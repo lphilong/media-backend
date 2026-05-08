@@ -1,0 +1,433 @@
+import { SystemInvariantError } from "@core/error/system-error";
+import { PermissionContract } from "@core/permission/permission.contract";
+import { resolvePermissionContract } from "@core/permission/permission.map";
+import { Permission } from "@core/permission/permission.enum";
+
+export const AUTHORITATIVE_ADMIN_MUTATION_IDENTITIES = [
+  "user.create",
+  "user.update",
+  "user.activate",
+  "user.disable",
+  "user.archive",
+  "user.auth-linkage.set",
+  "role.create",
+  "role.update",
+  "role.activate",
+  "role.deactivate",
+  "role.archive",
+  "role.set-permissions",
+  "role.set-assignment-rules",
+  "role.assign-to-user",
+  "role.revoke-from-user",
+  "org-unit.create",
+  "org-unit.update",
+  "org-unit.move",
+  "org-unit.activate",
+  "org-unit.deactivate",
+  "org-unit.archive",
+  "employment-profile.create",
+  "employment-profile.update-core",
+  "employment-profile.assign-org-unit",
+  "employment-profile.assign-manager",
+  "employment-profile.link-user",
+  "employment-profile.unlink-user",
+  "employment-profile.place-on-leave",
+  "employment-profile.return-from-leave",
+  "employment-profile.suspend",
+  "employment-profile.reactivate",
+  "employment-profile.terminate",
+  "employment-profile.archive",
+  "employment-profile.update-contract-status",
+  "talent.create",
+  "talent.update-core",
+  "talent.assign-manager",
+  "talent.link-employment-profile",
+  "talent.suspend",
+  "talent.reactivate",
+  "talent.deactivate",
+  "talent.archive",
+  "talent.update-commercial-participation",
+  "talent-group.create",
+  "talent-group.update-core",
+  "talent-group.activate",
+  "talent-group.deactivate",
+  "talent-group.archive",
+  "talent-group.add-member",
+  "talent-group.update-member-lineup",
+  "talent-group.deactivate-member",
+  "talent-group.reactivate-member",
+  "talent-group.remove-member",
+  "platform-account.create",
+  "platform-account.update-core",
+  "platform-account.transfer-ownership",
+  "platform-account.activate",
+  "platform-account.deactivate",
+  "platform-account.archive",
+  "platform-account.update-capabilities",
+  "studio-resource.create",
+  "studio-resource.update-core",
+  "studio-resource.mark-out-of-service",
+  "studio-resource.restore-to-active",
+  "studio-resource.deactivate",
+  "studio-resource.activate",
+  "studio-resource.archive",
+  "event-assignment.create",
+  "event-assignment.update-core",
+  "event-assignment.reschedule",
+  "event-assignment.replace-assignments",
+  "event-assignment.update-resources",
+  "event-assignment.update-platform-accounts",
+  "event-assignment.start",
+  "event-assignment.complete",
+  "event-assignment.cancel",
+  "event-assignment.archive",
+  "work-schedule.create",
+  "work-schedule.update-core",
+  "work-schedule.reschedule",
+  "work-schedule.reassign-subject",
+  "work-schedule.update-resources",
+  "work-schedule.cancel",
+  "work-schedule.archive",
+  "work-schedule.pattern.create",
+  "work-schedule.pattern.update",
+  "work-schedule.pattern.activate",
+  "work-schedule.pattern.archive",
+  "work-schedule.holiday-calendar.create",
+  "work-schedule.holiday-calendar.update",
+  "work-schedule.holiday-calendar.activate",
+  "work-schedule.holiday-calendar.archive",
+  "work-schedule.holiday-calendar.entry.add",
+  "work-schedule.holiday-calendar.entry.update",
+  "work-schedule.holiday-calendar.entry.remove",
+  "work-schedule.monthly-roster.create-draft",
+  "work-schedule.monthly-roster.update-draft",
+  "work-schedule.monthly-roster.archive",
+  "work-schedule.monthly-roster.publish",
+  "work-schedule.monthly-roster.exception.add",
+  "work-schedule.monthly-roster.exception.update",
+  "work-schedule.monthly-roster.exception.remove",
+  "contract-registry.create",
+  "contract-registry.update-draft-core",
+  "contract-registry.assign-owner",
+  "contract-registry.update-file-reference",
+  "contract-registry.mark-pending-signature",
+  "contract-registry.reopen-draft",
+  "contract-registry.activate",
+  "contract-registry.expire",
+  "contract-registry.terminate",
+  "contract-registry.archive",
+  "talent-kpi.create",
+  "talent-kpi.update-draft-core",
+  "talent-kpi.replace-metrics",
+  "talent-kpi.finalize",
+  "talent-kpi.archive",
+  "commission.create-rule",
+  "commission.update-rule-draft-core",
+  "commission.activate-rule",
+  "commission.deactivate-rule",
+  "commission.archive-rule",
+  "commission.create-settlement",
+  "commission.update-settlement-draft-core",
+  "commission.replace-settlement-revenue-entries",
+  "commission.finalize-settlement",
+  "commission.void-settlement",
+  "commission.archive-settlement",
+  "revenue-ledger.create",
+  "revenue-ledger.update-draft-core",
+  "revenue-ledger.finalize",
+  "revenue-ledger.reconcile",
+  "revenue-ledger.void",
+  "revenue-ledger.archive",
+] as const;
+
+export type AuthoritativeAdminMutationIdentity =
+  (typeof AUTHORITATIVE_ADMIN_MUTATION_IDENTITIES)[number];
+
+const ADMIN_MUTATION_PERMISSION_BY_IDENTITY: Readonly<
+  Record<AuthoritativeAdminMutationIdentity, Permission>
+> = Object.freeze({
+  "user.create": Permission.USER_CREATE,
+  "user.update": Permission.USER_EDIT,
+  "user.activate": Permission.USER_ACTIVATE,
+  "user.disable": Permission.USER_DISABLE,
+  "user.archive": Permission.USER_ARCHIVE,
+  "user.auth-linkage.set":
+    Permission.USER_AUTH_LINKAGE_SET,
+
+  "role.create": Permission.ROLE_CREATE,
+  "role.update": Permission.ROLE_UPDATE,
+  "role.activate": Permission.ROLE_ACTIVATE,
+  "role.deactivate": Permission.ROLE_DEACTIVATE,
+  "role.archive": Permission.ROLE_ARCHIVE,
+  "role.set-permissions":
+    Permission.ROLE_PERMISSION_ASSIGN,
+  "role.set-assignment-rules":
+    Permission.ROLE_ASSIGNMENT_RULE_SET,
+  "role.assign-to-user": Permission.ROLE_ASSIGN_TO_USER,
+  "role.revoke-from-user":
+    Permission.ROLE_REVOKE_FROM_USER,
+
+  "org-unit.create": Permission.ORG_UNIT_CREATE,
+  "org-unit.update": Permission.ORG_UNIT_UPDATE,
+  "org-unit.move":
+    Permission.ORG_UNIT_MANAGE_HIERARCHY,
+  "org-unit.activate":
+    Permission.ORG_UNIT_MANAGE_LIFECYCLE,
+  "org-unit.deactivate":
+    Permission.ORG_UNIT_MANAGE_LIFECYCLE,
+  "org-unit.archive":
+    Permission.ORG_UNIT_MANAGE_LIFECYCLE,
+
+  "employment-profile.create":
+    Permission.EMPLOYMENT_PROFILE_CREATE,
+  "employment-profile.update-core":
+    Permission.EMPLOYMENT_PROFILE_UPDATE,
+  "employment-profile.assign-org-unit":
+    Permission.EMPLOYMENT_PROFILE_MANAGE_ORG_ASSIGNMENT,
+  "employment-profile.assign-manager":
+    Permission.EMPLOYMENT_PROFILE_MANAGE_MANAGER_ASSIGNMENT,
+  "employment-profile.link-user":
+    Permission.EMPLOYMENT_PROFILE_MANAGE_USER_LINKAGE,
+  "employment-profile.unlink-user":
+    Permission.EMPLOYMENT_PROFILE_MANAGE_USER_LINKAGE,
+  "employment-profile.place-on-leave":
+    Permission.EMPLOYMENT_PROFILE_MANAGE_LIFECYCLE,
+  "employment-profile.return-from-leave":
+    Permission.EMPLOYMENT_PROFILE_MANAGE_LIFECYCLE,
+  "employment-profile.suspend":
+    Permission.EMPLOYMENT_PROFILE_MANAGE_LIFECYCLE,
+  "employment-profile.reactivate":
+    Permission.EMPLOYMENT_PROFILE_MANAGE_LIFECYCLE,
+  "employment-profile.terminate":
+    Permission.EMPLOYMENT_PROFILE_MANAGE_LIFECYCLE,
+  "employment-profile.archive":
+    Permission.EMPLOYMENT_PROFILE_MANAGE_LIFECYCLE,
+  "employment-profile.update-contract-status":
+    Permission.EMPLOYMENT_PROFILE_UPDATE,
+
+  "talent.create": Permission.TALENT_CREATE,
+  "talent.update-core": Permission.TALENT_UPDATE,
+  "talent.assign-manager":
+    Permission.TALENT_MANAGE_MANAGER,
+  "talent.link-employment-profile":
+    Permission.TALENT_MANAGE_EMPLOYMENT_LINK,
+  "talent.suspend":
+    Permission.TALENT_MANAGE_LIFECYCLE,
+  "talent.reactivate":
+    Permission.TALENT_MANAGE_LIFECYCLE,
+  "talent.deactivate":
+    Permission.TALENT_MANAGE_LIFECYCLE,
+  "talent.archive":
+    Permission.TALENT_MANAGE_LIFECYCLE,
+  "talent.update-commercial-participation":
+    Permission.TALENT_MANAGE_COMMERCIAL_PARTICIPATION,
+
+  "talent-group.create":
+    Permission.TALENT_GROUP_CREATE,
+  "talent-group.update-core":
+    Permission.TALENT_GROUP_UPDATE,
+  "talent-group.activate":
+    Permission.TALENT_GROUP_MANAGE_LIFECYCLE,
+  "talent-group.deactivate":
+    Permission.TALENT_GROUP_MANAGE_LIFECYCLE,
+  "talent-group.archive":
+    Permission.TALENT_GROUP_MANAGE_LIFECYCLE,
+  "talent-group.add-member":
+    Permission.TALENT_GROUP_MANAGE_MEMBERSHIP,
+  "talent-group.update-member-lineup":
+    Permission.TALENT_GROUP_MANAGE_MEMBERSHIP,
+  "talent-group.deactivate-member":
+    Permission.TALENT_GROUP_MANAGE_MEMBERSHIP,
+  "talent-group.reactivate-member":
+    Permission.TALENT_GROUP_MANAGE_MEMBERSHIP,
+  "talent-group.remove-member":
+    Permission.TALENT_GROUP_MANAGE_MEMBERSHIP,
+
+  "platform-account.create":
+    Permission.PLATFORM_ACCOUNT_CREATE,
+  "platform-account.update-core":
+    Permission.PLATFORM_ACCOUNT_UPDATE,
+  "platform-account.transfer-ownership":
+    Permission.PLATFORM_ACCOUNT_MANAGE_OWNERSHIP,
+  "platform-account.activate":
+    Permission.PLATFORM_ACCOUNT_MANAGE_LIFECYCLE,
+  "platform-account.deactivate":
+    Permission.PLATFORM_ACCOUNT_MANAGE_LIFECYCLE,
+  "platform-account.archive":
+    Permission.PLATFORM_ACCOUNT_MANAGE_LIFECYCLE,
+  "platform-account.update-capabilities":
+    Permission.PLATFORM_ACCOUNT_MANAGE_CAPABILITIES,
+
+  "studio-resource.create":
+    Permission.STUDIO_RESOURCE_CREATE,
+  "studio-resource.update-core":
+    Permission.STUDIO_RESOURCE_UPDATE,
+  "studio-resource.mark-out-of-service":
+    Permission.STUDIO_RESOURCE_MANAGE_AVAILABILITY,
+  "studio-resource.restore-to-active":
+    Permission.STUDIO_RESOURCE_MANAGE_AVAILABILITY,
+  "studio-resource.deactivate":
+    Permission.STUDIO_RESOURCE_MANAGE_LIFECYCLE,
+  "studio-resource.activate":
+    Permission.STUDIO_RESOURCE_MANAGE_LIFECYCLE,
+  "studio-resource.archive":
+    Permission.STUDIO_RESOURCE_MANAGE_LIFECYCLE,
+
+  "event-assignment.create":
+    Permission.EVENT_CREATE,
+  "event-assignment.update-core":
+    Permission.EVENT_UPDATE,
+  "event-assignment.reschedule":
+    Permission.EVENT_UPDATE,
+  "event-assignment.replace-assignments":
+    Permission.EVENT_MANAGE_ASSIGNMENTS,
+  "event-assignment.update-resources":
+    Permission.EVENT_UPDATE,
+  "event-assignment.update-platform-accounts":
+    Permission.EVENT_UPDATE,
+  "event-assignment.start":
+    Permission.EVENT_MANAGE_LIFECYCLE,
+  "event-assignment.complete":
+    Permission.EVENT_MANAGE_LIFECYCLE,
+  "event-assignment.cancel":
+    Permission.EVENT_MANAGE_LIFECYCLE,
+  "event-assignment.archive":
+    Permission.EVENT_MANAGE_LIFECYCLE,
+
+  "work-schedule.create":
+    Permission.WORK_SCHEDULE_CREATE,
+  "work-schedule.update-core":
+    Permission.WORK_SCHEDULE_UPDATE,
+  "work-schedule.reschedule":
+    Permission.WORK_SCHEDULE_UPDATE,
+  "work-schedule.reassign-subject":
+    Permission.WORK_SCHEDULE_UPDATE,
+  "work-schedule.update-resources":
+    Permission.WORK_SCHEDULE_UPDATE,
+  "work-schedule.cancel":
+    Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+  "work-schedule.archive":
+    Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+  "work-schedule.pattern.create":
+    Permission.WORK_SCHEDULE_UPDATE,
+  "work-schedule.pattern.update":
+    Permission.WORK_SCHEDULE_UPDATE,
+  "work-schedule.pattern.activate":
+    Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+  "work-schedule.pattern.archive":
+    Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+  "work-schedule.holiday-calendar.create":
+    Permission.WORK_SCHEDULE_UPDATE,
+  "work-schedule.holiday-calendar.update":
+    Permission.WORK_SCHEDULE_UPDATE,
+  "work-schedule.holiday-calendar.activate":
+    Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+  "work-schedule.holiday-calendar.archive":
+    Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+  "work-schedule.holiday-calendar.entry.add":
+    Permission.WORK_SCHEDULE_UPDATE,
+  "work-schedule.holiday-calendar.entry.update":
+    Permission.WORK_SCHEDULE_UPDATE,
+  "work-schedule.holiday-calendar.entry.remove":
+    Permission.WORK_SCHEDULE_UPDATE,
+  "work-schedule.monthly-roster.create-draft":
+    Permission.WORK_SCHEDULE_CREATE,
+  "work-schedule.monthly-roster.update-draft":
+    Permission.WORK_SCHEDULE_UPDATE,
+  "work-schedule.monthly-roster.archive":
+    Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+  "work-schedule.monthly-roster.publish":
+    Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+  "work-schedule.monthly-roster.exception.add":
+    Permission.WORK_SCHEDULE_UPDATE,
+  "work-schedule.monthly-roster.exception.update":
+    Permission.WORK_SCHEDULE_UPDATE,
+  "work-schedule.monthly-roster.exception.remove":
+    Permission.WORK_SCHEDULE_UPDATE,
+
+  "contract-registry.create":
+    Permission.CONTRACT_REGISTRY_CREATE,
+  "contract-registry.update-draft-core":
+    Permission.CONTRACT_REGISTRY_UPDATE,
+  "contract-registry.assign-owner":
+    Permission.CONTRACT_REGISTRY_MANAGE_OWNER,
+  "contract-registry.update-file-reference":
+    Permission.CONTRACT_REGISTRY_MANAGE_FILE_REFERENCE,
+  "contract-registry.mark-pending-signature":
+    Permission.CONTRACT_REGISTRY_MANAGE_LIFECYCLE,
+  "contract-registry.reopen-draft":
+    Permission.CONTRACT_REGISTRY_MANAGE_LIFECYCLE,
+  "contract-registry.activate":
+    Permission.CONTRACT_REGISTRY_MANAGE_LIFECYCLE,
+  "contract-registry.expire":
+    Permission.CONTRACT_REGISTRY_MANAGE_LIFECYCLE,
+  "contract-registry.terminate":
+    Permission.CONTRACT_REGISTRY_MANAGE_LIFECYCLE,
+  "contract-registry.archive":
+    Permission.CONTRACT_REGISTRY_MANAGE_LIFECYCLE,
+
+  "talent-kpi.create":
+    Permission.TALENT_KPI_CREATE,
+  "talent-kpi.update-draft-core":
+    Permission.TALENT_KPI_UPDATE,
+  "talent-kpi.replace-metrics":
+    Permission.TALENT_KPI_MANAGE_METRICS,
+  "talent-kpi.finalize":
+    Permission.TALENT_KPI_MANAGE_LIFECYCLE,
+  "talent-kpi.archive":
+    Permission.TALENT_KPI_MANAGE_LIFECYCLE,
+
+  "commission.create-rule":
+    Permission.COMMISSION_RULE_CREATE,
+  "commission.update-rule-draft-core":
+    Permission.COMMISSION_RULE_UPDATE,
+  "commission.activate-rule":
+    Permission.COMMISSION_RULE_MANAGE_LIFECYCLE,
+  "commission.deactivate-rule":
+    Permission.COMMISSION_RULE_MANAGE_LIFECYCLE,
+  "commission.archive-rule":
+    Permission.COMMISSION_RULE_MANAGE_LIFECYCLE,
+  "commission.create-settlement":
+    Permission.COMMISSION_SETTLEMENT_CREATE,
+  "commission.update-settlement-draft-core":
+    Permission.COMMISSION_SETTLEMENT_UPDATE,
+  "commission.replace-settlement-revenue-entries":
+    Permission.COMMISSION_SETTLEMENT_UPDATE,
+  "commission.finalize-settlement":
+    Permission.COMMISSION_SETTLEMENT_MANAGE_LIFECYCLE,
+  "commission.void-settlement":
+    Permission.COMMISSION_SETTLEMENT_MANAGE_LIFECYCLE,
+  "commission.archive-settlement":
+    Permission.COMMISSION_SETTLEMENT_MANAGE_LIFECYCLE,
+
+  "revenue-ledger.create":
+    Permission.REVENUE_LEDGER_CREATE,
+  "revenue-ledger.update-draft-core":
+    Permission.REVENUE_LEDGER_UPDATE,
+  "revenue-ledger.finalize":
+    Permission.REVENUE_LEDGER_MANAGE_LIFECYCLE,
+  "revenue-ledger.reconcile":
+    Permission.REVENUE_LEDGER_RECONCILE,
+  "revenue-ledger.void":
+    Permission.REVENUE_LEDGER_MANAGE_LIFECYCLE,
+  "revenue-ledger.archive":
+    Permission.REVENUE_LEDGER_MANAGE_LIFECYCLE,
+});
+
+export function resolveAuthoritativePermissionForMutationIdentity(
+  mutationIdentity: AuthoritativeAdminMutationIdentity,
+): PermissionContract {
+  const permissionCode =
+    ADMIN_MUTATION_PERMISSION_BY_IDENTITY[
+      mutationIdentity
+    ];
+
+  if (!permissionCode) {
+    throw new SystemInvariantError(
+      "SYSTEM_INVARIANT_VIOLATION",
+      `Authoritative ADMIN mutation permission map missing identity: ${mutationIdentity}`,
+    );
+  }
+
+  return resolvePermissionContract(permissionCode);
+}

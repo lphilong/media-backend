@@ -1,0 +1,16 @@
+node_modules/
+.env
+.env.*
+dist/
+build/
+logs/
+*.log
+docs/
+.vscode/
+.idea/
+tools/
+.codex/
+**/.codex/
+
+**/*.test.ts
+**/*.spec.ts
