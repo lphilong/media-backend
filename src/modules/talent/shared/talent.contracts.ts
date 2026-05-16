@@ -10,7 +10,7 @@ import {
 } from "@modules/talent/domain/talent.types";
 
 export interface CreateTalentCommand {
-  readonly talentCode: string;
+  readonly talentCode?: string | null;
   readonly stageName: string;
   readonly legalName: string;
   readonly talentOrigin: TalentOrigin;

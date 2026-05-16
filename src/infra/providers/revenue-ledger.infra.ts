@@ -1,4 +1,5 @@
 import { Db } from "mongodb";
+import { NativeMongoBusinessCodeSequenceRepository } from "@infra/mongo/business-code/business-code-sequence.repository";
 import { NativeMongoRevenueLedgerReadRepository } from "@infra/mongo/revenue-ledger/revenue-ledger.read-repository";
 import {
   NativeMongoRevenueLedgerCommissionReadonlyAccess,
@@ -10,6 +11,7 @@ import { NativeMongoRevenueEntryRepository } from "@infra/mongo/revenue-ledger/r
 
 export interface RevenueLedgerInfra {
   readonly revenueEntryRepository: NativeMongoRevenueEntryRepository;
+  readonly businessCodeSequenceRepository: NativeMongoBusinessCodeSequenceRepository;
   readonly revenueLedgerReadRepository: NativeMongoRevenueLedgerReadRepository;
   readonly revenueLedgerTalentReadonlyAccess: NativeMongoRevenueLedgerTalentReadonlyAccess;
   readonly revenueLedgerPlatformAccountReadonlyAccess: NativeMongoRevenueLedgerPlatformAccountReadonlyAccess;
@@ -23,6 +25,8 @@ export function createRevenueLedgerInfra(
   return {
     revenueEntryRepository:
       new NativeMongoRevenueEntryRepository(db),
+    businessCodeSequenceRepository:
+      new NativeMongoBusinessCodeSequenceRepository(db),
     revenueLedgerReadRepository:
       new NativeMongoRevenueLedgerReadRepository(
         db,

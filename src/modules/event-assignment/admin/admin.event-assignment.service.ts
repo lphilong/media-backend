@@ -10,6 +10,11 @@ import {
 } from "@core/application/authoritative-admin-mutation.bridge";
 import { AuthoritativeAdminMutationIdentity } from "@core/application/authoritative-admin-mutation.permission-map";
 import { AuditGuard } from "@core/audit/audit.guard";
+import { utcMonthBucketFromTimestamp } from "@core/business-code/business-code-bucket";
+import {
+  BusinessCodeSequenceRepository,
+  formatBusinessCode,
+} from "@core/business-code/business-code-sequence.repository";
 import { SystemInvariantError } from "@core/error/system-error";
 import { BaseAppError } from "@core/errors/base.error";
 import { Permission } from "@core/permission/permission.enum";
@@ -32,6 +37,7 @@ import {
   EventAssignmentStateError,
   EventAssignmentValidationError,
 } from "@modules/event-assignment/domain/event-assignment.errors";
+import { buildEventAssignmentCodePolicy } from "@modules/event-assignment/domain/event-assignment-code-policy";
 import { EventAssignmentEmploymentProfileReadonlyAccess } from "@modules/event-assignment/domain/event-assignment-employment-profile-readonly-access";
 import { EventAssignmentPlatformAccountReadonlyAccess } from "@modules/event-assignment/domain/event-assignment-platform-account-readonly-access";
 import {
@@ -88,7 +94,7 @@ interface NormalizedAssignmentReference
   extends EventAssignmentReferenceInput {}
 
 interface NormalizedCreateCommand {
-  readonly eventCode: string;
+  readonly eventCode: string | undefined;
   readonly title: string;
   readonly normalizedTitle: string;
   readonly assignments: readonly NormalizedAssignmentReference[];
@@ -136,6 +142,7 @@ interface NormalizedLifecycleCommand {
 export class EventAssignmentAdminService {
   constructor(
     private readonly repository: EventAssignmentRepository,
+    private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
     private readonly employmentProfileReadonlyAccess: EventAssignmentEmploymentProfileReadonlyAccess,
     private readonly talentReadonlyAccess: EventAssignmentTalentReadonlyAccess,
     private readonly talentGroupReadonlyAccess: EventAssignmentTalentGroupReadonlyAccess,
@@ -162,21 +169,26 @@ export class EventAssignmentAdminService {
       permission,
       operation,
       {
-        eventCode: input.eventCode,
+        eventCode: readOptionalLogString(
+          command.eventCode,
+        ),
         assignmentCount: input.assignments.length,
       },
       async (session) => {
         const scope = resolveRequiredGlobalScope(actor);
-        const existingByCode =
-          await this.repository.findEventByEventCode(
-            input.eventCode,
-            session,
-          );
 
-        if (existingByCode) {
-          throw new EventAssignmentConflictError(
-            `Event code already exists: ${input.eventCode}`,
-          );
+        if (input.eventCode !== undefined) {
+          const existingByCode =
+            await this.repository.findEventByEventCode(
+              input.eventCode,
+              session,
+            );
+
+          if (existingByCode) {
+            throw new EventAssignmentConflictError(
+              `Event code already exists: ${input.eventCode}`,
+            );
+          }
         }
 
         assertHasActiveAssignments(
@@ -220,64 +232,89 @@ export class EventAssignmentAdminService {
           session,
         });
 
-        const now = Date.now();
-        const eventRecord: EventRecord = {
-          id: crypto.randomUUID(),
-          eventCode: input.eventCode,
-          title: input.title,
-          normalizedTitle: input.normalizedTitle,
-          studioResourceIds: [
-            ...input.studioResourceIds,
-          ],
-          platformAccountIds: [
-            ...input.platformAccountIds,
-          ],
-          status: "SCHEDULED",
-          eventStartAt: input.eventStartAt,
-          eventEndAt: input.eventEndAt,
-          description: input.description,
-          externalRef: input.externalRef,
-          createdAt: now,
-          updatedAt: now,
-        };
+        let createdEvent!: EventRecord;
+        const maxAttempts =
+          input.eventCode === undefined ? 5 : 1;
 
-        const assignments =
-          input.assignments.map((assignment) => ({
+        for (
+          let attempt = 1;
+          attempt <= maxAttempts;
+          attempt += 1
+        ) {
+          const eventCode =
+            input.eventCode ??
+            (await this.allocateGeneratedCode(
+              input.eventStartAt,
+              session,
+            ));
+          const now = Date.now();
+          const eventRecord: EventRecord = {
             id: crypto.randomUUID(),
-            eventId: eventRecord.id,
-            assignmentKind:
-              assignment.assignmentKind,
-            assignmentEmploymentProfileId:
-              assignment.assignmentEmploymentProfileId,
-            assignmentTalentId:
-              assignment.assignmentTalentId,
-            assignmentTalentGroupId:
-              assignment.assignmentTalentGroupId,
-            assignmentStatus: "ACTIVE" as const,
+            eventCode,
+            title: input.title,
+            normalizedTitle:
+              input.normalizedTitle,
+            studioResourceIds: [
+              ...input.studioResourceIds,
+            ],
+            platformAccountIds: [
+              ...input.platformAccountIds,
+            ],
+            status: "SCHEDULED",
+            eventStartAt: input.eventStartAt,
+            eventEndAt: input.eventEndAt,
+            description: input.description,
+            externalRef: input.externalRef,
             createdAt: now,
             updatedAt: now,
-            removedAt: null,
-          }));
+          };
 
-        let createdEvent: EventRecord;
+          const assignments =
+            input.assignments.map((assignment) => ({
+              id: crypto.randomUUID(),
+              eventId: eventRecord.id,
+              assignmentKind:
+                assignment.assignmentKind,
+              assignmentEmploymentProfileId:
+                assignment.assignmentEmploymentProfileId,
+              assignmentTalentId:
+                assignment.assignmentTalentId,
+              assignmentTalentGroupId:
+                assignment.assignmentTalentGroupId,
+              assignmentStatus: "ACTIVE" as const,
+              createdAt: now,
+              updatedAt: now,
+              removedAt: null,
+            }));
 
-        try {
-          createdEvent = await this.repository.insertEvent(
-            eventRecord,
-            session,
-          );
-          await this.repository.insertAssignments(
-            assignments,
-            session,
-          );
-        } catch (error) {
-          if (isDuplicateKeyError(error)) {
-            throw new EventAssignmentConflictError(
-              "Event conflict detected on create",
+          try {
+            createdEvent =
+              await this.repository.insertEvent(
+                eventRecord,
+                session,
+              );
+            await this.repository.insertAssignments(
+              assignments,
+              session,
             );
-          }
+            break;
+          } catch (error) {
+            if (!isDuplicateKeyError(error)) {
+              throw error;
+            }
 
-          throw error;
+            if (input.eventCode !== undefined) {
+              throw new EventAssignmentConflictError(
+                "Event conflict detected on create",
+              );
+            }
+
+            if (attempt >= maxAttempts) {
+              throw new EventAssignmentConflictError(
+                "Generated event code conflict detected on create",
+              );
+            }
+          }
         }
 
         await this.recordAudit({
@@ -1257,6 +1294,35 @@ export class EventAssignmentAdminService {
     return event;
   }
 
+  private async allocateGeneratedCode(
+    eventStartAt: number,
+    session: ClientSession,
+  ): Promise<string> {
+    const bucket =
+      utcMonthBucketFromTimestamp(eventStartAt);
+    const policy =
+      buildEventAssignmentCodePolicy(bucket);
+    const maxExisting =
+      await this.repository.findMaxGeneratedEventCodeSequence(
+        policy,
+        session,
+      );
+    await this.codeSequenceRepository.ensureAtLeast(
+      policy.moduleKey,
+      policy.bucket,
+      maxExisting,
+      session,
+    );
+    const next =
+      await this.codeSequenceRepository.allocateNext(
+        policy.moduleKey,
+        policy.bucket,
+        session,
+      );
+
+    return formatBusinessCode(policy, next);
+  }
+
   private async assertEventHasActiveAssignments(
     eventId: string,
     session: ClientSession,
@@ -1651,7 +1717,7 @@ function normalizeCreateCommand(
   );
 
   return {
-    eventCode: normalizeRequiredText(
+    eventCode: normalizeOptionalCreateCode(
       command.eventCode,
       "eventCode",
     ),
@@ -1685,6 +1751,26 @@ function normalizeCreateCommand(
         "externalRef",
       ) ?? null,
   };
+}
+
+function normalizeOptionalCreateCode(
+  value: unknown,
+  field: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new EventAssignmentValidationError(
+      `${field} must be a string`,
+    );
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0
+    ? normalized
+    : undefined;
 }
 
 function normalizeUpdateCoreCommand(
@@ -2632,4 +2718,17 @@ function truncateLogMessage(
   }
 
   return `${raw.slice(0, 253)}...`;
+}
+
+function readOptionalLogString(
+  value: unknown,
+): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0
+    ? normalized
+    : undefined;
 }

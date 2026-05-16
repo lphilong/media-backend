@@ -1,4 +1,5 @@
 import { ClientSession } from "mongodb";
+import { BusinessCodePolicy } from "@core/business-code/business-code-sequence.repository";
 import {
   TalentKpiMeasurementSource,
   TalentKpiMetricValue,
@@ -67,6 +68,11 @@ export interface TalentKpiRepository {
     kpiRecordCode: string,
     session?: ClientSession,
   ): Promise<TalentKpiRecord | null>;
+
+  findMaxGeneratedKpiRecordCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number>;
 
   findNonArchivedByMeasurementIdentity(
     input: FindNonArchivedByMeasurementIdentityInput,

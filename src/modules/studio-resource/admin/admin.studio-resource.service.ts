@@ -10,6 +10,10 @@ import {
 } from "@core/application/authoritative-admin-mutation.bridge";
 import { AuthoritativeAdminMutationIdentity } from "@core/application/authoritative-admin-mutation.permission-map";
 import { AuditGuard } from "@core/audit/audit.guard";
+import {
+  BusinessCodeSequenceRepository,
+  formatBusinessCode,
+} from "@core/business-code/business-code-sequence.repository";
 import { SystemInvariantError } from "@core/error/system-error";
 import { BaseAppError } from "@core/errors/base.error";
 import { Permission } from "@core/permission/permission.enum";
@@ -29,6 +33,7 @@ import {
   StudioResourceStateError,
   StudioResourceValidationError,
 } from "@modules/studio-resource/domain/studio-resource.errors";
+import { STUDIO_RESOURCE_CODE_POLICY } from "@modules/studio-resource/domain/studio-resource-code-policy";
 import {
   StudioResourceRepository,
   TransitionStudioResourceOperationalStatusInput,
@@ -65,7 +70,7 @@ type StudioResourceFailureClassification =
   | "unknown";
 
 interface NormalizedCreateCommand {
-  readonly resourceCode: string;
+  readonly resourceCode: string | undefined;
   readonly name: string;
   readonly normalizedName: string;
   readonly shortName: string | null;
@@ -90,6 +95,7 @@ interface NormalizedUpdateCoreCommand {
 export class StudioResourceAdminService {
   constructor(
     private readonly repository: StudioResourceRepository,
+    private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
     private readonly workScheduleReadonlyAccess: StudioResourceWorkScheduleReadonlyAccess,
     private readonly eventAssignmentReadonlyAccess: StudioResourceEventAssignmentReadonlyAccess,
     private readonly audit: AuditGuard,
@@ -113,20 +119,24 @@ export class StudioResourceAdminService {
       permission,
       operation,
       {
-        resourceCode: input.resourceCode,
+        resourceCode: readOptionalLogString(
+          command.resourceCode,
+        ),
         resourceClass: input.resourceClass,
       },
       async (session) => {
-        const existing =
-          await this.repository.findByResourceCode(
-            input.resourceCode,
-            session,
-          );
+        if (input.resourceCode !== undefined) {
+          const existing =
+            await this.repository.findByResourceCode(
+              input.resourceCode,
+              session,
+            );
 
-        if (existing) {
-          throw new StudioResourceConflictError(
-            `Studio resource code already exists: ${input.resourceCode}`,
-          );
+          if (existing) {
+            throw new StudioResourceConflictError(
+              `Studio resource code already exists: ${input.resourceCode}`,
+            );
+          }
         }
 
         assertResourceShape(
@@ -134,40 +144,60 @@ export class StudioResourceAdminService {
           input.maxOccupancy,
         );
 
-        const now = Date.now();
-        const record: StudioResourceRecord = {
-          id: crypto.randomUUID(),
-          resourceCode: input.resourceCode,
-          name: input.name,
-          normalizedName: input.normalizedName,
-          shortName: input.shortName,
-          normalizedShortName:
-            input.normalizedShortName,
-          resourceClass: input.resourceClass,
-          operationalStatus: "ACTIVE",
-          locationLabel: input.locationLabel,
-          description: input.description,
-          externalRef: input.externalRef,
-          maxOccupancy: input.maxOccupancy,
-          createdAt: now,
-          updatedAt: now,
-        };
+        let created!: StudioResourceRecord;
+        const maxAttempts =
+          input.resourceCode === undefined ? 5 : 1;
 
-        let created: StudioResourceRecord;
+        for (
+          let attempt = 1;
+          attempt <= maxAttempts;
+          attempt += 1
+        ) {
+          const resourceCode =
+            input.resourceCode ??
+            (await this.allocateGeneratedCode(session));
+          const now = Date.now();
+          const record: StudioResourceRecord = {
+            id: crypto.randomUUID(),
+            resourceCode,
+            name: input.name,
+            normalizedName: input.normalizedName,
+            shortName: input.shortName,
+            normalizedShortName:
+              input.normalizedShortName,
+            resourceClass: input.resourceClass,
+            operationalStatus: "ACTIVE",
+            locationLabel: input.locationLabel,
+            description: input.description,
+            externalRef: input.externalRef,
+            maxOccupancy: input.maxOccupancy,
+            createdAt: now,
+            updatedAt: now,
+          };
 
-        try {
-          created = await this.repository.insert(
-            record,
-            session,
-          );
-        } catch (error) {
-          if (isDuplicateKeyError(error)) {
-            throw new StudioResourceConflictError(
-              "Studio resource code conflict detected on create",
+          try {
+            created = await this.repository.insert(
+              record,
+              session,
             );
-          }
+            break;
+          } catch (error) {
+            if (!isDuplicateKeyError(error)) {
+              throw error;
+            }
 
-          throw error;
+            if (input.resourceCode !== undefined) {
+              throw new StudioResourceConflictError(
+                "Studio resource code conflict detected on create",
+              );
+            }
+
+            if (attempt >= maxAttempts) {
+              throw new StudioResourceConflictError(
+                "Generated studio resource code conflict detected on create",
+              );
+            }
+          }
         }
 
         await this.recordAudit({
@@ -497,6 +527,33 @@ export class StudioResourceAdminService {
     return studioResource;
   }
 
+  private async allocateGeneratedCode(
+    session: ClientSession,
+  ): Promise<string> {
+    const maxExisting =
+      await this.repository.findMaxGeneratedCodeSequence(
+        STUDIO_RESOURCE_CODE_POLICY,
+        session,
+      );
+    await this.codeSequenceRepository.ensureAtLeast(
+      STUDIO_RESOURCE_CODE_POLICY.moduleKey,
+      STUDIO_RESOURCE_CODE_POLICY.bucket,
+      maxExisting,
+      session,
+    );
+    const next =
+      await this.codeSequenceRepository.allocateNext(
+        STUDIO_RESOURCE_CODE_POLICY.moduleKey,
+        STUDIO_RESOURCE_CODE_POLICY.bucket,
+        session,
+      );
+
+    return formatBusinessCode(
+      STUDIO_RESOURCE_CODE_POLICY,
+      next,
+    );
+  }
+
   private async assertNoLiveDownstreamAllocations(
     studioResourceId: string,
     operation:
@@ -659,7 +716,7 @@ function normalizeCreateCommand(
   const shortName = shortNameInput ?? null;
 
   return {
-    resourceCode: normalizeRequiredText(
+    resourceCode: normalizeOptionalCreateCode(
       command.resourceCode,
       "resourceCode",
     ),
@@ -694,6 +751,26 @@ function normalizeCreateCommand(
         "maxOccupancy",
       ) ?? null,
   };
+}
+
+function normalizeOptionalCreateCode(
+  value: unknown,
+  field: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new StudioResourceValidationError(
+      `${field} must be a string`,
+    );
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0
+    ? normalized
+    : undefined;
 }
 
 function normalizeUpdateCoreCommand(
@@ -1120,4 +1197,17 @@ function truncateLogMessage(
   }
 
   return `${raw.slice(0, 253)}...`;
+}
+
+function readOptionalLogString(
+  value: unknown,
+): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0
+    ? normalized
+    : undefined;
 }

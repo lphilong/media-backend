@@ -10,6 +10,11 @@ import {
 } from "@core/application/authoritative-admin-mutation.bridge";
 import { AuthoritativeAdminMutationIdentity } from "@core/application/authoritative-admin-mutation.permission-map";
 import { AuditGuard } from "@core/audit/audit.guard";
+import { utcYearBucketFromTimestamp } from "@core/business-code/business-code-bucket";
+import {
+  BusinessCodeSequenceRepository,
+  formatBusinessCode,
+} from "@core/business-code/business-code-sequence.repository";
 import { SystemInvariantError } from "@core/error/system-error";
 import { BaseAppError } from "@core/errors/base.error";
 import { Permission } from "@core/permission/permission.enum";
@@ -34,6 +39,7 @@ import {
   ContractRegistryStateError,
   ContractRegistryValidationError,
 } from "@modules/contract-registry/domain/contract-registry.errors";
+import { buildContractRegistryCodePolicy } from "@modules/contract-registry/domain/contract-registry-code-policy";
 import { ContractRegistryRepository } from "@modules/contract-registry/domain/contract-registry.repository";
 import { ContractRegistryTalentReadonlyAccess } from "@modules/contract-registry/domain/contract-registry-talent-readonly-access";
 import {
@@ -74,7 +80,7 @@ type ContractRegistryMutationFailureClassification =
   | "unknown";
 
 interface NormalizedCreateCommand {
-  readonly contractCode: string;
+  readonly contractCode: string | undefined;
   readonly title: string;
   readonly normalizedTitle: string;
   readonly contractKind: ContractKind;
@@ -164,6 +170,7 @@ interface DraftCorePatchBuildResult {
 export class ContractRegistryAdminService {
   constructor(
     private readonly repository: ContractRegistryRepository,
+    private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
     private readonly employmentProfileReadonlyAccess: ContractRegistryEmploymentProfileReadonlyAccess,
     private readonly talentReadonlyAccess: ContractRegistryTalentReadonlyAccess,
     private readonly audit: AuditGuard,
@@ -187,7 +194,9 @@ export class ContractRegistryAdminService {
       permission,
       operation,
       {
-        contractCode: input.contractCode,
+        contractCode: readOptionalLogString(
+          command.contractCode,
+        ),
         contractKind: input.contractKind,
         linkedEntityKind: input.linkedEntityKind,
         ownerEmploymentProfileId:
@@ -195,16 +204,19 @@ export class ContractRegistryAdminService {
       },
       async (session) => {
         const scope = resolveRequiredGlobalScope(actor);
-        const existingByCode =
-          await this.repository.findByContractCode(
-            input.contractCode,
-            session,
-          );
 
-        if (existingByCode) {
-          throw new ContractRegistryConflictError(
-            `Contract code already exists: ${input.contractCode}`,
-          );
+        if (input.contractCode !== undefined) {
+          const existingByCode =
+            await this.repository.findByContractCode(
+              input.contractCode,
+              session,
+            );
+
+          if (existingByCode) {
+            throw new ContractRegistryConflictError(
+              `Contract code already exists: ${input.contractCode}`,
+            );
+          }
         }
 
         assertLinkedEntityReferenceShape(
@@ -235,48 +247,76 @@ export class ContractRegistryAdminService {
           input.effectiveEndDate,
         );
 
-        const now = Date.now();
-        const record: ContractRecord = {
-          id: crypto.randomUUID(),
-          contractCode: input.contractCode,
-          title: input.title,
-          normalizedTitle: input.normalizedTitle,
-          contractKind: input.contractKind,
-          linkedEntityKind: input.linkedEntityKind,
-          linkedEmploymentProfileId:
-            input.linkedEmploymentProfileId,
-          linkedTalentId: input.linkedTalentId,
-          ownerEmploymentProfileId:
-            input.ownerEmploymentProfileId,
-          confidentialityTier:
-            input.confidentialityTier,
-          status: "DRAFT",
-          effectiveStartDate:
-            input.effectiveStartDate,
-          effectiveEndDate: input.effectiveEndDate,
-          fileReferenceId: input.fileReferenceId,
-          fileDisplayName: input.fileDisplayName,
-          description: input.description,
-          externalRef: input.externalRef,
-          createdAt: now,
-          updatedAt: now,
-        };
+        let created!: ContractRecord;
+        const maxAttempts =
+          input.contractCode === undefined ? 5 : 1;
 
-        let created: ContractRecord;
+        for (
+          let attempt = 1;
+          attempt <= maxAttempts;
+          attempt += 1
+        ) {
+          const contractCode =
+            input.contractCode ??
+            (await this.allocateGeneratedCode(
+              input.effectiveStartDate,
+              session,
+            ));
+          const now = Date.now();
+          const record: ContractRecord = {
+            id: crypto.randomUUID(),
+            contractCode,
+            title: input.title,
+            normalizedTitle:
+              input.normalizedTitle,
+            contractKind: input.contractKind,
+            linkedEntityKind:
+              input.linkedEntityKind,
+            linkedEmploymentProfileId:
+              input.linkedEmploymentProfileId,
+            linkedTalentId: input.linkedTalentId,
+            ownerEmploymentProfileId:
+              input.ownerEmploymentProfileId,
+            confidentialityTier:
+              input.confidentialityTier,
+            status: "DRAFT",
+            effectiveStartDate:
+              input.effectiveStartDate,
+            effectiveEndDate:
+              input.effectiveEndDate,
+            fileReferenceId:
+              input.fileReferenceId,
+            fileDisplayName:
+              input.fileDisplayName,
+            description: input.description,
+            externalRef: input.externalRef,
+            createdAt: now,
+            updatedAt: now,
+          };
 
-        try {
-          created = await this.repository.insert(
-            record,
-            session,
-          );
-        } catch (error) {
-          if (isDuplicateKeyError(error)) {
-            throw new ContractRegistryConflictError(
-              `Contract code already exists: ${input.contractCode}`,
+          try {
+            created = await this.repository.insert(
+              record,
+              session,
             );
-          }
+            break;
+          } catch (error) {
+            if (!isDuplicateKeyError(error)) {
+              throw error;
+            }
 
-          throw error;
+            if (input.contractCode !== undefined) {
+              throw new ContractRegistryConflictError(
+                `Contract code already exists: ${input.contractCode}`,
+              );
+            }
+
+            if (attempt >= maxAttempts) {
+              throw new ContractRegistryConflictError(
+                "Generated contract code conflict detected on create",
+              );
+            }
+          }
         }
 
         await this.recordAudit({
@@ -1171,6 +1211,35 @@ export class ContractRegistryAdminService {
     return record;
   }
 
+  private async allocateGeneratedCode(
+    effectiveStartDate: number,
+    session: ClientSession,
+  ): Promise<string> {
+    const bucket =
+      utcYearBucketFromTimestamp(effectiveStartDate);
+    const policy =
+      buildContractRegistryCodePolicy(bucket);
+    const maxExisting =
+      await this.repository.findMaxGeneratedContractCodeSequence(
+        policy,
+        session,
+      );
+    await this.codeSequenceRepository.ensureAtLeast(
+      policy.moduleKey,
+      policy.bucket,
+      maxExisting,
+      session,
+    );
+    const next =
+      await this.codeSequenceRepository.allocateNext(
+        policy.moduleKey,
+        policy.bucket,
+        session,
+      );
+
+    return formatBusinessCode(policy, next);
+  }
+
   private async assertLinkedEntityEligible(
     linkedEntityKind: ContractLinkedEntityKind,
     linkedEmploymentProfileId: string | null,
@@ -1380,7 +1449,7 @@ function normalizeCreateCommand(
   );
 
   return {
-    contractCode: normalizeRequiredText(
+    contractCode: normalizeOptionalCreateCode(
       command.contractCode,
       "contractCode",
     ),
@@ -1459,6 +1528,26 @@ function normalizeCreateCommand(
       },
     ),
   };
+}
+
+function normalizeOptionalCreateCode(
+  value: unknown,
+  field: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new ContractRegistryValidationError(
+      `${field} must be a string`,
+    );
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0
+    ? normalized
+    : undefined;
 }
 
 function normalizeUpdateDraftCoreCommand(
@@ -2545,4 +2634,17 @@ function truncateLogMessage(
   }
 
   return `${raw.slice(0, 253)}...`;
+}
+
+function readOptionalLogString(
+  value: unknown,
+): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0
+    ? normalized
+    : undefined;
 }

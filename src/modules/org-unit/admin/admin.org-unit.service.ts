@@ -10,6 +10,10 @@ import {
 } from "@core/application/authoritative-admin-mutation.bridge";
 import { AuthoritativeAdminMutationIdentity } from "@core/application/authoritative-admin-mutation.permission-map";
 import { AuditGuard } from "@core/audit/audit.guard";
+import {
+  BusinessCodeSequenceRepository,
+  formatBusinessCode,
+} from "@core/business-code/business-code-sequence.repository";
 import { SystemInvariantError } from "@core/error/system-error";
 import { BaseAppError } from "@core/errors/base.error";
 import { Permission } from "@core/permission/permission.enum";
@@ -34,6 +38,7 @@ import {
   RewriteOrgUnitHierarchyDescendantInput,
   UpdateOrgUnitProfileInput,
 } from "@modules/org-unit/domain/org-unit.repository";
+import { ORG_UNIT_CODE_POLICY } from "@modules/org-unit/domain/org-unit-code-policy";
 import { OrgUnitEmploymentReadonlyAccess } from "@modules/org-unit/domain/org-unit-employment-readonly-access";
 import { OrgUnitPlatformAccountReadonlyAccess } from "@modules/org-unit/domain/org-unit-platform-account-readonly-access";
 import {
@@ -67,6 +72,7 @@ type OrgUnitFailureClassification =
 export class OrgUnitAdminService {
   constructor(
     private readonly repository: OrgUnitRepository,
+    private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
     private readonly employmentReadonlyAccess: OrgUnitEmploymentReadonlyAccess,
     private readonly platformAccountReadonlyAccess: OrgUnitPlatformAccountReadonlyAccess,
     private readonly audit: AuditGuard,
@@ -98,16 +104,18 @@ export class OrgUnitAdminService {
           ) ?? undefined,
       },
       async (session) => {
-        const existingCode =
-          await this.repository.findByCode(
-            input.code,
-            session,
-          );
+        if (input.code !== undefined) {
+          const existingCode =
+            await this.repository.findByCode(
+              input.code,
+              session,
+            );
 
-        if (existingCode) {
-          throw new OrgUnitConflictError(
-            `Org unit code already exists: ${input.code}`,
-          );
+          if (existingCode) {
+            throw new OrgUnitConflictError(
+              `Org unit code already exists: ${input.code}`,
+            );
+          }
         }
 
         let ancestorChain: readonly string[] = [];
@@ -150,43 +158,61 @@ export class OrgUnitAdminService {
           );
         }
 
-        const now = Date.now();
-        const record: OrgUnitRecord = {
-          id: crypto.randomUUID(),
-          code: input.code,
-          searchCode: normalizeSearchCode(
-            input.code,
-          ),
-          name: input.name,
-          normalizedName:
-            input.normalizedName,
-          type: input.type,
-          status: "ACTIVE",
-          parentOrgUnitId: input.parentOrgUnitId,
-          ancestorChain,
-          depth: ancestorChain.length,
-          displayOrder: input.displayOrder,
-          description: input.description,
-          externalRef: input.externalRef,
-          createdAt: now,
-          updatedAt: now,
-        };
+        let created!: OrgUnitRecord;
+        const maxAttempts =
+          input.code === undefined ? 5 : 1;
 
-        let created: OrgUnitRecord;
+        for (
+          let attempt = 1;
+          attempt <= maxAttempts;
+          attempt += 1
+        ) {
+          const code =
+            input.code ??
+            (await this.allocateGeneratedCode(session));
+          const now = Date.now();
+          const record: OrgUnitRecord = {
+            id: crypto.randomUUID(),
+            code,
+            searchCode: normalizeSearchCode(code),
+            name: input.name,
+            normalizedName:
+              input.normalizedName,
+            type: input.type,
+            status: "ACTIVE",
+            parentOrgUnitId: input.parentOrgUnitId,
+            ancestorChain,
+            depth: ancestorChain.length,
+            displayOrder: input.displayOrder,
+            description: input.description,
+            externalRef: input.externalRef,
+            createdAt: now,
+            updatedAt: now,
+          };
 
-        try {
-          created = await this.repository.insert(
-            record,
-            session,
-          );
-        } catch (error) {
-          if (isDuplicateKeyError(error)) {
-            throw new OrgUnitConflictError(
-              "Org unit code or sibling normalized name already exists",
+          try {
+            created = await this.repository.insert(
+              record,
+              session,
             );
-          }
+            break;
+          } catch (error) {
+            if (!isDuplicateKeyError(error)) {
+              throw error;
+            }
 
-          throw error;
+            if (input.code !== undefined) {
+              throw new OrgUnitConflictError(
+                "Org unit code or sibling normalized name already exists",
+              );
+            }
+
+            if (attempt >= maxAttempts) {
+              throw new OrgUnitConflictError(
+                "Generated org unit code conflict detected on create",
+              );
+            }
+          }
         }
 
         await this.recordAudit({
@@ -940,6 +966,33 @@ export class OrgUnitAdminService {
     }
   }
 
+  private async allocateGeneratedCode(
+    session: ClientSession,
+  ): Promise<string> {
+    const maxExisting =
+      await this.repository.findMaxGeneratedCodeSequence(
+        ORG_UNIT_CODE_POLICY,
+        session,
+      );
+    await this.codeSequenceRepository.ensureAtLeast(
+      ORG_UNIT_CODE_POLICY.moduleKey,
+      ORG_UNIT_CODE_POLICY.bucket,
+      maxExisting,
+      session,
+    );
+    const next =
+      await this.codeSequenceRepository.allocateNext(
+        ORG_UNIT_CODE_POLICY.moduleKey,
+        ORG_UNIT_CODE_POLICY.bucket,
+        session,
+      );
+
+    return formatBusinessCode(
+      ORG_UNIT_CODE_POLICY,
+      next,
+    );
+  }
+
   private async assertNoNonArchivedOwnedPlatformAccounts(
     orgUnitId: string,
     session: ClientSession,
@@ -1070,7 +1123,7 @@ export class OrgUnitAdminService {
 }
 
 interface NormalizedCreateCommand {
-  readonly code: string;
+  readonly code: string | undefined;
   readonly name: string;
   readonly normalizedName: string;
   readonly type: OrgUnitType;
@@ -1083,7 +1136,7 @@ interface NormalizedCreateCommand {
 function normalizeCreateCommand(
   command: CreateOrgUnitCommand,
 ): NormalizedCreateCommand {
-  const code = normalizeRequiredText(
+  const code = normalizeOptionalCreateCode(
     command.code,
     "code",
   );
@@ -1114,6 +1167,26 @@ function normalizeCreateCommand(
       "externalRef",
     ),
   };
+}
+
+function normalizeOptionalCreateCode(
+  value: unknown,
+  field: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new OrgUnitValidationError(
+      `${field} must be a string`,
+    );
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0
+    ? normalized
+    : undefined;
 }
 
 function buildMutationTargetDescriptor(

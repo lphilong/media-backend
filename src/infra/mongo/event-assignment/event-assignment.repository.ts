@@ -3,6 +3,11 @@ import {
   Collection,
   Db,
 } from "mongodb";
+import {
+  buildGeneratedBusinessCodeRegex,
+  BusinessCodePolicy,
+  parseGeneratedBusinessCodeSequence,
+} from "@core/business-code/business-code-sequence.repository";
 import { BaseRepository } from "@infra/database/repository/base.repository";
 import {
   EventAssignmentRepository,
@@ -126,6 +131,34 @@ export class NativeMongoEventAssignmentRepository
     );
 
     return doc ? toEventRecord(doc) : null;
+  }
+
+  async findMaxGeneratedEventCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number> {
+    const doc = await this.collection
+      .find(
+        {
+          eventCode:
+            buildGeneratedBusinessCodeRegex(policy),
+        },
+        this.withSession(session),
+      )
+      .sort({ eventCode: -1 })
+      .limit(1)
+      .next();
+
+    if (!doc) {
+      return 0;
+    }
+
+    return (
+      parseGeneratedBusinessCodeSequence(
+        doc.eventCode,
+        policy,
+      ) ?? 0
+    );
   }
 
   async updateEventCore(

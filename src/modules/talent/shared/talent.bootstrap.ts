@@ -52,7 +52,7 @@ export function createTalentBootstrapRegistrar(): BootstrapRegistrar {
             $type: "string",
           },
           operationalStatus: {
-            $ne: "ARCHIVED",
+            $in: ["ACTIVE", "SUSPENDED", "INACTIVE"],
           },
         },
       );

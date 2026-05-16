@@ -137,7 +137,7 @@ export async function initEventAssignmentIndexes(
       unique: true,
       partialFilterExpression: {
         assignmentEmploymentProfileId: {
-          $ne: null,
+          $type: "string",
         },
         assignmentStatus: "ACTIVE",
       },
@@ -155,7 +155,7 @@ export async function initEventAssignmentIndexes(
       unique: true,
       partialFilterExpression: {
         assignmentTalentId: {
-          $ne: null,
+          $type: "string",
         },
         assignmentStatus: "ACTIVE",
       },
@@ -173,7 +173,7 @@ export async function initEventAssignmentIndexes(
       unique: true,
       partialFilterExpression: {
         assignmentTalentGroupId: {
-          $ne: null,
+          $type: "string",
         },
         assignmentStatus: "ACTIVE",
       },
@@ -190,7 +190,7 @@ export async function initEventAssignmentIndexes(
         EVENT_ASSIGNMENT_EMPLOYMENT_PROFILE_STATUS_INDEX_NAME,
       partialFilterExpression: {
         assignmentEmploymentProfileId: {
-          $ne: null,
+          $type: "string",
         },
       },
     },
@@ -205,7 +205,7 @@ export async function initEventAssignmentIndexes(
       name: EVENT_ASSIGNMENT_TALENT_STATUS_INDEX_NAME,
       partialFilterExpression: {
         assignmentTalentId: {
-          $ne: null,
+          $type: "string",
         },
       },
     },
@@ -221,7 +221,7 @@ export async function initEventAssignmentIndexes(
         EVENT_ASSIGNMENT_TALENT_GROUP_STATUS_INDEX_NAME,
       partialFilterExpression: {
         assignmentTalentGroupId: {
-          $ne: null,
+          $type: "string",
         },
       },
     },

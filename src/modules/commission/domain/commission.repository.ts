@@ -1,4 +1,5 @@
 import { ClientSession } from "mongodb";
+import { BusinessCodePolicy } from "@core/business-code/business-code-sequence.repository";
 import {
   CommissionBeneficiaryKind,
   CommissionRule,
@@ -93,6 +94,11 @@ export interface CommissionRepository {
     session?: ClientSession,
   ): Promise<CommissionRule | null>;
 
+  findMaxGeneratedRuleCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number>;
+
   updateRuleDraftCore(
     input: UpdateCommissionRuleDraftCoreInput,
     session: ClientSession,
@@ -117,6 +123,11 @@ export interface CommissionRepository {
     settlementCode: string,
     session?: ClientSession,
   ): Promise<CommissionSettlement | null>;
+
+  findMaxGeneratedSettlementCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number>;
 
   updateSettlementDraftCore(
     input: UpdateCommissionSettlementDraftCoreInput,

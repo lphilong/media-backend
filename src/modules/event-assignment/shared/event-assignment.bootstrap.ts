@@ -119,7 +119,7 @@ export function createEventAssignmentBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           assignmentEmploymentProfileId: {
-            $ne: null,
+            $type: "string",
           },
           assignmentStatus: "ACTIVE",
         },
@@ -135,7 +135,7 @@ export function createEventAssignmentBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           assignmentTalentId: {
-            $ne: null,
+            $type: "string",
           },
           assignmentStatus: "ACTIVE",
         },
@@ -151,7 +151,7 @@ export function createEventAssignmentBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           assignmentTalentGroupId: {
-            $ne: null,
+            $type: "string",
           },
           assignmentStatus: "ACTIVE",
         },
@@ -167,7 +167,7 @@ export function createEventAssignmentBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           assignmentEmploymentProfileId: {
-            $ne: null,
+            $type: "string",
           },
         },
       );
@@ -182,7 +182,7 @@ export function createEventAssignmentBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           assignmentTalentId: {
-            $ne: null,
+            $type: "string",
           },
         },
       );
@@ -197,7 +197,7 @@ export function createEventAssignmentBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           assignmentTalentGroupId: {
-            $ne: null,
+            $type: "string",
           },
         },
       );

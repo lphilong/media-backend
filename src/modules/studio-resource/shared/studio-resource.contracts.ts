@@ -10,7 +10,7 @@ import {
 } from "@modules/studio-resource/domain/studio-resource.types";
 
 export interface CreateStudioResourceCommand {
-  readonly resourceCode: string;
+  readonly resourceCode?: string | null;
   readonly name: string;
   readonly resourceClass: StudioResourceClass;
   readonly shortName?: string | null;

@@ -11,7 +11,7 @@ import {
 } from "@modules/platform-account/domain/platform-account.types";
 
 export interface CreatePlatformAccountCommand {
-  readonly accountCode: string;
+  readonly accountCode?: string | null;
   readonly platform: PlatformAccountPlatform;
   readonly platformSurfaceType: PlatformAccountSurfaceType;
   readonly displayName: string;

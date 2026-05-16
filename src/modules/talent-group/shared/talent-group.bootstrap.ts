@@ -50,7 +50,7 @@ export function createTalentGroupBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: ["ACTIVE", "INACTIVE"],
           },
         },
       );
@@ -127,7 +127,7 @@ export function createTalentGroupBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           membershipStatus: {
-            $ne: "REMOVED",
+            $in: ["ACTIVE", "INACTIVE"],
           },
         },
       );
@@ -142,7 +142,7 @@ export function createTalentGroupBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           membershipStatus: {
-            $ne: "REMOVED",
+            $in: ["ACTIVE", "INACTIVE"],
           },
         },
       );

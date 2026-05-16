@@ -49,7 +49,12 @@ export async function initEmploymentProfileIndexes(
           $type: "string",
         },
         employmentStatus: {
-          $ne: "ARCHIVED",
+          $in: [
+            "ACTIVE",
+            "ON_LEAVE",
+            "SUSPENDED",
+            "TERMINATED",
+          ],
         },
       },
     },

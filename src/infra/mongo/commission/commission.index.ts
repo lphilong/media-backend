@@ -145,7 +145,7 @@ export async function initCommissionIndexes(
         COMMISSION_RULE_BENEFICIARY_EMPLOYMENT_INDEX_NAME,
       partialFilterExpression: {
         beneficiaryEmploymentProfileId: {
-          $ne: null,
+          $type: "string",
         },
       },
     },
@@ -159,7 +159,7 @@ export async function initCommissionIndexes(
       name: COMMISSION_RULE_BENEFICIARY_TALENT_INDEX_NAME,
       partialFilterExpression: {
         beneficiaryTalentId: {
-          $ne: null,
+          $type: "string",
         },
       },
     },
@@ -187,7 +187,7 @@ export async function initCommissionIndexes(
         COMMISSION_RULE_FLAT_LIST_DEFAULT_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "ACTIVE", "INACTIVE"],
         },
       },
     },
@@ -203,7 +203,7 @@ export async function initCommissionIndexes(
         COMMISSION_RULE_FLAT_LIST_CREATED_AT_ASC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "ACTIVE", "INACTIVE"],
         },
       },
     },
@@ -219,7 +219,7 @@ export async function initCommissionIndexes(
         COMMISSION_RULE_FLAT_LIST_CREATED_AT_DESC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "ACTIVE", "INACTIVE"],
         },
       },
     },
@@ -235,7 +235,7 @@ export async function initCommissionIndexes(
         COMMISSION_RULE_FLAT_LIST_RULE_CODE_ASC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "ACTIVE", "INACTIVE"],
         },
       },
     },
@@ -251,7 +251,7 @@ export async function initCommissionIndexes(
         COMMISSION_RULE_FLAT_LIST_RULE_CODE_DESC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "ACTIVE", "INACTIVE"],
         },
       },
     },
@@ -267,7 +267,7 @@ export async function initCommissionIndexes(
         COMMISSION_RULE_FLAT_LIST_TITLE_ASC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "ACTIVE", "INACTIVE"],
         },
       },
     },
@@ -283,7 +283,7 @@ export async function initCommissionIndexes(
         COMMISSION_RULE_FLAT_LIST_TITLE_DESC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "ACTIVE", "INACTIVE"],
         },
       },
     },
@@ -313,7 +313,7 @@ export async function initCommissionIndexes(
       unique: true,
       partialFilterExpression: {
         status: {
-          $nin: ["VOIDED", "ARCHIVED"],
+          $in: ["DRAFT", "FINALIZED"],
         },
       },
     },
@@ -366,7 +366,7 @@ export async function initCommissionIndexes(
         COMMISSION_SETTLEMENT_BENEFICIARY_EMPLOYMENT_STATUS_PERIOD_INDEX_NAME,
       partialFilterExpression: {
         beneficiaryEmploymentProfileIdSnapshot: {
-          $ne: null,
+          $type: "string",
         },
       },
     },
@@ -383,7 +383,7 @@ export async function initCommissionIndexes(
         COMMISSION_SETTLEMENT_BENEFICIARY_TALENT_STATUS_PERIOD_INDEX_NAME,
       partialFilterExpression: {
         beneficiaryTalentIdSnapshot: {
-          $ne: null,
+          $type: "string",
         },
       },
     },
@@ -423,7 +423,7 @@ export async function initCommissionIndexes(
         COMMISSION_SETTLEMENT_FLAT_LIST_DEFAULT_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "FINALIZED", "VOIDED"],
         },
       },
     },
@@ -439,7 +439,7 @@ export async function initCommissionIndexes(
         COMMISSION_SETTLEMENT_FLAT_LIST_SETTLEMENT_CODE_ASC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "FINALIZED", "VOIDED"],
         },
       },
     },
@@ -455,7 +455,7 @@ export async function initCommissionIndexes(
         COMMISSION_SETTLEMENT_FLAT_LIST_SETTLEMENT_CODE_DESC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "FINALIZED", "VOIDED"],
         },
       },
     },
@@ -471,7 +471,7 @@ export async function initCommissionIndexes(
         COMMISSION_SETTLEMENT_FLAT_LIST_CREATED_AT_ASC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "FINALIZED", "VOIDED"],
         },
       },
     },
@@ -487,7 +487,7 @@ export async function initCommissionIndexes(
         COMMISSION_SETTLEMENT_FLAT_LIST_CREATED_AT_DESC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "FINALIZED", "VOIDED"],
         },
       },
     },
@@ -503,7 +503,7 @@ export async function initCommissionIndexes(
         COMMISSION_SETTLEMENT_FLAT_LIST_FINALIZED_AT_ASC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "FINALIZED", "VOIDED"],
         },
       },
     },
@@ -519,7 +519,7 @@ export async function initCommissionIndexes(
         COMMISSION_SETTLEMENT_FLAT_LIST_FINALIZED_AT_DESC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "FINALIZED", "VOIDED"],
         },
       },
     },

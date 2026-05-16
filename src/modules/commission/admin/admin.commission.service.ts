@@ -10,6 +10,11 @@ import {
 } from "@core/application/authoritative-admin-mutation.bridge";
 import { AuthoritativeAdminMutationIdentity } from "@core/application/authoritative-admin-mutation.permission-map";
 import { AuditGuard } from "@core/audit/audit.guard";
+import { utcMonthBucketFromTimestamp } from "@core/business-code/business-code-bucket";
+import {
+  BusinessCodeSequenceRepository,
+  formatBusinessCode,
+} from "@core/business-code/business-code-sequence.repository";
 import { SystemInvariantError } from "@core/error/system-error";
 import { BaseAppError } from "@core/errors/base.error";
 import { Permission } from "@core/permission/permission.enum";
@@ -41,6 +46,8 @@ import {
   CommissionStateError,
   CommissionValidationError,
 } from "@modules/commission/domain/commission.errors";
+import { COMMISSION_RULE_CODE_POLICY } from "@modules/commission/domain/commission-rule-code-policy";
+import { buildCommissionSettlementCodePolicy } from "@modules/commission/domain/commission-settlement-code-policy";
 import {
   CommissionReferencedRevenueEntry,
   CommissionRevenueLedgerReadonlyAccess,
@@ -164,7 +171,7 @@ interface NormalizedRuleBeneficiary {
 }
 
 interface NormalizedCreateRuleCommand {
-  readonly ruleCode: string;
+  readonly ruleCode: string | undefined;
   readonly title: string;
   readonly normalizedTitle: string;
   readonly settlementKind: CommissionSettlementKind;
@@ -196,7 +203,7 @@ interface NormalizedRuleLifecycleCommand {
 }
 
 interface NormalizedCreateSettlementCommand {
-  readonly settlementCode: string;
+  readonly settlementCode: string | undefined;
   readonly title: string;
   readonly normalizedTitle: string;
   readonly sourceRuleId: string;
@@ -294,6 +301,7 @@ interface RuleDraftCorePatchBuildResult {
 export class CommissionAdminService {
   constructor(
     private readonly repository: CommissionRepository,
+    private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
     private readonly employmentProfileReadonlyAccess: CommissionEmploymentProfileReadonlyAccess,
     private readonly talentReadonlyAccess: CommissionTalentReadonlyAccess,
     private readonly contractReadonlyAccess: CommissionContractRegistryReadonlyAccess,
@@ -320,7 +328,9 @@ export class CommissionAdminService {
         permission,
         operation,
         {
-          ruleCode: input.ruleCode,
+          ruleCode: readOptionalLogString(
+            command.ruleCode,
+          ),
           settlementKind: input.settlementKind,
           beneficiaryKind:
             input.beneficiary.beneficiaryKind,
@@ -329,16 +339,18 @@ export class CommissionAdminService {
         },
         async (session) => {
           const scope = resolveRequiredGlobalScope(actor);
-          const existingByRuleCode =
-            await this.repository.findRuleByRuleCode(
-              input.ruleCode,
-              session,
-            );
+          if (input.ruleCode !== undefined) {
+            const existingByRuleCode =
+              await this.repository.findRuleByRuleCode(
+                input.ruleCode,
+                session,
+              );
 
-          if (existingByRuleCode) {
-            throw new CommissionConflictError(
-              `Rule code already exists: ${input.ruleCode}`,
-            );
+            if (existingByRuleCode) {
+              throw new CommissionConflictError(
+                `Rule code already exists: ${input.ruleCode}`,
+              );
+            }
           }
 
           const candidate: RuleCandidateState = {
@@ -361,38 +373,75 @@ export class CommissionAdminService {
             "create",
           );
 
-          const now = Date.now();
-          const record: CommissionRule = {
-            id: crypto.randomUUID(),
-            ruleCode: input.ruleCode,
-            title: input.title,
-            normalizedTitle: input.normalizedTitle,
-            settlementKind: input.settlementKind,
-            beneficiaryKind:
-              input.beneficiary.beneficiaryKind,
-            beneficiaryEmploymentProfileId:
-              input.beneficiary
-                .beneficiaryEmploymentProfileId,
-            beneficiaryTalentId:
-              input.beneficiary.beneficiaryTalentId,
-            sourceContractRecordId:
-              input.sourceContractRecordId,
-            settlementBasis: input.settlementBasis,
-            ratePercent: input.ratePercent,
-            appliesToRevenueKinds: [
-              ...input.appliesToRevenueKinds,
-            ],
-            status: "DRAFT",
-            effectiveStartDate:
-              input.effectiveStartDate,
-            effectiveEndDate: input.effectiveEndDate,
-            description: input.description,
-            externalRef: input.externalRef,
-            createdAt: now,
-            updatedAt: now,
-          };
+          let record!: CommissionRule;
+          const maxAttempts =
+            input.ruleCode === undefined ? 5 : 1;
 
-          await this.repository.insertRule(record, session);
+          for (
+            let attempt = 1;
+            attempt <= maxAttempts;
+            attempt += 1
+          ) {
+            const ruleCode =
+              input.ruleCode ??
+              (await this.allocateGeneratedRuleCode(
+                session,
+              ));
+            const now = Date.now();
+            record = {
+              id: crypto.randomUUID(),
+              ruleCode,
+              title: input.title,
+              normalizedTitle: input.normalizedTitle,
+              settlementKind: input.settlementKind,
+              beneficiaryKind:
+                input.beneficiary.beneficiaryKind,
+              beneficiaryEmploymentProfileId:
+                input.beneficiary
+                  .beneficiaryEmploymentProfileId,
+              beneficiaryTalentId:
+                input.beneficiary.beneficiaryTalentId,
+              sourceContractRecordId:
+                input.sourceContractRecordId,
+              settlementBasis: input.settlementBasis,
+              ratePercent: input.ratePercent,
+              appliesToRevenueKinds: [
+                ...input.appliesToRevenueKinds,
+              ],
+              status: "DRAFT",
+              effectiveStartDate:
+                input.effectiveStartDate,
+              effectiveEndDate: input.effectiveEndDate,
+              description: input.description,
+              externalRef: input.externalRef,
+              createdAt: now,
+              updatedAt: now,
+            };
+
+            try {
+              await this.repository.insertRule(
+                record,
+                session,
+              );
+              break;
+            } catch (error) {
+              if (!isDuplicateKeyError(error)) {
+                throw error;
+              }
+
+              if (input.ruleCode !== undefined) {
+                throw new CommissionConflictError(
+                  "Rule code already exists",
+                );
+              }
+
+              if (attempt >= maxAttempts) {
+                throw new CommissionConflictError(
+                  "Generated rule code conflict detected on create",
+                );
+              }
+            }
+          }
 
           await this.recordRuleAudit({
             actor,
@@ -788,22 +837,26 @@ export class CommissionAdminService {
         permission,
         operation,
         {
-          settlementCode: input.settlementCode,
+          settlementCode: readOptionalLogString(
+            command.settlementCode,
+          ),
           sourceRuleId: input.sourceRuleId,
           revenueEntryCount: input.revenueEntryIds.length,
         },
         async (session) => {
           const scope = resolveRequiredGlobalScope(actor);
-          const existingByCode =
-            await this.repository.findSettlementBySettlementCode(
-              input.settlementCode,
-              session,
-            );
+          if (input.settlementCode !== undefined) {
+            const existingByCode =
+              await this.repository.findSettlementBySettlementCode(
+                input.settlementCode,
+                session,
+              );
 
-          if (existingByCode) {
-            throw new CommissionConflictError(
-              `Settlement code already exists: ${input.settlementCode}`,
-            );
+            if (existingByCode) {
+              throw new CommissionConflictError(
+                `Settlement code already exists: ${input.settlementCode}`,
+              );
+            }
           }
 
           const sourceRule = await this.requireRule(
@@ -849,52 +902,67 @@ export class CommissionAdminService {
               session,
             });
 
-          const now = Date.now();
-          const settlement: CommissionSettlement = {
-            id: crypto.randomUUID(),
-            settlementCode: input.settlementCode,
-            title: input.title,
-            normalizedTitle: input.normalizedTitle,
-            sourceRuleId: sourceRule.id,
-            sourceContractRecordIdSnapshot:
-              sourceRule.sourceContractRecordId,
-            settlementKindSnapshot:
-              sourceRule.settlementKind,
-            beneficiaryKindSnapshot:
-              sourceRule.beneficiaryKind,
-            beneficiaryEmploymentProfileIdSnapshot:
-              sourceRule.beneficiaryEmploymentProfileId,
-            beneficiaryTalentIdSnapshot:
-              sourceRule.beneficiaryTalentId,
-            subjectTalentId:
-              evaluatedSelection.subjectTalentId,
-            settlementBasisSnapshot:
-              sourceRule.settlementBasis,
-            ratePercentSnapshot:
-              sourceRule.ratePercent,
-            revenueEntryIds:
-              evaluatedSelection.canonicalRevenueEntryIds,
-            settlementPeriodStartAt:
-              input.settlementPeriodStartAt,
-            settlementPeriodEndAt:
-              input.settlementPeriodEndAt,
-            settlementCurrencyCode:
-              evaluatedSelection.settlementCurrencyCode,
-            grossRevenueAmount:
-              evaluatedSelection.grossRevenueAmount,
-            settlementAmount:
-              evaluatedSelection.settlementAmount,
-            status: "DRAFT",
-            finalizedAt: null,
-            voidedAt: null,
-            description: input.description,
-            externalRef: input.externalRef,
-            createdAt: now,
-            updatedAt: now,
-          };
+          let settlement!: CommissionSettlement;
+          let lines!: readonly CommissionSettlementLine[];
+          const maxAttempts =
+            input.settlementCode === undefined ? 5 : 1;
 
-          const lines: readonly CommissionSettlementLine[] =
-            evaluatedSelection.lines.map((line) => ({
+          for (
+            let attempt = 1;
+            attempt <= maxAttempts;
+            attempt += 1
+          ) {
+            const settlementCode =
+              input.settlementCode ??
+              (await this.allocateGeneratedSettlementCode(
+                input.settlementPeriodStartAt,
+                session,
+              ));
+            const now = Date.now();
+            settlement = {
+              id: crypto.randomUUID(),
+              settlementCode,
+              title: input.title,
+              normalizedTitle: input.normalizedTitle,
+              sourceRuleId: sourceRule.id,
+              sourceContractRecordIdSnapshot:
+                sourceRule.sourceContractRecordId,
+              settlementKindSnapshot:
+                sourceRule.settlementKind,
+              beneficiaryKindSnapshot:
+                sourceRule.beneficiaryKind,
+              beneficiaryEmploymentProfileIdSnapshot:
+                sourceRule.beneficiaryEmploymentProfileId,
+              beneficiaryTalentIdSnapshot:
+                sourceRule.beneficiaryTalentId,
+              subjectTalentId:
+                evaluatedSelection.subjectTalentId,
+              settlementBasisSnapshot:
+                sourceRule.settlementBasis,
+              ratePercentSnapshot:
+                sourceRule.ratePercent,
+              revenueEntryIds:
+                evaluatedSelection.canonicalRevenueEntryIds,
+              settlementPeriodStartAt:
+                input.settlementPeriodStartAt,
+              settlementPeriodEndAt:
+                input.settlementPeriodEndAt,
+              settlementCurrencyCode:
+                evaluatedSelection.settlementCurrencyCode,
+              grossRevenueAmount:
+                evaluatedSelection.grossRevenueAmount,
+              settlementAmount:
+                evaluatedSelection.settlementAmount,
+              status: "DRAFT",
+              finalizedAt: null,
+              voidedAt: null,
+              description: input.description,
+              externalRef: input.externalRef,
+              createdAt: now,
+              updatedAt: now,
+            };
+
+            lines = evaluatedSelection.lines.map((line) => ({
               id: crypto.randomUUID(),
               settlementId: settlement.id,
               revenueEntryId: line.revenueEntryId,
@@ -914,14 +982,34 @@ export class CommissionAdminService {
               updatedAt: now,
             }));
 
-          await this.repository.insertSettlement(
-            settlement,
-            session,
-          );
-          await this.repository.insertSettlementLines(
-            lines,
-            session,
-          );
+            try {
+              await this.repository.insertSettlement(
+                settlement,
+                session,
+              );
+              await this.repository.insertSettlementLines(
+                lines,
+                session,
+              );
+              break;
+            } catch (error) {
+              if (!isDuplicateKeyError(error)) {
+                throw error;
+              }
+
+              if (input.settlementCode !== undefined) {
+                throw new CommissionConflictError(
+                  "Settlement code already exists or settlement exclusivity conflict detected",
+                );
+              }
+
+              if (attempt >= maxAttempts) {
+                throw new CommissionConflictError(
+                  "Generated settlement code conflict detected on create",
+                );
+              }
+            }
+          }
 
           await this.recordSettlementAudit({
             actor,
@@ -1630,6 +1718,63 @@ export class CommissionAdminService {
     return settlement;
   }
 
+  private async allocateGeneratedRuleCode(
+    session: ClientSession,
+  ): Promise<string> {
+    const maxExisting =
+      await this.repository.findMaxGeneratedRuleCodeSequence(
+        COMMISSION_RULE_CODE_POLICY,
+        session,
+      );
+    await this.codeSequenceRepository.ensureAtLeast(
+      COMMISSION_RULE_CODE_POLICY.moduleKey,
+      COMMISSION_RULE_CODE_POLICY.bucket,
+      maxExisting,
+      session,
+    );
+    const next =
+      await this.codeSequenceRepository.allocateNext(
+        COMMISSION_RULE_CODE_POLICY.moduleKey,
+        COMMISSION_RULE_CODE_POLICY.bucket,
+        session,
+      );
+
+    return formatBusinessCode(
+      COMMISSION_RULE_CODE_POLICY,
+      next,
+    );
+  }
+
+  private async allocateGeneratedSettlementCode(
+    settlementPeriodStartAt: number,
+    session: ClientSession,
+  ): Promise<string> {
+    const bucket = utcMonthBucketFromTimestamp(
+      settlementPeriodStartAt,
+    );
+    const policy =
+      buildCommissionSettlementCodePolicy(bucket);
+    const maxExisting =
+      await this.repository.findMaxGeneratedSettlementCodeSequence(
+        policy,
+        session,
+      );
+    await this.codeSequenceRepository.ensureAtLeast(
+      policy.moduleKey,
+      policy.bucket,
+      maxExisting,
+      session,
+    );
+    const next =
+      await this.codeSequenceRepository.allocateNext(
+        policy.moduleKey,
+        policy.bucket,
+        session,
+      );
+
+    return formatBusinessCode(policy, next);
+  }
+
   private async assertRuleCandidateStateValid(
     candidate: RuleCandidateState,
     session: ClientSession,
@@ -2240,7 +2385,7 @@ function normalizeCreateRuleCommand(
   };
 
   return {
-    ruleCode: normalizeRequiredNonEmptyString(
+    ruleCode: normalizeOptionalCreateCode(
       command.ruleCode,
       "ruleCode",
     ),
@@ -2390,7 +2535,7 @@ function normalizeCreateSettlementCommand(
 
   return {
     settlementCode:
-      normalizeRequiredNonEmptyString(
+      normalizeOptionalCreateCode(
         command.settlementCode,
         "settlementCode",
       ),
@@ -3271,6 +3416,26 @@ function normalizeRequiredNonEmptyString(
   return normalized;
 }
 
+function normalizeOptionalCreateCode(
+  value: unknown,
+  field: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new CommissionValidationError(
+      `${field} must be a string`,
+    );
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0
+    ? normalized
+    : undefined;
+}
+
 function normalizeOptionalNonEmptyString(
   value: unknown,
   field: string,
@@ -3725,4 +3890,17 @@ function truncateLogMessage(
   }
 
   return `${raw.slice(0, 253)}...`;
+}
+
+function readOptionalLogString(
+  value: unknown,
+): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0
+    ? normalized
+    : undefined;
 }

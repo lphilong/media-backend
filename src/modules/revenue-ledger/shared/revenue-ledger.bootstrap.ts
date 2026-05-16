@@ -73,7 +73,7 @@ export function createRevenueLedgerBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           attributionPlatformAccountId: {
-            $ne: null,
+            $type: "string",
           },
         },
       );
@@ -89,7 +89,7 @@ export function createRevenueLedgerBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           attributionEventId: {
-            $ne: null,
+            $type: "string",
           },
         },
       );
@@ -137,7 +137,12 @@ export function createRevenueLedgerBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: [
+              "DRAFT",
+              "FINALIZED",
+              "RECONCILED",
+              "VOIDED",
+            ],
           },
         },
       );
@@ -152,7 +157,12 @@ export function createRevenueLedgerBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: [
+              "DRAFT",
+              "FINALIZED",
+              "RECONCILED",
+              "VOIDED",
+            ],
           },
         },
       );
@@ -167,7 +177,12 @@ export function createRevenueLedgerBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: [
+              "DRAFT",
+              "FINALIZED",
+              "RECONCILED",
+              "VOIDED",
+            ],
           },
         },
       );
@@ -182,7 +197,12 @@ export function createRevenueLedgerBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: [
+              "DRAFT",
+              "FINALIZED",
+              "RECONCILED",
+              "VOIDED",
+            ],
           },
         },
       );
@@ -197,7 +217,12 @@ export function createRevenueLedgerBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: [
+              "DRAFT",
+              "FINALIZED",
+              "RECONCILED",
+              "VOIDED",
+            ],
           },
         },
       );
@@ -292,13 +317,30 @@ function hasDeepExactShape(
   candidate: unknown,
   expected: unknown,
 ): boolean {
+  if (Object.is(candidate, expected)) {
+    return true;
+  }
+
+  if (
+    Array.isArray(candidate) &&
+    Array.isArray(expected)
+  ) {
+    if (candidate.length !== expected.length) {
+      return false;
+    }
+
+    return candidate.every((entry, index) =>
+      hasDeepExactShape(entry, expected[index]),
+    );
+  }
+
   if (
     typeof candidate !== "object" ||
     candidate === null ||
     typeof expected !== "object" ||
     expected === null
   ) {
-    return Object.is(candidate, expected);
+    return false;
   }
 
   if (

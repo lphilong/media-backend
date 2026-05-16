@@ -74,7 +74,7 @@ export async function initTalentKpiIndexes(
       unique: true,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "FINALIZED"],
         },
       },
     },
@@ -126,7 +126,7 @@ export async function initTalentKpiIndexes(
         TALENT_KPI_RECORD_PLATFORM_STATUS_PERIOD_INDEX_NAME,
       partialFilterExpression: {
         attributionPlatformAccountId: {
-          $ne: null,
+          $type: "string",
         },
       },
     },
@@ -144,7 +144,7 @@ export async function initTalentKpiIndexes(
         TALENT_KPI_RECORD_EVENT_STATUS_PERIOD_INDEX_NAME,
       partialFilterExpression: {
         attributionEventId: {
-          $ne: null,
+          $type: "string",
         },
       },
     },
@@ -171,7 +171,7 @@ export async function initTalentKpiIndexes(
         TALENT_KPI_RECORD_FLAT_LIST_DEFAULT_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "FINALIZED"],
         },
       },
     },
@@ -187,7 +187,7 @@ export async function initTalentKpiIndexes(
         TALENT_KPI_RECORD_FLAT_LIST_CREATED_AT_ASC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "FINALIZED"],
         },
       },
     },
@@ -203,7 +203,7 @@ export async function initTalentKpiIndexes(
         TALENT_KPI_RECORD_FLAT_LIST_CREATED_AT_DESC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "FINALIZED"],
         },
       },
     },

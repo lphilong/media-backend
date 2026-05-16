@@ -100,7 +100,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           beneficiaryEmploymentProfileId: {
-            $ne: null,
+            $type: "string",
           },
         },
       );
@@ -114,7 +114,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           beneficiaryTalentId: {
-            $ne: null,
+            $type: "string",
           },
         },
       );
@@ -140,7 +140,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: ["DRAFT", "ACTIVE", "INACTIVE"],
           },
         },
       );
@@ -155,7 +155,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: ["DRAFT", "ACTIVE", "INACTIVE"],
           },
         },
       );
@@ -170,7 +170,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: ["DRAFT", "ACTIVE", "INACTIVE"],
           },
         },
       );
@@ -185,7 +185,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: ["DRAFT", "ACTIVE", "INACTIVE"],
           },
         },
       );
@@ -200,7 +200,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: ["DRAFT", "ACTIVE", "INACTIVE"],
           },
         },
       );
@@ -215,7 +215,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: ["DRAFT", "ACTIVE", "INACTIVE"],
           },
         },
       );
@@ -230,7 +230,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: ["DRAFT", "ACTIVE", "INACTIVE"],
           },
         },
       );
@@ -256,7 +256,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $nin: ["VOIDED", "ARCHIVED"],
+            $in: ["DRAFT", "FINALIZED"],
           },
         },
       );
@@ -305,7 +305,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           beneficiaryEmploymentProfileIdSnapshot: {
-            $ne: null,
+            $type: "string",
           },
         },
       );
@@ -321,7 +321,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           beneficiaryTalentIdSnapshot: {
-            $ne: null,
+            $type: "string",
           },
         },
       );
@@ -358,7 +358,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: ["DRAFT", "FINALIZED", "VOIDED"],
           },
         },
       );
@@ -373,7 +373,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: ["DRAFT", "FINALIZED", "VOIDED"],
           },
         },
       );
@@ -388,7 +388,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: ["DRAFT", "FINALIZED", "VOIDED"],
           },
         },
       );
@@ -403,7 +403,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: ["DRAFT", "FINALIZED", "VOIDED"],
           },
         },
       );
@@ -418,7 +418,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: ["DRAFT", "FINALIZED", "VOIDED"],
           },
         },
       );
@@ -433,7 +433,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: ["DRAFT", "FINALIZED", "VOIDED"],
           },
         },
       );
@@ -448,7 +448,7 @@ export function createCommissionBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: ["DRAFT", "FINALIZED", "VOIDED"],
           },
         },
       );
@@ -597,13 +597,30 @@ function hasDeepExactShape(
   candidate: unknown,
   expected: unknown,
 ): boolean {
+  if (Object.is(candidate, expected)) {
+    return true;
+  }
+
+  if (
+    Array.isArray(candidate) &&
+    Array.isArray(expected)
+  ) {
+    if (candidate.length !== expected.length) {
+      return false;
+    }
+
+    return candidate.every((entry, index) =>
+      hasDeepExactShape(entry, expected[index]),
+    );
+  }
+
   if (
     typeof candidate !== "object" ||
     candidate === null ||
     typeof expected !== "object" ||
     expected === null
   ) {
-    return Object.is(candidate, expected);
+    return false;
   }
 
   if (

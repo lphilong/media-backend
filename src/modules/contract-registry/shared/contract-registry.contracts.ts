@@ -13,7 +13,7 @@ import {
 } from "@modules/contract-registry/domain/contract-registry.types";
 
 export interface CreateContractRecordCommand {
-  readonly contractCode: string;
+  readonly contractCode?: string | null;
   readonly title: string;
   readonly contractKind: ContractKind | string;
   readonly linkedEntityKind: ContractLinkedEntityKind | string;

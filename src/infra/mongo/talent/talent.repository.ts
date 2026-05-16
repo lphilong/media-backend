@@ -1,4 +1,9 @@
 import { ClientSession, Db } from "mongodb";
+import {
+  buildGeneratedBusinessCodeRegex,
+  BusinessCodePolicy,
+  parseGeneratedBusinessCodeSequence,
+} from "@core/business-code/business-code-sequence.repository";
 import { BaseRepository } from "@infra/database/repository";
 import {
   AssignTalentManagerInput,
@@ -79,6 +84,34 @@ export class NativeMongoTalentRepository
     );
 
     return doc ? toTalentRecord(doc) : null;
+  }
+
+  async findMaxGeneratedCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number> {
+    const doc = await this.collection
+      .find(
+        {
+          talentCode:
+            buildGeneratedBusinessCodeRegex(policy),
+        },
+        this.withSession(session),
+      )
+      .sort({ talentCode: -1 })
+      .limit(1)
+      .next();
+
+    if (!doc) {
+      return 0;
+    }
+
+    return (
+      parseGeneratedBusinessCodeSequence(
+        doc.talentCode,
+        policy,
+      ) ?? 0
+    );
   }
 
   async findNonArchivedByLinkedEmploymentProfileId(

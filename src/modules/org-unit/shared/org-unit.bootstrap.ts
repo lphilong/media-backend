@@ -51,7 +51,7 @@ export function createOrgUnitBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: ["ACTIVE", "INACTIVE"],
           },
         },
       );

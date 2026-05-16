@@ -48,7 +48,7 @@ export async function initOrgUnitIndexes(
       unique: true,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["ACTIVE", "INACTIVE"],
         },
       },
     },

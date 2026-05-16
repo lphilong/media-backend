@@ -10,6 +10,11 @@ import {
 } from "@core/application/authoritative-admin-mutation.bridge";
 import { AuthoritativeAdminMutationIdentity } from "@core/application/authoritative-admin-mutation.permission-map";
 import { AuditGuard } from "@core/audit/audit.guard";
+import { utcMonthBucketFromTimestamp } from "@core/business-code/business-code-bucket";
+import {
+  BusinessCodeSequenceRepository,
+  formatBusinessCode,
+} from "@core/business-code/business-code-sequence.repository";
 import { SystemInvariantError } from "@core/error/system-error";
 import { BaseAppError } from "@core/errors/base.error";
 import { Permission } from "@core/permission/permission.enum";
@@ -38,6 +43,7 @@ import {
   RevenueLedgerStateError,
   RevenueLedgerValidationError,
 } from "@modules/revenue-ledger/domain/revenue-ledger.errors";
+import { buildRevenueLedgerCodePolicy } from "@modules/revenue-ledger/domain/revenue-ledger-code-policy";
 import { RevenueLedgerPlatformAccountReadonlyAccess } from "@modules/revenue-ledger/domain/revenue-ledger-platform-account-readonly-access";
 import {
   RevenueEntryRepository,
@@ -83,7 +89,7 @@ type RevenueLedgerMutationFailureClassification =
   | "unknown";
 
 interface NormalizedCreateCommand {
-  readonly revenueEntryCode: string;
+  readonly revenueEntryCode: string | undefined;
   readonly title: string;
   readonly normalizedTitle: string;
   readonly subjectTalentId: string;
@@ -157,6 +163,7 @@ interface DraftCorePatchBuildResult {
 export class RevenueLedgerAdminService {
   constructor(
     private readonly repository: RevenueEntryRepository,
+    private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
     private readonly talentReadonlyAccess: RevenueLedgerTalentReadonlyAccess,
     private readonly platformAccountReadonlyAccess: RevenueLedgerPlatformAccountReadonlyAccess,
     private readonly eventReadonlyAccess: RevenueLedgerEventReadonlyAccess,
@@ -183,7 +190,9 @@ export class RevenueLedgerAdminService {
         permission,
         operation,
         {
-          revenueEntryCode: input.revenueEntryCode,
+          revenueEntryCode: readOptionalLogString(
+            command.revenueEntryCode,
+          ),
           subjectTalentId: input.subjectTalentId,
           attributionPlatformAccountId:
             input.attributionPlatformAccountId,
@@ -196,16 +205,19 @@ export class RevenueLedgerAdminService {
           const scope = resolveRequiredGlobalScope(
             actor,
           );
-          const existingByCode =
-            await this.repository.findByRevenueEntryCode(
-              input.revenueEntryCode,
-              session,
-            );
 
-          if (existingByCode) {
-            throw new RevenueLedgerConflictError(
-              `Revenue entry code already exists: ${input.revenueEntryCode}`,
-            );
+          if (input.revenueEntryCode !== undefined) {
+            const existingByCode =
+              await this.repository.findByRevenueEntryCode(
+                input.revenueEntryCode,
+                session,
+              );
+
+            if (existingByCode) {
+              throw new RevenueLedgerConflictError(
+                `Revenue entry code already exists: ${input.revenueEntryCode}`,
+              );
+            }
           }
 
           const candidate: RevenueEntryCandidateState = {
@@ -227,38 +239,79 @@ export class RevenueLedgerAdminService {
             session,
           );
 
-          const now = Date.now();
-          const revenueEntry: RevenueEntry = {
-            id: crypto.randomUUID(),
-            revenueEntryCode: input.revenueEntryCode,
-            title: input.title,
-            normalizedTitle: input.normalizedTitle,
-            subjectTalentId: input.subjectTalentId,
-            attributionPlatformAccountId:
-              input.attributionPlatformAccountId,
-            attributionEventId:
-              input.attributionEventId,
-            revenueKind: input.revenueKind,
-            entrySource: input.entrySource,
-            status: "DRAFT",
-            currencyCode: input.currencyCode,
-            recognizedAmount:
-              input.recognizedAmount,
-            recognizedAt: input.recognizedAt,
-            finalizedAt: null,
-            reconciledAt: null,
-            voidedAt: null,
-            reconciliationReference: null,
-            description: input.description,
-            externalRef: input.externalRef,
-            createdAt: now,
-            updatedAt: now,
-          };
+          let revenueEntry!: RevenueEntry;
+          const maxAttempts =
+            input.revenueEntryCode === undefined
+              ? 5
+              : 1;
 
-          await this.repository.insert(
-            revenueEntry,
-            session,
-          );
+          for (
+            let attempt = 1;
+            attempt <= maxAttempts;
+            attempt += 1
+          ) {
+            const revenueEntryCode =
+              input.revenueEntryCode ??
+              (await this.allocateGeneratedCode(
+                input.recognizedAt,
+                session,
+              ));
+            const now = Date.now();
+            revenueEntry = {
+              id: crypto.randomUUID(),
+              revenueEntryCode,
+              title: input.title,
+              normalizedTitle:
+                input.normalizedTitle,
+              subjectTalentId:
+                input.subjectTalentId,
+              attributionPlatformAccountId:
+                input.attributionPlatformAccountId,
+              attributionEventId:
+                input.attributionEventId,
+              revenueKind: input.revenueKind,
+              entrySource: input.entrySource,
+              status: "DRAFT",
+              currencyCode: input.currencyCode,
+              recognizedAmount:
+                input.recognizedAmount,
+              recognizedAt: input.recognizedAt,
+              finalizedAt: null,
+              reconciledAt: null,
+              voidedAt: null,
+              reconciliationReference: null,
+              description: input.description,
+              externalRef: input.externalRef,
+              createdAt: now,
+              updatedAt: now,
+            };
+
+            try {
+              await this.repository.insert(
+                revenueEntry,
+                session,
+              );
+              break;
+            } catch (error) {
+              if (!isDuplicateKeyError(error)) {
+                throw error;
+              }
+
+              if (
+                input.revenueEntryCode !== undefined
+              ) {
+                throw new RevenueLedgerConflictError(
+                  "Revenue entry code already exists",
+                );
+              }
+
+              if (attempt >= maxAttempts) {
+                throw new RevenueLedgerConflictError(
+                  "Generated revenue entry code conflict detected on create",
+                );
+              }
+            }
+          }
 
           await this.recordAudit({
             actor,
@@ -812,6 +865,35 @@ export class RevenueLedgerAdminService {
     return record;
   }
 
+  private async allocateGeneratedCode(
+    recognizedAt: number,
+    session: ClientSession,
+  ): Promise<string> {
+    const bucket =
+      utcMonthBucketFromTimestamp(recognizedAt);
+    const policy =
+      buildRevenueLedgerCodePolicy(bucket);
+    const maxExisting =
+      await this.repository.findMaxGeneratedRevenueEntryCodeSequence(
+        policy,
+        session,
+      );
+    await this.codeSequenceRepository.ensureAtLeast(
+      policy.moduleKey,
+      policy.bucket,
+      maxExisting,
+      session,
+    );
+    const next =
+      await this.codeSequenceRepository.allocateNext(
+        policy.moduleKey,
+        policy.bucket,
+        session,
+      );
+
+    return formatBusinessCode(policy, next);
+  }
+
   private async assertCandidateStateValid(
     candidate: RevenueEntryCandidateState,
     session: ClientSession,
@@ -1082,7 +1164,7 @@ function normalizeCreateCommand(
   );
 
   return {
-    revenueEntryCode: normalizeRequiredText(
+    revenueEntryCode: normalizeOptionalCreateCode(
       command.revenueEntryCode,
       "revenueEntryCode",
     ),
@@ -1140,6 +1222,26 @@ function normalizeCreateCommand(
       },
     ) ?? null,
   };
+}
+
+function normalizeOptionalCreateCode(
+  value: unknown,
+  field: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new RevenueLedgerValidationError(
+      `${field} must be a string`,
+    );
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0
+    ? normalized
+    : undefined;
 }
 
 function normalizeUpdateDraftCoreCommand(
@@ -1989,4 +2091,17 @@ function truncateLogMessage(
   }
 
   return `${raw.slice(0, 253)}...`;
+}
+
+function readOptionalLogString(
+  value: unknown,
+): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0
+    ? normalized
+    : undefined;
 }

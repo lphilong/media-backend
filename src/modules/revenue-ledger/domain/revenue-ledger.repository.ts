@@ -1,4 +1,5 @@
 import { ClientSession } from "mongodb";
+import { BusinessCodePolicy } from "@core/business-code/business-code-sequence.repository";
 import {
   RevenueEntry,
   RevenueEntryStatus,
@@ -47,6 +48,11 @@ export interface RevenueEntryRepository {
     revenueEntryCode: string,
     session?: ClientSession,
   ): Promise<RevenueEntry | null>;
+
+  findMaxGeneratedRevenueEntryCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number>;
 
   updateDraftCore(
     input: UpdateRevenueEntryDraftCoreInput,

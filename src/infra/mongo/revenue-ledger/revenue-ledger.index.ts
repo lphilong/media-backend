@@ -89,7 +89,7 @@ export async function initRevenueLedgerIndexes(
         REVENUE_ENTRY_PLATFORM_STATUS_RECOGNIZED_AT_INDEX_NAME,
       partialFilterExpression: {
         attributionPlatformAccountId: {
-          $ne: null,
+          $type: "string",
         },
       },
     },
@@ -106,7 +106,7 @@ export async function initRevenueLedgerIndexes(
         REVENUE_ENTRY_EVENT_STATUS_RECOGNIZED_AT_INDEX_NAME,
       partialFilterExpression: {
         attributionEventId: {
-          $ne: null,
+          $type: "string",
         },
       },
     },
@@ -158,7 +158,12 @@ export async function initRevenueLedgerIndexes(
         REVENUE_ENTRY_FLAT_LIST_DEFAULT_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: [
+            "DRAFT",
+            "FINALIZED",
+            "RECONCILED",
+            "VOIDED",
+          ],
         },
       },
     },
@@ -174,7 +179,12 @@ export async function initRevenueLedgerIndexes(
         REVENUE_ENTRY_FLAT_LIST_CREATED_AT_ASC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: [
+            "DRAFT",
+            "FINALIZED",
+            "RECONCILED",
+            "VOIDED",
+          ],
         },
       },
     },
@@ -190,7 +200,12 @@ export async function initRevenueLedgerIndexes(
         REVENUE_ENTRY_FLAT_LIST_CREATED_AT_DESC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: [
+            "DRAFT",
+            "FINALIZED",
+            "RECONCILED",
+            "VOIDED",
+          ],
         },
       },
     },
@@ -206,7 +221,12 @@ export async function initRevenueLedgerIndexes(
         REVENUE_ENTRY_FLAT_LIST_REVENUE_ENTRY_CODE_ASC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: [
+            "DRAFT",
+            "FINALIZED",
+            "RECONCILED",
+            "VOIDED",
+          ],
         },
       },
     },
@@ -222,7 +242,12 @@ export async function initRevenueLedgerIndexes(
         REVENUE_ENTRY_FLAT_LIST_REVENUE_ENTRY_CODE_DESC_NON_ARCHIVED_SORT_INDEX_NAME,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: [
+            "DRAFT",
+            "FINALIZED",
+            "RECONCILED",
+            "VOIDED",
+          ],
         },
       },
     },

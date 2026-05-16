@@ -10,6 +10,10 @@ import {
 } from "@core/application/authoritative-admin-mutation.bridge";
 import { AuthoritativeAdminMutationIdentity } from "@core/application/authoritative-admin-mutation.permission-map";
 import { AuditGuard } from "@core/audit/audit.guard";
+import {
+  BusinessCodeSequenceRepository,
+  formatBusinessCode,
+} from "@core/business-code/business-code-sequence.repository";
 import { SystemInvariantError } from "@core/error/system-error";
 import { BaseAppError } from "@core/errors/base.error";
 import { Permission } from "@core/permission/permission.enum";
@@ -30,6 +34,7 @@ import {
   EmploymentProfileStateError,
   EmploymentProfileValidationError,
 } from "@modules/employment-profile/domain/employment-profile.errors";
+import { EMPLOYMENT_PROFILE_CODE_POLICY } from "@modules/employment-profile/domain/employment-profile-code-policy";
 import { EmploymentProfileWorkScheduleReadonlyAccess } from "@modules/employment-profile/domain/employment-profile-work-schedule-readonly-access";
 import { EmploymentProfileEventAssignmentReadonlyAccess } from "@modules/employment-profile/domain/employment-profile-event-assignment-readonly-access";
 import { EmploymentProfileOrgUnitReadonlyAccess } from "@modules/employment-profile/domain/employment-profile-org-unit-readonly-access";
@@ -81,6 +86,7 @@ type EmploymentProfileFailureClassification =
 export class EmploymentProfileAdminService {
   constructor(
     private readonly repository: EmploymentProfileRepository,
+    private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
     private readonly orgUnitReadonlyAccess: EmploymentProfileOrgUnitReadonlyAccess,
     private readonly userReadonlyAccess: EmploymentProfileUserReadonlyAccess,
     private readonly talentReadonlyAccess: EmploymentProfileTalentReadonlyAccess,
@@ -124,16 +130,18 @@ export class EmploymentProfileAdminService {
       async (session) => {
         const employmentProfileId =
           crypto.randomUUID();
-        const existing =
-          await this.repository.findByEmployeeCode(
-            input.employeeCode,
-            session,
-          );
+        if (input.employeeCode !== undefined) {
+          const existing =
+            await this.repository.findByEmployeeCode(
+              input.employeeCode,
+              session,
+            );
 
-        if (existing) {
-          throw new EmploymentProfileConflictError(
-            `Employee code already exists: ${input.employeeCode}`,
-          );
+          if (existing) {
+            throw new EmploymentProfileConflictError(
+              `Employee code already exists: ${input.employeeCode}`,
+            );
+          }
         }
 
         await this.assertOrgUnitActive(
@@ -169,49 +177,69 @@ export class EmploymentProfileAdminService {
           "employmentStartDate",
           now,
         );
-        const employmentProfile: EmploymentProfileRecord =
-          {
-            id: employmentProfileId,
-            employeeCode: input.employeeCode,
-            legalName: input.legalName,
-            normalizedLegalName:
-              input.normalizedLegalName,
-            displayName: input.displayName,
-            normalizedDisplayName:
-              input.normalizedDisplayName,
-            employmentKind: input.employmentKind,
-            jobTitle: input.jobTitle,
-            titleDescription:
-              input.titleDescription,
-            externalRef: input.externalRef,
-            orgUnitId: input.orgUnitId,
-            managerEmploymentProfileId:
-              input.managerEmploymentProfileId,
-            linkedUserId: input.linkedUserId,
-            employmentStatus: "ACTIVE",
-            contractStatus: input.contractStatus,
-            employmentStartDate:
-              input.employmentStartDate,
-            employmentEndDate: null,
-            createdAt: now,
-            updatedAt: now,
-          };
+        let created!: EmploymentProfileRecord;
+        const maxAttempts =
+          input.employeeCode === undefined ? 5 : 1;
 
-        let created: EmploymentProfileRecord;
+        for (
+          let attempt = 1;
+          attempt <= maxAttempts;
+          attempt += 1
+        ) {
+          const employeeCode =
+            input.employeeCode ??
+            (await this.allocateGeneratedCode(session));
+          const employmentProfile: EmploymentProfileRecord =
+            {
+              id: employmentProfileId,
+              employeeCode,
+              legalName: input.legalName,
+              normalizedLegalName:
+                input.normalizedLegalName,
+              displayName: input.displayName,
+              normalizedDisplayName:
+                input.normalizedDisplayName,
+              employmentKind: input.employmentKind,
+              jobTitle: input.jobTitle,
+              titleDescription:
+                input.titleDescription,
+              externalRef: input.externalRef,
+              orgUnitId: input.orgUnitId,
+              managerEmploymentProfileId:
+                input.managerEmploymentProfileId,
+              linkedUserId: input.linkedUserId,
+              employmentStatus: "ACTIVE",
+              contractStatus: input.contractStatus,
+              employmentStartDate:
+                input.employmentStartDate,
+              employmentEndDate: null,
+              createdAt: now,
+              updatedAt: now,
+            };
 
-        try {
-          created = await this.repository.insert(
-            employmentProfile,
-            session,
-          );
-        } catch (error) {
-          if (isDuplicateKeyError(error)) {
-            throw new EmploymentProfileConflictError(
-              "Employee code or linked user already exists on a non-archived employment profile",
+          try {
+            created = await this.repository.insert(
+              employmentProfile,
+              session,
             );
-          }
+            break;
+          } catch (error) {
+            if (!isDuplicateKeyError(error)) {
+              throw error;
+            }
 
-          throw error;
+            if (input.employeeCode !== undefined) {
+              throw new EmploymentProfileConflictError(
+                "Employee code or linked user already exists on a non-archived employment profile",
+              );
+            }
+
+            if (attempt >= maxAttempts) {
+              throw new EmploymentProfileConflictError(
+                "Generated employee code conflict detected on create",
+              );
+            }
+          }
         }
 
         await this.recordAudit({
@@ -1601,6 +1629,33 @@ export class EmploymentProfileAdminService {
     return employmentProfile;
   }
 
+  private async allocateGeneratedCode(
+    session: ClientSession,
+  ): Promise<string> {
+    const maxExisting =
+      await this.repository.findMaxGeneratedCodeSequence(
+        EMPLOYMENT_PROFILE_CODE_POLICY,
+        session,
+      );
+    await this.codeSequenceRepository.ensureAtLeast(
+      EMPLOYMENT_PROFILE_CODE_POLICY.moduleKey,
+      EMPLOYMENT_PROFILE_CODE_POLICY.bucket,
+      maxExisting,
+      session,
+    );
+    const next =
+      await this.codeSequenceRepository.allocateNext(
+        EMPLOYMENT_PROFILE_CODE_POLICY.moduleKey,
+        EMPLOYMENT_PROFILE_CODE_POLICY.bucket,
+        session,
+      );
+
+    return formatBusinessCode(
+      EMPLOYMENT_PROFILE_CODE_POLICY,
+      next,
+    );
+  }
+
   private async assertOrgUnitActive(
     orgUnitId: string,
     session: ClientSession,
@@ -1934,7 +1989,7 @@ export class EmploymentProfileAdminService {
 }
 
 interface NormalizedCreateCommand {
-  readonly employeeCode: string;
+  readonly employeeCode: string | undefined;
   readonly legalName: string;
   readonly normalizedLegalName: string;
   readonly displayName: string;
@@ -1976,7 +2031,7 @@ function normalizeCreateCommand(
   }
 
   return {
-    employeeCode: normalizeRequiredText(
+    employeeCode: normalizeOptionalCreateCode(
       command.employeeCode,
       "employeeCode",
     ),
@@ -2023,6 +2078,26 @@ function normalizeCreateCommand(
         "employmentStartDate",
       ),
   };
+}
+
+function normalizeOptionalCreateCode(
+  value: unknown,
+  field: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new EmploymentProfileValidationError(
+      `${field} must be a string`,
+    );
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0
+    ? normalized
+    : undefined;
 }
 
 function buildEmploymentProfileCorePatch(params: {

@@ -1,4 +1,5 @@
 import { Db } from "mongodb";
+import { NativeMongoBusinessCodeSequenceRepository } from "@infra/mongo/business-code/business-code-sequence.repository";
 import { NativeMongoEventAssignmentReadRepository } from "@infra/mongo/event-assignment/event-assignment.read-repository";
 import {
   NativeMongoEventAssignmentEmploymentProfileReadonlyAccess,
@@ -11,6 +12,7 @@ import { NativeMongoEventAssignmentRepository } from "@infra/mongo/event-assignm
 
 export interface EventAssignmentInfra {
   readonly eventAssignmentRepository: NativeMongoEventAssignmentRepository;
+  readonly businessCodeSequenceRepository: NativeMongoBusinessCodeSequenceRepository;
   readonly eventAssignmentReadRepository: NativeMongoEventAssignmentReadRepository;
   readonly eventAssignmentEmploymentProfileReadonlyAccess: NativeMongoEventAssignmentEmploymentProfileReadonlyAccess;
   readonly eventAssignmentTalentReadonlyAccess: NativeMongoEventAssignmentTalentReadonlyAccess;
@@ -25,6 +27,8 @@ export function createEventAssignmentInfra(
   return {
     eventAssignmentRepository:
       new NativeMongoEventAssignmentRepository(db),
+    businessCodeSequenceRepository:
+      new NativeMongoBusinessCodeSequenceRepository(db),
     eventAssignmentReadRepository:
       new NativeMongoEventAssignmentReadRepository(
         db,

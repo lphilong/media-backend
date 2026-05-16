@@ -10,6 +10,11 @@ import {
 } from "@core/application/authoritative-admin-mutation.bridge";
 import { AuthoritativeAdminMutationIdentity } from "@core/application/authoritative-admin-mutation.permission-map";
 import { AuditGuard } from "@core/audit/audit.guard";
+import { utcMonthBucketFromTimestamp } from "@core/business-code/business-code-bucket";
+import {
+  BusinessCodeSequenceRepository,
+  formatBusinessCode,
+} from "@core/business-code/business-code-sequence.repository";
 import { SystemInvariantError } from "@core/error/system-error";
 import { BaseAppError } from "@core/errors/base.error";
 import { Permission } from "@core/permission/permission.enum";
@@ -34,6 +39,7 @@ import {
   TalentKpiStateError,
   TalentKpiValidationError,
 } from "@modules/talent-kpi/domain/talent-kpi.errors";
+import { buildTalentKpiCodePolicy } from "@modules/talent-kpi/domain/talent-kpi-code-policy";
 import { TalentKpiPlatformAccountReadonlyAccess } from "@modules/talent-kpi/domain/talent-kpi-platform-account-readonly-access";
 import {
   TalentKpiMeasurementIdentity,
@@ -100,8 +106,7 @@ interface NormalizedMetricValue {
 }
 
 interface NormalizedCreateCommand {
-  readonly kpiRecordCode: string;
-  readonly normalizedKpiRecordCode: string;
+  readonly kpiRecordCode: string | undefined;
   readonly title: string;
   readonly normalizedTitle: string;
   readonly subjectTalentId: string;
@@ -159,6 +164,7 @@ interface DraftCorePatchBuildResult {
 export class TalentKpiAdminService {
   constructor(
     private readonly repository: TalentKpiRepository,
+    private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
     private readonly talentReadonlyAccess: TalentKpiTalentReadonlyAccess,
     private readonly platformAccountReadonlyAccess: TalentKpiPlatformAccountReadonlyAccess,
     private readonly eventReadonlyAccess: TalentKpiEventReadonlyAccess,
@@ -184,7 +190,9 @@ export class TalentKpiAdminService {
         permission,
         operation,
         {
-          kpiRecordCode: input.kpiRecordCode,
+          kpiRecordCode: readOptionalLogString(
+            command.kpiRecordCode,
+          ),
           subjectTalentId: input.subjectTalentId,
           attributionPlatformAccountId:
             input.attributionPlatformAccountId,
@@ -197,16 +205,19 @@ export class TalentKpiAdminService {
           const scope = resolveRequiredGlobalScope(
             actor,
           );
-          const existingByCode =
-            await this.repository.findRecordByKpiRecordCode(
-              input.kpiRecordCode,
-              session,
-            );
 
-          if (existingByCode) {
-            throw new TalentKpiConflictError(
-              `KPI record code already exists: ${input.kpiRecordCode}`,
-            );
+          if (input.kpiRecordCode !== undefined) {
+            const existingByCode =
+              await this.repository.findRecordByKpiRecordCode(
+                input.kpiRecordCode,
+                session,
+              );
+
+            if (existingByCode) {
+              throw new TalentKpiConflictError(
+                `KPI record code already exists: ${input.kpiRecordCode}`,
+              );
+            }
           }
 
           const candidate: TalentKpiCandidateState = {
@@ -226,45 +237,84 @@ export class TalentKpiAdminService {
             session,
           );
 
-          const now = Date.now();
-          const record: TalentKpiRecord = {
-            id: crypto.randomUUID(),
-            kpiRecordCode: input.kpiRecordCode,
-            normalizedKpiRecordCode:
-              input.normalizedKpiRecordCode,
-            title: input.title,
-            normalizedTitle: input.normalizedTitle,
-            subjectTalentId: input.subjectTalentId,
-            attributionPlatformAccountId:
-              input.attributionPlatformAccountId,
-            attributionEventId:
-              input.attributionEventId,
-            measurementSource:
-              input.measurementSource,
-            status: "DRAFT",
-            periodStartAt: input.periodStartAt,
-            periodEndAt: input.periodEndAt,
-            publishedAt: null,
-            description: input.description,
-            externalRef: input.externalRef,
-            createdAt: now,
-            updatedAt: now,
-          };
+          let record!: TalentKpiRecord;
+          const maxAttempts =
+            input.kpiRecordCode === undefined ? 5 : 1;
 
-          const metricValues = toMetricValueRecords(
-            record.id,
-            input.metrics,
-            now,
-          );
+          for (
+            let attempt = 1;
+            attempt <= maxAttempts;
+            attempt += 1
+          ) {
+            const kpiRecordCode =
+              input.kpiRecordCode ??
+              (await this.allocateGeneratedCode(
+                input.periodStartAt,
+                session,
+              ));
+            const now = Date.now();
+            record = {
+              id: crypto.randomUUID(),
+              kpiRecordCode,
+              normalizedKpiRecordCode:
+                canonicalizeSearchToken(
+                  kpiRecordCode,
+                ),
+              title: input.title,
+              normalizedTitle:
+                input.normalizedTitle,
+              subjectTalentId:
+                input.subjectTalentId,
+              attributionPlatformAccountId:
+                input.attributionPlatformAccountId,
+              attributionEventId:
+                input.attributionEventId,
+              measurementSource:
+                input.measurementSource,
+              status: "DRAFT",
+              periodStartAt: input.periodStartAt,
+              periodEndAt: input.periodEndAt,
+              publishedAt: null,
+              description: input.description,
+              externalRef: input.externalRef,
+              createdAt: now,
+              updatedAt: now,
+            };
 
-          await this.repository.insertRecord(
-            record,
-            session,
-          );
-          await this.repository.insertMetricValues(
-            metricValues,
-            session,
-          );
+            const metricValues = toMetricValueRecords(
+              record.id,
+              input.metrics,
+              now,
+            );
+
+            try {
+              await this.repository.insertRecord(
+                record,
+                session,
+              );
+              await this.repository.insertMetricValues(
+                metricValues,
+                session,
+              );
+              break;
+            } catch (error) {
+              if (!isDuplicateKeyError(error)) {
+                throw error;
+              }
+
+              if (input.kpiRecordCode !== undefined) {
+                throw new TalentKpiConflictError(
+                  "KPI record code or measurement identity already exists",
+                );
+              }
+
+              if (attempt >= maxAttempts) {
+                throw new TalentKpiConflictError(
+                  "Generated KPI record code conflict detected on create",
+                );
+              }
+            }
+          }
 
           await this.recordAudit({
             actor,
@@ -759,6 +809,34 @@ export class TalentKpiAdminService {
     return record;
   }
 
+  private async allocateGeneratedCode(
+    periodStartAt: number,
+    session: ClientSession,
+  ): Promise<string> {
+    const bucket =
+      utcMonthBucketFromTimestamp(periodStartAt);
+    const policy = buildTalentKpiCodePolicy(bucket);
+    const maxExisting =
+      await this.repository.findMaxGeneratedKpiRecordCodeSequence(
+        policy,
+        session,
+      );
+    await this.codeSequenceRepository.ensureAtLeast(
+      policy.moduleKey,
+      policy.bucket,
+      maxExisting,
+      session,
+    );
+    const next =
+      await this.codeSequenceRepository.allocateNext(
+        policy.moduleKey,
+        policy.bucket,
+        session,
+      );
+
+    return formatBusinessCode(policy, next);
+  }
+
   private async assertCandidateStateValid(
     candidate: TalentKpiCandidateState,
     session: ClientSession,
@@ -1029,7 +1107,7 @@ export class TalentKpiAdminService {
 function normalizeCreateCommand(
   command: CreateTalentKpiRecordCommand,
 ): NormalizedCreateCommand {
-  const kpiRecordCode = normalizeRequiredText(
+  const kpiRecordCode = normalizeOptionalCreateCode(
     command.kpiRecordCode,
     "kpiRecordCode",
   );
@@ -1040,8 +1118,6 @@ function normalizeCreateCommand(
 
   return {
     kpiRecordCode,
-    normalizedKpiRecordCode:
-      canonicalizeSearchToken(kpiRecordCode),
     title,
     normalizedTitle: canonicalizeSearchToken(title),
     subjectTalentId: normalizeRequiredText(
@@ -1094,6 +1170,26 @@ function normalizeCreateCommand(
       },
     ) ?? null,
   };
+}
+
+function normalizeOptionalCreateCode(
+  value: unknown,
+  field: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new TalentKpiValidationError(
+      `${field} must be a string`,
+    );
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0
+    ? normalized
+    : undefined;
 }
 
 function normalizeUpdateDraftCoreCommand(
@@ -1996,4 +2092,17 @@ function truncateLogMessage(
   }
 
   return `${raw.slice(0, 253)}...`;
+}
+
+function readOptionalLogString(
+  value: unknown,
+): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0
+    ? normalized
+    : undefined;
 }

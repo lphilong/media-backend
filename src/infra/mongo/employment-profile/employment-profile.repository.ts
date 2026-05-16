@@ -1,4 +1,9 @@
 import { ClientSession, Db } from "mongodb";
+import {
+  buildGeneratedBusinessCodeRegex,
+  BusinessCodePolicy,
+  parseGeneratedBusinessCodeSequence,
+} from "@core/business-code/business-code-sequence.repository";
 import { BaseRepository } from "@infra/database/repository";
 import {
   AssignEmploymentProfileManagerInput,
@@ -86,6 +91,34 @@ export class NativeMongoEmploymentProfileRepository
     return doc
       ? toEmploymentProfileRecord(doc)
       : null;
+  }
+
+  async findMaxGeneratedCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number> {
+    const doc = await this.collection
+      .find(
+        {
+          employeeCode:
+            buildGeneratedBusinessCodeRegex(policy),
+        },
+        this.withSession(session),
+      )
+      .sort({ employeeCode: -1 })
+      .limit(1)
+      .next();
+
+    if (!doc) {
+      return 0;
+    }
+
+    return (
+      parseGeneratedBusinessCodeSequence(
+        doc.employeeCode,
+        policy,
+      ) ?? 0
+    );
   }
 
   async findNonArchivedByLinkedUserId(

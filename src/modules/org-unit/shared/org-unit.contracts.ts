@@ -10,7 +10,7 @@ import {
 import { OrgUnitListItemView } from "@modules/org-unit/domain/org-unit.types";
 
 export interface CreateOrgUnitCommand {
-  readonly code: string;
+  readonly code?: string | null;
   readonly name: string;
   readonly type: OrgUnitType;
   readonly parentOrgUnitId?: string | null;

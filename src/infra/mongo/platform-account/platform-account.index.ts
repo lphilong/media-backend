@@ -68,7 +68,7 @@ export async function initPlatformAccountIndexes(
           $type: "string",
         },
         operationalStatus: {
-          $ne: "ARCHIVED",
+          $in: ["ACTIVE", "INACTIVE"],
         },
       },
     },
@@ -88,7 +88,7 @@ export async function initPlatformAccountIndexes(
           $type: "string",
         },
         operationalStatus: {
-          $ne: "ARCHIVED",
+          $in: ["ACTIVE", "INACTIVE"],
         },
       },
     },
@@ -108,7 +108,7 @@ export async function initPlatformAccountIndexes(
           $type: "string",
         },
         operationalStatus: {
-          $ne: "ARCHIVED",
+          $in: ["ACTIVE", "INACTIVE"],
         },
       },
     },

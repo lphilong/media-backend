@@ -3,6 +3,11 @@ import {
   Collection,
   Db,
 } from "mongodb";
+import {
+  buildGeneratedBusinessCodeRegex,
+  BusinessCodePolicy,
+  parseGeneratedBusinessCodeSequence,
+} from "@core/business-code/business-code-sequence.repository";
 import { BaseRepository } from "@infra/database/repository/base.repository";
 import {
   CommissionRepository,
@@ -155,6 +160,34 @@ export class NativeMongoCommissionRepository
       : null;
   }
 
+  async findMaxGeneratedRuleCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number> {
+    const document = await this.collection
+      .find(
+        {
+          ruleCode:
+            buildGeneratedBusinessCodeRegex(policy),
+        },
+        this.withSession(session),
+      )
+      .sort({ ruleCode: -1 })
+      .limit(1)
+      .next();
+
+    if (!document) {
+      return 0;
+    }
+
+    return (
+      parseGeneratedBusinessCodeSequence(
+        document.ruleCode,
+        policy,
+      ) ?? 0
+    );
+  }
+
   async updateRuleDraftCore(
     input: UpdateCommissionRuleDraftCoreInput,
     session: ClientSession,
@@ -286,6 +319,34 @@ export class NativeMongoCommissionRepository
     return document
       ? toCommissionSettlement(document)
       : null;
+  }
+
+  async findMaxGeneratedSettlementCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number> {
+    const document = await this.settlementCollection
+      .find(
+        {
+          settlementCode:
+            buildGeneratedBusinessCodeRegex(policy),
+        },
+        this.withSession(session),
+      )
+      .sort({ settlementCode: -1 })
+      .limit(1)
+      .next();
+
+    if (!document) {
+      return 0;
+    }
+
+    return (
+      parseGeneratedBusinessCodeSequence(
+        document.settlementCode,
+        policy,
+      ) ?? 0
+    );
   }
 
   async updateSettlementDraftCore(

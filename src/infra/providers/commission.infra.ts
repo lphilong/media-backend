@@ -1,4 +1,5 @@
 import { Db } from "mongodb";
+import { NativeMongoBusinessCodeSequenceRepository } from "@infra/mongo/business-code/business-code-sequence.repository";
 import { NativeMongoCommissionReadRepository } from "@infra/mongo/commission/commission.read-repository";
 import {
   NativeMongoCommissionContractRegistryReadonlyAccess,
@@ -10,6 +11,7 @@ import { NativeMongoCommissionRepository } from "@infra/mongo/commission/commiss
 
 export interface CommissionRevenueShareInfra {
   readonly commissionRepository: NativeMongoCommissionRepository;
+  readonly businessCodeSequenceRepository: NativeMongoBusinessCodeSequenceRepository;
   readonly commissionReadRepository: NativeMongoCommissionReadRepository;
   readonly commissionEmploymentProfileReadonlyAccess: NativeMongoCommissionEmploymentProfileReadonlyAccess;
   readonly commissionTalentReadonlyAccess: NativeMongoCommissionTalentReadonlyAccess;
@@ -23,6 +25,8 @@ export function createCommissionRevenueShareInfra(
   return {
     commissionRepository:
       new NativeMongoCommissionRepository(db),
+    businessCodeSequenceRepository:
+      new NativeMongoBusinessCodeSequenceRepository(db),
     commissionReadRepository:
       new NativeMongoCommissionReadRepository(db),
     commissionEmploymentProfileReadonlyAccess:

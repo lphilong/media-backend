@@ -2,6 +2,11 @@ import {
   ClientSession,
   Db,
 } from "mongodb";
+import {
+  buildGeneratedBusinessCodeRegex,
+  BusinessCodePolicy,
+  parseGeneratedBusinessCodeSequence,
+} from "@core/business-code/business-code-sequence.repository";
 import { BaseRepository } from "@infra/database/repository/base.repository";
 import {
   AssignContractRecordOwnerInput,
@@ -90,6 +95,34 @@ export class NativeMongoContractRegistryRepository
     return document
       ? toContractRecord(document)
       : null;
+  }
+
+  async findMaxGeneratedContractCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number> {
+    const document = await this.collection
+      .find(
+        {
+          contractCode:
+            buildGeneratedBusinessCodeRegex(policy),
+        },
+        this.withSession(session),
+      )
+      .sort({ contractCode: -1 })
+      .limit(1)
+      .next();
+
+    if (!document) {
+      return 0;
+    }
+
+    return (
+      parseGeneratedBusinessCodeSequence(
+        document.contractCode,
+        policy,
+      ) ?? 0
+    );
   }
 
   async updateDraftCore(

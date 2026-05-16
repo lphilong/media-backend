@@ -1,4 +1,5 @@
 import { ClientSession } from "mongodb";
+import { BusinessCodePolicy } from "@core/business-code/business-code-sequence.repository";
 import {
   OrgUnitRecord,
   OrgUnitStatus,
@@ -58,6 +59,11 @@ export interface OrgUnitRepository {
     code: string,
     session?: ClientSession,
   ): Promise<OrgUnitRecord | null>;
+
+  findMaxGeneratedCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number>;
 
   findLiveSiblingByNormalizedName(
     input: FindLiveSiblingByNormalizedNameInput,

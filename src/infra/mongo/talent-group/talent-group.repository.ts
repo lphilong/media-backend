@@ -3,6 +3,11 @@ import {
   Collection,
   Db,
 } from "mongodb";
+import {
+  buildGeneratedBusinessCodeRegex,
+  BusinessCodePolicy,
+  parseGeneratedBusinessCodeSequence,
+} from "@core/business-code/business-code-sequence.repository";
 import { BaseRepository } from "@infra/database/repository";
 import {
   FindLiveTalentGroupByNormalizedNameInput,
@@ -96,6 +101,34 @@ export class NativeMongoTalentGroupRepository
     );
 
     return doc ? toTalentGroupRecord(doc) : null;
+  }
+
+  async findMaxGeneratedCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number> {
+    const doc = await this.collection
+      .find(
+        {
+          groupCode:
+            buildGeneratedBusinessCodeRegex(policy),
+        },
+        this.withSession(session),
+      )
+      .sort({ groupCode: -1 })
+      .limit(1)
+      .next();
+
+    if (!doc) {
+      return 0;
+    }
+
+    return (
+      parseGeneratedBusinessCodeSequence(
+        doc.groupCode,
+        policy,
+      ) ?? 0
+    );
   }
 
   async findLiveGroupByNormalizedName(

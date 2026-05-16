@@ -11,7 +11,7 @@ import {
 } from "@modules/employment-profile/domain/employment-profile.types";
 
 export interface CreateEmploymentProfileCommand {
-  readonly employeeCode: string;
+  readonly employeeCode?: string | null;
   readonly legalName: string;
   readonly displayName: string;
   readonly employmentKind: EmploymentKind;

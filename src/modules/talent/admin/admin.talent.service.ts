@@ -10,6 +10,10 @@ import {
 } from "@core/application/authoritative-admin-mutation.bridge";
 import { AuthoritativeAdminMutationIdentity } from "@core/application/authoritative-admin-mutation.permission-map";
 import { AuditGuard } from "@core/audit/audit.guard";
+import {
+  BusinessCodeSequenceRepository,
+  formatBusinessCode,
+} from "@core/business-code/business-code-sequence.repository";
 import { SystemInvariantError } from "@core/error/system-error";
 import { BaseAppError } from "@core/errors/base.error";
 import { Permission } from "@core/permission/permission.enum";
@@ -29,6 +33,7 @@ import {
   TalentStateError,
   TalentValidationError,
 } from "@modules/talent/domain/talent.errors";
+import { TALENT_CODE_POLICY } from "@modules/talent/domain/talent-code-policy";
 import {
   TalentEmploymentProfileReadonlyAccess,
   TalentReferencedEmploymentProfile,
@@ -77,6 +82,7 @@ type TalentFailureClassification =
 export class TalentAdminService {
   constructor(
     private readonly repository: TalentRepository,
+    private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
     private readonly employmentProfileReadonlyAccess: TalentEmploymentProfileReadonlyAccess,
     private readonly talentGroupReadonlyAccess: TalentTalentGroupReadonlyAccess,
     private readonly platformAccountReadonlyAccess: TalentPlatformAccountReadonlyAccess,
@@ -119,16 +125,18 @@ export class TalentAdminService {
           ) ?? undefined,
       },
       async (session) => {
-        const existing =
-          await this.repository.findByTalentCode(
-            input.talentCode,
-            session,
-          );
+        if (input.talentCode !== undefined) {
+          const existing =
+            await this.repository.findByTalentCode(
+              input.talentCode,
+              session,
+            );
 
-        if (existing) {
-          throw new TalentConflictError(
-            `Talent code already exists: ${input.talentCode}`,
-          );
+          if (existing) {
+            throw new TalentConflictError(
+              `Talent code already exists: ${input.talentCode}`,
+            );
+          }
         }
 
         await this.assertLinkedEmploymentProfileAllowed(
@@ -154,54 +162,74 @@ export class TalentAdminService {
           input.eventEligible,
         );
 
-        const now = Date.now();
-        const talent: TalentRecord = {
-          id: crypto.randomUUID(),
-          talentCode: input.talentCode,
-          stageName: input.stageName,
-          normalizedStageName:
-            input.normalizedStageName,
-          legalName: input.legalName,
-          normalizedLegalName:
-            input.normalizedLegalName,
-          displayShortName:
-            input.displayShortName,
-          normalizedDisplayShortName:
-            input.normalizedDisplayShortName,
-          talentOrigin: input.talentOrigin,
-          operationalStatus: "ACTIVE",
-          managerEmploymentProfileId:
-            input.managerEmploymentProfileId,
-          linkedEmploymentProfileId:
-            input.linkedEmploymentProfileId,
-          commercialParticipationStatus:
-            input.commercialParticipationStatus,
-          livestreamEligible:
-            input.livestreamEligible,
-          eventEligible:
-            input.eventEligible,
-          externalRef: input.externalRef,
-          profileSummary:
-            input.profileSummary,
-          createdAt: now,
-          updatedAt: now,
-        };
+        let created!: TalentRecord;
+        const maxAttempts =
+          input.talentCode === undefined ? 5 : 1;
 
-        let created: TalentRecord;
+        for (
+          let attempt = 1;
+          attempt <= maxAttempts;
+          attempt += 1
+        ) {
+          const talentCode =
+            input.talentCode ??
+            (await this.allocateGeneratedCode(session));
+          const now = Date.now();
+          const talent: TalentRecord = {
+            id: crypto.randomUUID(),
+            talentCode,
+            stageName: input.stageName,
+            normalizedStageName:
+              input.normalizedStageName,
+            legalName: input.legalName,
+            normalizedLegalName:
+              input.normalizedLegalName,
+            displayShortName:
+              input.displayShortName,
+            normalizedDisplayShortName:
+              input.normalizedDisplayShortName,
+            talentOrigin: input.talentOrigin,
+            operationalStatus: "ACTIVE",
+            managerEmploymentProfileId:
+              input.managerEmploymentProfileId,
+            linkedEmploymentProfileId:
+              input.linkedEmploymentProfileId,
+            commercialParticipationStatus:
+              input.commercialParticipationStatus,
+            livestreamEligible:
+              input.livestreamEligible,
+            eventEligible:
+              input.eventEligible,
+            externalRef: input.externalRef,
+            profileSummary:
+              input.profileSummary,
+            createdAt: now,
+            updatedAt: now,
+          };
 
-        try {
-          created = await this.repository.insert(
-            talent,
-            session,
-          );
-        } catch (error) {
-          if (isDuplicateKeyError(error)) {
-            throw new TalentConflictError(
-              "Talent code or linked employment profile already exists on a non-archived talent",
+          try {
+            created = await this.repository.insert(
+              talent,
+              session,
             );
-          }
+            break;
+          } catch (error) {
+            if (!isDuplicateKeyError(error)) {
+              throw error;
+            }
 
-          throw error;
+            if (input.talentCode !== undefined) {
+              throw new TalentConflictError(
+                "Talent code or linked employment profile already exists on a non-archived talent",
+              );
+            }
+
+            if (attempt >= maxAttempts) {
+              throw new TalentConflictError(
+                "Generated talent code conflict detected on create",
+              );
+            }
+          }
         }
 
         await this.recordAudit({
@@ -1164,6 +1192,33 @@ export class TalentAdminService {
     return talent;
   }
 
+  private async allocateGeneratedCode(
+    session: ClientSession,
+  ): Promise<string> {
+    const maxExisting =
+      await this.repository.findMaxGeneratedCodeSequence(
+        TALENT_CODE_POLICY,
+        session,
+      );
+    await this.codeSequenceRepository.ensureAtLeast(
+      TALENT_CODE_POLICY.moduleKey,
+      TALENT_CODE_POLICY.bucket,
+      maxExisting,
+      session,
+    );
+    const next =
+      await this.codeSequenceRepository.allocateNext(
+        TALENT_CODE_POLICY.moduleKey,
+        TALENT_CODE_POLICY.bucket,
+        session,
+      );
+
+    return formatBusinessCode(
+      TALENT_CODE_POLICY,
+      next,
+    );
+  }
+
   private async assertManagerLinkageAllowed(
     managerEmploymentProfileId: string | null,
     linkedEmploymentProfileId: string | null,
@@ -1586,7 +1641,7 @@ export class TalentAdminService {
 }
 
 interface NormalizedCreateCommand {
-  readonly talentCode: string;
+  readonly talentCode: string | undefined;
   readonly stageName: string;
   readonly normalizedStageName: string;
   readonly legalName: string;
@@ -1620,7 +1675,7 @@ function normalizeCreateCommand(
   );
 
   return {
-    talentCode: normalizeRequiredText(
+    talentCode: normalizeOptionalCreateCode(
       command.talentCode,
       "talentCode",
     ),
@@ -1673,6 +1728,26 @@ function normalizeCreateCommand(
       "profileSummary",
     ),
   };
+}
+
+function normalizeOptionalCreateCode(
+  value: unknown,
+  field: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new TalentValidationError(
+      `${field} must be a string`,
+    );
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0
+    ? normalized
+    : undefined;
 }
 
 function buildTalentCorePatch(params: {

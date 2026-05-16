@@ -1,4 +1,5 @@
 import { ClientSession } from "mongodb";
+import { BusinessCodePolicy } from "@core/business-code/business-code-sequence.repository";
 import {
   ContractConfidentialityTier,
   ContractLinkedEntityKind,
@@ -57,6 +58,11 @@ export interface ContractRegistryRepository {
     contractCode: string,
     session?: ClientSession,
   ): Promise<ContractRecord | null>;
+
+  findMaxGeneratedContractCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number>;
 
   updateDraftCore(
     input: UpdateContractRecordDraftCoreInput,

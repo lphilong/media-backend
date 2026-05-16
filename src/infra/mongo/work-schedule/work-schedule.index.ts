@@ -135,7 +135,7 @@ export async function initWorkShiftIndexes(
         WORK_SHIFT_SUBJECT_EMPLOYMENT_PROFILE_STATUS_WINDOW_INDEX_NAME,
       partialFilterExpression: {
         subjectEmploymentProfileId: {
-          $ne: null,
+          $type: "string",
         },
       },
     },
@@ -154,7 +154,7 @@ export async function initWorkShiftIndexes(
         WORK_SHIFT_SUBJECT_TALENT_STATUS_WINDOW_INDEX_NAME,
       partialFilterExpression: {
         subjectTalentId: {
-          $ne: null,
+          $type: "string",
         },
       },
     },
@@ -173,7 +173,7 @@ export async function initWorkShiftIndexes(
         WORK_SHIFT_SUBJECT_TALENT_GROUP_STATUS_WINDOW_INDEX_NAME,
       partialFilterExpression: {
         subjectTalentGroupId: {
-          $ne: null,
+          $type: "string",
         },
       },
     },
@@ -234,7 +234,7 @@ export async function initWorkShiftIndexes(
         WORK_SHIFT_SOURCE_GENERATION_RUN_INDEX_NAME,
       partialFilterExpression: {
         sourceGenerationRunId: {
-          $ne: null,
+          $type: "string",
         },
       },
     },
@@ -421,7 +421,7 @@ async function initMonthlyRosterIndexes(
       unique: true,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["DRAFT", "PUBLISHED", "LOCKED"],
         },
       },
     },

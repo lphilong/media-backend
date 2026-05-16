@@ -1,4 +1,5 @@
 import { Db } from "mongodb";
+import { NativeMongoBusinessCodeSequenceRepository } from "@infra/mongo/business-code/business-code-sequence.repository";
 import {
   NativeMongoPlatformAccountOrgUnitReadonlyAccess,
   NativeMongoOrgUnitPlatformAccountReadonlyAccess,
@@ -13,6 +14,7 @@ import { NativeMongoPlatformAccountRepository } from "@infra/mongo/platform-acco
 
 export interface PlatformAccountInfra {
   readonly platformAccountRepository: NativeMongoPlatformAccountRepository;
+  readonly businessCodeSequenceRepository: NativeMongoBusinessCodeSequenceRepository;
   readonly platformAccountReadRepository: NativeMongoPlatformAccountReadRepository;
   readonly platformAccountOrgUnitReadonlyAccess: NativeMongoPlatformAccountOrgUnitReadonlyAccess;
   readonly platformAccountTalentReadonlyAccess: NativeMongoPlatformAccountTalentReadonlyAccess;
@@ -29,6 +31,8 @@ export function createPlatformAccountInfra(
   return {
     platformAccountRepository:
       new NativeMongoPlatformAccountRepository(db),
+    businessCodeSequenceRepository:
+      new NativeMongoBusinessCodeSequenceRepository(db),
     platformAccountReadRepository:
       new NativeMongoPlatformAccountReadRepository(
         db,

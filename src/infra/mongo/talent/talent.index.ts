@@ -46,7 +46,7 @@ export async function initTalentIndexes(
           $type: "string",
         },
         operationalStatus: {
-          $ne: "ARCHIVED",
+          $in: ["ACTIVE", "SUSPENDED", "INACTIVE"],
         },
       },
     },

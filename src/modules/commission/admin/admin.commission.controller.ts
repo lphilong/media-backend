@@ -238,7 +238,10 @@ function parseCreateRuleCommand(
   );
 
   return {
-    ruleCode: body.ruleCode as string,
+    ruleCode: body.ruleCode as
+      | string
+      | null
+      | undefined,
     title: body.title as string,
     settlementKind: body.settlementKind as string,
     beneficiaryKind: body.beneficiaryKind as string,
@@ -364,7 +367,10 @@ function parseCreateSettlementCommand(
   );
 
   return {
-    settlementCode: body.settlementCode as string,
+    settlementCode: body.settlementCode as
+      | string
+      | null
+      | undefined,
     title: body.title as string,
     sourceRuleId: body.sourceRuleId as string,
     settlementPeriodStartAt:

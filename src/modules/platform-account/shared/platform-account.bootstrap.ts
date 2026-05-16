@@ -61,7 +61,7 @@ export function createPlatformAccountBootstrapRegistrar(): BootstrapRegistrar {
             $type: "string",
           },
           operationalStatus: {
-            $ne: "ARCHIVED",
+            $in: ["ACTIVE", "INACTIVE"],
           },
         },
       );
@@ -79,7 +79,7 @@ export function createPlatformAccountBootstrapRegistrar(): BootstrapRegistrar {
             $type: "string",
           },
           operationalStatus: {
-            $ne: "ARCHIVED",
+            $in: ["ACTIVE", "INACTIVE"],
           },
         },
       );
@@ -97,7 +97,7 @@ export function createPlatformAccountBootstrapRegistrar(): BootstrapRegistrar {
             $type: "string",
           },
           operationalStatus: {
-            $ne: "ARCHIVED",
+            $in: ["ACTIVE", "INACTIVE"],
           },
         },
       );

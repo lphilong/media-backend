@@ -36,7 +36,7 @@ export async function initDashboardLiteSupportIndexes(
       partialFilterExpression: {
         status: "ACTIVE",
         effectiveEndDate: {
-          $ne: null,
+          $type: "number",
         },
       },
     },
@@ -67,7 +67,7 @@ export async function initDashboardLiteSupportIndexes(
       partialFilterExpression: {
         status: "FINALIZED",
         publishedAt: {
-          $ne: null,
+          $type: "number",
         },
       },
     },
@@ -98,7 +98,7 @@ export async function initDashboardLiteSupportIndexes(
       partialFilterExpression: {
         status: "FINALIZED",
         finalizedAt: {
-          $ne: null,
+          $type: "number",
         },
       },
     },
@@ -113,7 +113,7 @@ export async function initDashboardLiteSupportIndexes(
       partialFilterExpression: {
         status: "RECONCILED",
         reconciledAt: {
-          $ne: null,
+          $type: "number",
         },
       },
     },
@@ -144,7 +144,7 @@ export async function initDashboardLiteSupportIndexes(
       partialFilterExpression: {
         status: "FINALIZED",
         finalizedAt: {
-          $ne: null,
+          $type: "number",
         },
       },
     },

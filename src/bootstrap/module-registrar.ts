@@ -1,6 +1,7 @@
 import { Db } from "mongodb";
 import { PresenterRegistryWriter } from "@app/presenter/presenter.runtime-access";
 import { initDomainEventOutbox } from "@system/outbox/outbox.schema";
+import { initBusinessCodeSequenceIndexes } from "@infra/mongo/business-code/business-code-sequence.index";
 import { createRoleBootstrapRegistrar } from "@modules/role/shared/role.bootstrap";
 import { SystemInvariantError } from "@core/error/system-error";
 import { createUserBootstrapRegistrar } from "@modules/user/shared/user.bootstrap";
@@ -32,6 +33,7 @@ const FOUNDATION_BOOTSTRAP_REGISTRAR: BootstrapRegistrar =
     name: "foundation",
     async initIndexes(db: Db): Promise<void> {
       await initDomainEventOutbox(db);
+      await initBusinessCodeSequenceIndexes(db);
     },
   });
 

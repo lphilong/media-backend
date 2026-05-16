@@ -10,6 +10,10 @@ import {
 } from "@core/application/authoritative-admin-mutation.bridge";
 import { AuthoritativeAdminMutationIdentity } from "@core/application/authoritative-admin-mutation.permission-map";
 import { AuditGuard } from "@core/audit/audit.guard";
+import {
+  BusinessCodeSequenceRepository,
+  formatBusinessCode,
+} from "@core/business-code/business-code-sequence.repository";
 import { SystemInvariantError } from "@core/error/system-error";
 import { BaseAppError } from "@core/errors/base.error";
 import { Permission } from "@core/permission/permission.enum";
@@ -29,6 +33,7 @@ import {
   PlatformAccountStateError,
   PlatformAccountValidationError,
 } from "@modules/platform-account/domain/platform-account.errors";
+import { PLATFORM_ACCOUNT_CODE_POLICY } from "@modules/platform-account/domain/platform-account-code-policy";
 import {
   PlatformAccountOrgUnitReadonlyAccess,
   PlatformAccountReferencedOrgUnit,
@@ -98,7 +103,7 @@ interface NormalizedNullableValue {
 
 interface NormalizedCreateCommand
   extends OwnerReferenceShape {
-  readonly accountCode: string;
+  readonly accountCode: string | undefined;
   readonly platform: PlatformAccountPlatform;
   readonly platformSurfaceType: PlatformAccountSurfaceType;
   readonly displayName: string;
@@ -118,6 +123,7 @@ interface NormalizedCreateCommand
 export class PlatformAccountAdminService {
   constructor(
     private readonly repository: PlatformAccountRepository,
+    private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
     private readonly orgUnitReadonlyAccess: PlatformAccountOrgUnitReadonlyAccess,
     private readonly talentReadonlyAccess: PlatformAccountTalentReadonlyAccess,
     private readonly talentGroupReadonlyAccess: PlatformAccountTalentGroupReadonlyAccess,
@@ -155,16 +161,18 @@ export class PlatformAccountAdminService {
         ownerReferenceId: input.ownerReferenceId,
       },
       async (session) => {
-        const existingCode =
-          await this.repository.findByAccountCode(
-            input.accountCode,
-            session,
-          );
+        if (input.accountCode !== undefined) {
+          const existingCode =
+            await this.repository.findByAccountCode(
+              input.accountCode,
+              session,
+            );
 
-        if (existingCode) {
-          throw new PlatformAccountConflictError(
-            `Platform account code already exists: ${input.accountCode}`,
-          );
+          if (existingCode) {
+            throw new PlatformAccountConflictError(
+              `Platform account code already exists: ${input.accountCode}`,
+            );
+          }
         }
 
         await this.assertOwnerEligible(
@@ -185,58 +193,78 @@ export class PlatformAccountAdminService {
           session,
         );
 
-        const now = Date.now();
-        const record: PlatformAccountRecord = {
-          id: crypto.randomUUID(),
-          accountCode: input.accountCode,
-          platform: input.platform,
-          platformSurfaceType:
-            input.platformSurfaceType,
-          displayName: input.displayName,
-          normalizedDisplayName:
-            input.normalizedDisplayName,
-          handle: input.handle,
-          normalizedHandle:
-            input.normalizedHandle,
-          externalPlatformId:
-            input.externalPlatformId,
-          profileUrl: input.profileUrl,
-          normalizedProfileUrl:
-            input.normalizedProfileUrl,
-          ownerKind: input.ownerKind,
-          ownerOrgUnitId:
-            input.ownerOrgUnitId,
-          ownerTalentId: input.ownerTalentId,
-          ownerTalentGroupId:
-            input.ownerTalentGroupId,
-          operationalStatus: "ACTIVE",
-          livestreamEnabled:
-            input.livestreamEnabled,
-          contentPublishingEnabled:
-            input.contentPublishingEnabled,
-          monetizationEnabled:
-            input.monetizationEnabled,
-          description: input.description,
-          externalRef: input.externalRef,
-          createdAt: now,
-          updatedAt: now,
-        };
+        let created!: PlatformAccountRecord;
+        const maxAttempts =
+          input.accountCode === undefined ? 5 : 1;
 
-        let created: PlatformAccountRecord;
+        for (
+          let attempt = 1;
+          attempt <= maxAttempts;
+          attempt += 1
+        ) {
+          const accountCode =
+            input.accountCode ??
+            (await this.allocateGeneratedCode(session));
+          const now = Date.now();
+          const record: PlatformAccountRecord = {
+            id: crypto.randomUUID(),
+            accountCode,
+            platform: input.platform,
+            platformSurfaceType:
+              input.platformSurfaceType,
+            displayName: input.displayName,
+            normalizedDisplayName:
+              input.normalizedDisplayName,
+            handle: input.handle,
+            normalizedHandle:
+              input.normalizedHandle,
+            externalPlatformId:
+              input.externalPlatformId,
+            profileUrl: input.profileUrl,
+            normalizedProfileUrl:
+              input.normalizedProfileUrl,
+            ownerKind: input.ownerKind,
+            ownerOrgUnitId:
+              input.ownerOrgUnitId,
+            ownerTalentId: input.ownerTalentId,
+            ownerTalentGroupId:
+              input.ownerTalentGroupId,
+            operationalStatus: "ACTIVE",
+            livestreamEnabled:
+              input.livestreamEnabled,
+            contentPublishingEnabled:
+              input.contentPublishingEnabled,
+            monetizationEnabled:
+              input.monetizationEnabled,
+            description: input.description,
+            externalRef: input.externalRef,
+            createdAt: now,
+            updatedAt: now,
+          };
 
-        try {
-          created = await this.repository.insert(
-            record,
-            session,
-          );
-        } catch (error) {
-          if (isDuplicateKeyError(error)) {
-            throw new PlatformAccountConflictError(
-              "Platform account identity conflict detected on create",
+          try {
+            created = await this.repository.insert(
+              record,
+              session,
             );
-          }
+            break;
+          } catch (error) {
+            if (!isDuplicateKeyError(error)) {
+              throw error;
+            }
 
-          throw error;
+            if (input.accountCode !== undefined) {
+              throw new PlatformAccountConflictError(
+                "Platform account identity conflict detected on create",
+              );
+            }
+
+            if (attempt >= maxAttempts) {
+              throw new PlatformAccountConflictError(
+                "Generated platform account code conflict detected on create",
+              );
+            }
+          }
         }
 
         await this.recordAudit({
@@ -1058,6 +1086,33 @@ export class PlatformAccountAdminService {
     return platformAccount;
   }
 
+  private async allocateGeneratedCode(
+    session: ClientSession,
+  ): Promise<string> {
+    const maxExisting =
+      await this.repository.findMaxGeneratedCodeSequence(
+        PLATFORM_ACCOUNT_CODE_POLICY,
+        session,
+      );
+    await this.codeSequenceRepository.ensureAtLeast(
+      PLATFORM_ACCOUNT_CODE_POLICY.moduleKey,
+      PLATFORM_ACCOUNT_CODE_POLICY.bucket,
+      maxExisting,
+      session,
+    );
+    const next =
+      await this.codeSequenceRepository.allocateNext(
+        PLATFORM_ACCOUNT_CODE_POLICY.moduleKey,
+        PLATFORM_ACCOUNT_CODE_POLICY.bucket,
+        session,
+      );
+
+    return formatBusinessCode(
+      PLATFORM_ACCOUNT_CODE_POLICY,
+      next,
+    );
+  }
+
   private async assertNoLiveIdentityConflicts(
     params: {
       readonly platform: PlatformAccountPlatform;
@@ -1470,7 +1525,7 @@ function normalizeCreateCommand(
   });
 
   return {
-    accountCode: normalizeRequiredText(
+    accountCode: normalizeOptionalCreateCode(
       command.accountCode,
       "accountCode",
     ),
@@ -1517,6 +1572,26 @@ function normalizeCreateCommand(
       "externalRef",
     ),
   };
+}
+
+function normalizeOptionalCreateCode(
+  value: unknown,
+  field: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new PlatformAccountValidationError(
+      `${field} must be a string`,
+    );
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0
+    ? normalized
+    : undefined;
 }
 
 function buildPlatformAccountCorePatch(params: {

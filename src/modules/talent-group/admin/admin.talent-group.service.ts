@@ -10,6 +10,10 @@ import {
 } from "@core/application/authoritative-admin-mutation.bridge";
 import { AuthoritativeAdminMutationIdentity } from "@core/application/authoritative-admin-mutation.permission-map";
 import { AuditGuard } from "@core/audit/audit.guard";
+import {
+  BusinessCodeSequenceRepository,
+  formatBusinessCode,
+} from "@core/business-code/business-code-sequence.repository";
 import { SystemInvariantError } from "@core/error/system-error";
 import { BaseAppError } from "@core/errors/base.error";
 import { Permission } from "@core/permission/permission.enum";
@@ -30,6 +34,7 @@ import {
   TalentGroupStateError,
   TalentGroupValidationError,
 } from "@modules/talent-group/domain/talent-group.errors";
+import { TALENT_GROUP_CODE_POLICY } from "@modules/talent-group/domain/talent-group-code-policy";
 import { TalentGroupEventAssignmentReadonlyAccess } from "@modules/talent-group/domain/talent-group-event-assignment-readonly-access";
 import { TalentGroupWorkScheduleReadonlyAccess } from "@modules/talent-group/domain/talent-group-work-schedule-readonly-access";
 import {
@@ -75,6 +80,7 @@ type TalentGroupFailureClassification =
 export class TalentGroupAdminService {
   constructor(
     private readonly repository: TalentGroupRepository,
+    private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
     private readonly talentReadonlyAccess: TalentGroupTalentReadonlyAccess,
     private readonly platformAccountReadonlyAccess: TalentGroupPlatformAccountReadonlyAccess,
     private readonly workScheduleReadonlyAccess: TalentGroupWorkScheduleReadonlyAccess,
@@ -105,16 +111,18 @@ export class TalentGroupAdminService {
         ),
       },
       async (session) => {
-        const existingCode =
-          await this.repository.findGroupByCode(
-            input.groupCode,
-            session,
-          );
+        if (input.groupCode !== undefined) {
+          const existingCode =
+            await this.repository.findGroupByCode(
+              input.groupCode,
+              session,
+            );
 
-        if (existingCode) {
-          throw new TalentGroupConflictError(
-            `Talent group code already exists: ${input.groupCode}`,
-          );
+          if (existingCode) {
+            throw new TalentGroupConflictError(
+              `Talent group code already exists: ${input.groupCode}`,
+            );
+          }
         }
 
         const existingName =
@@ -132,38 +140,58 @@ export class TalentGroupAdminService {
           );
         }
 
-        const now = Date.now();
-        const group: TalentGroupRecord = {
-          id: crypto.randomUUID(),
-          groupCode: input.groupCode,
-          name: input.name,
-          normalizedName: input.normalizedName,
-          shortName: input.shortName,
-          normalizedShortName:
-            input.normalizedShortName,
-          description: input.description,
-          externalRef: input.externalRef,
-          status: "ACTIVE",
-          displayOrder: input.displayOrder,
-          createdAt: now,
-          updatedAt: now,
-        };
+        let created!: TalentGroupRecord;
+        const maxAttempts =
+          input.groupCode === undefined ? 5 : 1;
 
-        let created: TalentGroupRecord;
+        for (
+          let attempt = 1;
+          attempt <= maxAttempts;
+          attempt += 1
+        ) {
+          const groupCode =
+            input.groupCode ??
+            (await this.allocateGeneratedCode(session));
+          const now = Date.now();
+          const group: TalentGroupRecord = {
+            id: crypto.randomUUID(),
+            groupCode,
+            name: input.name,
+            normalizedName: input.normalizedName,
+            shortName: input.shortName,
+            normalizedShortName:
+              input.normalizedShortName,
+            description: input.description,
+            externalRef: input.externalRef,
+            status: "ACTIVE",
+            displayOrder: input.displayOrder,
+            createdAt: now,
+            updatedAt: now,
+          };
 
-        try {
-          created = await this.repository.insertGroup(
-            group,
-            session,
-          );
-        } catch (error) {
-          if (isDuplicateKeyError(error)) {
-            throw new TalentGroupConflictError(
-              "Talent group code or live normalized name already exists",
+          try {
+            created = await this.repository.insertGroup(
+              group,
+              session,
             );
-          }
+            break;
+          } catch (error) {
+            if (!isDuplicateKeyError(error)) {
+              throw error;
+            }
 
-          throw error;
+            if (input.groupCode !== undefined) {
+              throw new TalentGroupConflictError(
+                "Talent group code or live normalized name already exists",
+              );
+            }
+
+            if (attempt >= maxAttempts) {
+              throw new TalentGroupConflictError(
+                "Generated talent group code conflict detected on create",
+              );
+            }
+          }
         }
 
         await this.recordGroupAudit({
@@ -1218,6 +1246,33 @@ export class TalentGroupAdminService {
     return group;
   }
 
+  private async allocateGeneratedCode(
+    session: ClientSession,
+  ): Promise<string> {
+    const maxExisting =
+      await this.repository.findMaxGeneratedCodeSequence(
+        TALENT_GROUP_CODE_POLICY,
+        session,
+      );
+    await this.codeSequenceRepository.ensureAtLeast(
+      TALENT_GROUP_CODE_POLICY.moduleKey,
+      TALENT_GROUP_CODE_POLICY.bucket,
+      maxExisting,
+      session,
+    );
+    const next =
+      await this.codeSequenceRepository.allocateNext(
+        TALENT_GROUP_CODE_POLICY.moduleKey,
+        TALENT_GROUP_CODE_POLICY.bucket,
+        session,
+      );
+
+    return formatBusinessCode(
+      TALENT_GROUP_CODE_POLICY,
+      next,
+    );
+  }
+
   private async requireMember(
     membershipId: string,
     session: ClientSession,
@@ -1494,7 +1549,7 @@ export class TalentGroupAdminService {
 }
 
 interface NormalizedCreateCommand {
-  readonly groupCode: string;
+  readonly groupCode: string | undefined;
   readonly name: string;
   readonly normalizedName: string;
   readonly shortName: string | null;
@@ -1517,7 +1572,7 @@ function normalizeCreateCommand(
   );
 
   return {
-    groupCode: normalizeRequiredText(
+    groupCode: normalizeOptionalCreateCode(
       command.groupCode,
       "groupCode",
     ),
@@ -1541,6 +1596,26 @@ function normalizeCreateCommand(
       "externalRef",
     ),
   };
+}
+
+function normalizeOptionalCreateCode(
+  value: unknown,
+  field: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new TalentGroupValidationError(
+      `${field} must be a string`,
+    );
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0
+    ? normalized
+    : undefined;
 }
 
 function buildTalentGroupCorePatch(params: {

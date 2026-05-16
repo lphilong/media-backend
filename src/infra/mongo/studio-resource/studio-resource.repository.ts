@@ -1,4 +1,9 @@
 import { ClientSession, Db } from "mongodb";
+import {
+  buildGeneratedBusinessCodeRegex,
+  BusinessCodePolicy,
+  parseGeneratedBusinessCodeSequence,
+} from "@core/business-code/business-code-sequence.repository";
 import { BaseRepository } from "@infra/database/repository/base.repository";
 import {
   StudioResourceRepository,
@@ -71,6 +76,34 @@ export class NativeMongoStudioResourceRepository
     );
 
     return doc ? toStudioResourceRecord(doc) : null;
+  }
+
+  async findMaxGeneratedCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number> {
+    const doc = await this.collection
+      .find(
+        {
+          resourceCode:
+            buildGeneratedBusinessCodeRegex(policy),
+        },
+        this.withSession(session),
+      )
+      .sort({ resourceCode: -1 })
+      .limit(1)
+      .next();
+
+    if (!doc) {
+      return 0;
+    }
+
+    return (
+      parseGeneratedBusinessCodeSequence(
+        doc.resourceCode,
+        policy,
+      ) ?? 0
+    );
   }
 
   async updateCore(

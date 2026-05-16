@@ -1,4 +1,5 @@
 import { ClientSession } from "mongodb";
+import { BusinessCodePolicy } from "@core/business-code/business-code-sequence.repository";
 import {
   TalentGroupMemberRecord,
   TalentGroupMemberStatus,
@@ -71,6 +72,11 @@ export interface TalentGroupRepository {
     groupCode: string,
     session?: ClientSession,
   ): Promise<TalentGroupRecord | null>;
+
+  findMaxGeneratedCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number>;
 
   findLiveGroupByNormalizedName(
     input: FindLiveTalentGroupByNormalizedNameInput,

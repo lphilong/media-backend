@@ -1,4 +1,5 @@
 import { ClientSession } from "mongodb";
+import { BusinessCodePolicy } from "@core/business-code/business-code-sequence.repository";
 import {
   EmploymentContractStatus,
   EmploymentKind,
@@ -67,6 +68,11 @@ export interface EmploymentProfileRepository {
     employeeCode: string,
     session?: ClientSession,
   ): Promise<EmploymentProfileRecord | null>;
+
+  findMaxGeneratedCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number>;
 
   findNonArchivedByLinkedUserId(
     linkedUserId: string,

@@ -1,4 +1,5 @@
 import { ClientSession } from "mongodb";
+import { BusinessCodePolicy } from "@core/business-code/business-code-sequence.repository";
 import {
   StudioResourceOperationalStatus,
   StudioResourceRecord,
@@ -39,6 +40,11 @@ export interface StudioResourceRepository {
     resourceCode: string,
     session?: ClientSession,
   ): Promise<StudioResourceRecord | null>;
+
+  findMaxGeneratedCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number>;
 
   updateCore(
     input: UpdateStudioResourceCoreInput,

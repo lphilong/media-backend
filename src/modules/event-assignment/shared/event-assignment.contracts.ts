@@ -20,7 +20,7 @@ export interface EventAssignmentInput {
 }
 
 export interface CreateEventCommand {
-  readonly eventCode: string;
+  readonly eventCode?: string | null;
   readonly title: string;
   readonly assignments: readonly EventAssignmentInput[];
   readonly studioResourceIds?: readonly string[];

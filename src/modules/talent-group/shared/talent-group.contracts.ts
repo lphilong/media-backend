@@ -11,7 +11,7 @@ import {
 } from "@modules/talent-group/domain/talent-group.types";
 
 export interface CreateTalentGroupCommand {
-  readonly groupCode: string;
+  readonly groupCode?: string | null;
   readonly name: string;
   readonly shortName?: string | null;
   readonly description?: string | null;

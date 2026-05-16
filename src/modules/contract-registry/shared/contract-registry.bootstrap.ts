@@ -102,7 +102,7 @@ export function createContractRegistryBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           linkedEmploymentProfileId: {
-            $ne: null,
+            $type: "string",
           },
         },
       );
@@ -118,7 +118,7 @@ export function createContractRegistryBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           linkedTalentId: {
-            $ne: null,
+            $type: "string",
           },
         },
       );

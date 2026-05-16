@@ -103,7 +103,7 @@ export function createWorkScheduleBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           subjectEmploymentProfileId: {
-            $ne: null,
+            $type: "string",
           },
         },
       );
@@ -121,7 +121,7 @@ export function createWorkScheduleBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           subjectTalentId: {
-            $ne: null,
+            $type: "string",
           },
         },
       );
@@ -139,7 +139,7 @@ export function createWorkScheduleBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           subjectTalentGroupId: {
-            $ne: null,
+            $type: "string",
           },
         },
       );
@@ -197,7 +197,7 @@ export function createWorkScheduleBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           sourceGenerationRunId: {
-            $ne: null,
+            $type: "string",
           },
         },
       );
@@ -337,7 +337,7 @@ export function createWorkScheduleBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: {
-            $ne: "ARCHIVED",
+            $in: ["DRAFT", "PUBLISHED", "LOCKED"],
           },
         },
       );
@@ -521,13 +521,30 @@ function hasDeepExactShape(
   candidate: unknown,
   expected: unknown,
 ): boolean {
+  if (Object.is(candidate, expected)) {
+    return true;
+  }
+
+  if (
+    Array.isArray(candidate) &&
+    Array.isArray(expected)
+  ) {
+    if (candidate.length !== expected.length) {
+      return false;
+    }
+
+    return candidate.every((entry, index) =>
+      hasDeepExactShape(entry, expected[index]),
+    );
+  }
+
   if (
     typeof candidate !== "object" ||
     candidate === null ||
     typeof expected !== "object" ||
     expected === null
   ) {
-    return Object.is(candidate, expected);
+    return false;
   }
 
   if (

@@ -1,4 +1,5 @@
 import { Db } from "mongodb";
+import { NativeMongoBusinessCodeSequenceRepository } from "@infra/mongo/business-code/business-code-sequence.repository";
 import { NativeMongoTalentKpiReadRepository } from "@infra/mongo/talent-kpi/talent-kpi.read-repository";
 import {
   NativeMongoTalentKpiEventReadonlyAccess,
@@ -9,6 +10,7 @@ import { NativeMongoTalentKpiRepository } from "@infra/mongo/talent-kpi/talent-k
 
 export interface TalentKpiInfra {
   readonly talentKpiRepository: NativeMongoTalentKpiRepository;
+  readonly businessCodeSequenceRepository: NativeMongoBusinessCodeSequenceRepository;
   readonly talentKpiReadRepository: NativeMongoTalentKpiReadRepository;
   readonly talentKpiTalentReadonlyAccess: NativeMongoTalentKpiTalentReadonlyAccess;
   readonly talentKpiPlatformAccountReadonlyAccess: NativeMongoTalentKpiPlatformAccountReadonlyAccess;
@@ -21,6 +23,8 @@ export function createTalentKpiInfra(
   return {
     talentKpiRepository:
       new NativeMongoTalentKpiRepository(db),
+    businessCodeSequenceRepository:
+      new NativeMongoBusinessCodeSequenceRepository(db),
     talentKpiReadRepository:
       new NativeMongoTalentKpiReadRepository(db),
     talentKpiTalentReadonlyAccess:

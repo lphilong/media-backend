@@ -1,4 +1,5 @@
 import { Db } from "mongodb";
+import { NativeMongoBusinessCodeSequenceRepository } from "@infra/mongo/business-code/business-code-sequence.repository";
 import {
   NativeMongoTalentGroupReadRepository,
   NativeMongoTalentTalentGroupReadonlyAccess,
@@ -11,6 +12,7 @@ import { NativeMongoTalentGroupRepository } from "@infra/mongo/talent-group/tale
 
 export interface TalentGroupInfra {
   readonly talentGroupRepository: NativeMongoTalentGroupRepository;
+  readonly businessCodeSequenceRepository: NativeMongoBusinessCodeSequenceRepository;
   readonly talentGroupReadRepository: NativeMongoTalentGroupReadRepository;
   readonly talentGroupTalentReadonlyAccess: NativeMongoTalentGroupTalentReadonlyAccess;
   readonly talentGroupPlatformAccountReadonlyAccess: NativeMongoTalentGroupPlatformAccountReadonlyAccess;
@@ -25,6 +27,8 @@ export function createTalentGroupInfra(
   return {
     talentGroupRepository:
       new NativeMongoTalentGroupRepository(db),
+    businessCodeSequenceRepository:
+      new NativeMongoBusinessCodeSequenceRepository(db),
     talentGroupReadRepository:
       new NativeMongoTalentGroupReadRepository(db),
     talentGroupTalentReadonlyAccess:

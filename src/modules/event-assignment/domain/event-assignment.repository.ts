@@ -1,4 +1,5 @@
 import { ClientSession } from "mongodb";
+import { BusinessCodePolicy } from "@core/business-code/business-code-sequence.repository";
 import {
   EventAssignmentKind,
   EventAssignmentRecord,
@@ -98,6 +99,11 @@ export interface EventAssignmentRepository {
     eventCode: string,
     session?: ClientSession,
   ): Promise<EventRecord | null>;
+
+  findMaxGeneratedEventCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number>;
 
   updateEventCore(
     input: UpdateEventCoreInput,

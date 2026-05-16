@@ -242,6 +242,8 @@ export async function createAdminRoutes(
   /* ORG UNIT */
   const {
     orgUnitRepository,
+    businessCodeSequenceRepository:
+      orgUnitBusinessCodeSequenceRepository,
     orgUnitReadRepository,
     orgUnitEmploymentReadonlyAccess,
     orgUnitPlatformAccountReadonlyAccess,
@@ -249,6 +251,8 @@ export async function createAdminRoutes(
 
   const {
     employmentProfileRepository,
+    businessCodeSequenceRepository:
+      employmentProfileBusinessCodeSequenceRepository,
     employmentProfileReadRepository,
     employmentProfileOrgUnitReadonlyAccess,
     employmentProfileUserReadonlyAccess,
@@ -258,6 +262,8 @@ export async function createAdminRoutes(
   } = createEmploymentProfileInfra(infra.primaryDb);
   const {
     talentRepository,
+    businessCodeSequenceRepository:
+      talentBusinessCodeSequenceRepository,
     talentReadRepository,
     talentEmploymentProfileReadonlyAccess,
     talentTalentGroupReadonlyAccess,
@@ -267,6 +273,8 @@ export async function createAdminRoutes(
   } = createTalentInfra(infra.primaryDb);
   const {
     talentGroupRepository,
+    businessCodeSequenceRepository:
+      talentGroupBusinessCodeSequenceRepository,
     talentGroupReadRepository,
     talentGroupTalentReadonlyAccess,
     talentGroupPlatformAccountReadonlyAccess,
@@ -275,6 +283,8 @@ export async function createAdminRoutes(
   } = createTalentGroupInfra(infra.primaryDb);
   const {
     platformAccountRepository,
+    businessCodeSequenceRepository:
+      platformAccountBusinessCodeSequenceRepository,
     platformAccountReadRepository,
     platformAccountOrgUnitReadonlyAccess,
     platformAccountTalentReadonlyAccess,
@@ -283,6 +293,8 @@ export async function createAdminRoutes(
   } = createPlatformAccountInfra(infra.primaryDb);
   const {
     studioResourceRepository,
+    businessCodeSequenceRepository:
+      studioResourceBusinessCodeSequenceRepository,
     studioResourceReadRepository,
     studioResourceWorkScheduleReadonlyAccess,
     studioResourceEventAssignmentReadonlyAccess,
@@ -305,6 +317,8 @@ export async function createAdminRoutes(
   } = createWorkScheduleInfra(infra.primaryDb);
   const {
     eventAssignmentRepository,
+    businessCodeSequenceRepository:
+      eventAssignmentBusinessCodeSequenceRepository,
     eventAssignmentReadRepository,
     eventAssignmentEmploymentProfileReadonlyAccess,
     eventAssignmentTalentReadonlyAccess,
@@ -314,12 +328,16 @@ export async function createAdminRoutes(
   } = createEventAssignmentInfra(infra.primaryDb);
   const {
     contractRegistryRepository,
+    businessCodeSequenceRepository:
+      contractRegistryBusinessCodeSequenceRepository,
     contractRegistryReadRepository,
     contractRegistryEmploymentProfileReadonlyAccess,
     contractRegistryTalentReadonlyAccess,
   } = createContractRegistryInfra(infra.primaryDb);
   const {
     talentKpiRepository,
+    businessCodeSequenceRepository:
+      talentKpiBusinessCodeSequenceRepository,
     talentKpiReadRepository,
     talentKpiTalentReadonlyAccess,
     talentKpiPlatformAccountReadonlyAccess,
@@ -327,6 +345,8 @@ export async function createAdminRoutes(
   } = createTalentKpiInfra(infra.primaryDb);
   const {
     commissionRepository,
+    businessCodeSequenceRepository:
+      commissionBusinessCodeSequenceRepository,
     commissionReadRepository,
     commissionEmploymentProfileReadonlyAccess,
     commissionTalentReadonlyAccess,
@@ -337,6 +357,8 @@ export async function createAdminRoutes(
   );
   const {
     revenueEntryRepository,
+    businessCodeSequenceRepository:
+      revenueLedgerBusinessCodeSequenceRepository,
     revenueLedgerReadRepository,
     revenueLedgerTalentReadonlyAccess,
     revenueLedgerPlatformAccountReadonlyAccess,
@@ -348,6 +370,7 @@ export async function createAdminRoutes(
 
   const orgUnitService = new OrgUnitAdminService(
     orgUnitRepository,
+    orgUnitBusinessCodeSequenceRepository,
     orgUnitEmploymentReadonlyAccess,
     orgUnitPlatformAccountReadonlyAccess,
     authoritativeAuditGuard,
@@ -378,6 +401,7 @@ export async function createAdminRoutes(
   const employmentProfileService =
     new EmploymentProfileAdminService(
       employmentProfileRepository,
+      employmentProfileBusinessCodeSequenceRepository,
       employmentProfileOrgUnitReadonlyAccess,
       employmentProfileUserReadonlyAccess,
       employmentProfileTalentReadonlyAccess,
@@ -412,6 +436,7 @@ export async function createAdminRoutes(
   /* TALENT */
   const talentService = new TalentAdminService(
     talentRepository,
+    talentBusinessCodeSequenceRepository,
     talentEmploymentProfileReadonlyAccess,
     talentTalentGroupReadonlyAccess,
     talentPlatformAccountReadonlyAccess,
@@ -445,6 +470,7 @@ export async function createAdminRoutes(
   const talentGroupService =
     new TalentGroupAdminService(
       talentGroupRepository,
+      talentGroupBusinessCodeSequenceRepository,
       talentGroupTalentReadonlyAccess,
       talentGroupPlatformAccountReadonlyAccess,
       talentGroupWorkScheduleReadonlyAccess,
@@ -479,6 +505,7 @@ export async function createAdminRoutes(
   const platformAccountService =
     new PlatformAccountAdminService(
       platformAccountRepository,
+      platformAccountBusinessCodeSequenceRepository,
       platformAccountOrgUnitReadonlyAccess,
       platformAccountTalentReadonlyAccess,
       platformAccountTalentGroupReadonlyAccess,
@@ -513,6 +540,7 @@ export async function createAdminRoutes(
   const studioResourceService =
     new StudioResourceAdminService(
       studioResourceRepository,
+      studioResourceBusinessCodeSequenceRepository,
       studioResourceWorkScheduleReadonlyAccess,
       studioResourceEventAssignmentReadonlyAccess,
       authoritativeAuditGuard,
@@ -674,6 +702,7 @@ export async function createAdminRoutes(
   const eventAssignmentService =
     new EventAssignmentAdminService(
       eventAssignmentRepository,
+      eventAssignmentBusinessCodeSequenceRepository,
       eventAssignmentEmploymentProfileReadonlyAccess,
       eventAssignmentTalentReadonlyAccess,
       eventAssignmentTalentGroupReadonlyAccess,
@@ -707,6 +736,7 @@ export async function createAdminRoutes(
   const contractRegistryService =
     new ContractRegistryAdminService(
       contractRegistryRepository,
+      contractRegistryBusinessCodeSequenceRepository,
       contractRegistryEmploymentProfileReadonlyAccess,
       contractRegistryTalentReadonlyAccess,
       authoritativeAuditGuard,
@@ -737,6 +767,7 @@ export async function createAdminRoutes(
   const talentKpiService =
     new TalentKpiAdminService(
       talentKpiRepository,
+      talentKpiBusinessCodeSequenceRepository,
       talentKpiTalentReadonlyAccess,
       talentKpiPlatformAccountReadonlyAccess,
       talentKpiEventReadonlyAccess,
@@ -768,6 +799,7 @@ export async function createAdminRoutes(
   const commissionService =
     new CommissionAdminService(
       commissionRepository,
+      commissionBusinessCodeSequenceRepository,
       commissionEmploymentProfileReadonlyAccess,
       commissionTalentReadonlyAccess,
       commissionContractRegistryReadonlyAccess,
@@ -800,6 +832,7 @@ export async function createAdminRoutes(
   const revenueLedgerService =
     new RevenueLedgerAdminService(
       revenueEntryRepository,
+      revenueLedgerBusinessCodeSequenceRepository,
       revenueLedgerTalentReadonlyAccess,
       revenueLedgerPlatformAccountReadonlyAccess,
       revenueLedgerEventReadonlyAccess,

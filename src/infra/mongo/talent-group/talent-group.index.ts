@@ -50,7 +50,7 @@ export async function initTalentGroupIndexes(
       unique: true,
       partialFilterExpression: {
         status: {
-          $ne: "ARCHIVED",
+          $in: ["ACTIVE", "INACTIVE"],
         },
       },
     },
@@ -130,7 +130,7 @@ export async function initTalentGroupIndexes(
       unique: true,
       partialFilterExpression: {
         membershipStatus: {
-          $ne: "REMOVED",
+          $in: ["ACTIVE", "INACTIVE"],
         },
       },
     },
@@ -147,7 +147,7 @@ export async function initTalentGroupIndexes(
       unique: true,
       partialFilterExpression: {
         membershipStatus: {
-          $ne: "REMOVED",
+          $in: ["ACTIVE", "INACTIVE"],
         },
       },
     },

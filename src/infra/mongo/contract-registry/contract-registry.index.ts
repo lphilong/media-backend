@@ -120,7 +120,7 @@ export async function initContractRegistryIndexes(
         CONTRACT_RECORD_LINKED_EMPLOYMENT_PROFILE_STATUS_EFFECTIVE_START_INDEX_NAME,
       partialFilterExpression: {
         linkedEmploymentProfileId: {
-          $ne: null,
+          $type: "string",
         },
       },
     },
@@ -137,7 +137,7 @@ export async function initContractRegistryIndexes(
         CONTRACT_RECORD_LINKED_TALENT_STATUS_EFFECTIVE_START_INDEX_NAME,
       partialFilterExpression: {
         linkedTalentId: {
-          $ne: null,
+          $type: "string",
         },
       },
     },

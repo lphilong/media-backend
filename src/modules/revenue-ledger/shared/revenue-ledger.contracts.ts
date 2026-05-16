@@ -13,7 +13,7 @@ import {
 } from "@modules/revenue-ledger/domain/revenue-ledger.types";
 
 export interface CreateRevenueEntryCommand {
-  readonly revenueEntryCode: string;
+  readonly revenueEntryCode?: string | null;
   readonly title: string;
   readonly subjectTalentId: string;
   readonly attributionPlatformAccountId?: string | null;

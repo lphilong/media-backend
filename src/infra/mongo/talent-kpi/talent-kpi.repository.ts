@@ -3,6 +3,11 @@ import {
   Collection,
   Db,
 } from "mongodb";
+import {
+  buildGeneratedBusinessCodeRegex,
+  BusinessCodePolicy,
+  parseGeneratedBusinessCodeSequence,
+} from "@core/business-code/business-code-sequence.repository";
 import { BaseRepository } from "@infra/database/repository/base.repository";
 import {
   FindNonArchivedByMeasurementIdentityInput,
@@ -122,6 +127,34 @@ export class NativeMongoTalentKpiRepository
     return document
       ? toTalentKpiRecord(document)
       : null;
+  }
+
+  async findMaxGeneratedKpiRecordCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number> {
+    const document = await this.collection
+      .find(
+        {
+          kpiRecordCode:
+            buildGeneratedBusinessCodeRegex(policy),
+        },
+        this.withSession(session),
+      )
+      .sort({ kpiRecordCode: -1 })
+      .limit(1)
+      .next();
+
+    if (!document) {
+      return 0;
+    }
+
+    return (
+      parseGeneratedBusinessCodeSequence(
+        document.kpiRecordCode,
+        policy,
+      ) ?? 0
+    );
   }
 
   async findNonArchivedByMeasurementIdentity(

@@ -2,6 +2,11 @@ import {
   ClientSession,
   Db,
 } from "mongodb";
+import {
+  buildGeneratedBusinessCodeRegex,
+  BusinessCodePolicy,
+  parseGeneratedBusinessCodeSequence,
+} from "@core/business-code/business-code-sequence.repository";
 import { BaseRepository } from "@infra/database/repository/base.repository";
 import {
   RevenueEntryRepository,
@@ -89,6 +94,34 @@ export class NativeMongoRevenueEntryRepository
     return document
       ? toRevenueEntry(document)
       : null;
+  }
+
+  async findMaxGeneratedRevenueEntryCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number> {
+    const document = await this.collection
+      .find(
+        {
+          revenueEntryCode:
+            buildGeneratedBusinessCodeRegex(policy),
+        },
+        this.withSession(session),
+      )
+      .sort({ revenueEntryCode: -1 })
+      .limit(1)
+      .next();
+
+    if (!document) {
+      return 0;
+    }
+
+    return (
+      parseGeneratedBusinessCodeSequence(
+        document.revenueEntryCode,
+        policy,
+      ) ?? 0
+    );
   }
 
   async updateDraftCore(

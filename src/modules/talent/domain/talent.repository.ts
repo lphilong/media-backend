@@ -1,4 +1,5 @@
 import { ClientSession } from "mongodb";
+import { BusinessCodePolicy } from "@core/business-code/business-code-sequence.repository";
 import {
   TalentCommercialParticipationStatus,
   TalentOperationalStatus,
@@ -60,6 +61,11 @@ export interface TalentRepository {
     talentCode: string,
     session?: ClientSession,
   ): Promise<TalentRecord | null>;
+
+  findMaxGeneratedCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number>;
 
   findNonArchivedByLinkedEmploymentProfileId(
     linkedEmploymentProfileId: string,

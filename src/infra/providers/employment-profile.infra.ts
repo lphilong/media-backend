@@ -1,4 +1,5 @@
 import { Db } from "mongodb";
+import { NativeMongoBusinessCodeSequenceRepository } from "@infra/mongo/business-code/business-code-sequence.repository";
 import {
   NativeMongoEmploymentProfileOrgUnitReadonlyAccess,
   NativeMongoEmploymentProfileReadRepository,
@@ -12,6 +13,7 @@ import { NativeMongoEmploymentProfileRepository } from "@infra/mongo/employment-
 
 export interface EmploymentProfileInfra {
   readonly employmentProfileRepository: NativeMongoEmploymentProfileRepository;
+  readonly businessCodeSequenceRepository: NativeMongoBusinessCodeSequenceRepository;
   readonly employmentProfileReadRepository: NativeMongoEmploymentProfileReadRepository;
   readonly employmentProfileOrgUnitReadonlyAccess: NativeMongoEmploymentProfileOrgUnitReadonlyAccess;
   readonly employmentProfileUserReadonlyAccess: NativeMongoEmploymentProfileUserReadonlyAccess;
@@ -27,6 +29,8 @@ export function createEmploymentProfileInfra(
   return {
     employmentProfileRepository:
       new NativeMongoEmploymentProfileRepository(db),
+    businessCodeSequenceRepository:
+      new NativeMongoBusinessCodeSequenceRepository(db),
     employmentProfileReadRepository:
       new NativeMongoEmploymentProfileReadRepository(
         db,

@@ -66,7 +66,7 @@ export function createDashboardLiteBootstrapRegistrar(): BootstrapRegistrar {
         {
           status: "ACTIVE",
           effectiveEndDate: {
-            $ne: null,
+            $type: "number",
           },
         },
       );
@@ -93,7 +93,7 @@ export function createDashboardLiteBootstrapRegistrar(): BootstrapRegistrar {
         {
           status: "FINALIZED",
           publishedAt: {
-            $ne: null,
+            $type: "number",
           },
         },
       );
@@ -120,7 +120,7 @@ export function createDashboardLiteBootstrapRegistrar(): BootstrapRegistrar {
         {
           status: "FINALIZED",
           finalizedAt: {
-            $ne: null,
+            $type: "number",
           },
         },
       );
@@ -135,7 +135,7 @@ export function createDashboardLiteBootstrapRegistrar(): BootstrapRegistrar {
         {
           status: "RECONCILED",
           reconciledAt: {
-            $ne: null,
+            $type: "number",
           },
         },
       );
@@ -162,7 +162,7 @@ export function createDashboardLiteBootstrapRegistrar(): BootstrapRegistrar {
         {
           status: "FINALIZED",
           finalizedAt: {
-            $ne: null,
+            $type: "number",
           },
         },
       );

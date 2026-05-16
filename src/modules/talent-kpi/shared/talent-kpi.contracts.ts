@@ -19,7 +19,7 @@ export interface TalentKpiMetricInput {
 }
 
 export interface CreateTalentKpiRecordCommand {
-  readonly kpiRecordCode: string;
+  readonly kpiRecordCode?: string | null;
   readonly title: string;
   readonly subjectTalentId: string;
   readonly attributionPlatformAccountId?: string | null;

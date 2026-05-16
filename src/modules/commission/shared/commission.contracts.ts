@@ -22,7 +22,7 @@ import {
 import { RevenueKind } from "@modules/revenue-ledger/domain/revenue-ledger.types";
 
 export interface CreateCommissionRuleCommand {
-  readonly ruleCode: string;
+  readonly ruleCode?: string | null;
   readonly title: string;
   readonly settlementKind: CommissionSettlementKind | string;
   readonly beneficiaryKind: CommissionBeneficiaryKind | string;
@@ -62,7 +62,7 @@ export interface ArchiveCommissionRuleCommand {
 }
 
 export interface CreateCommissionSettlementCommand {
-  readonly settlementCode: string;
+  readonly settlementCode?: string | null;
   readonly title: string;
   readonly sourceRuleId: string;
   readonly settlementPeriodStartAt: number;

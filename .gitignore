@@ -1,10 +1,17 @@
 node_modules/
+
+# Env files
 .env
 .env.*
+!.env.example
+
+# Build/runtime artifacts
 dist/
 build/
 logs/
 *.log
+
+# Local/editor/tooling
 docs/
 .vscode/
 .idea/
@@ -12,5 +19,10 @@ tools/
 .codex/
 **/.codex/
 
+# Test source visibility
+# Keep the broad ignore for now to avoid surfacing unrelated historical tests,
+# but explicitly allow the Mongo partial-index regression tests required for acceptance.
 **/*.test.ts
 **/*.spec.ts
+!src/modules/mongo-partial-index-compatibility.test.ts
+!src/modules/org-unit/org-unit-live-name-uniqueness.test.ts

@@ -53,7 +53,12 @@ export function createEmploymentProfileBootstrapRegistrar(): BootstrapRegistrar 
             $type: "string",
           },
           employmentStatus: {
-            $ne: "ARCHIVED",
+            $in: [
+              "ACTIVE",
+              "ON_LEAVE",
+              "SUSPENDED",
+              "TERMINATED",
+            ],
           },
         },
       );

@@ -1,4 +1,5 @@
 import { Db } from "mongodb";
+import { NativeMongoBusinessCodeSequenceRepository } from "@infra/mongo/business-code/business-code-sequence.repository";
 import { NativeMongoContractRegistryReadRepository } from "@infra/mongo/contract-registry/contract-registry.read-repository";
 import {
   NativeMongoContractRegistryEmploymentProfileReadonlyAccess,
@@ -8,6 +9,7 @@ import { NativeMongoContractRegistryRepository } from "@infra/mongo/contract-reg
 
 export interface ContractRegistryInfra {
   readonly contractRegistryRepository: NativeMongoContractRegistryRepository;
+  readonly businessCodeSequenceRepository: NativeMongoBusinessCodeSequenceRepository;
   readonly contractRegistryReadRepository: NativeMongoContractRegistryReadRepository;
   readonly contractRegistryEmploymentProfileReadonlyAccess: NativeMongoContractRegistryEmploymentProfileReadonlyAccess;
   readonly contractRegistryTalentReadonlyAccess: NativeMongoContractRegistryTalentReadonlyAccess;
@@ -19,6 +21,8 @@ export function createContractRegistryInfra(
   return {
     contractRegistryRepository:
       new NativeMongoContractRegistryRepository(db),
+    businessCodeSequenceRepository:
+      new NativeMongoBusinessCodeSequenceRepository(db),
     contractRegistryReadRepository:
       new NativeMongoContractRegistryReadRepository(
         db,

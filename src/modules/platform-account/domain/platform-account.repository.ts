@@ -1,4 +1,5 @@
 import { ClientSession } from "mongodb";
+import { BusinessCodePolicy } from "@core/business-code/business-code-sequence.repository";
 import {
   PlatformAccountOperationalStatus,
   PlatformAccountOwnerKind,
@@ -80,6 +81,11 @@ export interface PlatformAccountRepository {
     accountCode: string,
     session?: ClientSession,
   ): Promise<PlatformAccountRecord | null>;
+
+  findMaxGeneratedCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session?: ClientSession,
+  ): Promise<number>;
 
   findLiveByPlatformAndNormalizedHandle(
     input: FindLivePlatformAccountByNormalizedHandleInput,
