@@ -12,6 +12,12 @@ import {
   RoleListItemView,
   RolePermissionMatrixView,
 } from "@modules/role/domain/role.types";
+import {
+  RoleTemplateDefinition,
+  RoleTemplateCode,
+  RoleTemplateListItem,
+} from "@modules/role/domain/role-template.catalog";
+import { ActorScopeGrants } from "@core/actor/actor";
 
 export interface RoleAssignmentRuleInput {
   readonly id?: string;
@@ -29,6 +35,16 @@ export interface CreateRoleCommand {
   readonly initialDelegationBand?: RoleDelegationBand;
   readonly initialMaxDelegatableBand?: RoleMaxDelegatableBand;
   readonly initialAssignmentRules?: readonly RoleAssignmentRuleInput[];
+  readonly templateCode?: RoleTemplateCode;
+  readonly templateVersion?: string;
+  readonly templateAppliedAt?: number;
+}
+
+export interface CreateRoleFromTemplateCommand {
+  readonly templateCode: string;
+  readonly code: string;
+  readonly name: string;
+  readonly description?: string | null;
 }
 
 export interface UpdateRoleCommand {
@@ -67,6 +83,7 @@ export interface AssignRoleToUserCommand {
   readonly roleId: string;
   readonly userId: string;
   readonly reason?: string | null;
+  readonly scopeGrants?: ActorScopeGrants;
   readonly effectiveAt?: number | string | null;
 }
 
@@ -112,5 +129,20 @@ export interface ListRoleAssignmentsResult {
   readonly nextCursor?: string;
 }
 
-export type GetRolePermissionMatrixResult =
-  RolePermissionMatrixView;
+export type GetRolePermissionMatrixResult = RolePermissionMatrixView;
+
+export interface PreviewRoleTemplateCommand {
+  readonly templateCode: string;
+}
+
+export interface RoleTemplatePreviewResult {
+  readonly template: RoleTemplateDefinition;
+  readonly permissions: readonly string[];
+  readonly scopePlan: RoleTemplateDefinition["scopePlan"];
+  readonly warnings: readonly string[];
+  readonly unsupportedScopeNotes: readonly string[];
+}
+
+export interface ListRoleTemplatesResult {
+  readonly items: readonly RoleTemplateListItem[];
+}

@@ -44,6 +44,11 @@ interface ParsedWindowFilter {
   readonly windowEndAt?: number;
 }
 
+interface ParsedPublishedAtFilter {
+  readonly publishedFromAt?: number;
+  readonly publishedToAt?: number;
+}
+
 export class TalentKpiAdminQueryService {
   constructor(
     private readonly readRepository: TalentKpiReadRepository,
@@ -62,6 +67,10 @@ export class TalentKpiAdminQueryService {
     const window = parseWindowFilter({
       windowStartAt: query.windowStartAt,
       windowEndAt: query.windowEndAt,
+    });
+    const publishedAt = parsePublishedAtFilter({
+      publishedFromAt: query.publishedFromAt,
+      publishedToAt: query.publishedToAt,
     });
 
     return this.readRepository.listTalentKpiRecords({
@@ -87,6 +96,12 @@ export class TalentKpiAdminQueryService {
       ),
       windowStartAt: window.windowStartAt,
       windowEndAt: window.windowEndAt,
+      createdBeforeAt: parseOptionalInteger(
+        query.createdBeforeAt,
+        "createdBeforeAt",
+      ),
+      publishedFromAt: publishedAt.publishedFromAt,
+      publishedToAt: publishedAt.publishedToAt,
       limit: parseLimit(query.limit),
       cursor: parseOptionalCursor(query.cursor),
       search: parseOptionalSearch(query.search),
@@ -277,6 +292,35 @@ export class TalentKpiAdminQueryService {
     );
     PermissionGuard.assert(actor, permission);
   }
+}
+
+function parsePublishedAtFilter(input: {
+  readonly publishedFromAt: unknown;
+  readonly publishedToAt: unknown;
+}): ParsedPublishedAtFilter {
+  const publishedFromAt = parseOptionalInteger(
+    input.publishedFromAt,
+    "publishedFromAt",
+  );
+  const publishedToAt = parseOptionalInteger(
+    input.publishedToAt,
+    "publishedToAt",
+  );
+
+  if (
+    publishedFromAt !== undefined &&
+    publishedToAt !== undefined &&
+    publishedToAt <= publishedFromAt
+  ) {
+    throw new TalentKpiValidationError(
+      "publishedToAt must be strictly greater than publishedFromAt",
+    );
+  }
+
+  return {
+    publishedFromAt,
+    publishedToAt,
+  };
 }
 
 function normalizeRequiredText(

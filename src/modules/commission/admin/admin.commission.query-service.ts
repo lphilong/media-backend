@@ -79,6 +79,11 @@ interface ParsedSettlementWindowFilter {
   readonly windowEndAt?: number;
 }
 
+interface ParsedTimestampRangeFilter {
+  readonly fromAt?: number;
+  readonly toAt?: number;
+}
+
 export class CommissionAdminQueryService {
   constructor(
     private readonly readRepository: CommissionReadRepository,
@@ -261,6 +266,14 @@ export class CommissionAdminQueryService {
       windowStartAt: query.windowStartAt,
       windowEndAt: query.windowEndAt,
     });
+    const finalizedAt = parseTimestampRangeFilter(
+      {
+        fromAt: query.finalizedFromAt,
+        toAt: query.finalizedToAt,
+      },
+      "finalizedFromAt",
+      "finalizedToAt",
+    );
 
     return this.readRepository.listCommissionSettlements(
       {
@@ -295,6 +308,12 @@ export class CommissionAdminQueryService {
           ),
         windowStartAt: window.windowStartAt,
         windowEndAt: window.windowEndAt,
+        createdBeforeAt: parseOptionalInteger(
+          query.createdBeforeAt,
+          "createdBeforeAt",
+        ),
+        finalizedFromAt: finalizedAt.fromAt,
+        finalizedToAt: finalizedAt.toAt,
         limit: parseLimit(query.limit),
         cursor: parseOptionalCursor(query.cursor),
         search: parseOptionalSearch(query.search),
@@ -524,6 +543,39 @@ export class CommissionAdminQueryService {
     );
     PermissionGuard.assert(actor, permission);
   }
+}
+
+function parseTimestampRangeFilter(
+  input: {
+    readonly fromAt: unknown;
+    readonly toAt: unknown;
+  },
+  fromField: string,
+  toField: string,
+): ParsedTimestampRangeFilter {
+  const fromAt = parseOptionalInteger(
+    input.fromAt,
+    fromField,
+  );
+  const toAt = parseOptionalInteger(
+    input.toAt,
+    toField,
+  );
+
+  if (
+    fromAt !== undefined &&
+    toAt !== undefined &&
+    toAt <= fromAt
+  ) {
+    throw new CommissionValidationError(
+      `${toField} must be strictly greater than ${fromField}`,
+    );
+  }
+
+  return {
+    fromAt,
+    toAt,
+  };
 }
 
 function normalizeRequiredText(

@@ -39,6 +39,8 @@ const LIST_CONTRACT_RECORDS_QUERY_FIELDS: readonly string[] =
     "hasFileReference",
     "windowStartDate",
     "windowEndDate",
+    "effectiveEndDateFrom",
+    "effectiveEndDateTo",
     "limit",
     "cursor",
     "search",
@@ -231,6 +233,14 @@ function parseListContractRecordsQuery(
         | undefined,
     windowEndDate:
       req.query.windowEndDate as
+        | string
+        | undefined,
+    effectiveEndDateFrom:
+      req.query.effectiveEndDateFrom as
+        | string
+        | undefined,
+    effectiveEndDateTo:
+      req.query.effectiveEndDateTo as
         | string
         | undefined,
     limit: req.query.limit as string | undefined,

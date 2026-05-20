@@ -1,3 +1,5 @@
+import { ReferenceSummary } from "@modules/reference-summary";
+
 export const EMPLOYMENT_KINDS = [
   "EMPLOYEE",
   "CONTRACTOR",
@@ -60,8 +62,11 @@ export interface EmploymentProfileRecord {
   readonly titleDescription: string | null;
   readonly externalRef: string | null;
   readonly orgUnitId: string;
+  readonly orgUnitRef?: ReferenceSummary | null;
   readonly managerEmploymentProfileId: string | null;
+  readonly managerEmploymentProfileRef?: ReferenceSummary | null;
   readonly linkedUserId: string | null;
+  readonly linkedUserRef?: ReferenceSummary | null;
   readonly employmentStatus: EmploymentStatus;
   readonly contractStatus: EmploymentContractStatus;
   readonly employmentStartDate: number;
@@ -78,8 +83,11 @@ export interface EmploymentProfileListItemView {
   readonly employmentKind: EmploymentKind;
   readonly jobTitle: string;
   readonly orgUnitId: string;
+  readonly orgUnitRef?: ReferenceSummary | null;
   readonly managerEmploymentProfileId: string | null;
+  readonly managerEmploymentProfileRef?: ReferenceSummary | null;
   readonly linkedUserId: string | null;
+  readonly linkedUserRef?: ReferenceSummary | null;
   readonly employmentStatus: EmploymentStatus;
   readonly contractStatus: EmploymentContractStatus;
   readonly createdAt: number;
@@ -92,7 +100,9 @@ export interface EmploymentProfileDirectReportListItemView {
   readonly employmentStatus: EmploymentStatus;
   readonly contractStatus: EmploymentContractStatus;
   readonly orgUnitId: string;
+  readonly orgUnitRef?: ReferenceSummary | null;
   readonly managerEmploymentProfileId: string | null;
+  readonly managerEmploymentProfileRef?: ReferenceSummary | null;
 }
 
 export interface EmploymentProfileOrgUnitListItemView {
@@ -102,7 +112,9 @@ export interface EmploymentProfileOrgUnitListItemView {
   readonly employmentStatus: EmploymentStatus;
   readonly contractStatus: EmploymentContractStatus;
   readonly orgUnitId: string;
+  readonly orgUnitRef?: ReferenceSummary | null;
   readonly managerEmploymentProfileId: string | null;
+  readonly managerEmploymentProfileRef?: ReferenceSummary | null;
 }
 
 export interface EmploymentProfileDetailView {
@@ -115,8 +127,11 @@ export interface EmploymentProfileDetailView {
   readonly titleDescription: string | null;
   readonly externalRef: string | null;
   readonly orgUnitId: string;
+  readonly orgUnitRef?: ReferenceSummary | null;
   readonly managerEmploymentProfileId: string | null;
+  readonly managerEmploymentProfileRef?: ReferenceSummary | null;
   readonly linkedUserId: string | null;
+  readonly linkedUserRef?: ReferenceSummary | null;
   readonly employmentStatus: EmploymentStatus;
   readonly contractStatus: EmploymentContractStatus;
   readonly employmentStartDate: number;

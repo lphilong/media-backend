@@ -20,6 +20,9 @@ const TALENT_KPI_ADMIN_DETAIL_FIELDS = [
   "subjectTalentId",
   "attributionPlatformAccountId",
   "attributionEventId",
+  "subjectTalentRef",
+  "attributionPlatformAccountRef",
+  "attributionEventRef",
   "measurementSource",
   "status",
   "periodStartAt",
@@ -38,6 +41,9 @@ const TALENT_KPI_ADMIN_LIST_FIELDS = [
   "subjectTalentId",
   "attributionPlatformAccountId",
   "attributionEventId",
+  "subjectTalentRef",
+  "attributionPlatformAccountRef",
+  "attributionEventRef",
   "measurementSource",
   "status",
   "periodStartAt",
@@ -104,6 +110,11 @@ export const TalentKpiAdminDetailExposure =
               input.attributionPlatformAccountId,
             attributionEventId:
               input.attributionEventId,
+            subjectTalentRef: input.subjectTalentRef,
+            attributionPlatformAccountRef:
+              input.attributionPlatformAccountRef,
+            attributionEventRef:
+              input.attributionEventRef,
             measurementSource:
               input.measurementSource,
             status: input.status,
@@ -138,6 +149,11 @@ export const TalentKpiAdminListExposure =
               input.attributionPlatformAccountId,
             attributionEventId:
               input.attributionEventId,
+            subjectTalentRef: input.subjectTalentRef,
+            attributionPlatformAccountRef:
+              input.attributionPlatformAccountRef,
+            attributionEventRef:
+              input.attributionEventRef,
             measurementSource:
               input.measurementSource,
             status: input.status,

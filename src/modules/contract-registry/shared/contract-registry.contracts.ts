@@ -94,6 +94,8 @@ export interface ListContractRecordsQuery {
   readonly hasFileReference?: boolean | string;
   readonly windowStartDate?: string;
   readonly windowEndDate?: string;
+  readonly effectiveEndDateFrom?: string;
+  readonly effectiveEndDateTo?: string;
   readonly limit?: number | string;
   readonly cursor?: string;
   readonly search?: string;

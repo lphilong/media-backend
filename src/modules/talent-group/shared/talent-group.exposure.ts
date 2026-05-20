@@ -40,6 +40,7 @@ const TALENT_GROUP_MEMBER_FIELDS = [
   "id",
   "groupId",
   "talentId",
+  "talentRef",
   "membershipStatus",
   "lineupOrder",
   "joinedAt",
@@ -58,6 +59,7 @@ const TALENT_GROUP_BY_TALENT_FIELDS = [
   "displayOrder",
   "membershipId",
   "talentId",
+  "talentRef",
   "membershipStatus",
   "lineupOrder",
   "joinedAt",
@@ -130,6 +132,7 @@ export const TalentGroupMemberExposure =
             id: input.id,
             groupId: input.groupId,
             talentId: input.talentId,
+            talentRef: input.talentRef,
             membershipStatus:
               input.membershipStatus,
             lineupOrder: input.lineupOrder,
@@ -168,6 +171,7 @@ export const TalentGroupByTalentExposure =
             displayOrder: input.displayOrder,
             membershipId: input.membershipId,
             talentId: input.talentId,
+            talentRef: input.talentRef,
             membershipStatus:
               input.membershipStatus,
             lineupOrder: input.lineupOrder,

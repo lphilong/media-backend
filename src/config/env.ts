@@ -1,5 +1,7 @@
 import "dotenv/config";
 import { z } from "zod";
+import { ActorScopeGrants } from "@core/actor/actor";
+import { Permission } from "@core/permission/permission.enum";
 
 /**
  * Runtime mode selector.
@@ -43,6 +45,21 @@ const KNOWN_ENV_KEYS = [
   "STORAGE_BASE_URL",
   "STORAGE_UPLOAD_TTL",
   "STORAGE_DOWNLOAD_TTL",
+  "LOCAL_MOCK_AUTH_ENABLED",
+  "LOCAL_MOCK_AUTH_ACTOR_ID",
+  "LOCAL_MOCK_AUTH_EMAIL",
+  "LOCAL_MOCK_AUTH_PERMISSIONS",
+  "LOCAL_MOCK_AUTH_SCOPE_GRANTS",
+  "APP_ENV",
+  "DEPLOY_ENV",
+  "RENDER",
+  "RENDER_SERVICE_ID",
+  "RENDER_EXTERNAL_URL",
+  "VERCEL",
+  "VERCEL_ENV",
+  "RAILWAY_ENVIRONMENT",
+  "FLY_APP_NAME",
+  "HEROKU_APP_NAME",
 ] as const;
 
 type KnownEnvKey = (typeof KNOWN_ENV_KEYS)[number];
@@ -82,6 +99,198 @@ function isValidIanaTimeZone(
   } catch {
     return false;
   }
+}
+
+const CANONICAL_PERMISSION_CODES = new Set<string>(
+  Object.values(Permission),
+);
+
+const LOCAL_MOCK_AUTH_SCOPE_GRANT_KEYS = new Set([
+  "workSchedule",
+  "eventAssignment",
+  "contractRegistry",
+  "talentKpi",
+  "revenueLedger",
+  "commission",
+  "dashboardLite",
+]);
+
+const LOCAL_MOCK_AUTH_SCOPE_GRANT_VALUES: Readonly<
+  Record<string, ReadonlySet<string>>
+> = Object.freeze({
+  workSchedule: new Set([
+    "self",
+    "team",
+    "department",
+    "global",
+  ]),
+  eventAssignment: new Set(["global"]),
+  contractRegistry: new Set(["global"]),
+  talentKpi: new Set(["global"]),
+  revenueLedger: new Set(["global"]),
+  commission: new Set(["global"]),
+  dashboardLite: new Set(["global"]),
+});
+
+function parsePermissionCsv(
+  input: string | undefined,
+): readonly Permission[] {
+  if (input === undefined || input.trim().length === 0) {
+    return Object.freeze([]);
+  }
+
+  const unique = new Set<Permission>();
+
+  for (const rawEntry of input.split(",")) {
+    const entry = rawEntry.trim();
+    if (entry.length === 0) {
+      continue;
+    }
+
+    if (!CANONICAL_PERMISSION_CODES.has(entry)) {
+      throw new Error(
+        `LOCAL_MOCK_AUTH_PERMISSIONS contains unknown permission: ${entry}`,
+      );
+    }
+
+    unique.add(entry as Permission);
+  }
+
+  return Object.freeze([...unique.values()]);
+}
+
+function assertPlainRecord(
+  value: unknown,
+  label: string,
+): asserts value is Record<string, unknown> {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    throw new Error(`${label} must be a JSON object`);
+  }
+}
+
+function parseScopeGrantsJson(
+  input: string | undefined,
+): ActorScopeGrants {
+  if (input === undefined || input.trim().length === 0) {
+    return Object.freeze({});
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(input);
+  } catch {
+    throw new Error(
+      "LOCAL_MOCK_AUTH_SCOPE_GRANTS must be valid JSON",
+    );
+  }
+
+  assertPlainRecord(
+    parsed,
+    "LOCAL_MOCK_AUTH_SCOPE_GRANTS",
+  );
+
+  const scopeGrants: Record<string, readonly string[]> = {};
+
+  for (const [key, value] of Object.entries(parsed)) {
+    if (!LOCAL_MOCK_AUTH_SCOPE_GRANT_KEYS.has(key)) {
+      throw new Error(
+        `LOCAL_MOCK_AUTH_SCOPE_GRANTS contains unsupported key: ${key}`,
+      );
+    }
+
+    if (
+      !Array.isArray(value) ||
+      !value.every((entry) => typeof entry === "string")
+    ) {
+      throw new Error(
+        `LOCAL_MOCK_AUTH_SCOPE_GRANTS.${key} must be an array of strings`,
+      );
+    }
+
+    const allowed =
+      LOCAL_MOCK_AUTH_SCOPE_GRANT_VALUES[key];
+    const unique = new Set<string>();
+
+    for (const rawScope of value) {
+      const scope = rawScope.trim();
+      if (scope.length === 0 || !allowed?.has(scope)) {
+        throw new Error(
+          `LOCAL_MOCK_AUTH_SCOPE_GRANTS.${key} contains unsupported scope`,
+        );
+      }
+
+      unique.add(scope);
+    }
+
+    scopeGrants[key] = Object.freeze([
+      ...unique.values(),
+    ]);
+  }
+
+  return Object.freeze(scopeGrants) as ActorScopeGrants;
+}
+
+function isTruthyDeployMarker(
+  value: string | undefined,
+): boolean {
+  if (value === undefined) {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized.length > 0 &&
+    normalized !== "false" &&
+    normalized !== "0" &&
+    normalized !== "local" &&
+    normalized !== "development"
+  );
+}
+
+function hasDeployedRuntimeMarker(env: {
+  readonly APP_ENV?: string;
+  readonly DEPLOY_ENV?: string;
+  readonly RENDER?: string;
+  readonly RENDER_SERVICE_ID?: string;
+  readonly RENDER_EXTERNAL_URL?: string;
+  readonly VERCEL?: string;
+  readonly VERCEL_ENV?: string;
+  readonly RAILWAY_ENVIRONMENT?: string;
+  readonly FLY_APP_NAME?: string;
+  readonly HEROKU_APP_NAME?: string;
+}): boolean {
+  const environmentValues = [
+    env.APP_ENV,
+    env.DEPLOY_ENV,
+    env.VERCEL_ENV,
+    env.RAILWAY_ENVIRONMENT,
+  ];
+
+  for (const value of environmentValues) {
+    const normalized = value?.trim().toLowerCase();
+    if (
+      normalized === "production" ||
+      normalized === "prod" ||
+      normalized === "staging" ||
+      normalized === "stage" ||
+      normalized === "deployed"
+    ) {
+      return true;
+    }
+  }
+
+  return (
+    isTruthyDeployMarker(env.RENDER) ||
+    isTruthyDeployMarker(env.RENDER_SERVICE_ID) ||
+    isTruthyDeployMarker(env.RENDER_EXTERNAL_URL) ||
+    isTruthyDeployMarker(env.VERCEL) ||
+    isTruthyDeployMarker(env.FLY_APP_NAME) ||
+    isTruthyDeployMarker(env.HEROKU_APP_NAME)
+  );
 }
 
 function readKnownEnv(
@@ -303,8 +512,121 @@ const envSchema = z
       .int()
       .positive()
       .default(300),
+
+    /* =========================
+     * LOCAL-ONLY MOCK AUTH
+     * ========================= */
+    LOCAL_MOCK_AUTH_ENABLED: z
+      .string()
+      .optional()
+      .transform((value, ctx) => {
+        try {
+          return parseBooleanFlag(value, false);
+        } catch (error) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              error instanceof Error
+                ? error.message
+                : "Invalid LOCAL_MOCK_AUTH_ENABLED value",
+          });
+          return z.NEVER;
+        }
+      }),
+    LOCAL_MOCK_AUTH_ACTOR_ID: z
+      .string()
+      .trim()
+      .min(1)
+      .default("local-mock-admin-actor"),
+    LOCAL_MOCK_AUTH_EMAIL: z
+      .string()
+      .trim()
+      .email()
+      .optional(),
+    LOCAL_MOCK_AUTH_PERMISSIONS: z
+      .string()
+      .optional()
+      .transform((value, ctx) => {
+        try {
+          return parsePermissionCsv(value);
+        } catch (error) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              error instanceof Error
+                ? error.message
+                : "Invalid LOCAL_MOCK_AUTH_PERMISSIONS value",
+          });
+          return z.NEVER;
+        }
+      }),
+    LOCAL_MOCK_AUTH_SCOPE_GRANTS: z
+      .string()
+      .optional()
+      .transform((value, ctx) => {
+        try {
+          return parseScopeGrantsJson(value);
+        } catch (error) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              error instanceof Error
+                ? error.message
+                : "Invalid LOCAL_MOCK_AUTH_SCOPE_GRANTS value",
+          });
+          return z.NEVER;
+        }
+      }),
+    APP_ENV: z.string().optional(),
+    DEPLOY_ENV: z.string().optional(),
+    RENDER: z.string().optional(),
+    RENDER_SERVICE_ID: z.string().optional(),
+    RENDER_EXTERNAL_URL: z.string().optional(),
+    VERCEL: z.string().optional(),
+    VERCEL_ENV: z.string().optional(),
+    RAILWAY_ENVIRONMENT: z.string().optional(),
+    FLY_APP_NAME: z.string().optional(),
+    HEROKU_APP_NAME: z.string().optional(),
   })
   .superRefine((env, ctx) => {
+    if (env.LOCAL_MOCK_AUTH_ENABLED) {
+      if (env.APP_RUNTIME !== "http") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["LOCAL_MOCK_AUTH_ENABLED"],
+          message:
+            "LOCAL_MOCK_AUTH_ENABLED is only allowed when APP_RUNTIME=http",
+        });
+      }
+
+      if (env.NODE_ENV === "production") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["LOCAL_MOCK_AUTH_ENABLED"],
+          message:
+            "LOCAL_MOCK_AUTH_ENABLED is forbidden when NODE_ENV=production",
+        });
+      }
+
+      if (hasDeployedRuntimeMarker(env)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["LOCAL_MOCK_AUTH_ENABLED"],
+          message:
+            "LOCAL_MOCK_AUTH_ENABLED is forbidden in deployed or staging runtimes",
+        });
+      }
+
+      if (env.LOCAL_MOCK_AUTH_PERMISSIONS.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["LOCAL_MOCK_AUTH_PERMISSIONS"],
+          message:
+            "LOCAL_MOCK_AUTH_PERMISSIONS is required when LOCAL_MOCK_AUTH_ENABLED=true",
+        });
+      }
+    }
+
     if (env.APP_RUNTIME === "http") {
       if (!env.AUTH0_ISSUER_BASE_URL) {
         ctx.addIssue({
@@ -409,6 +731,12 @@ function parseEnv(
   return Object.freeze(
     envSchema.parse(readKnownEnv(source)),
   );
+}
+
+export function parseEnvForTests(
+  source: NodeJS.ProcessEnv,
+): Readonly<Env> {
+  return parseEnv(source);
 }
 
 export function getEnv(): Readonly<Env> {

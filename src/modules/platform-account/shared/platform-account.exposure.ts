@@ -22,6 +22,7 @@ const PLATFORM_ACCOUNT_ADMIN_LIST_FIELDS = [
   "ownerOrgUnitId",
   "ownerTalentId",
   "ownerTalentGroupId",
+  "ownerRef",
   "operationalStatus",
   "livestreamEnabled",
   "contentPublishingEnabled",
@@ -43,6 +44,7 @@ const PLATFORM_ACCOUNT_ADMIN_DETAIL_FIELDS = [
   "ownerOrgUnitId",
   "ownerTalentId",
   "ownerTalentGroupId",
+  "ownerRef",
   "operationalStatus",
   "livestreamEnabled",
   "contentPublishingEnabled",
@@ -77,6 +79,7 @@ export const PlatformAccountAdminListExposure =
             ownerTalentId: input.ownerTalentId,
             ownerTalentGroupId:
               input.ownerTalentGroupId,
+            ownerRef: input.ownerRef,
             operationalStatus:
               input.operationalStatus,
             livestreamEnabled:
@@ -125,6 +128,7 @@ export const PlatformAccountAdminDetailExposure =
             ownerTalentId: input.ownerTalentId,
             ownerTalentGroupId:
               input.ownerTalentGroupId,
+            ownerRef: input.ownerRef,
             operationalStatus:
               input.operationalStatus,
             livestreamEnabled:

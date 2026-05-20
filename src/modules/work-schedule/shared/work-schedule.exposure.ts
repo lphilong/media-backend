@@ -35,11 +35,13 @@ const WORK_SHIFT_ADMIN_LIST_FIELDS = [
   "subjectEmploymentProfileId",
   "subjectTalentId",
   "subjectTalentGroupId",
+  "subjectRef",
   "status",
   "shiftStartAt",
   "shiftEndAt",
   "sourceType",
   "sourceRosterId",
+  "sourceRosterRef",
   "sourceRosterMonth",
   "sourceRosterLocalDate",
   "sourceRosterSlotKey",
@@ -73,7 +75,9 @@ const WORK_SHIFT_ADMIN_DETAIL_FIELDS = [
   "subjectEmploymentProfileId",
   "subjectTalentId",
   "subjectTalentGroupId",
+  "subjectRef",
   "studioResourceIds",
+  "studioResourceRefs",
   "status",
   "shiftStartAt",
   "shiftEndAt",
@@ -81,11 +85,14 @@ const WORK_SHIFT_ADMIN_DETAIL_FIELDS = [
   "externalRef",
   "sourceType",
   "sourceRosterId",
+  "sourceRosterRef",
   "sourcePatternId",
+  "sourcePatternRef",
   "sourceExceptionId",
   "sourceGenerationRunId",
   "sourceRosterMonth",
   "sourceDepartmentOrgUnitId",
+  "sourceDepartmentOrgUnitRef",
   "sourceRosterLocalDate",
   "sourceRosterSlotKey",
   "createdAt",
@@ -146,6 +153,7 @@ const ROSTER_EXCEPTION_ADMIN_FIELDS = [
   "exceptionType",
   "exceptionDate",
   "subjectEmploymentProfileId",
+  "subjectEmploymentProfileRef",
   "status",
   "title",
   "startLocalTime",
@@ -153,6 +161,7 @@ const ROSTER_EXCEPTION_ADMIN_FIELDS = [
   "workingMinutes",
   "breakMinutes",
   "studioResourceIds",
+  "studioResourceRefs",
   "reason",
   "sourceNote",
   "description",
@@ -170,8 +179,11 @@ const MONTHLY_ROSTER_ADMIN_LIST_FIELDS = [
   "targetSubjectKind",
   "targetOrgUnitMode",
   "departmentOrgUnitId",
+  "departmentOrgUnitRef",
   "workPatternId",
+  "workPatternRef",
   "holidayCalendarId",
+  "holidayCalendarRef",
   "status",
   "draftVersion",
   "exceptionCount",
@@ -194,8 +206,10 @@ const MONTHLY_ROSTER_ADMIN_DETAIL_FIELDS = [
 
 const MONTHLY_ROSTER_PREVIEW_ELIGIBLE_PROFILE_FIELDS = [
   "subjectEmploymentProfileId",
+  "subjectEmploymentProfileRef",
   "employmentStatus",
   "departmentOrgUnitId",
+  "departmentOrgUnitRef",
 ] as const;
 
 const MONTHLY_ROSTER_PREVIEW_CONFLICT_FIELDS = [
@@ -219,7 +233,9 @@ const MONTHLY_ROSTER_PREVIEW_ROW_FIELDS = [
   "monthlyRosterId",
   "rosterMonth",
   "departmentOrgUnitId",
+  "departmentOrgUnitRef",
   "subjectEmploymentProfileId",
+  "subjectEmploymentProfileRef",
   "localDate",
   "rowKind",
   "sourceExceptionId",
@@ -256,8 +272,11 @@ const MONTHLY_ROSTER_PREVIEW_FIELDS = [
   "rosterMonth",
   "timezone",
   "departmentOrgUnitId",
+  "departmentOrgUnitRef",
   "workPatternId",
+  "workPatternRef",
   "holidayCalendarId",
+  "holidayCalendarRef",
   "rosterStatus",
   "draftVersion",
   "currentPreviewHash",
@@ -282,11 +301,13 @@ export const WorkScheduleAdminListExposure =
             subjectTalentId: input.subjectTalentId,
             subjectTalentGroupId:
               input.subjectTalentGroupId,
+            subjectRef: input.subjectRef,
             status: input.status,
             shiftStartAt: input.shiftStartAt,
             shiftEndAt: input.shiftEndAt,
             sourceType: input.sourceType,
             sourceRosterId: input.sourceRosterId,
+            sourceRosterRef: input.sourceRosterRef,
             sourceRosterMonth:
               input.sourceRosterMonth,
             sourceRosterLocalDate:
@@ -380,9 +401,11 @@ export const WorkScheduleAdminDetailExposure =
             subjectTalentId: input.subjectTalentId,
             subjectTalentGroupId:
               input.subjectTalentGroupId,
+            subjectRef: input.subjectRef,
             studioResourceIds: [
               ...input.studioResourceIds,
             ],
+            studioResourceRefs: input.studioResourceRefs,
             status: input.status,
             shiftStartAt: input.shiftStartAt,
             shiftEndAt: input.shiftEndAt,
@@ -390,7 +413,9 @@ export const WorkScheduleAdminDetailExposure =
             externalRef: input.externalRef,
             sourceType: input.sourceType,
             sourceRosterId: input.sourceRosterId,
+            sourceRosterRef: input.sourceRosterRef,
             sourcePatternId: input.sourcePatternId,
+            sourcePatternRef: input.sourcePatternRef,
             sourceExceptionId:
               input.sourceExceptionId,
             sourceGenerationRunId:
@@ -399,6 +424,8 @@ export const WorkScheduleAdminDetailExposure =
               input.sourceRosterMonth,
             sourceDepartmentOrgUnitId:
               input.sourceDepartmentOrgUnitId,
+            sourceDepartmentOrgUnitRef:
+              input.sourceDepartmentOrgUnitRef,
             sourceRosterLocalDate:
               input.sourceRosterLocalDate,
             sourceRosterSlotKey:
@@ -549,6 +576,8 @@ export const RosterExceptionAdminExposure =
             exceptionDate: input.exceptionDate,
             subjectEmploymentProfileId:
               input.subjectEmploymentProfileId,
+            subjectEmploymentProfileRef:
+              input.subjectEmploymentProfileRef,
             status: input.status,
             title: input.title,
             startLocalTime: input.startLocalTime,
@@ -558,6 +587,7 @@ export const RosterExceptionAdminExposure =
             studioResourceIds: [
               ...input.studioResourceIds,
             ],
+            studioResourceRefs: input.studioResourceRefs,
             reason: input.reason,
             sourceNote: input.sourceNote,
             description: input.description,
@@ -598,9 +628,14 @@ export const MonthlyRosterAdminExposure =
               input.targetOrgUnitMode,
             departmentOrgUnitId:
               input.departmentOrgUnitId,
+            departmentOrgUnitRef:
+              input.departmentOrgUnitRef,
             workPatternId: input.workPatternId,
+            workPatternRef: input.workPatternRef,
             holidayCalendarId:
               input.holidayCalendarId,
+            holidayCalendarRef:
+              input.holidayCalendarRef,
             status: input.status,
             draftVersion: input.draftVersion,
             exceptionCount: input.exceptionCount,
@@ -635,9 +670,14 @@ export const MonthlyRosterAdminExposure =
               input.targetOrgUnitMode,
             departmentOrgUnitId:
               input.departmentOrgUnitId,
+            departmentOrgUnitRef:
+              input.departmentOrgUnitRef,
             workPatternId: input.workPatternId,
+            workPatternRef: input.workPatternRef,
             holidayCalendarId:
               input.holidayCalendarId,
+            holidayCalendarRef:
+              input.holidayCalendarRef,
             status: input.status,
             draftVersion: input.draftVersion,
             exceptionCount: input.exceptionCount,
@@ -684,9 +724,13 @@ export const MonthlyRosterPreviewAdminExposure =
           {
             subjectEmploymentProfileId:
               input.subjectEmploymentProfileId,
+            subjectEmploymentProfileRef:
+              input.subjectEmploymentProfileRef,
             employmentStatus: input.employmentStatus,
             departmentOrgUnitId:
               input.departmentOrgUnitId,
+            departmentOrgUnitRef:
+              input.departmentOrgUnitRef,
           },
           MONTHLY_ROSTER_PREVIEW_ELIGIBLE_PROFILE_FIELDS,
         ),
@@ -735,8 +779,12 @@ export const MonthlyRosterPreviewAdminExposure =
             rosterMonth: input.rosterMonth,
             departmentOrgUnitId:
               input.departmentOrgUnitId,
+            departmentOrgUnitRef:
+              input.departmentOrgUnitRef,
             subjectEmploymentProfileId:
               input.subjectEmploymentProfileId,
+            subjectEmploymentProfileRef:
+              input.subjectEmploymentProfileRef,
             localDate: input.localDate,
             rowKind: input.rowKind,
             sourceExceptionId:
@@ -803,9 +851,14 @@ export const MonthlyRosterPreviewAdminExposure =
             timezone: input.timezone,
             departmentOrgUnitId:
               input.departmentOrgUnitId,
+            departmentOrgUnitRef:
+              input.departmentOrgUnitRef,
             workPatternId: input.workPatternId,
+            workPatternRef: input.workPatternRef,
             holidayCalendarId:
               input.holidayCalendarId,
+            holidayCalendarRef:
+              input.holidayCalendarRef,
             rosterStatus: input.rosterStatus,
             draftVersion: input.draftVersion,
             currentPreviewHash:

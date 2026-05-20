@@ -6,11 +6,16 @@ import {
 } from "express";
 import { ContextType } from "@core/context/context.types";
 import { contextMiddleware } from "@core/context/context.middleware.adapter";
-import { getActor } from "@core/actor/actor-context";
+import {
+  getActor,
+  hasActor,
+} from "@core/actor/actor-context";
 import {
   Auth0ActorResolver,
   auth0JwtMiddleware,
+  createLocalMockAuthMiddleware,
 } from "@app/auth";
+import type { LocalMockAuthConfig } from "@app/auth";
 import { SystemInvariantError } from "@core/error/system-error";
 
 function assertSecureHttpContext(
@@ -33,6 +38,7 @@ export function createSecureRouter(options: {
     audience: string;
   };
   actorResolver: Auth0ActorResolver;
+  localMockAuth?: LocalMockAuthConfig;
 }): Router {
   const context = assertSecureHttpContext(
     options.context,
@@ -42,10 +48,16 @@ export function createSecureRouter(options: {
 
   router.use(contextMiddleware(context));
 
+  const jwtMiddleware = auth0JwtMiddleware({
+    issuerBaseURL: options.auth0.issuerBaseURL,
+    audience: options.auth0.audience,
+  });
+
   router.use(
-    auth0JwtMiddleware({
-      issuerBaseURL: options.auth0.issuerBaseURL,
-      audience: options.auth0.audience,
+    createLocalMockAuthMiddleware({
+      context,
+      config: options.localMockAuth,
+      fallback: jwtMiddleware,
     }),
   );
 
@@ -56,7 +68,9 @@ export function createSecureRouter(options: {
       next: NextFunction,
     ) => {
       try {
-        await options.actorResolver.resolve(req);
+        if (!hasActor(req)) {
+          await options.actorResolver.resolve(req);
+        }
 
         // Fail-closed guarantee
         getActor(req);

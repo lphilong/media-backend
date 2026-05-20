@@ -43,6 +43,9 @@ const LIST_TALENT_KPI_RECORDS_QUERY_FIELDS: readonly string[] =
     "containsMetricCode",
     "windowStartAt",
     "windowEndAt",
+    "createdBeforeAt",
+    "publishedFromAt",
+    "publishedToAt",
     "limit",
     "cursor",
     "search",
@@ -266,6 +269,18 @@ function parseListTalentKpiRecordsQuery(
         | undefined,
     windowEndAt:
       req.query.windowEndAt as
+        | string
+        | undefined,
+    createdBeforeAt:
+      req.query.createdBeforeAt as
+        | string
+        | undefined,
+    publishedFromAt:
+      req.query.publishedFromAt as
+        | string
+        | undefined,
+    publishedToAt:
+      req.query.publishedToAt as
         | string
         | undefined,
     limit: req.query.limit as string | undefined,

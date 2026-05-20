@@ -22,6 +22,8 @@ export interface ListContractRecordsReadInput {
   readonly hasFileReference?: boolean;
   readonly windowStartDate?: number;
   readonly windowEndDate?: number;
+  readonly effectiveEndDateFrom?: number;
+  readonly effectiveEndDateTo?: number;
   readonly limit: number;
   readonly cursor?: string;
   readonly search?: string;

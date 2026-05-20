@@ -1,3 +1,5 @@
+import { ReferenceSummary } from "@modules/reference-summary";
+
 export const CONTRACT_KINDS = [
   "EMPLOYMENT",
   "TALENT_SERVICE",
@@ -91,6 +93,9 @@ export interface ContractRecordDetailView {
   readonly linkedEmploymentProfileId: string | null;
   readonly linkedTalentId: string | null;
   readonly ownerEmploymentProfileId: string;
+  readonly linkedEmploymentProfileRef?: ReferenceSummary | null;
+  readonly linkedTalentRef?: ReferenceSummary | null;
+  readonly ownerEmploymentProfileRef?: ReferenceSummary | null;
   readonly confidentialityTier: ContractConfidentialityTier;
   readonly status: ContractRecordStatus;
   readonly effectiveStartDate: number;
@@ -112,6 +117,9 @@ export interface ContractRecordListItemView {
   readonly linkedEmploymentProfileId: string | null;
   readonly linkedTalentId: string | null;
   readonly ownerEmploymentProfileId: string;
+  readonly linkedEmploymentProfileRef?: ReferenceSummary | null;
+  readonly linkedTalentRef?: ReferenceSummary | null;
+  readonly ownerEmploymentProfileRef?: ReferenceSummary | null;
   readonly confidentialityTier: ContractConfidentialityTier;
   readonly status: ContractRecordStatus;
   readonly effectiveStartDate: number;
@@ -127,6 +135,8 @@ export interface ContractRecordByLinkedEntityListItemView {
   readonly linkedEntityKind: ContractLinkedEntityKind;
   readonly linkedEmploymentProfileId: string | null;
   readonly linkedTalentId: string | null;
+  readonly linkedEmploymentProfileRef?: ReferenceSummary | null;
+  readonly linkedTalentRef?: ReferenceSummary | null;
   readonly status: ContractRecordStatus;
   readonly effectiveStartDate: number;
   readonly effectiveEndDate: number | null;
@@ -138,6 +148,7 @@ export interface ContractRecordByOwnerListItemView {
   readonly title: string;
   readonly contractKind: ContractKind;
   readonly ownerEmploymentProfileId: string;
+  readonly ownerEmploymentProfileRef?: ReferenceSummary | null;
   readonly confidentialityTier: ContractConfidentialityTier;
   readonly status: ContractRecordStatus;
   readonly effectiveStartDate: number;

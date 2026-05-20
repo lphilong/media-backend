@@ -6,6 +6,7 @@ import compression from "compression";
 import { httpErrorMiddleware } from "./http/http-error.middleware";
 import { createSecureRouter } from "./router/secure-router";
 import { Auth0ActorResolver } from "./auth/auth0.actor.resolver";
+import { createLocalMockAuthConfig } from "./auth/local-mock-auth.middleware";
 import { env } from "@config/env";
 import { createAdminRoutes } from "./router/admin.routes";
 import { InfraModule } from "@infra/infra.module";
@@ -60,6 +61,13 @@ export async function createApp(options: {
         audience: requireHttpAuth0Audience(),
       },
       actorResolver: options.actorResolver,
+      localMockAuth: createLocalMockAuthConfig({
+        enabled: env.LOCAL_MOCK_AUTH_ENABLED,
+        actorId: env.LOCAL_MOCK_AUTH_ACTOR_ID,
+        email: env.LOCAL_MOCK_AUTH_EMAIL,
+        permissions: env.LOCAL_MOCK_AUTH_PERMISSIONS,
+        scopeGrants: env.LOCAL_MOCK_AUTH_SCOPE_GRANTS,
+      }),
     }),
     httpContextMiddleware(),
     adminRoutes,

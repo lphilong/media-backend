@@ -1,3 +1,5 @@
+import { ReferenceSummary } from "@modules/reference-summary";
+
 export const REVENUE_ENTRY_KINDS = [
   "PLATFORM_LIVESTREAM",
   "PLATFORM_CONTENT",
@@ -80,6 +82,9 @@ export interface RevenueEntryDetailView {
   readonly subjectTalentId: string;
   readonly attributionPlatformAccountId: string | null;
   readonly attributionEventId: string | null;
+  readonly subjectTalentRef?: ReferenceSummary | null;
+  readonly attributionPlatformAccountRef?: ReferenceSummary | null;
+  readonly attributionEventRef?: ReferenceSummary | null;
   readonly revenueKind: RevenueKind;
   readonly entrySource: RevenueEntrySource;
   readonly status: RevenueEntryStatus;
@@ -103,6 +108,9 @@ export interface RevenueEntryListItemView {
   readonly subjectTalentId: string;
   readonly attributionPlatformAccountId: string | null;
   readonly attributionEventId: string | null;
+  readonly subjectTalentRef?: ReferenceSummary | null;
+  readonly attributionPlatformAccountRef?: ReferenceSummary | null;
+  readonly attributionEventRef?: ReferenceSummary | null;
   readonly revenueKind: RevenueKind;
   readonly entrySource: RevenueEntrySource;
   readonly status: RevenueEntryStatus;

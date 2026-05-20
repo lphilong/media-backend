@@ -81,6 +81,7 @@ export interface GetEventDetailQuery {
 
 export interface ListEventsQuery {
   readonly status?: EventStatus | string;
+  readonly statusGroup?: string;
   readonly assignmentKind?: EventAssignmentKind | string;
   readonly assignmentEmploymentProfileId?: string;
   readonly assignmentTalentId?: string;
@@ -89,6 +90,10 @@ export interface ListEventsQuery {
   readonly containsPlatformAccountId?: string;
   readonly windowStartAt?: number | string;
   readonly windowEndAt?: number | string;
+  readonly eventOverlapStartAt?: number | string;
+  readonly eventOverlapEndAt?: number | string;
+  readonly eventStartFromAt?: number | string;
+  readonly eventStartToAt?: number | string;
   readonly limit?: number | string;
   readonly cursor?: string;
   readonly search?: string;

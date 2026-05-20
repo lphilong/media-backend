@@ -1,12 +1,5 @@
-import {
-  ClientSession,
-  Collection,
-  Db,
-  Document,
-} from "mongodb";
-import {
-  AuthSecurityVersionReader,
-} from "@core/auth/auth-security-version.repository";
+import { ClientSession, Collection, Db, Document } from "mongodb";
+import { AuthSecurityVersionReader } from "@core/auth/auth-security-version.repository";
 import {
   ActorScopeGrants,
   CommissionActorScopeGrant,
@@ -30,15 +23,9 @@ import { UserMapper } from "./user.mapper";
 import { UserPersistence } from "./user.persistence";
 
 const BASELINE_AUTH_SECURITY_VERSION = "bootstrap";
-const AUTH_SECURITY_VERSION_DOCUMENT_ID =
-  "admin.auth-security-version";
+const AUTH_SECURITY_VERSION_DOCUMENT_ID = "admin.auth-security-version";
 const WORK_SCHEDULE_SCOPE_GRANTS_ORDER: readonly WorkScheduleActorScopeGrant[] =
-  Object.freeze([
-    "self",
-    "team",
-    "department",
-    "global",
-  ]);
+  Object.freeze(["self", "team", "department", "global"]);
 const EVENT_ASSIGNMENT_SCOPE_GRANTS_ORDER: readonly EventAssignmentActorScopeGrant[] =
   Object.freeze(["global"]);
 const CONTRACT_REGISTRY_SCOPE_GRANTS_ORDER: readonly ContractRegistryActorScopeGrant[] =
@@ -61,6 +48,7 @@ interface UserAuthResolutionAggregateDocument {
   readonly rolePermissions?: readonly unknown[];
   readonly roleMaxDelegatableBands?: readonly unknown[];
   readonly scopeGrants?: unknown;
+  readonly assignmentScopeGrants?: readonly unknown[];
 }
 
 interface ActiveRoleAssignmentProbeDocument {
@@ -86,9 +74,7 @@ export class MongoUserAuthRepository
   constructor(db: Db) {
     this.collection = db.collection<UserPersistence>("users");
     this.authSecurityVersionCollection =
-      db.collection<AuthSecurityVersionDocument>(
-        "auth_security_versions",
-      );
+      db.collection<AuthSecurityVersionDocument>("auth_security_versions");
   }
 
   async findByAuthSubject(
@@ -122,13 +108,11 @@ export class MongoUserAuthRepository
         _id: doc._id,
         actorKind: doc.actorKind,
         accountStatus: doc.accountStatus,
-        permissions: toRuntimePermissionSet(
-          doc.rolePermissions,
-          doc._id,
-        ),
+        permissions: toRuntimePermissionSet(doc.rolePermissions, doc._id),
         scopeGrants: toRuntimeActorScopeGrants(
           doc.scopeGrants,
           doc._id,
+          doc.assignmentScopeGrants,
         ),
       });
     });
@@ -138,8 +122,7 @@ export class MongoUserAuthRepository
     permissionCodes: readonly string[],
     session: ClientSession,
   ): Promise<Readonly<Record<string, readonly string[]>>> {
-    const normalizedCodes =
-      normalizePermissionCodes(permissionCodes);
+    const normalizedCodes = normalizePermissionCodes(permissionCodes);
 
     if (normalizedCodes.length === 0) {
       return {};
@@ -152,9 +135,7 @@ export class MongoUserAuthRepository
       )
       .toArray();
 
-    const result = initializePermissionUserMap(
-      normalizedCodes,
-    );
+    const result = initializePermissionUserMap(normalizedCodes);
 
     for (const doc of docs) {
       const assignmentRoleIds = toSortedUniqueStrings(
@@ -175,10 +156,7 @@ export class MongoUserAuthRepository
       );
 
       const resolvedPermissions = new Set(
-        toRuntimePermissionSet(
-          doc.rolePermissions,
-          doc._id,
-        ),
+        toRuntimePermissionSet(doc.rolePermissions, doc._id),
       );
 
       for (const permissionCode of normalizedCodes) {
@@ -252,10 +230,7 @@ export class MongoUserAuthRepository
       resolvedRoleIds,
     );
 
-    return toRuntimeDelegationCeilingSet(
-      doc.roleMaxDelegatableBands,
-      doc._id,
-    );
+    return toRuntimeDelegationCeilingSet(doc.roleMaxDelegatableBands, doc._id);
   }
 
   async listActiveUserIdsWithGovernanceRecoverySurface(
@@ -263,8 +238,7 @@ export class MongoUserAuthRepository
     minimumDelegatableBand: RoleMaxDelegatableBandForCapability,
     session: ClientSession,
   ): Promise<readonly string[]> {
-    const normalizedCodes =
-      normalizePermissionCodes(permissionCodes);
+    const normalizedCodes = normalizePermissionCodes(permissionCodes);
 
     if (normalizedCodes.length === 0) {
       return [];
@@ -300,10 +274,7 @@ export class MongoUserAuthRepository
       );
 
       const resolvedPermissions = new Set(
-        toRuntimePermissionSet(
-          doc.rolePermissions,
-          doc._id,
-        ),
+        toRuntimePermissionSet(doc.rolePermissions, doc._id),
       );
 
       if (
@@ -314,18 +285,14 @@ export class MongoUserAuthRepository
         continue;
       }
 
-      const delegationCeilings =
-        toRuntimeDelegationCeilingSet(
-          doc.roleMaxDelegatableBands,
-          doc._id,
-        );
+      const delegationCeilings = toRuntimeDelegationCeilingSet(
+        doc.roleMaxDelegatableBands,
+        doc._id,
+      );
 
       if (
         !delegationCeilings.some((ceiling) =>
-          isDelegatableBandAtLeast(
-            ceiling,
-            minimumDelegatableBand,
-          ),
+          isDelegatableBandAtLeast(ceiling, minimumDelegatableBand),
         )
       ) {
         continue;
@@ -338,23 +305,20 @@ export class MongoUserAuthRepository
   }
 
   async readAuthSecurityVersion(): Promise<string> {
-    const doc =
-      await this.authSecurityVersionCollection.findOne(
-        {
-          _id: AUTH_SECURITY_VERSION_DOCUMENT_ID,
-        },
-        {
-          projection: { _id: 0, version: 1 },
-        },
-      );
+    const doc = await this.authSecurityVersionCollection.findOne(
+      {
+        _id: AUTH_SECURITY_VERSION_DOCUMENT_ID,
+      },
+      {
+        projection: { _id: 0, version: 1 },
+      },
+    );
 
     if (!doc) {
       return BASELINE_AUTH_SECURITY_VERSION;
     }
 
-    const version = normalizeAuthSecurityVersion(
-      doc.version,
-    );
+    const version = normalizeAuthSecurityVersion(doc.version);
 
     if (!version) {
       throw new InfrastructureError(
@@ -367,23 +331,17 @@ export class MongoUserAuthRepository
   }
 }
 
-function normalizeAuthSecurityVersion(
-  value: unknown,
-): string | null {
+function normalizeAuthSecurityVersion(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
   }
 
   const normalized = value.trim();
 
-  return normalized.length > 0
-    ? normalized
-    : null;
+  return normalized.length > 0 ? normalized : null;
 }
 
-function buildAuthResolutionPipeline(
-  authSubject: string,
-): Document[] {
+function buildAuthResolutionPipeline(authSubject: string): Document[] {
   return [
     {
       $match: {
@@ -422,6 +380,7 @@ function buildAuthResolutionPipeline(
             $project: {
               _id: 0,
               roleId: 1,
+              scopeGrants: 1,
             },
           },
         ],
@@ -501,6 +460,13 @@ function buildAuthResolutionPipeline(
             in: "$$role.maxDelegatableBand",
           },
         },
+        assignmentScopeGrants: {
+          $map: {
+            input: "$activeAssignments",
+            as: "assignment",
+            in: "$$assignment.scopeGrants",
+          },
+        },
       },
     },
     {
@@ -513,6 +479,7 @@ function buildAuthResolutionPipeline(
         rolePermissions: 1,
         roleMaxDelegatableBands: 1,
         scopeGrants: 1,
+        assignmentScopeGrants: 1,
       },
     },
   ];
@@ -648,9 +615,7 @@ function buildActivePermissionProjectionPipeline(): Document[] {
   ];
 }
 
-function buildActiveDelegationCeilingPipeline(
-  userId: string,
-): Document[] {
+function buildActiveDelegationCeilingPipeline(userId: string): Document[] {
   return [
     {
       $match: {
@@ -770,9 +735,7 @@ function buildActiveDelegationCeilingPipeline(
   ];
 }
 
-function buildActiveRoleAssignmentProbePipeline(
-  userId: string,
-): Document[] {
+function buildActiveRoleAssignmentProbePipeline(userId: string): Document[] {
   return [
     {
       $match: {
@@ -851,15 +814,54 @@ function toRuntimePermissionSet(
 function toRuntimeActorScopeGrants(
   scopeGrants: unknown,
   userId: string,
+  assignmentScopeGrantPayloads?: readonly unknown[],
+): ActorScopeGrants | undefined {
+  const normalized: {
+    workSchedule?: readonly WorkScheduleActorScopeGrant[];
+    eventAssignment?: readonly EventAssignmentActorScopeGrant[];
+    contractRegistry?: readonly ContractRegistryActorScopeGrant[];
+    talentKpi?: readonly TalentKpiActorScopeGrant[];
+    revenueLedger?: readonly RevenueLedgerActorScopeGrant[];
+    commission?: readonly CommissionActorScopeGrant[];
+    dashboardLite?: readonly DashboardLiteActorScopeGrant[];
+  } = {};
+
+  mergeRuntimeActorScopeGrants(
+    normalized,
+    normalizeRuntimeActorScopeGrantsPayload(scopeGrants, userId),
+  );
+
+  for (const assignmentScopeGrants of assignmentScopeGrantPayloads ?? []) {
+    mergeRuntimeActorScopeGrants(
+      normalized,
+      normalizeRuntimeActorScopeGrantsPayload(assignmentScopeGrants, userId),
+    );
+  }
+
+  if (
+    normalized.workSchedule === undefined &&
+    normalized.eventAssignment === undefined &&
+    normalized.contractRegistry === undefined &&
+    normalized.talentKpi === undefined &&
+    normalized.revenueLedger === undefined &&
+    normalized.commission === undefined &&
+    normalized.dashboardLite === undefined
+  ) {
+    return undefined;
+  }
+
+  return Object.freeze(normalized);
+}
+
+function normalizeRuntimeActorScopeGrantsPayload(
+  scopeGrants: unknown,
+  userId: string,
 ): ActorScopeGrants | undefined {
   if (scopeGrants === undefined || scopeGrants === null) {
     return undefined;
   }
 
-  if (
-    typeof scopeGrants !== "object" ||
-    Array.isArray(scopeGrants)
-  ) {
+  if (typeof scopeGrants !== "object" || Array.isArray(scopeGrants)) {
     throw new InfrastructureError(
       "USER_AUTH_SCOPE_GRANTS_INVALID_SHAPE",
       `Invalid actor scopeGrants payload for user ${userId}`,
@@ -868,10 +870,8 @@ function toRuntimeActorScopeGrants(
 
   const raw = scopeGrants as Record<string, unknown>;
   const rawWorkSchedule = raw.workSchedule;
-  const rawEventAssignment =
-    raw.eventAssignment;
-  const rawContractRegistry =
-    raw.contractRegistry;
+  const rawEventAssignment = raw.eventAssignment;
+  const rawContractRegistry = raw.contractRegistry;
   const rawTalentKpi = raw.talentKpi;
   const rawRevenueLedger = raw.revenueLedger;
   const rawCommission = raw.commission;
@@ -895,8 +895,7 @@ function toRuntimeActorScopeGrants(
       );
     }
 
-    const uniqueWorkScheduleScopes =
-      new Set<WorkScheduleActorScopeGrant>();
+    const uniqueWorkScheduleScopes = new Set<WorkScheduleActorScopeGrant>();
 
     for (const scope of rawWorkSchedule) {
       if (
@@ -911,15 +910,12 @@ function toRuntimeActorScopeGrants(
         );
       }
 
-      uniqueWorkScheduleScopes.add(
-        scope as WorkScheduleActorScopeGrant,
-      );
+      uniqueWorkScheduleScopes.add(scope as WorkScheduleActorScopeGrant);
     }
 
     normalized.workSchedule = Object.freeze(
-      WORK_SCHEDULE_SCOPE_GRANTS_ORDER.filter(
-        (scope) =>
-          uniqueWorkScheduleScopes.has(scope),
+      WORK_SCHEDULE_SCOPE_GRANTS_ORDER.filter((scope) =>
+        uniqueWorkScheduleScopes.has(scope),
       ),
     );
   }
@@ -946,13 +942,11 @@ function toRuntimeActorScopeGrants(
       uniqueEventAssignmentScopes.add("global");
     }
 
-    normalized.eventAssignment =
-      Object.freeze(
-        EVENT_ASSIGNMENT_SCOPE_GRANTS_ORDER.filter(
-          (scope) =>
-            uniqueEventAssignmentScopes.has(scope),
-        ),
-      );
+    normalized.eventAssignment = Object.freeze(
+      EVENT_ASSIGNMENT_SCOPE_GRANTS_ORDER.filter((scope) =>
+        uniqueEventAssignmentScopes.has(scope),
+      ),
+    );
   }
 
   if (rawContractRegistry !== undefined) {
@@ -977,15 +971,11 @@ function toRuntimeActorScopeGrants(
       uniqueContractRegistryScopes.add("global");
     }
 
-    normalized.contractRegistry =
-      Object.freeze(
-        CONTRACT_REGISTRY_SCOPE_GRANTS_ORDER.filter(
-          (scope) =>
-            uniqueContractRegistryScopes.has(
-              scope,
-            ),
-        ),
-      );
+    normalized.contractRegistry = Object.freeze(
+      CONTRACT_REGISTRY_SCOPE_GRANTS_ORDER.filter((scope) =>
+        uniqueContractRegistryScopes.has(scope),
+      ),
+    );
   }
 
   if (rawTalentKpi !== undefined) {
@@ -996,8 +986,7 @@ function toRuntimeActorScopeGrants(
       );
     }
 
-    const uniqueTalentKpiScopes =
-      new Set<TalentKpiActorScopeGrant>();
+    const uniqueTalentKpiScopes = new Set<TalentKpiActorScopeGrant>();
 
     for (const scope of rawTalentKpi) {
       if (scope !== "global") {
@@ -1011,9 +1000,8 @@ function toRuntimeActorScopeGrants(
     }
 
     normalized.talentKpi = Object.freeze(
-      TALENT_KPI_SCOPE_GRANTS_ORDER.filter(
-        (scope) =>
-          uniqueTalentKpiScopes.has(scope),
+      TALENT_KPI_SCOPE_GRANTS_ORDER.filter((scope) =>
+        uniqueTalentKpiScopes.has(scope),
       ),
     );
   }
@@ -1026,8 +1014,7 @@ function toRuntimeActorScopeGrants(
       );
     }
 
-    const uniqueRevenueLedgerScopes =
-      new Set<RevenueLedgerActorScopeGrant>();
+    const uniqueRevenueLedgerScopes = new Set<RevenueLedgerActorScopeGrant>();
 
     for (const scope of rawRevenueLedger) {
       if (scope !== "global") {
@@ -1041,9 +1028,8 @@ function toRuntimeActorScopeGrants(
     }
 
     normalized.revenueLedger = Object.freeze(
-      REVENUE_LEDGER_SCOPE_GRANTS_ORDER.filter(
-        (scope) =>
-          uniqueRevenueLedgerScopes.has(scope),
+      REVENUE_LEDGER_SCOPE_GRANTS_ORDER.filter((scope) =>
+        uniqueRevenueLedgerScopes.has(scope),
       ),
     );
   }
@@ -1056,8 +1042,7 @@ function toRuntimeActorScopeGrants(
       );
     }
 
-    const uniqueCommissionScopes =
-      new Set<CommissionActorScopeGrant>();
+    const uniqueCommissionScopes = new Set<CommissionActorScopeGrant>();
 
     for (const scope of rawCommission) {
       if (scope !== "global") {
@@ -1071,8 +1056,8 @@ function toRuntimeActorScopeGrants(
     }
 
     normalized.commission = Object.freeze(
-      COMMISSION_SCOPE_GRANTS_ORDER.filter(
-        (scope) => uniqueCommissionScopes.has(scope),
+      COMMISSION_SCOPE_GRANTS_ORDER.filter((scope) =>
+        uniqueCommissionScopes.has(scope),
       ),
     );
   }
@@ -1085,8 +1070,7 @@ function toRuntimeActorScopeGrants(
       );
     }
 
-    const uniqueDashboardLiteScopes =
-      new Set<DashboardLiteActorScopeGrant>();
+    const uniqueDashboardLiteScopes = new Set<DashboardLiteActorScopeGrant>();
 
     for (const scope of rawDashboardLite) {
       if (scope !== "global") {
@@ -1100,9 +1084,8 @@ function toRuntimeActorScopeGrants(
     }
 
     normalized.dashboardLite = Object.freeze(
-      DASHBOARD_LITE_SCOPE_GRANTS_ORDER.filter(
-        (scope) =>
-          uniqueDashboardLiteScopes.has(scope),
+      DASHBOARD_LITE_SCOPE_GRANTS_ORDER.filter((scope) =>
+        uniqueDashboardLiteScopes.has(scope),
       ),
     );
   }
@@ -1122,6 +1105,103 @@ function toRuntimeActorScopeGrants(
   return Object.freeze(normalized);
 }
 
+function mergeRuntimeActorScopeGrants(
+  target: {
+    workSchedule?: readonly WorkScheduleActorScopeGrant[];
+    eventAssignment?: readonly EventAssignmentActorScopeGrant[];
+    contractRegistry?: readonly ContractRegistryActorScopeGrant[];
+    talentKpi?: readonly TalentKpiActorScopeGrant[];
+    revenueLedger?: readonly RevenueLedgerActorScopeGrant[];
+    commission?: readonly CommissionActorScopeGrant[];
+    dashboardLite?: readonly DashboardLiteActorScopeGrant[];
+  },
+  source: ActorScopeGrants | undefined,
+): void {
+  if (!source) {
+    return;
+  }
+
+  const workSchedule = mergeOrderedScopeGrants(
+    target.workSchedule,
+    source.workSchedule,
+    WORK_SCHEDULE_SCOPE_GRANTS_ORDER,
+  );
+  if (workSchedule !== undefined) {
+    target.workSchedule = workSchedule;
+  }
+
+  const eventAssignment = mergeOrderedScopeGrants(
+    target.eventAssignment,
+    source.eventAssignment,
+    EVENT_ASSIGNMENT_SCOPE_GRANTS_ORDER,
+  );
+  if (eventAssignment !== undefined) {
+    target.eventAssignment = eventAssignment;
+  }
+
+  const contractRegistry = mergeOrderedScopeGrants(
+    target.contractRegistry,
+    source.contractRegistry,
+    CONTRACT_REGISTRY_SCOPE_GRANTS_ORDER,
+  );
+  if (contractRegistry !== undefined) {
+    target.contractRegistry = contractRegistry;
+  }
+
+  const talentKpi = mergeOrderedScopeGrants(
+    target.talentKpi,
+    source.talentKpi,
+    TALENT_KPI_SCOPE_GRANTS_ORDER,
+  );
+  if (talentKpi !== undefined) {
+    target.talentKpi = talentKpi;
+  }
+
+  const revenueLedger = mergeOrderedScopeGrants(
+    target.revenueLedger,
+    source.revenueLedger,
+    REVENUE_LEDGER_SCOPE_GRANTS_ORDER,
+  );
+  if (revenueLedger !== undefined) {
+    target.revenueLedger = revenueLedger;
+  }
+
+  const commission = mergeOrderedScopeGrants(
+    target.commission,
+    source.commission,
+    COMMISSION_SCOPE_GRANTS_ORDER,
+  );
+  if (commission !== undefined) {
+    target.commission = commission;
+  }
+
+  const dashboardLite = mergeOrderedScopeGrants(
+    target.dashboardLite,
+    source.dashboardLite,
+    DASHBOARD_LITE_SCOPE_GRANTS_ORDER,
+  );
+  if (dashboardLite !== undefined) {
+    target.dashboardLite = dashboardLite;
+  }
+}
+
+function mergeOrderedScopeGrants<T extends string>(
+  current: readonly T[] | undefined,
+  incoming: readonly T[] | undefined,
+  order: readonly T[],
+): readonly T[] | undefined {
+  if (!incoming || incoming.length === 0) {
+    return current;
+  }
+
+  const merged = new Set<T>(current ?? []);
+  for (const scope of incoming) {
+    merged.add(scope);
+  }
+
+  return Object.freeze(order.filter((scope) => merged.has(scope)));
+}
+
 function toRuntimeDelegationCeilingSet(
   values: readonly unknown[] | undefined,
   userId: string,
@@ -1130,8 +1210,7 @@ function toRuntimeDelegationCeilingSet(
     return [];
   }
 
-  const unique =
-    new Set<RoleMaxDelegatableBandForCapability>();
+  const unique = new Set<RoleMaxDelegatableBandForCapability>();
 
   for (const value of values) {
     if (value === undefined || value === null) {
@@ -1139,11 +1218,7 @@ function toRuntimeDelegationCeilingSet(
       continue;
     }
 
-    if (
-      value !== "NONE" &&
-      value !== "LIMITED" &&
-      value !== "PRIVILEGED"
-    ) {
+    if (value !== "NONE" && value !== "LIMITED" && value !== "PRIVILEGED") {
       throw new InfrastructureError(
         "USER_AUTH_ROLE_DELEGATION_BAND_INVALID_VALUE",
         `Invalid role maxDelegatableBand value for user ${userId}`,
@@ -1160,10 +1235,7 @@ function compareDelegatableBand(
   left: RoleMaxDelegatableBandForCapability,
   right: RoleMaxDelegatableBandForCapability,
 ): number {
-  return (
-    toDelegatableBandRank(left) -
-    toDelegatableBandRank(right)
-  );
+  return toDelegatableBandRank(left) - toDelegatableBandRank(right);
 }
 
 function toDelegatableBandRank(
@@ -1184,20 +1256,13 @@ function isDelegatableBandAtLeast(
   current: RoleMaxDelegatableBandForCapability,
   minimum: RoleMaxDelegatableBandForCapability,
 ): boolean {
-  return (
-    toDelegatableBandRank(current) >=
-    toDelegatableBandRank(minimum)
-  );
+  return toDelegatableBandRank(current) >= toDelegatableBandRank(minimum);
 }
 
 function assertDelegatableBand(
   value: RoleMaxDelegatableBandForCapability,
 ): void {
-  if (
-    value === "NONE" ||
-    value === "LIMITED" ||
-    value === "PRIVILEGED"
-  ) {
+  if (value === "NONE" || value === "LIMITED" || value === "PRIVILEGED") {
     return;
   }
 
@@ -1229,9 +1294,7 @@ function toSortedUniqueStrings(
   return [...unique].sort();
 }
 
-function normalizePermissionCodes(
-  codes: readonly string[],
-): readonly string[] {
+function normalizePermissionCodes(codes: readonly string[]): readonly string[] {
   const unique = new Set<string>();
 
   for (const code of codes) {
@@ -1274,9 +1337,7 @@ function finalizePermissionUserMap(
 ): Readonly<Record<string, readonly string[]>> {
   const finalized: Record<string, readonly string[]> = {};
 
-  for (const [permissionCode, userIds] of Object.entries(
-    map,
-  )) {
+  for (const [permissionCode, userIds] of Object.entries(map)) {
     finalized[permissionCode] = [...new Set(userIds)].sort();
   }
 

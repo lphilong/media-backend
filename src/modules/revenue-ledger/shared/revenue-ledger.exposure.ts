@@ -19,6 +19,9 @@ const REVENUE_LEDGER_ADMIN_DETAIL_FIELDS = [
   "subjectTalentId",
   "attributionPlatformAccountId",
   "attributionEventId",
+  "subjectTalentRef",
+  "attributionPlatformAccountRef",
+  "attributionEventRef",
   "revenueKind",
   "entrySource",
   "status",
@@ -42,6 +45,9 @@ const REVENUE_LEDGER_ADMIN_LIST_FIELDS = [
   "subjectTalentId",
   "attributionPlatformAccountId",
   "attributionEventId",
+  "subjectTalentRef",
+  "attributionPlatformAccountRef",
+  "attributionEventRef",
   "revenueKind",
   "entrySource",
   "status",
@@ -105,6 +111,11 @@ export const RevenueLedgerAdminDetailExposure =
               input.attributionPlatformAccountId,
             attributionEventId:
               input.attributionEventId,
+            subjectTalentRef: input.subjectTalentRef,
+            attributionPlatformAccountRef:
+              input.attributionPlatformAccountRef,
+            attributionEventRef:
+              input.attributionEventRef,
             revenueKind: input.revenueKind,
             entrySource: input.entrySource,
             status: input.status,
@@ -145,6 +156,11 @@ export const RevenueLedgerAdminListExposure =
               input.attributionPlatformAccountId,
             attributionEventId:
               input.attributionEventId,
+            subjectTalentRef: input.subjectTalentRef,
+            attributionPlatformAccountRef:
+              input.attributionPlatformAccountRef,
+            attributionEventRef:
+              input.attributionEventRef,
             revenueKind: input.revenueKind,
             entrySource: input.entrySource,
             status: input.status,

@@ -155,6 +155,9 @@ export interface ListCommissionSettlementsQuery {
   readonly settlementCurrencyCode?: string;
   readonly windowStartAt?: number | string;
   readonly windowEndAt?: number | string;
+  readonly createdBeforeAt?: number | string;
+  readonly finalizedFromAt?: number | string;
+  readonly finalizedToAt?: number | string;
   readonly limit?: number | string;
   readonly cursor?: string;
   readonly search?: string;

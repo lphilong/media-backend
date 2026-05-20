@@ -1,8 +1,5 @@
 import crypto from "crypto";
-import {
-  ClientSession,
-  MongoServerError,
-} from "mongodb";
+import { ClientSession, MongoServerError } from "mongodb";
 import { Actor } from "@core/actor/actor";
 import { AuditGuard } from "@core/audit/audit.guard";
 import {
@@ -23,9 +20,7 @@ import {
 } from "@infra/logger.adapter";
 import { ActorSnapshotCacheInvalidator } from "@infra/cache/actor.snapshot.cache";
 import { getCurrentDomainEventCollector } from "@system/event-bridge/domain-event.types";
-import {
-  RoleAssignmentRuleRepository,
-} from "@modules/role/domain/role-assignment-rule.repository";
+import { RoleAssignmentRuleRepository } from "@modules/role/domain/role-assignment-rule.repository";
 import {
   RoleAssignmentConflictError,
   RoleAssignmentNotFoundError,
@@ -35,6 +30,10 @@ import {
   RoleStateError,
   RoleValidationError,
 } from "@modules/role/domain/role.errors";
+import {
+  assertActorCanGrantAssignmentScopeGrants,
+  normalizeAssignmentScopeGrants,
+} from "@modules/role/domain/role-assignment-scope-grants";
 import {
   createRoleCreatedEvent,
   createRoleActivatedEvent,
@@ -46,9 +45,12 @@ import {
   createRoleRevokedFromUserEvent,
   createRoleUpdatedEvent,
 } from "@modules/role/domain/role.events";
+import { RoleRepository } from "@modules/role/domain/role.repository";
 import {
-  RoleRepository,
-} from "@modules/role/domain/role.repository";
+  getRoleTemplate,
+  isRoleTemplateCode,
+  RoleTemplateCode,
+} from "@modules/role/domain/role-template.catalog";
 import { RoleUserReadonlyAccess } from "@modules/role/domain/role-user-readonly-access";
 import { UserAdminCapabilityRepository } from "@modules/user/domain/user.admin-capability.repository";
 import {
@@ -64,13 +66,12 @@ import {
   RoleRecord,
   RoleState,
 } from "@modules/role/domain/role.types";
-import {
-  UserRoleAssignmentRepository,
-} from "@modules/role/domain/user-role-assignment.repository";
+import { UserRoleAssignmentRepository } from "@modules/role/domain/user-role-assignment.repository";
 import {
   ActivateRoleCommand,
   ArchiveRoleCommand,
   AssignRoleToUserCommand,
+  CreateRoleFromTemplateCommand,
   CreateRoleCommand,
   DeactivateRoleCommand,
   RevokeRoleFromUserCommand,
@@ -86,26 +87,23 @@ const MUTABLE_ROLE_STATES: readonly RoleState[] = [
   "ACTIVE",
   "INACTIVE",
 ];
-const CANONICAL_PERMISSION_CODES = new Set<string>(
-  Object.values(Permission),
-);
+const CANONICAL_PERMISSION_CODES = new Set<string>(Object.values(Permission));
 
-const GOVERNANCE_RECOVERY_PERMISSION_CODES: readonly string[] =
-  [
-    Permission.USER_CREATE,
-    Permission.USER_ACTIVATE,
-    Permission.USER_DISABLE,
-    Permission.USER_ARCHIVE,
-    Permission.USER_AUTH_LINKAGE_SET,
-    Permission.ROLE_CREATE,
-    Permission.ROLE_UPDATE,
-    Permission.ROLE_ACTIVATE,
-    Permission.ROLE_DEACTIVATE,
-    Permission.ROLE_ARCHIVE,
-    Permission.ROLE_PERMISSION_ASSIGN,
-    Permission.ROLE_ASSIGN_TO_USER,
-    Permission.ROLE_REVOKE_FROM_USER,
-  ];
+const GOVERNANCE_RECOVERY_PERMISSION_CODES: readonly string[] = [
+  Permission.USER_CREATE,
+  Permission.USER_ACTIVATE,
+  Permission.USER_DISABLE,
+  Permission.USER_ARCHIVE,
+  Permission.USER_AUTH_LINKAGE_SET,
+  Permission.ROLE_CREATE,
+  Permission.ROLE_UPDATE,
+  Permission.ROLE_ACTIVATE,
+  Permission.ROLE_DEACTIVATE,
+  Permission.ROLE_ARCHIVE,
+  Permission.ROLE_PERMISSION_ASSIGN,
+  Permission.ROLE_ASSIGN_TO_USER,
+  Permission.ROLE_REVOKE_FROM_USER,
+];
 
 type RoleFailureClassification =
   | "validation"
@@ -141,42 +139,45 @@ export class RoleAdminService {
         roleCode: readOptionalLogString(command.code),
       },
       async (mutationTargetDescriptor) => {
-        const permission = this.assertPermission(
-          actor,
-          Permission.ROLE_CREATE,
-        );
+        const permission = this.assertPermission(actor, Permission.ROLE_CREATE);
 
         const code = normalizeRoleCode(command.code);
-        const name = normalizeRequiredText(
-          command.name,
-          "name",
-        );
+        const name = normalizeRequiredText(command.name, "name");
         const description = normalizeNullableText(
           command.description,
           "description",
         );
-        const initialPermissions =
-          normalizePermissionCodeList(
-            command.initialPermissions,
-            "initialPermissions",
-          );
+        const initialPermissions = normalizePermissionCodeList(
+          command.initialPermissions,
+          "initialPermissions",
+        );
         this.assertActorCanAuthorPermissions(
           actor,
           initialPermissions,
           "initialPermissions",
         );
-        const initialDelegationBand =
-          normalizeRoleDelegationBand(
-            command.initialDelegationBand,
-            "initialDelegationBand",
-            "LIMITED",
-          );
-        const initialMaxDelegatableBand =
-          normalizeRoleMaxDelegatableBand(
-            command.initialMaxDelegatableBand,
-            "initialMaxDelegatableBand",
-            "NONE",
-          );
+        const initialDelegationBand = normalizeRoleDelegationBand(
+          command.initialDelegationBand,
+          "initialDelegationBand",
+          "LIMITED",
+        );
+        const initialMaxDelegatableBand = normalizeRoleMaxDelegatableBand(
+          command.initialMaxDelegatableBand,
+          "initialMaxDelegatableBand",
+          "NONE",
+        );
+        const templateCode = normalizeOptionalRoleTemplateCode(
+          command.templateCode,
+          "templateCode",
+        );
+        const templateVersion = normalizeOptionalText(
+          command.templateVersion,
+          "templateVersion",
+        );
+        const templateAppliedAt = normalizeOptionalTimestamp(
+          command.templateAppliedAt,
+          "templateAppliedAt",
+        );
 
         return this.executeAuthoritativeMutation(
           actor,
@@ -184,28 +185,22 @@ export class RoleAdminService {
           mutationType,
           mutationTargetDescriptor,
           async (session) => {
-            const existing =
-              await this.roleRepository.findByCode(
-                code,
-                session,
-              );
+            const existing = await this.roleRepository.findByCode(
+              code,
+              session,
+            );
 
             if (existing) {
-              throw new RoleConflictError(
-                `Role code already exists: ${code}`,
-              );
+              throw new RoleConflictError(`Role code already exists: ${code}`);
             }
 
             const now = Date.now();
             const roleId = crypto.randomUUID();
-            const initialAssignmentRules =
-              normalizeRoleAssignmentRules({
-                roleId,
-                rules:
-                  command.initialAssignmentRules ??
-                  [],
-                now,
-              });
+            const initialAssignmentRules = normalizeRoleAssignmentRules({
+              roleId,
+              rules: command.initialAssignmentRules ?? [],
+              now,
+            });
 
             const role: RoleRecord = {
               id: roleId,
@@ -214,10 +209,11 @@ export class RoleAdminService {
               description,
               state: "DRAFT",
               permissions: initialPermissions,
-              delegationBand:
-                initialDelegationBand,
-              maxDelegatableBand:
-                initialMaxDelegatableBand,
+              delegationBand: initialDelegationBand,
+              maxDelegatableBand: initialMaxDelegatableBand,
+              ...(templateCode ? { templateCode } : {}),
+              ...(templateVersion ? { templateVersion } : {}),
+              ...(templateAppliedAt !== undefined ? { templateAppliedAt } : {}),
               createdAt: now,
               updatedAt: now,
               activatedAt: null,
@@ -227,11 +223,7 @@ export class RoleAdminService {
             let created: RoleRecord;
 
             try {
-              created =
-                await this.roleRepository.insert(
-                  role,
-                  session,
-                );
+              created = await this.roleRepository.insert(role, session);
             } catch (error) {
               if (isDuplicateKeyError(error)) {
                 throw new RoleConflictError(
@@ -272,10 +264,7 @@ export class RoleAdminService {
               }),
             );
 
-            return toRoleMutationView(
-              created,
-              createdRules,
-            );
+            return toRoleMutationView(created, createdRules);
           },
         );
       },
@@ -284,12 +273,35 @@ export class RoleAdminService {
         roleCode: result.code,
         permissionCount: result.permissions.length,
         delegationBand: result.delegationBand,
-        maxDelegatableBand:
-          result.maxDelegatableBand,
-        assignmentRuleCount:
-          result.assignmentRules.length,
+        maxDelegatableBand: result.maxDelegatableBand,
+        assignmentRuleCount: result.assignmentRules.length,
       }),
     );
+  }
+
+  async createRoleFromTemplate(
+    actor: Actor,
+    command: CreateRoleFromTemplateCommand,
+  ): Promise<RoleMutationResult> {
+    const template = getRoleTemplate(
+      normalizeRequiredText(command.templateCode, "templateCode"),
+    );
+
+    if (!template) {
+      throw new RoleValidationError(
+        `Unknown role template code: ${command.templateCode}`,
+      );
+    }
+
+    return this.createRole(actor, {
+      code: command.code,
+      name: command.name,
+      description: command.description,
+      initialPermissions: template.permissions,
+      templateCode: template.code,
+      templateVersion: template.version,
+      templateAppliedAt: Date.now(),
+    });
   }
 
   async updateRole(
@@ -304,23 +316,14 @@ export class RoleAdminService {
         roleId: readOptionalLogString(command.roleId),
       },
       async (mutationTargetDescriptor) => {
-        const permission = this.assertPermission(
-          actor,
-          Permission.ROLE_UPDATE,
-        );
+        const permission = this.assertPermission(actor, Permission.ROLE_UPDATE);
 
-        const roleId = normalizeRequiredText(
-          command.roleId,
-          "roleId",
-        );
+        const roleId = normalizeRequiredText(command.roleId, "roleId");
 
         const hasName = command.name !== undefined;
-        const hasDescription =
-          command.description !== undefined;
-        const hasDelegationBand =
-          command.delegationBand !== undefined;
-        const hasMaxDelegatableBand =
-          command.maxDelegatableBand !== undefined;
+        const hasDescription = command.description !== undefined;
+        const hasDelegationBand = command.delegationBand !== undefined;
+        const hasMaxDelegatableBand = command.maxDelegatableBand !== undefined;
 
         if (
           !hasName &&
@@ -338,25 +341,20 @@ export class RoleAdminService {
           : undefined;
 
         const description = hasDescription
-          ? normalizeNullableText(
-              command.description,
-              "description",
+          ? normalizeNullableText(command.description, "description")
+          : undefined;
+        const delegationBand = hasDelegationBand
+          ? normalizeRoleDelegationBand(
+              command.delegationBand,
+              "delegationBand",
             )
           : undefined;
-        const delegationBand =
-          hasDelegationBand
-            ? normalizeRoleDelegationBand(
-                command.delegationBand,
-                "delegationBand",
-              )
-            : undefined;
-        const maxDelegatableBand =
-          hasMaxDelegatableBand
-            ? normalizeRoleMaxDelegatableBand(
-                command.maxDelegatableBand,
-                "maxDelegatableBand",
-              )
-            : undefined;
+        const maxDelegatableBand = hasMaxDelegatableBand
+          ? normalizeRoleMaxDelegatableBand(
+              command.maxDelegatableBand,
+              "maxDelegatableBand",
+            )
+          : undefined;
 
         return this.executeAuthoritativeMutation(
           actor,
@@ -364,10 +362,7 @@ export class RoleAdminService {
           mutationType,
           mutationTargetDescriptor,
           async (session) => {
-            const role = await this.requireRole(
-              roleId,
-              session,
-            );
+            const role = await this.requireRole(roleId, session);
 
             assertRoleStateAllowed(
               role.state,
@@ -377,17 +372,11 @@ export class RoleAdminService {
 
             const changedFields: string[] = [];
 
-            if (
-              name !== undefined &&
-              name !== role.name
-            ) {
+            if (name !== undefined && name !== role.name) {
               changedFields.push("name");
             }
 
-            if (
-              description !== undefined &&
-              description !== role.description
-            ) {
+            if (description !== undefined && description !== role.description) {
               changedFields.push("description");
             }
 
@@ -400,12 +389,9 @@ export class RoleAdminService {
 
             if (
               maxDelegatableBand !== undefined &&
-              maxDelegatableBand !==
-                role.maxDelegatableBand
+              maxDelegatableBand !== role.maxDelegatableBand
             ) {
-              changedFields.push(
-                "maxDelegatableBand",
-              );
+              changedFields.push("maxDelegatableBand");
             }
 
             if (changedFields.length === 0) {
@@ -415,30 +401,26 @@ export class RoleAdminService {
             }
 
             const now = Date.now();
-            const updated =
-              await this.roleRepository.updateMetadata(
-                {
-                  roleId,
-                  name,
-                  description,
-                  delegationBand,
-                  maxDelegatableBand,
-                  updatedAt: now,
-                },
-                session,
-              );
+            const updated = await this.roleRepository.updateMetadata(
+              {
+                roleId,
+                name,
+                description,
+                delegationBand,
+                maxDelegatableBand,
+                updatedAt: now,
+              },
+              session,
+            );
 
             if (!updated) {
-              throw new RoleConflictError(
-                `Failed to update role: ${roleId}`,
-              );
+              throw new RoleConflictError(`Failed to update role: ${roleId}`);
             }
 
-            const rules =
-              await this.roleAssignmentRuleRepository.listByRoleId(
-                roleId,
-                session,
-              );
+            const rules = await this.roleAssignmentRuleRepository.listByRoleId(
+              roleId,
+              session,
+            );
 
             await this.recordRoleAudit({
               actor,
@@ -453,8 +435,7 @@ export class RoleAdminService {
 
             if (
               maxDelegatableBand !== undefined &&
-              maxDelegatableBand !==
-                role.maxDelegatableBand
+              maxDelegatableBand !== role.maxDelegatableBand
             ) {
               await this.assertGovernanceRecoveryContinuity(
                 "update role delegation ceiling",
@@ -498,10 +479,7 @@ export class RoleAdminService {
           Permission.ROLE_ACTIVATE,
         );
 
-        const roleId = normalizeRequiredText(
-          command.roleId,
-          "roleId",
-        );
+        const roleId = normalizeRequiredText(command.roleId, "roleId");
 
         return this.executeAuthoritativeMutation(
           actor,
@@ -509,40 +487,31 @@ export class RoleAdminService {
           mutationType,
           mutationTargetDescriptor,
           async (session, controls) => {
-            const role = await this.requireRole(
-              roleId,
-              session,
-            );
+            const role = await this.requireRole(roleId, session);
 
-            if (
-              role.state !== "DRAFT" &&
-              role.state !== "INACTIVE"
-            ) {
+            if (role.state !== "DRAFT" && role.state !== "INACTIVE") {
               throw new RoleStateError(
                 `Role ${roleId} cannot transition from ${role.state} to ACTIVE`,
               );
             }
 
-            const trackedPermissions =
-              toSortedUniquePermissionCodes(
-                role.permissions,
-              );
-            const permissionCoverageBefore =
-              await this.readPermissionCoverage(
-                trackedPermissions,
-                session,
-              );
+            const trackedPermissions = toSortedUniquePermissionCodes(
+              role.permissions,
+            );
+            const permissionCoverageBefore = await this.readPermissionCoverage(
+              trackedPermissions,
+              session,
+            );
 
-            const updated =
-              await this.roleRepository.transitionState(
-                {
-                  roleId,
-                  fromStates: [role.state],
-                  toState: "ACTIVE",
-                  changedAt: Date.now(),
-                },
-                session,
-              );
+            const updated = await this.roleRepository.transitionState(
+              {
+                roleId,
+                fromStates: [role.state],
+                toState: "ACTIVE",
+                changedAt: Date.now(),
+              },
+              session,
+            );
 
             if (!updated) {
               throw new RoleConflictError(
@@ -555,11 +524,10 @@ export class RoleAdminService {
               session,
             );
 
-            const rules =
-              await this.roleAssignmentRuleRepository.listByRoleId(
-                roleId,
-                session,
-              );
+            const rules = await this.roleAssignmentRuleRepository.listByRoleId(
+              roleId,
+              session,
+            );
 
             await this.recordRoleAudit({
               actor,
@@ -581,19 +549,14 @@ export class RoleAdminService {
               }),
             );
 
-            await this.markAuthSecurityTruthChangedOnCoverageDelta(
-              {
-                controls,
-                trackedPermissions,
-                permissionCoverageBefore,
-                session,
-              },
-            );
+            await this.markAuthSecurityTruthChangedOnCoverageDelta({
+              controls,
+              trackedPermissions,
+              permissionCoverageBefore,
+              session,
+            });
 
-            return toRoleMutationView(
-              updated,
-              rules,
-            );
+            return toRoleMutationView(updated, rules);
           },
         );
       },
@@ -622,14 +585,8 @@ export class RoleAdminService {
           Permission.ROLE_DEACTIVATE,
         );
 
-        const roleId = normalizeRequiredText(
-          command.roleId,
-          "roleId",
-        );
-        const reason = normalizeNullableText(
-          command.reason,
-          "reason",
-        );
+        const roleId = normalizeRequiredText(command.roleId, "roleId");
+        const reason = normalizeNullableText(command.reason, "reason");
 
         return this.executeAuthoritativeMutation(
           actor,
@@ -637,10 +594,7 @@ export class RoleAdminService {
           mutationType,
           mutationTargetDescriptor,
           async (session) => {
-            const role = await this.requireRole(
-              roleId,
-              session,
-            );
+            const role = await this.requireRole(roleId, session);
 
             if (role.state !== "ACTIVE") {
               throw new RoleStateError(
@@ -654,16 +608,15 @@ export class RoleAdminService {
               session,
             );
 
-            const updated =
-              await this.roleRepository.transitionState(
-                {
-                  roleId,
-                  fromStates: ["ACTIVE"],
-                  toState: "INACTIVE",
-                  changedAt: Date.now(),
-                },
-                session,
-              );
+            const updated = await this.roleRepository.transitionState(
+              {
+                roleId,
+                fromStates: ["ACTIVE"],
+                toState: "INACTIVE",
+                changedAt: Date.now(),
+              },
+              session,
+            );
 
             if (!updated) {
               throw new RoleConflictError(
@@ -676,11 +629,10 @@ export class RoleAdminService {
               session,
             );
 
-            const rules =
-              await this.roleAssignmentRuleRepository.listByRoleId(
-                roleId,
-                session,
-              );
+            const rules = await this.roleAssignmentRuleRepository.listByRoleId(
+              roleId,
+              session,
+            );
 
             await this.recordRoleAudit({
               actor,
@@ -703,10 +655,7 @@ export class RoleAdminService {
               }),
             );
 
-            return toRoleMutationView(
-              updated,
-              rules,
-            );
+            return toRoleMutationView(updated, rules);
           },
         );
       },
@@ -735,14 +684,8 @@ export class RoleAdminService {
           Permission.ROLE_ARCHIVE,
         );
 
-        const roleId = normalizeRequiredText(
-          command.roleId,
-          "roleId",
-        );
-        const reason = normalizeNullableText(
-          command.reason,
-          "reason",
-        );
+        const roleId = normalizeRequiredText(command.roleId, "roleId");
+        const reason = normalizeNullableText(command.reason, "reason");
 
         return this.executeAuthoritativeMutation(
           actor,
@@ -750,15 +693,9 @@ export class RoleAdminService {
           mutationType,
           mutationTargetDescriptor,
           async (session) => {
-            const role = await this.requireRole(
-              roleId,
-              session,
-            );
+            const role = await this.requireRole(roleId, session);
 
-            if (
-              role.state !== "DRAFT" &&
-              role.state !== "INACTIVE"
-            ) {
+            if (role.state !== "DRAFT" && role.state !== "INACTIVE") {
               throw new RoleStateError(
                 `Role ${roleId} cannot transition from ${role.state} to ARCHIVED`,
               );
@@ -770,16 +707,15 @@ export class RoleAdminService {
               session,
             );
 
-            const updated =
-              await this.roleRepository.transitionState(
-                {
-                  roleId,
-                  fromStates: [role.state],
-                  toState: "ARCHIVED",
-                  changedAt: Date.now(),
-                },
-                session,
-              );
+            const updated = await this.roleRepository.transitionState(
+              {
+                roleId,
+                fromStates: [role.state],
+                toState: "ARCHIVED",
+                changedAt: Date.now(),
+              },
+              session,
+            );
 
             if (!updated) {
               throw new RoleConflictError(
@@ -792,11 +728,10 @@ export class RoleAdminService {
               session,
             );
 
-            const rules =
-              await this.roleAssignmentRuleRepository.listByRoleId(
-                roleId,
-                session,
-              );
+            const rules = await this.roleAssignmentRuleRepository.listByRoleId(
+              roleId,
+              session,
+            );
 
             await this.recordRoleAudit({
               actor,
@@ -819,10 +754,7 @@ export class RoleAdminService {
               }),
             );
 
-            return toRoleMutationView(
-              updated,
-              rules,
-            );
+            return toRoleMutationView(updated, rules);
           },
         );
       },
@@ -851,21 +783,13 @@ export class RoleAdminService {
           Permission.ROLE_PERMISSION_ASSIGN,
         );
 
-        const roleId = normalizeRequiredText(
-          command.roleId,
-          "roleId",
-        );
+        const roleId = normalizeRequiredText(command.roleId, "roleId");
 
-        const permissions =
-          normalizePermissionCodeList(
-            command.permissions,
-            "permissions",
-          );
-        this.assertActorCanAuthorPermissions(
-          actor,
-          permissions,
+        const permissions = normalizePermissionCodeList(
+          command.permissions,
           "permissions",
         );
+        this.assertActorCanAuthorPermissions(actor, permissions, "permissions");
 
         return this.executeAuthoritativeMutation(
           actor,
@@ -873,10 +797,7 @@ export class RoleAdminService {
           mutationType,
           mutationTargetDescriptor,
           async (session, controls) => {
-            const role = await this.requireRole(
-              roleId,
-              session,
-            );
+            const role = await this.requireRole(roleId, session);
 
             assertRoleStateAllowed(
               role.state,
@@ -884,37 +805,29 @@ export class RoleAdminService {
               "set role permissions",
             );
 
-            if (
-              areStringSetsEquivalent(
-                role.permissions,
-                permissions,
-              )
-            ) {
+            if (areStringSetsEquivalent(role.permissions, permissions)) {
               throw new RoleValidationError(
                 "At least one changed field is required",
               );
             }
 
-            const trackedPermissions =
-              mergePermissionCodeSets(
-                role.permissions,
-                permissions,
-              );
-            const permissionCoverageBefore =
-              await this.readPermissionCoverage(
-                trackedPermissions,
-                session,
-              );
+            const trackedPermissions = mergePermissionCodeSets(
+              role.permissions,
+              permissions,
+            );
+            const permissionCoverageBefore = await this.readPermissionCoverage(
+              trackedPermissions,
+              session,
+            );
 
-            const updated =
-              await this.roleRepository.replacePermissions(
-                {
-                  roleId,
-                  permissions,
-                  updatedAt: Date.now(),
-                },
-                session,
-              );
+            const updated = await this.roleRepository.replacePermissions(
+              {
+                roleId,
+                permissions,
+                updatedAt: Date.now(),
+              },
+              session,
+            );
 
             if (!updated) {
               throw new RoleConflictError(
@@ -927,11 +840,10 @@ export class RoleAdminService {
               session,
             );
 
-            const rules =
-              await this.roleAssignmentRuleRepository.listByRoleId(
-                roleId,
-                session,
-              );
+            const rules = await this.roleAssignmentRuleRepository.listByRoleId(
+              roleId,
+              session,
+            );
 
             await this.recordRoleAudit({
               actor,
@@ -940,36 +852,28 @@ export class RoleAdminService {
               mutationType,
               metadata: {
                 permissionCount: permissions.length,
-                permissionCodesSummary:
-                  permissions,
+                permissionCodesSummary: permissions,
               },
               session,
             });
 
             getCurrentDomainEventCollector().emit(
-              createRolePermissionsUpdatedEvent(
-                {
-                  roleId,
-                  permissions,
-                  aggregateVersion: updated.updatedAt,
-                  occurredAt: updated.updatedAt,
-                },
-              ),
+              createRolePermissionsUpdatedEvent({
+                roleId,
+                permissions,
+                aggregateVersion: updated.updatedAt,
+                occurredAt: updated.updatedAt,
+              }),
             );
 
-            await this.markAuthSecurityTruthChangedOnCoverageDelta(
-              {
-                controls,
-                trackedPermissions,
-                permissionCoverageBefore,
-                session,
-              },
-            );
+            await this.markAuthSecurityTruthChangedOnCoverageDelta({
+              controls,
+              trackedPermissions,
+              permissionCoverageBefore,
+              session,
+            });
 
-            return toRoleMutationView(
-              updated,
-              rules,
-            );
+            return toRoleMutationView(updated, rules);
           },
           {
             invalidateActorSnapshots: true,
@@ -1001,10 +905,7 @@ export class RoleAdminService {
           Permission.ROLE_ASSIGNMENT_RULE_SET,
         );
 
-        const roleId = normalizeRequiredText(
-          command.roleId,
-          "roleId",
-        );
+        const roleId = normalizeRequiredText(command.roleId, "roleId");
 
         return this.executeAuthoritativeMutation(
           actor,
@@ -1012,10 +913,7 @@ export class RoleAdminService {
           mutationType,
           mutationTargetDescriptor,
           async (session) => {
-            const role = await this.requireRole(
-              roleId,
-              session,
-            );
+            const role = await this.requireRole(roleId, session);
 
             assertRoleStateAllowed(
               role.state,
@@ -1024,12 +922,11 @@ export class RoleAdminService {
             );
 
             const now = Date.now();
-            const normalizedRules =
-              normalizeRoleAssignmentRules({
-                roleId,
-                rules: command.rules,
-                now,
-              });
+            const normalizedRules = normalizeRoleAssignmentRules({
+              roleId,
+              rules: command.rules,
+              now,
+            });
             const currentRules =
               await this.roleAssignmentRuleRepository.listByRoleId(
                 roleId,
@@ -1056,19 +953,16 @@ export class RoleAdminService {
                 session,
               );
 
-            const refreshedRole =
-              await this.roleRepository.updateMetadata(
-                {
-                  roleId,
-                  updatedAt: now,
-                },
-                session,
-              );
+            const refreshedRole = await this.roleRepository.updateMetadata(
+              {
+                roleId,
+                updatedAt: now,
+              },
+              session,
+            );
 
             if (!refreshedRole) {
-              throw new RoleConflictError(
-                `Failed to update role: ${roleId}`,
-              );
+              throw new RoleConflictError(`Failed to update role: ${roleId}`);
             }
 
             await this.recordRoleAudit({
@@ -1083,30 +977,22 @@ export class RoleAdminService {
             });
 
             getCurrentDomainEventCollector().emit(
-              createRoleAssignmentRulesUpdatedEvent(
-                {
-                  roleId,
-                  ruleIds: rules.map((rule) => rule.id),
-                  aggregateVersion:
-                    refreshedRole.updatedAt,
-                  occurredAt:
-                    refreshedRole.updatedAt,
-                },
-              ),
+              createRoleAssignmentRulesUpdatedEvent({
+                roleId,
+                ruleIds: rules.map((rule) => rule.id),
+                aggregateVersion: refreshedRole.updatedAt,
+                occurredAt: refreshedRole.updatedAt,
+              }),
             );
 
-            return toRoleMutationView(
-              refreshedRole,
-              rules,
-            );
+            return toRoleMutationView(refreshedRole, rules);
           },
         );
       },
       (result) => ({
         roleId: result.id,
         roleCode: result.code,
-        assignmentRuleCount:
-          result.assignmentRules.length,
+        assignmentRuleCount: result.assignmentRules.length,
       }),
     );
   }
@@ -1129,22 +1015,13 @@ export class RoleAdminService {
           Permission.ROLE_ASSIGN_TO_USER,
         );
 
-        const roleId = normalizeRequiredText(
-          command.roleId,
-          "roleId",
-        );
-        const userId = normalizeRequiredText(
-          command.userId,
-          "userId",
-        );
-        const reason = normalizeNullableText(
-          command.reason,
-          "reason",
-        );
+        const roleId = normalizeRequiredText(command.roleId, "roleId");
+        const userId = normalizeRequiredText(command.userId, "userId");
+        const reason = normalizeNullableText(command.reason, "reason");
+        const scopeGrants = normalizeAssignmentScopeGrants(command.scopeGrants);
+        assertActorCanGrantAssignmentScopeGrants(actor, scopeGrants);
 
-        assertEffectiveAtNotProvided(
-          command.effectiveAt,
-        );
+        assertEffectiveAtNotProvided(command.effectiveAt);
 
         return this.executeAuthoritativeMutation(
           actor,
@@ -1152,15 +1029,9 @@ export class RoleAdminService {
           mutationType,
           mutationTargetDescriptor,
           async (session, controls) => {
-            await this.assertActorActiveForDelegation(
-              actor,
-              session,
-            );
+            await this.assertActorActiveForDelegation(actor, session);
 
-            const role = await this.requireRole(
-              roleId,
-              session,
-            );
+            const role = await this.requireRole(roleId, session);
 
             if (role.state !== "ACTIVE") {
               throw new RoleStateError(
@@ -1174,9 +1045,7 @@ export class RoleAdminService {
               );
             }
 
-            this.assertRoleDelegationBandAssignable(
-              role,
-            );
+            this.assertRoleDelegationBandAssignable(role);
 
             await this.assertActorCanDelegateRoleBand(
               actor.id,
@@ -1185,11 +1054,10 @@ export class RoleAdminService {
               session,
             );
 
-            const targetExists =
-              await this.userReadonlyAccess.isAssignableById(
-                userId,
-                session,
-              );
+            const targetExists = await this.userReadonlyAccess.isAssignableById(
+              userId,
+              session,
+            );
 
             if (!targetExists) {
               throw new RoleDependencyError(
@@ -1210,11 +1078,10 @@ export class RoleAdminService {
               );
             }
 
-            const rules =
-              await this.roleAssignmentRuleRepository.listByRoleId(
-                roleId,
-                session,
-              );
+            const rules = await this.roleAssignmentRuleRepository.listByRoleId(
+              roleId,
+              session,
+            );
 
             assertAssignmentRulesAllow({
               actor,
@@ -1223,15 +1090,13 @@ export class RoleAdminService {
               rules,
             });
 
-            const trackedPermissions =
-              toSortedUniquePermissionCodes(
-                role.permissions,
-              );
-            const permissionCoverageBefore =
-              await this.readPermissionCoverage(
-                trackedPermissions,
-                session,
-              );
+            const trackedPermissions = toSortedUniquePermissionCodes(
+              role.permissions,
+            );
+            const permissionCoverageBefore = await this.readPermissionCoverage(
+              trackedPermissions,
+              session,
+            );
 
             const now = Date.now();
 
@@ -1239,6 +1104,7 @@ export class RoleAdminService {
               assignmentId: crypto.randomUUID(),
               roleId,
               userId,
+              ...(scopeGrants ? { scopeGrants } : {}),
               state: "ACTIVE" as const,
               effectiveAt: now,
               revokedAt: null,
@@ -1262,19 +1128,16 @@ export class RoleAdminService {
               throw error;
             }
 
-            const refreshedRole =
-              await this.roleRepository.updateMetadata(
-                {
-                  roleId,
-                  updatedAt: now,
-                },
-                session,
-              );
+            const refreshedRole = await this.roleRepository.updateMetadata(
+              {
+                roleId,
+                updatedAt: now,
+              },
+              session,
+            );
 
             if (!refreshedRole) {
-              throw new RoleConflictError(
-                `Failed to update role: ${roleId}`,
-              );
+              throw new RoleConflictError(`Failed to update role: ${roleId}`);
             }
 
             await this.recordRoleAudit({
@@ -1284,8 +1147,7 @@ export class RoleAdminService {
               mutationType,
               metadata: {
                 userId,
-                assignmentId:
-                  assignment.assignmentId,
+                assignmentId: assignment.assignmentId,
               },
               session,
             });
@@ -1293,29 +1155,21 @@ export class RoleAdminService {
             getCurrentDomainEventCollector().emit(
               createRoleAssignedToUserEvent({
                 roleId,
-                assignmentId:
-                  assignment.assignmentId,
+                assignmentId: assignment.assignmentId,
                 userId,
-                aggregateVersion:
-                  refreshedRole.updatedAt,
-                occurredAt:
-                  refreshedRole.updatedAt,
+                aggregateVersion: refreshedRole.updatedAt,
+                occurredAt: refreshedRole.updatedAt,
               }),
             );
 
-            await this.markAuthSecurityTruthChangedOnCoverageDelta(
-              {
-                controls,
-                trackedPermissions,
-                permissionCoverageBefore,
-                session,
-              },
-            );
+            await this.markAuthSecurityTruthChangedOnCoverageDelta({
+              controls,
+              trackedPermissions,
+              permissionCoverageBefore,
+              session,
+            });
 
-            return toRoleMutationView(
-              refreshedRole,
-              rules,
-            );
+            return toRoleMutationView(refreshedRole, rules);
           },
           {
             invalidateActorSnapshots: true,
@@ -1339,9 +1193,7 @@ export class RoleAdminService {
       mutationType,
       {
         roleId: readOptionalLogString(command.roleId),
-        assignmentId: readOptionalLogString(
-          command.assignmentId,
-        ),
+        assignmentId: readOptionalLogString(command.assignmentId),
       },
       async (mutationTargetDescriptor) => {
         const permission = this.assertPermission(
@@ -1349,18 +1201,12 @@ export class RoleAdminService {
           Permission.ROLE_REVOKE_FROM_USER,
         );
 
-        const roleId = normalizeRequiredText(
-          command.roleId,
-          "roleId",
-        );
+        const roleId = normalizeRequiredText(command.roleId, "roleId");
         const assignmentId = normalizeRequiredText(
           command.assignmentId,
           "assignmentId",
         );
-        const reason = normalizeNullableText(
-          command.reason,
-          "reason",
-        );
+        const reason = normalizeNullableText(command.reason, "reason");
 
         return this.executeAuthoritativeMutation(
           actor,
@@ -1368,15 +1214,9 @@ export class RoleAdminService {
           mutationType,
           mutationTargetDescriptor,
           async (session, controls) => {
-            await this.assertActorActiveForDelegation(
-              actor,
-              session,
-            );
+            await this.assertActorActiveForDelegation(actor, session);
 
-            const role = await this.requireRole(
-              roleId,
-              session,
-            );
+            const role = await this.requireRole(roleId, session);
 
             if (role.state !== "ACTIVE") {
               throw new RoleStateError(
@@ -1384,9 +1224,7 @@ export class RoleAdminService {
               );
             }
 
-            this.assertRoleDelegationBandAssignable(
-              role,
-            );
+            this.assertRoleDelegationBandAssignable(role);
 
             await this.assertActorCanDelegateRoleBand(
               actor.id,
@@ -1395,19 +1233,13 @@ export class RoleAdminService {
               session,
             );
 
-            const assignment =
-              await this.userRoleAssignmentRepository.findById(
-                assignmentId,
-                session,
-              );
+            const assignment = await this.userRoleAssignmentRepository.findById(
+              assignmentId,
+              session,
+            );
 
-            if (
-              !assignment ||
-              assignment.roleId !== roleId
-            ) {
-              throw new RoleAssignmentNotFoundError(
-                assignmentId,
-              );
+            if (!assignment || assignment.roleId !== roleId) {
+              throw new RoleAssignmentNotFoundError(assignmentId);
             }
 
             if (assignment.state !== "ACTIVE") {
@@ -1416,11 +1248,10 @@ export class RoleAdminService {
               );
             }
 
-            const targetExists =
-              await this.userReadonlyAccess.isAssignableById(
-                assignment.userId,
-                session,
-              );
+            const targetExists = await this.userReadonlyAccess.isAssignableById(
+              assignment.userId,
+              session,
+            );
 
             if (!targetExists) {
               throw new RoleDependencyError(
@@ -1428,11 +1259,10 @@ export class RoleAdminService {
               );
             }
 
-            const rules =
-              await this.roleAssignmentRuleRepository.listByRoleId(
-                roleId,
-                session,
-              );
+            const rules = await this.roleAssignmentRuleRepository.listByRoleId(
+              roleId,
+              session,
+            );
 
             assertAssignmentRulesAllow({
               actor,
@@ -1441,24 +1271,21 @@ export class RoleAdminService {
               rules,
             });
 
-            const trackedPermissions =
-              toSortedUniquePermissionCodes(
-                role.permissions,
-              );
-            const permissionCoverageBefore =
-              await this.readPermissionCoverage(
-                trackedPermissions,
-                session,
-              );
+            const trackedPermissions = toSortedUniquePermissionCodes(
+              role.permissions,
+            );
+            const permissionCoverageBefore = await this.readPermissionCoverage(
+              trackedPermissions,
+              session,
+            );
 
             const revokedAt = Date.now();
-            const revoked =
-              await this.userRoleAssignmentRepository.revokeById(
-                assignmentId,
-                reason,
-                revokedAt,
-                session,
-              );
+            const revoked = await this.userRoleAssignmentRepository.revokeById(
+              assignmentId,
+              reason,
+              revokedAt,
+              session,
+            );
 
             if (!revoked) {
               throw new RoleConflictError(
@@ -1471,19 +1298,16 @@ export class RoleAdminService {
               session,
             );
 
-            const refreshedRole =
-              await this.roleRepository.updateMetadata(
-                {
-                  roleId,
-                  updatedAt: revokedAt,
-                },
-                session,
-              );
+            const refreshedRole = await this.roleRepository.updateMetadata(
+              {
+                roleId,
+                updatedAt: revokedAt,
+              },
+              session,
+            );
 
             if (!refreshedRole) {
-              throw new RoleConflictError(
-                `Failed to update role: ${roleId}`,
-              );
+              throw new RoleConflictError(`Failed to update role: ${roleId}`);
             }
 
             await this.recordRoleAudit({
@@ -1504,26 +1328,19 @@ export class RoleAdminService {
                 roleId,
                 assignmentId,
                 userId: revoked.userId,
-                aggregateVersion:
-                  refreshedRole.updatedAt,
-                occurredAt:
-                  refreshedRole.updatedAt,
+                aggregateVersion: refreshedRole.updatedAt,
+                occurredAt: refreshedRole.updatedAt,
               }),
             );
 
-            await this.markAuthSecurityTruthChangedOnCoverageDelta(
-              {
-                controls,
-                trackedPermissions,
-                permissionCoverageBefore,
-                session,
-              },
-            );
+            await this.markAuthSecurityTruthChangedOnCoverageDelta({
+              controls,
+              trackedPermissions,
+              permissionCoverageBefore,
+              session,
+            });
 
-            return toRoleMutationView(
-              refreshedRole,
-              rules,
-            );
+            return toRoleMutationView(refreshedRole, rules);
           },
           {
             invalidateActorSnapshots: true,
@@ -1541,35 +1358,21 @@ export class RoleAdminService {
     actor: Actor,
     operation: AuthoritativeAdminMutationIdentity,
     startMetadata: Readonly<Record<string, unknown>>,
-    execute: (
-      mutationTargetDescriptor: string,
-    ) => Promise<T>,
+    execute: (mutationTargetDescriptor: string) => Promise<T>,
     onSuccess: (result: T) => Readonly<Record<string, unknown>>,
   ): Promise<T> {
     const mutationTargetDescriptor =
       buildMutationTargetDescriptor(startMetadata);
 
-    this.logMutationEvent(
-      actor,
-      operation,
-      "mutation.start",
-      startMetadata,
-    );
+    this.logMutationEvent(actor, operation, "mutation.start", startMetadata);
 
     try {
-      const result = await execute(
-        mutationTargetDescriptor,
-      );
+      const result = await execute(mutationTargetDescriptor);
 
-      this.logMutationEvent(
-        actor,
-        operation,
-        "mutation.success",
-        {
-          ...startMetadata,
-          ...onSuccess(result),
-        },
-      );
+      this.logMutationEvent(actor, operation, "mutation.success", {
+        ...startMetadata,
+        ...onSuccess(result),
+      });
 
       return result;
     } catch (error) {
@@ -1582,11 +1385,9 @@ export class RoleAdminService {
         timestamp: Date.now(),
         metadata: {
           ...startMetadata,
-          classification:
-            classifyRoleMutationFailure(error),
+          classification: classifyRoleMutationFailure(error),
           errorCode: extractErrorCode(error),
-          errorMessage:
-            truncateLogMessage(error),
+          errorMessage: truncateLogMessage(error),
         },
       });
 
@@ -1621,14 +1422,12 @@ export class RoleAdminService {
     );
 
     if (options?.invalidateActorSnapshots) {
-      await this.actorSnapshotCacheInvalidator.invalidateAll(
-        {
-          traceId,
-          actorId: actor.id,
-          context: actor.context,
-          operation,
-        },
-      );
+      await this.actorSnapshotCacheInvalidator.invalidateAll({
+        traceId,
+        actorId: actor.id,
+        context: actor.context,
+        operation,
+      });
     }
 
     return result;
@@ -1638,10 +1437,7 @@ export class RoleAdminService {
     permissionCodes: readonly string[],
     session: ClientSession,
   ): Promise<Readonly<Record<string, readonly string[]>>> {
-    const trackedPermissions =
-      toSortedUniquePermissionCodes(
-        permissionCodes,
-      );
+    const trackedPermissions = toSortedUniquePermissionCodes(permissionCodes);
 
     if (trackedPermissions.length === 0) {
       return {};
@@ -1661,10 +1457,9 @@ export class RoleAdminService {
     >;
     readonly session: ClientSession;
   }): Promise<void> {
-    const trackedPermissions =
-      toSortedUniquePermissionCodes(
-        params.trackedPermissions,
-      );
+    const trackedPermissions = toSortedUniquePermissionCodes(
+      params.trackedPermissions,
+    );
 
     if (trackedPermissions.length === 0) {
       return;
@@ -1697,11 +1492,10 @@ export class RoleAdminService {
       );
     }
 
-    const isActive =
-      await this.userReadonlyAccess.isAssignableById(
-        actor.id,
-        session,
-      );
+    const isActive = await this.userReadonlyAccess.isAssignableById(
+      actor.id,
+      session,
+    );
 
     if (!isActive) {
       throw new RoleDependencyError(
@@ -1710,9 +1504,7 @@ export class RoleAdminService {
     }
   }
 
-  private assertRoleDelegationBandAssignable(
-    role: RoleRecord,
-  ): void {
+  private assertRoleDelegationBandAssignable(role: RoleRecord): void {
     if (role.delegationBand !== "FOUNDATION") {
       return;
     }
@@ -1736,10 +1528,7 @@ export class RoleAdminService {
 
     if (
       ceilings.some((ceiling) =>
-        isDelegationCeilingSufficient(
-          ceiling,
-          targetBand,
-        ),
+        isDelegationCeilingSufficient(ceiling, targetBand),
       )
     ) {
       return;
@@ -1791,8 +1580,7 @@ export class RoleAdminService {
     actor: Actor,
     permissionCode: Permission,
   ): PermissionContract {
-    const permission =
-      PermissionResolver.resolve(permissionCode);
+    const permission = PermissionResolver.resolve(permissionCode);
 
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(actor, permission);
@@ -1844,10 +1632,7 @@ export class RoleAdminService {
     roleId: string,
     session: ClientSession,
   ): Promise<RoleRecord> {
-    const role = await this.roleRepository.findById(
-      roleId,
-      session,
-    );
+    const role = await this.roleRepository.findById(roleId, session);
 
     if (!role) {
       throw new RoleNotFoundError(roleId);
@@ -1882,10 +1667,7 @@ function buildMutationTargetDescriptor(
 ): string {
   const encoded = JSON.stringify(metadata);
 
-  if (
-    typeof encoded === "string" &&
-    encoded.length > 2
-  ) {
+  if (typeof encoded === "string" && encoded.length > 2) {
     return encoded;
   }
 
@@ -1904,20 +1686,18 @@ function toRoleMutationView(
     state: role.state,
     permissions: [...role.permissions],
     delegationBand: role.delegationBand,
-    maxDelegatableBand:
-      role.maxDelegatableBand,
-    assignmentRules: rules.map((rule) =>
-      toRuleView(rule),
-    ),
+    maxDelegatableBand: role.maxDelegatableBand,
+    assignmentRules: rules.map((rule) => toRuleView(rule)),
+    templateCode: role.templateCode,
+    templateVersion: role.templateVersion,
+    templateAppliedAt: role.templateAppliedAt,
     updatedAt: role.updatedAt,
     activatedAt: role.activatedAt,
     archivedAt: role.archivedAt,
   };
 }
 
-function toRuleView(
-  rule: RoleAssignmentRuleRecord,
-): RoleAssignmentRuleView {
+function toRuleView(rule: RoleAssignmentRuleRecord): RoleAssignmentRuleView {
   return {
     id: rule.id,
     code: rule.code,
@@ -1946,14 +1726,9 @@ function normalizeRoleCode(value: unknown): string {
   return raw.trim().toUpperCase();
 }
 
-function normalizeRequiredText(
-  value: unknown,
-  field: string,
-): string {
+function normalizeRequiredText(value: unknown, field: string): string {
   if (typeof value !== "string") {
-    throw new RoleValidationError(
-      `${field} must be a string`,
-    );
+    throw new RoleValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
@@ -1965,22 +1740,72 @@ function normalizeRequiredText(
   return normalized;
 }
 
-function normalizeNullableText(
-  value: unknown,
-  field: string,
-): string | null {
+function normalizeNullableText(value: unknown, field: string): string | null {
   if (value === undefined || value === null) {
     return null;
   }
 
   if (typeof value !== "string") {
-    throw new RoleValidationError(
-      `${field} must be a string`,
-    );
+    throw new RoleValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeOptionalText(
+  value: unknown,
+  field: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new RoleValidationError(`${field} must be a string`);
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeOptionalRoleTemplateCode(
+  value: unknown,
+  field: string,
+): RoleTemplateCode | undefined {
+  const normalized = normalizeOptionalText(value, field);
+  if (normalized === undefined) {
+    return undefined;
+  }
+
+  const code = normalized.toUpperCase();
+  if (isRoleTemplateCode(code)) {
+    return code;
+  }
+
+  throw new RoleValidationError(
+    `${field} contains unknown role template code: ${normalized}`,
+  );
+}
+
+function normalizeOptionalTimestamp(
+  value: unknown,
+  field: string,
+): number | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    !Number.isFinite(value) ||
+    value < 0
+  ) {
+    throw new RoleValidationError(`${field} must be a non-negative integer`);
+  }
+
+  return value;
 }
 
 function normalizeRoleDelegationBand(
@@ -2006,11 +1831,7 @@ function normalizeRoleDelegationBand(
 
   const normalized = value.trim().toUpperCase();
 
-  if (
-    ROLE_DELEGATION_BANDS.includes(
-      normalized as RoleDelegationBand,
-    )
-  ) {
+  if (ROLE_DELEGATION_BANDS.includes(normalized as RoleDelegationBand)) {
     return normalized as RoleDelegationBand;
   }
 
@@ -2043,9 +1864,7 @@ function normalizeRoleMaxDelegatableBand(
   const normalized = value.trim().toUpperCase();
 
   if (
-    ROLE_MAX_DELEGATABLE_BANDS.includes(
-      normalized as RoleMaxDelegatableBand,
-    )
+    ROLE_MAX_DELEGATABLE_BANDS.includes(normalized as RoleMaxDelegatableBand)
   ) {
     return normalized as RoleMaxDelegatableBand;
   }
@@ -2064,18 +1883,14 @@ function normalizePermissionCodeList(
   }
 
   if (!Array.isArray(value)) {
-    throw new RoleValidationError(
-      `${field} must be an array of strings`,
-    );
+    throw new RoleValidationError(`${field} must be an array of strings`);
   }
 
   const unique = new Set<string>();
 
   for (const entry of value) {
     if (typeof entry !== "string") {
-      throw new RoleValidationError(
-        `${field} must be an array of strings`,
-      );
+      throw new RoleValidationError(`${field} must be an array of strings`);
     }
 
     const normalized = entry.trim();
@@ -2104,29 +1919,18 @@ function normalizeRoleAssignmentRules(params: {
   now: number;
 }): readonly RoleAssignmentRuleRecord[] {
   if (!Array.isArray(params.rules)) {
-    throw new RoleValidationError(
-      "rules must be an array",
-    );
+    throw new RoleValidationError("rules must be an array");
   }
 
   const normalized: RoleAssignmentRuleRecord[] = [];
   const seenCodes = new Set<string>();
 
   for (const raw of params.rules) {
-    if (
-      typeof raw !== "object" ||
-      raw === null ||
-      Array.isArray(raw)
-    ) {
-      throw new RoleValidationError(
-        "Each rule must be an object",
-      );
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      throw new RoleValidationError("Each rule must be an object");
     }
 
-    const code = normalizeRequiredText(
-      raw.code,
-      "rule.code",
-    );
+    const code = normalizeRequiredText(raw.code, "rule.code");
     if (seenCodes.has(code)) {
       throw new RoleValidationError(
         `rules must not contain duplicate rule.code values: ${code}`,
@@ -2143,17 +1947,14 @@ function normalizeRoleAssignmentRules(params: {
 
     normalized.push({
       id:
-        typeof raw.id === "string" &&
-        raw.id.trim().length > 0
+        typeof raw.id === "string" && raw.id.trim().length > 0
           ? raw.id.trim()
           : crypto.randomUUID(),
       roleId: params.roleId,
       code,
       description,
       state,
-      conditions: normalizeRuleConditions(
-        raw.conditions,
-      ),
+      conditions: normalizeRuleConditions(raw.conditions),
       createdAt: params.now,
       updatedAt: params.now,
     });
@@ -2162,32 +1963,24 @@ function normalizeRoleAssignmentRules(params: {
   return normalized;
 }
 
-function parseRuleState(
-  value: unknown,
-): RoleAssignmentRuleState {
+function parseRuleState(value: unknown): RoleAssignmentRuleState {
   if (value === undefined) {
     return "ACTIVE";
   }
 
   if (typeof value !== "string") {
-    throw new RoleValidationError(
-      "rule.state must be ACTIVE or INACTIVE",
-    );
+    throw new RoleValidationError("rule.state must be ACTIVE or INACTIVE");
   }
 
   const normalized = value.trim().toUpperCase();
 
   if (
-    ROLE_ASSIGNMENT_RULE_STATES.includes(
-      normalized as RoleAssignmentRuleState,
-    )
+    ROLE_ASSIGNMENT_RULE_STATES.includes(normalized as RoleAssignmentRuleState)
   ) {
     return normalized as RoleAssignmentRuleState;
   }
 
-  throw new RoleValidationError(
-    "rule.state must be ACTIVE or INACTIVE",
-  );
+  throw new RoleValidationError("rule.state must be ACTIVE or INACTIVE");
 }
 
 function normalizeRuleConditions(
@@ -2197,10 +1990,7 @@ function normalizeRuleConditions(
     return null;
   }
 
-  return normalizeConditionObject(
-    value,
-    "rule.conditions",
-  );
+  return normalizeConditionObject(value, "rule.conditions");
 }
 
 function normalizeConditionObject(
@@ -2213,24 +2003,16 @@ function normalizeConditionObject(
 
   for (const [key, entry] of Object.entries(source)) {
     if (entry === undefined) {
-      throw new RoleValidationError(
-        `${path}.${key} must not be undefined`,
-      );
+      throw new RoleValidationError(`${path}.${key} must not be undefined`);
     }
 
-    normalized[key] = normalizeConditionValue(
-      entry,
-      `${path}.${key}`,
-    );
+    normalized[key] = normalizeConditionValue(entry, `${path}.${key}`);
   }
 
   return normalized;
 }
 
-function normalizeConditionValue(
-  value: unknown,
-  path: string,
-): unknown {
+function normalizeConditionValue(value: unknown, path: string): unknown {
   if (value === null) {
     return null;
   }
@@ -2243,18 +2025,14 @@ function normalizeConditionValue(
 
   if (valueType === "number") {
     if (!Number.isFinite(value)) {
-      throw new RoleValidationError(
-        `${path} must be a finite number`,
-      );
+      throw new RoleValidationError(`${path} must be a finite number`);
     }
 
     return value;
   }
 
   if (valueType === "undefined") {
-    throw new RoleValidationError(
-      `${path} must not be undefined`,
-    );
+    throw new RoleValidationError(`${path} must not be undefined`);
   }
 
   if (
@@ -2262,74 +2040,48 @@ function normalizeConditionValue(
     valueType === "symbol" ||
     valueType === "function"
   ) {
-    throw new RoleValidationError(
-      `${path} contains unsupported value type`,
-    );
+    throw new RoleValidationError(`${path} contains unsupported value type`);
   }
 
   if (Array.isArray(value)) {
-    throw new RoleValidationError(
-      `${path} must not contain arrays`,
-    );
+    throw new RoleValidationError(`${path} must not contain arrays`);
   }
 
   return normalizeConditionObject(value, path);
 }
 
-function assertStrictConditionObject(
-  value: unknown,
-  path: string,
-): void {
+function assertStrictConditionObject(value: unknown, path: string): void {
   if (typeof value !== "object" || value === null) {
-    throw new RoleValidationError(
-      `${path} must be a strict plain object`,
-    );
+    throw new RoleValidationError(`${path} must be a strict plain object`);
   }
 
   if (Array.isArray(value)) {
-    throw new RoleValidationError(
-      `${path} must be a strict plain object`,
-    );
+    throw new RoleValidationError(`${path} must be a strict plain object`);
   }
 
-  if (
-    value instanceof Date ||
-    value instanceof Map ||
-    value instanceof Set
-  ) {
-    throw new RoleValidationError(
-      `${path} must be a strict plain object`,
-    );
+  if (value instanceof Date || value instanceof Map || value instanceof Set) {
+    throw new RoleValidationError(`${path} must be a strict plain object`);
   }
 
   if (Buffer.isBuffer(value) || ArrayBuffer.isView(value)) {
-    throw new RoleValidationError(
-      `${path} must be a strict plain object`,
-    );
+    throw new RoleValidationError(`${path} must be a strict plain object`);
   }
 
   const prototype = Object.getPrototypeOf(value);
 
   if (prototype !== Object.prototype) {
-    throw new RoleValidationError(
-      `${path} must be a strict plain object`,
-    );
+    throw new RoleValidationError(`${path} must be a strict plain object`);
   }
 
   if (
     "toJSON" in value &&
-    typeof (value as { toJSON?: unknown }).toJSON ===
-      "function"
+    typeof (value as { toJSON?: unknown }).toJSON === "function"
   ) {
-    throw new RoleValidationError(
-      `${path} must not include toJSON`,
-    );
+    throw new RoleValidationError(`${path} must not include toJSON`);
   }
 }
 
-function assertEffectiveAtNotProvided(
-  value: unknown,
-): void {
+function assertEffectiveAtNotProvided(value: unknown): void {
   if (value === undefined || value === null) {
     return;
   }
@@ -2349,10 +2101,7 @@ function mergePermissionCodeSets(
   left: readonly string[],
   right: readonly string[],
 ): readonly string[] {
-  return toSortedUniquePermissionCodes([
-    ...left,
-    ...right,
-  ]);
+  return toSortedUniquePermissionCodes([...left, ...right]);
 }
 
 function isDelegationCeilingSufficient(
@@ -2364,13 +2113,8 @@ function isDelegationCeilingSufficient(
   }
 
   const ceilingRank =
-    ceiling === "PRIVILEGED"
-      ? 2
-      : ceiling === "LIMITED"
-        ? 1
-        : 0;
-  const targetRank =
-    targetBand === "PRIVILEGED" ? 2 : 1;
+    ceiling === "PRIVILEGED" ? 2 : ceiling === "LIMITED" ? 1 : 0;
+  const targetRank = targetBand === "PRIVILEGED" ? 2 : 1;
 
   return ceilingRank >= targetRank;
 }
@@ -2380,9 +2124,7 @@ function areStringSetsEquivalent(
   right: readonly string[],
 ): boolean {
   const leftSorted = toSortedUniquePermissionCodes(left);
-  const rightSorted = toSortedUniquePermissionCodes(
-    right,
-  );
+  const rightSorted = toSortedUniquePermissionCodes(right);
 
   if (leftSorted.length !== rightSorted.length) {
     return false;
@@ -2446,14 +2188,10 @@ function compareComparableRoleRules(
   }
 
   if (left.description !== right.description) {
-    return (left.description ?? "").localeCompare(
-      right.description ?? "",
-    );
+    return (left.description ?? "").localeCompare(right.description ?? "");
   }
 
-  return left.conditions.localeCompare(
-    right.conditions,
-  );
+  return left.conditions.localeCompare(right.conditions);
 }
 
 interface ComparableRoleAssignmentRule {
@@ -2470,15 +2208,11 @@ function toComparableRoleAssignmentRule(
     code: rule.code,
     description: rule.description,
     state: rule.state,
-    conditions: JSON.stringify(
-      toStableComparableValue(rule.conditions),
-    ),
+    conditions: JSON.stringify(toStableComparableValue(rule.conditions)),
   };
 }
 
-function toStableComparableValue(
-  value: unknown,
-): unknown {
+function toStableComparableValue(value: unknown): unknown {
   if (
     value === null ||
     typeof value === "string" ||
@@ -2489,9 +2223,7 @@ function toStableComparableValue(
   }
 
   if (Array.isArray(value)) {
-    return value.map((entry) =>
-      toStableComparableValue(entry),
-    );
+    return value.map((entry) => toStableComparableValue(entry));
   }
 
   if (typeof value !== "object") {
@@ -2501,38 +2233,25 @@ function toStableComparableValue(
   const source = value as Record<string, unknown>;
   const entries = Object.keys(source)
     .sort()
-    .map((key) => [
-      key,
-      toStableComparableValue(source[key]),
-    ]);
+    .map((key) => [key, toStableComparableValue(source[key])]);
 
   return Object.fromEntries(entries);
 }
 
 function hasPermissionCoverageDelta(params: {
   readonly trackedPermissions: readonly string[];
-  readonly before: Readonly<
-    Record<string, readonly string[]>
-  >;
-  readonly after: Readonly<
-    Record<string, readonly string[]>
-  >;
+  readonly before: Readonly<Record<string, readonly string[]>>;
+  readonly after: Readonly<Record<string, readonly string[]>>;
 }): boolean {
   for (const permissionCode of params.trackedPermissions) {
-    const beforeUserIds =
-      params.before[permissionCode] ?? [];
-    const afterUserIds =
-      params.after[permissionCode] ?? [];
+    const beforeUserIds = params.before[permissionCode] ?? [];
+    const afterUserIds = params.after[permissionCode] ?? [];
 
     if (beforeUserIds.length !== afterUserIds.length) {
       return true;
     }
 
-    for (
-      let index = 0;
-      index < beforeUserIds.length;
-      index += 1
-    ) {
+    for (let index = 0; index < beforeUserIds.length; index += 1) {
       if (beforeUserIds[index] !== afterUserIds[index]) {
         return true;
       }
@@ -2586,9 +2305,7 @@ function classifyRoleMutationFailure(
   return "unknown";
 }
 
-function extractErrorCode(
-  error: unknown,
-): string | undefined {
+function extractErrorCode(error: unknown): string | undefined {
   if (error instanceof BaseAppError) {
     return error.code;
   }
@@ -2600,13 +2317,8 @@ function extractErrorCode(
   return undefined;
 }
 
-function truncateLogMessage(
-  error: unknown,
-): string {
-  const raw =
-    error instanceof Error
-      ? error.message
-      : String(error);
+function truncateLogMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
 
   if (raw.length <= 256) {
     return raw;
@@ -2615,17 +2327,13 @@ function truncateLogMessage(
   return `${raw.slice(0, 253)}...`;
 }
 
-function readOptionalLogString(
-  value: unknown,
-): string | undefined {
+function readOptionalLogString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
   }
 
   const normalized = value.trim();
-  return normalized.length > 0
-    ? normalized
-    : undefined;
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function assertAssignmentRulesAllow(params: {
@@ -2659,12 +2367,7 @@ function assertAssignmentRulesAllow(params: {
       continue;
     }
 
-    if (
-      !doesRuleConditionMatchContext(
-        rule.conditions,
-        evaluationContext,
-      )
-    ) {
+    if (!doesRuleConditionMatchContext(rule.conditions, evaluationContext)) {
       throw new RoleDependencyError(
         `Role assignment denied by rule ${rule.code} for role ${params.role.id} and user ${params.userId}`,
       );
@@ -2676,21 +2379,14 @@ function doesRuleConditionMatchContext(
   condition: Record<string, unknown>,
   context: Record<string, unknown>,
 ): boolean {
-  for (const [key, expectedValue] of Object.entries(
-    condition,
-  )) {
+  for (const [key, expectedValue] of Object.entries(condition)) {
     if (!(key in context)) {
       return false;
     }
 
     const actualValue = context[key];
 
-    if (
-      !doesRuleConditionValueMatch(
-        expectedValue,
-        actualValue,
-      )
-    ) {
+    if (!doesRuleConditionValueMatch(expectedValue, actualValue)) {
       return false;
     }
   }
@@ -2702,10 +2398,7 @@ function doesRuleConditionValueMatch(
   expectedValue: unknown,
   actualValue: unknown,
 ): boolean {
-  if (
-    expectedValue === null ||
-    typeof expectedValue !== "object"
-  ) {
+  if (expectedValue === null || typeof expectedValue !== "object") {
     return Object.is(expectedValue, actualValue);
   }
 
@@ -2721,4 +2414,4 @@ function doesRuleConditionValueMatch(
     expectedValue as Record<string, unknown>,
     actualValue as Record<string, unknown>,
   );
-} 
+}

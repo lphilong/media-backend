@@ -42,6 +42,11 @@ interface ParsedWindowFilter {
   readonly windowEndAt?: number;
 }
 
+interface ParsedTimestampRangeFilter {
+  readonly fromAt?: number;
+  readonly toAt?: number;
+}
+
 interface FlatListSortCoverageInput {
   readonly sortField?: RevenueEntrySortField;
   readonly status?: RevenueEntryStatus;
@@ -53,6 +58,11 @@ interface FlatListSortCoverageInput {
   readonly currencyCode?: string;
   readonly windowStartAt?: number;
   readonly windowEndAt?: number;
+  readonly createdBeforeAt?: number;
+  readonly finalizedFromAt?: number;
+  readonly finalizedToAt?: number;
+  readonly reconciledFromAt?: number;
+  readonly reconciledToAt?: number;
   readonly search?: string;
 }
 
@@ -75,6 +85,26 @@ export class RevenueLedgerAdminQueryService {
       windowStartAt: query.windowStartAt,
       windowEndAt: query.windowEndAt,
     });
+    const finalizedAt = parseTimestampRangeFilter(
+      {
+        fromAt: query.finalizedFromAt,
+        toAt: query.finalizedToAt,
+      },
+      "finalizedFromAt",
+      "finalizedToAt",
+    );
+    const reconciledAt = parseTimestampRangeFilter(
+      {
+        fromAt: query.reconciledFromAt,
+        toAt: query.reconciledToAt,
+      },
+      "reconciledFromAt",
+      "reconciledToAt",
+    );
+    const createdBeforeAt = parseOptionalInteger(
+      query.createdBeforeAt,
+      "createdBeforeAt",
+    );
 
     const status = parseOptionalStatus(query.status);
     const subjectTalentId = parseOptionalId(
@@ -118,6 +148,11 @@ export class RevenueLedgerAdminQueryService {
       currencyCode,
       windowStartAt: window.windowStartAt,
       windowEndAt: window.windowEndAt,
+      createdBeforeAt,
+      finalizedFromAt: finalizedAt.fromAt,
+      finalizedToAt: finalizedAt.toAt,
+      reconciledFromAt: reconciledAt.fromAt,
+      reconciledToAt: reconciledAt.toAt,
       search,
     });
 
@@ -131,6 +166,11 @@ export class RevenueLedgerAdminQueryService {
       currencyCode,
       windowStartAt: window.windowStartAt,
       windowEndAt: window.windowEndAt,
+      createdBeforeAt,
+      finalizedFromAt: finalizedAt.fromAt,
+      finalizedToAt: finalizedAt.toAt,
+      reconciledFromAt: reconciledAt.fromAt,
+      reconciledToAt: reconciledAt.toAt,
       limit: parseLimit(query.limit),
       cursor: parseOptionalCursor(query.cursor),
       search,
@@ -300,6 +340,39 @@ export class RevenueLedgerAdminQueryService {
     );
     PermissionGuard.assert(actor, permission);
   }
+}
+
+function parseTimestampRangeFilter(
+  input: {
+    readonly fromAt: unknown;
+    readonly toAt: unknown;
+  },
+  fromField: string,
+  toField: string,
+): ParsedTimestampRangeFilter {
+  const fromAt = parseOptionalInteger(
+    input.fromAt,
+    fromField,
+  );
+  const toAt = parseOptionalInteger(
+    input.toAt,
+    toField,
+  );
+
+  if (
+    fromAt !== undefined &&
+    toAt !== undefined &&
+    toAt <= fromAt
+  ) {
+    throw new RevenueLedgerValidationError(
+      `${toField} must be strictly greater than ${fromField}`,
+    );
+  }
+
+  return {
+    fromAt,
+    toAt,
+  };
 }
 
 function normalizeRequiredText(
@@ -652,6 +725,11 @@ function assertFlatListSortCoverage(
     input.currencyCode !== undefined ||
     input.windowStartAt !== undefined ||
     input.windowEndAt !== undefined ||
+    input.createdBeforeAt !== undefined ||
+    input.finalizedFromAt !== undefined ||
+    input.finalizedToAt !== undefined ||
+    input.reconciledFromAt !== undefined ||
+    input.reconciledToAt !== undefined ||
     input.search !== undefined;
 
   if (

@@ -1,3 +1,5 @@
+import { ReferenceSummary } from "@modules/reference-summary";
+
 export const TALENT_GROUP_STATUSES = [
   "ACTIVE",
   "INACTIVE",
@@ -53,6 +55,7 @@ export interface TalentGroupMemberRecord {
   readonly id: string;
   readonly groupId: string;
   readonly talentId: string;
+  readonly talentRef?: ReferenceSummary | null;
   readonly membershipStatus: TalentGroupMemberStatus;
   readonly lineupOrder: number;
   readonly joinedAt: number;
@@ -85,6 +88,7 @@ export interface TalentGroupMemberListItemView {
   readonly id: string;
   readonly groupId: string;
   readonly talentId: string;
+  readonly talentRef?: ReferenceSummary | null;
   readonly membershipStatus: TalentGroupMemberStatus;
   readonly lineupOrder: number;
   readonly joinedAt: number;
@@ -106,6 +110,7 @@ export interface TalentGroupByTalentListItemView {
   readonly displayOrder: number;
   readonly membershipId: string;
   readonly talentId: string;
+  readonly talentRef?: ReferenceSummary | null;
   readonly membershipStatus: TalentGroupMemberStatus;
   readonly lineupOrder: number;
   readonly joinedAt: number;

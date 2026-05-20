@@ -42,6 +42,11 @@ interface ParsedDateWindow {
   readonly windowEndDate?: number;
 }
 
+interface ParsedEffectiveEndDateRange {
+  readonly effectiveEndDateFrom?: number;
+  readonly effectiveEndDateTo?: number;
+}
+
 interface ParsedLinkedEntityFilter {
   readonly linkedEntityKind?: ContractLinkedEntityKind;
   readonly linkedEmploymentProfileId?: string;
@@ -80,6 +85,12 @@ export class ContractRegistryAdminQueryService {
       windowStartDate: query.windowStartDate,
       windowEndDate: query.windowEndDate,
     });
+    const effectiveEndDateRange =
+      parseEffectiveEndDateRange({
+        effectiveEndDateFrom:
+          query.effectiveEndDateFrom,
+        effectiveEndDateTo: query.effectiveEndDateTo,
+      });
 
     return this.readRepository.listContractRecords({
       status: parseOptionalStatus(query.status),
@@ -106,6 +117,10 @@ export class ContractRegistryAdminQueryService {
       ),
       windowStartDate: window.windowStartDate,
       windowEndDate: window.windowEndDate,
+      effectiveEndDateFrom:
+        effectiveEndDateRange.effectiveEndDateFrom,
+      effectiveEndDateTo:
+        effectiveEndDateRange.effectiveEndDateTo,
       limit: parseLimit(query.limit),
       cursor: parseOptionalCursor(query.cursor),
       search: parseOptionalSearch(query.search),
@@ -354,6 +369,35 @@ function parseDateWindow(input: {
   return {
     windowStartDate,
     windowEndDate,
+  };
+}
+
+function parseEffectiveEndDateRange(input: {
+  readonly effectiveEndDateFrom: unknown;
+  readonly effectiveEndDateTo: unknown;
+}): ParsedEffectiveEndDateRange {
+  const effectiveEndDateFrom = parseOptionalDate(
+    input.effectiveEndDateFrom,
+    "effectiveEndDateFrom",
+  );
+  const effectiveEndDateTo = parseOptionalDate(
+    input.effectiveEndDateTo,
+    "effectiveEndDateTo",
+  );
+
+  if (
+    effectiveEndDateFrom !== undefined &&
+    effectiveEndDateTo !== undefined &&
+    effectiveEndDateTo < effectiveEndDateFrom
+  ) {
+    throw new ContractRegistryValidationError(
+      "effectiveEndDateTo must not be earlier than effectiveEndDateFrom",
+    );
+  }
+
+  return {
+    effectiveEndDateFrom,
+    effectiveEndDateTo,
   };
 }
 

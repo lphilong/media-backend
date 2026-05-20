@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { withCommand } from "@app/base/command.middleware";
 import { InfraModule } from "@infra/infra.module";
 import { createUserInfra } from "@infra/providers/user.infra";
 import { createRoleInfra } from "@infra/providers/role.infra";
@@ -22,6 +23,7 @@ import { MongoAuditLogger } from "@core/audit/mongo.audit.logger";
 import { MongoAuditWriteRepository } from "@infra/mongo/audit/audit.write.repository";
 import { AuditContext } from "@core/audit/audit.context";
 import { ActorSnapshotCacheInvalidator } from "@infra/cache/actor.snapshot.cache";
+import { CurrentActorCapabilitiesController } from "./current-actor-capabilities.controller";
 
 /* USER */
 import { userAdminRoutes } from "@modules/user/admin/admin.user.routes";
@@ -36,6 +38,9 @@ import { AdminRoleController } from "@modules/role/admin/admin.role.controller";
 import { AdminRoleQueryController } from "@modules/role/admin/admin.role.query.controller";
 import { RoleAdminService } from "@modules/role/admin/admin.role.service";
 import { RoleAdminQueryService } from "@modules/role/admin/admin.role.query-service";
+import { adminRoleTemplateRoutes } from "@modules/role/admin/admin.role-template.routes";
+import { AdminRoleTemplateController } from "@modules/role/admin/admin.role-template.controller";
+import { RoleTemplateAdminService } from "@modules/role/admin/admin.role-template.service";
 
 /* ORG UNIT */
 import { adminOrgUnitRoutes } from "@modules/org-unit/admin/admin.org-unit.routes";
@@ -141,38 +146,36 @@ import { adminDashboardLiteRoutes } from "@modules/dashboard-lite/admin/admin.da
 import { DashboardLiteAdminQueryController } from "@modules/dashboard-lite/admin/admin.dashboard-lite.query.controller";
 import { DashboardLiteAdminQueryService } from "@modules/dashboard-lite/admin/admin.dashboard-lite.query-service";
 
-export async function createAdminRoutes(
-  infra: InfraModule,
-): Promise<Router> {
+export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   const r = Router();
   r.use(auditScopeMiddleware);
 
-  const adminMutationBridge =
-    new MongoAuthoritativeAdminMutationBridge(
-      infra.mongoClient,
-      infra.primaryDb,
-    );
+  const currentActorCapabilitiesController =
+    new CurrentActorCapabilitiesController();
+
+  r.get(
+    "/me/capabilities",
+    withCommand("CURRENT_ACTOR_CAPABILITIES"),
+    currentActorCapabilitiesController.execute,
+  );
+
+  const adminMutationBridge = new MongoAuthoritativeAdminMutationBridge(
+    infra.mongoClient,
+    infra.primaryDb,
+  );
 
   const authoritativeAuditGuard = new AuditGuard(
-    new MongoAuditLogger(
-      new MongoAuditWriteRepository(
-        infra.primaryDb,
-      ),
-    ),
+    new MongoAuditLogger(new MongoAuditWriteRepository(infra.primaryDb)),
     new AuditContext(),
   );
 
-  const actorSnapshotCacheInvalidator =
-    new ActorSnapshotCacheInvalidator(
-      infra.cacheAdapter,
-    );
+  const actorSnapshotCacheInvalidator = new ActorSnapshotCacheInvalidator(
+    infra.cacheAdapter,
+  );
 
   /* USER */
-  const {
-    userRepository,
-    userReadRepository,
-    userAuthRepository,
-  } = createUserInfra(infra.primaryDb);
+  const { userRepository, userReadRepository, userAuthRepository } =
+    createUserInfra(infra.primaryDb);
 
   const userLifecycleService = new UserLifecycleService(
     userRepository,
@@ -182,22 +185,12 @@ export async function createAdminRoutes(
     actorSnapshotCacheInvalidator,
   );
 
-  const userQueryService = new UserAdminQueryService(
-    userReadRepository,
-  );
+  const userQueryService = new UserAdminQueryService(userReadRepository);
 
-  const userMutationController =
-    new UserAdminController(userLifecycleService);
-  const userQueryController =
-    new UserQueryAdminController(userQueryService);
+  const userMutationController = new UserAdminController(userLifecycleService);
+  const userQueryController = new UserQueryAdminController(userQueryService);
 
-  r.use(
-    "/users",
-    userAdminRoutes(
-      userMutationController,
-      userQueryController,
-    ),
-  );
+  r.use("/users", userAdminRoutes(userMutationController, userQueryController));
 
   /* ROLE */
   const {
@@ -225,25 +218,20 @@ export async function createAdminRoutes(
     roleAssignmentReadRepository,
   );
 
-  const roleController = new AdminRoleController(
-    roleService,
+  const roleController = new AdminRoleController(roleService);
+  const roleQueryController = new AdminRoleQueryController(roleQueryService);
+  const roleTemplateController = new AdminRoleTemplateController(
+    new RoleTemplateAdminService(),
   );
-  const roleQueryController =
-    new AdminRoleQueryController(roleQueryService);
 
-  r.use(
-    "/roles",
-    adminRoleRoutes(
-      roleController,
-      roleQueryController,
-    ),
-  );
+  r.use("/roles", adminRoleRoutes(roleController, roleQueryController));
+
+  r.use("/role-templates", adminRoleTemplateRoutes(roleTemplateController));
 
   /* ORG UNIT */
   const {
     orgUnitRepository,
-    businessCodeSequenceRepository:
-      orgUnitBusinessCodeSequenceRepository,
+    businessCodeSequenceRepository: orgUnitBusinessCodeSequenceRepository,
     orgUnitReadRepository,
     orgUnitEmploymentReadonlyAccess,
     orgUnitPlatformAccountReadonlyAccess,
@@ -262,8 +250,7 @@ export async function createAdminRoutes(
   } = createEmploymentProfileInfra(infra.primaryDb);
   const {
     talentRepository,
-    businessCodeSequenceRepository:
-      talentBusinessCodeSequenceRepository,
+    businessCodeSequenceRepository: talentBusinessCodeSequenceRepository,
     talentReadRepository,
     talentEmploymentProfileReadonlyAccess,
     talentTalentGroupReadonlyAccess,
@@ -273,8 +260,7 @@ export async function createAdminRoutes(
   } = createTalentInfra(infra.primaryDb);
   const {
     talentGroupRepository,
-    businessCodeSequenceRepository:
-      talentGroupBusinessCodeSequenceRepository,
+    businessCodeSequenceRepository: talentGroupBusinessCodeSequenceRepository,
     talentGroupReadRepository,
     talentGroupTalentReadonlyAccess,
     talentGroupPlatformAccountReadonlyAccess,
@@ -336,8 +322,7 @@ export async function createAdminRoutes(
   } = createContractRegistryInfra(infra.primaryDb);
   const {
     talentKpiRepository,
-    businessCodeSequenceRepository:
-      talentKpiBusinessCodeSequenceRepository,
+    businessCodeSequenceRepository: talentKpiBusinessCodeSequenceRepository,
     talentKpiReadRepository,
     talentKpiTalentReadonlyAccess,
     talentKpiPlatformAccountReadonlyAccess,
@@ -345,28 +330,25 @@ export async function createAdminRoutes(
   } = createTalentKpiInfra(infra.primaryDb);
   const {
     commissionRepository,
-    businessCodeSequenceRepository:
-      commissionBusinessCodeSequenceRepository,
+    businessCodeSequenceRepository: commissionBusinessCodeSequenceRepository,
     commissionReadRepository,
     commissionEmploymentProfileReadonlyAccess,
     commissionTalentReadonlyAccess,
     commissionContractRegistryReadonlyAccess,
     commissionRevenueLedgerReadonlyAccess,
-  } = createCommissionRevenueShareInfra(
-    infra.primaryDb,
-  );
+  } = createCommissionRevenueShareInfra(infra.primaryDb);
   const {
     revenueEntryRepository,
-    businessCodeSequenceRepository:
-      revenueLedgerBusinessCodeSequenceRepository,
+    businessCodeSequenceRepository: revenueLedgerBusinessCodeSequenceRepository,
     revenueLedgerReadRepository,
     revenueLedgerTalentReadonlyAccess,
     revenueLedgerPlatformAccountReadonlyAccess,
     revenueLedgerEventReadonlyAccess,
     revenueLedgerCommissionReadonlyAccess,
   } = createRevenueLedgerInfra(infra.primaryDb);
-  const { dashboardLiteReadRepository } =
-    createDashboardLiteInfra(infra.primaryDb);
+  const { dashboardLiteReadRepository } = createDashboardLiteInfra(
+    infra.primaryDb,
+  );
 
   const orgUnitService = new OrgUnitAdminService(
     orgUnitRepository,
@@ -377,53 +359,42 @@ export async function createAdminRoutes(
     adminMutationBridge,
   );
 
-  const orgUnitQueryService =
-    new OrgUnitAdminQueryService(
-      orgUnitReadRepository,
-    );
+  const orgUnitQueryService = new OrgUnitAdminQueryService(
+    orgUnitReadRepository,
+  );
 
-  const orgUnitController =
-    new OrgUnitAdminController(orgUnitService);
-  const orgUnitQueryController =
-    new OrgUnitAdminQueryController(
-      orgUnitQueryService,
-    );
+  const orgUnitController = new OrgUnitAdminController(orgUnitService);
+  const orgUnitQueryController = new OrgUnitAdminQueryController(
+    orgUnitQueryService,
+  );
 
   r.use(
     "/org-units",
-    adminOrgUnitRoutes(
-      orgUnitController,
-      orgUnitQueryController,
-    ),
+    adminOrgUnitRoutes(orgUnitController, orgUnitQueryController),
   );
 
   /* EMPLOYMENT PROFILE */
-  const employmentProfileService =
-    new EmploymentProfileAdminService(
-      employmentProfileRepository,
-      employmentProfileBusinessCodeSequenceRepository,
-      employmentProfileOrgUnitReadonlyAccess,
-      employmentProfileUserReadonlyAccess,
-      employmentProfileTalentReadonlyAccess,
-      employmentProfileWorkScheduleReadonlyAccess,
-      employmentProfileEventAssignmentReadonlyAccess,
-      authoritativeAuditGuard,
-      adminMutationBridge,
-    );
+  const employmentProfileService = new EmploymentProfileAdminService(
+    employmentProfileRepository,
+    employmentProfileBusinessCodeSequenceRepository,
+    employmentProfileOrgUnitReadonlyAccess,
+    employmentProfileUserReadonlyAccess,
+    employmentProfileTalentReadonlyAccess,
+    employmentProfileWorkScheduleReadonlyAccess,
+    employmentProfileEventAssignmentReadonlyAccess,
+    authoritativeAuditGuard,
+    adminMutationBridge,
+  );
 
-  const employmentProfileQueryService =
-    new EmploymentProfileAdminQueryService(
-      employmentProfileReadRepository,
-    );
+  const employmentProfileQueryService = new EmploymentProfileAdminQueryService(
+    employmentProfileReadRepository,
+  );
 
-  const employmentProfileController =
-    new EmploymentProfileAdminController(
-      employmentProfileService,
-    );
+  const employmentProfileController = new EmploymentProfileAdminController(
+    employmentProfileService,
+  );
   const employmentProfileQueryController =
-    new EmploymentProfileAdminQueryController(
-      employmentProfileQueryService,
-    );
+    new EmploymentProfileAdminQueryController(employmentProfileQueryService);
 
   r.use(
     "/employment-profiles",
@@ -446,87 +417,64 @@ export async function createAdminRoutes(
     adminMutationBridge,
   );
 
-  const talentQueryService =
-    new TalentAdminQueryService(
-      talentReadRepository,
-    );
+  const talentQueryService = new TalentAdminQueryService(talentReadRepository);
 
-  const talentController =
-    new TalentAdminController(talentService);
-  const talentQueryController =
-    new TalentAdminQueryController(
-      talentQueryService,
-    );
-
-  r.use(
-    "/talents",
-    adminTalentRoutes(
-      talentController,
-      talentQueryController,
-    ),
+  const talentController = new TalentAdminController(talentService);
+  const talentQueryController = new TalentAdminQueryController(
+    talentQueryService,
   );
 
+  r.use("/talents", adminTalentRoutes(talentController, talentQueryController));
+
   /* TALENT GROUP */
-  const talentGroupService =
-    new TalentGroupAdminService(
-      talentGroupRepository,
-      talentGroupBusinessCodeSequenceRepository,
-      talentGroupTalentReadonlyAccess,
-      talentGroupPlatformAccountReadonlyAccess,
-      talentGroupWorkScheduleReadonlyAccess,
-      talentGroupEventAssignmentReadonlyAccess,
-      authoritativeAuditGuard,
-      adminMutationBridge,
-    );
+  const talentGroupService = new TalentGroupAdminService(
+    talentGroupRepository,
+    talentGroupBusinessCodeSequenceRepository,
+    talentGroupTalentReadonlyAccess,
+    talentGroupPlatformAccountReadonlyAccess,
+    talentGroupWorkScheduleReadonlyAccess,
+    talentGroupEventAssignmentReadonlyAccess,
+    authoritativeAuditGuard,
+    adminMutationBridge,
+  );
 
-  const talentGroupQueryService =
-    new TalentGroupAdminQueryService(
-      talentGroupReadRepository,
-    );
+  const talentGroupQueryService = new TalentGroupAdminQueryService(
+    talentGroupReadRepository,
+  );
 
-  const talentGroupController =
-    new TalentGroupAdminController(
-      talentGroupService,
-    );
-  const talentGroupQueryController =
-    new TalentGroupAdminQueryController(
-      talentGroupQueryService,
-    );
+  const talentGroupController = new TalentGroupAdminController(
+    talentGroupService,
+  );
+  const talentGroupQueryController = new TalentGroupAdminQueryController(
+    talentGroupQueryService,
+  );
 
   r.use(
     "/talent-groups",
-    adminTalentGroupRoutes(
-      talentGroupController,
-      talentGroupQueryController,
-    ),
+    adminTalentGroupRoutes(talentGroupController, talentGroupQueryController),
   );
 
   /* PLATFORM ACCOUNT */
-  const platformAccountService =
-    new PlatformAccountAdminService(
-      platformAccountRepository,
-      platformAccountBusinessCodeSequenceRepository,
-      platformAccountOrgUnitReadonlyAccess,
-      platformAccountTalentReadonlyAccess,
-      platformAccountTalentGroupReadonlyAccess,
-      platformAccountEventAssignmentReadonlyAccess,
-      authoritativeAuditGuard,
-      adminMutationBridge,
-    );
+  const platformAccountService = new PlatformAccountAdminService(
+    platformAccountRepository,
+    platformAccountBusinessCodeSequenceRepository,
+    platformAccountOrgUnitReadonlyAccess,
+    platformAccountTalentReadonlyAccess,
+    platformAccountTalentGroupReadonlyAccess,
+    platformAccountEventAssignmentReadonlyAccess,
+    authoritativeAuditGuard,
+    adminMutationBridge,
+  );
 
-  const platformAccountQueryService =
-    new PlatformAccountAdminQueryService(
-      platformAccountReadRepository,
-    );
+  const platformAccountQueryService = new PlatformAccountAdminQueryService(
+    platformAccountReadRepository,
+  );
 
-  const platformAccountController =
-    new PlatformAccountAdminController(
-      platformAccountService,
-    );
+  const platformAccountController = new PlatformAccountAdminController(
+    platformAccountService,
+  );
   const platformAccountQueryController =
-    new PlatformAccountAdminQueryController(
-      platformAccountQueryService,
-    );
+    new PlatformAccountAdminQueryController(platformAccountQueryService);
 
   r.use(
     "/platform-accounts",
@@ -537,29 +485,25 @@ export async function createAdminRoutes(
   );
 
   /* STUDIO RESOURCE */
-  const studioResourceService =
-    new StudioResourceAdminService(
-      studioResourceRepository,
-      studioResourceBusinessCodeSequenceRepository,
-      studioResourceWorkScheduleReadonlyAccess,
-      studioResourceEventAssignmentReadonlyAccess,
-      authoritativeAuditGuard,
-      adminMutationBridge,
-    );
+  const studioResourceService = new StudioResourceAdminService(
+    studioResourceRepository,
+    studioResourceBusinessCodeSequenceRepository,
+    studioResourceWorkScheduleReadonlyAccess,
+    studioResourceEventAssignmentReadonlyAccess,
+    authoritativeAuditGuard,
+    adminMutationBridge,
+  );
 
-  const studioResourceQueryService =
-    new StudioResourceAdminQueryService(
-      studioResourceReadRepository,
-    );
+  const studioResourceQueryService = new StudioResourceAdminQueryService(
+    studioResourceReadRepository,
+  );
 
-  const studioResourceController =
-    new StudioResourceAdminController(
-      studioResourceService,
-    );
-  const studioResourceQueryController =
-    new StudioResourceAdminQueryController(
-      studioResourceQueryService,
-    );
+  const studioResourceController = new StudioResourceAdminController(
+    studioResourceService,
+  );
+  const studioResourceQueryController = new StudioResourceAdminQueryController(
+    studioResourceQueryService,
+  );
 
   r.use(
     "/studio-resources",
@@ -570,30 +514,26 @@ export async function createAdminRoutes(
   );
 
   /* WORK SCHEDULE */
-  const workScheduleService =
-    new WorkScheduleAdminService(
-      workShiftRepository,
-      workShiftCodeSequenceRepository,
-      workScheduleEmploymentProfileReadonlyAccess,
-      workScheduleTalentReadonlyAccess,
-      workScheduleTalentGroupReadonlyAccess,
-      workScheduleStudioResourceReadonlyAccess,
-      authoritativeAuditGuard,
-      adminMutationBridge,
-    );
-  const workScheduleQueryService =
-    new WorkScheduleAdminQueryService(
-      workShiftReadRepository,
-      workScheduleEmploymentProfileReadonlyAccess,
-    );
-  const workScheduleController =
-    new WorkScheduleAdminController(
-      workScheduleService,
-    );
-  const workScheduleQueryController =
-    new WorkScheduleAdminQueryController(
-      workScheduleQueryService,
-    );
+  const workScheduleService = new WorkScheduleAdminService(
+    workShiftRepository,
+    workShiftCodeSequenceRepository,
+    workScheduleEmploymentProfileReadonlyAccess,
+    workScheduleTalentReadonlyAccess,
+    workScheduleTalentGroupReadonlyAccess,
+    workScheduleStudioResourceReadonlyAccess,
+    authoritativeAuditGuard,
+    adminMutationBridge,
+  );
+  const workScheduleQueryService = new WorkScheduleAdminQueryService(
+    workShiftReadRepository,
+    workScheduleEmploymentProfileReadonlyAccess,
+  );
+  const workScheduleController = new WorkScheduleAdminController(
+    workScheduleService,
+  );
+  const workScheduleQueryController = new WorkScheduleAdminQueryController(
+    workScheduleQueryService,
+  );
 
   r.use(
     "/work-shifts",
@@ -603,53 +543,41 @@ export async function createAdminRoutes(
     ),
   );
 
-  const workPatternService =
-    new WorkPatternAdminService(
-      workPatternRepository,
-      workShiftCodeSequenceRepository,
-      authoritativeAuditGuard,
-      adminMutationBridge,
-    );
-  const workPatternQueryService =
-    new WorkPatternAdminQueryService(
-      workPatternReadRepository,
-    );
-  const workPatternController =
-    new WorkPatternAdminController(
-      workPatternService,
-    );
-  const workPatternQueryController =
-    new WorkPatternAdminQueryController(
-      workPatternQueryService,
-    );
+  const workPatternService = new WorkPatternAdminService(
+    workPatternRepository,
+    workShiftCodeSequenceRepository,
+    authoritativeAuditGuard,
+    adminMutationBridge,
+  );
+  const workPatternQueryService = new WorkPatternAdminQueryService(
+    workPatternReadRepository,
+  );
+  const workPatternController = new WorkPatternAdminController(
+    workPatternService,
+  );
+  const workPatternQueryController = new WorkPatternAdminQueryController(
+    workPatternQueryService,
+  );
 
   r.use(
     "/work-schedule/patterns",
-    adminWorkPatternRoutes(
-      workPatternController,
-      workPatternQueryController,
-    ),
+    adminWorkPatternRoutes(workPatternController, workPatternQueryController),
   );
 
-  const holidayCalendarService =
-    new HolidayCalendarAdminService(
-      holidayCalendarRepository,
-      workShiftCodeSequenceRepository,
-      authoritativeAuditGuard,
-      adminMutationBridge,
-    );
-  const holidayCalendarQueryService =
-    new HolidayCalendarAdminQueryService(
-      holidayCalendarReadRepository,
-    );
-  const holidayCalendarController =
-    new HolidayCalendarAdminController(
-      holidayCalendarService,
-    );
+  const holidayCalendarService = new HolidayCalendarAdminService(
+    holidayCalendarRepository,
+    workShiftCodeSequenceRepository,
+    authoritativeAuditGuard,
+    adminMutationBridge,
+  );
+  const holidayCalendarQueryService = new HolidayCalendarAdminQueryService(
+    holidayCalendarReadRepository,
+  );
+  const holidayCalendarController = new HolidayCalendarAdminController(
+    holidayCalendarService,
+  );
   const holidayCalendarQueryController =
-    new HolidayCalendarAdminQueryController(
-      holidayCalendarQueryService,
-    );
+    new HolidayCalendarAdminQueryController(holidayCalendarQueryService);
 
   r.use(
     "/work-schedule/holiday-calendars",
@@ -659,36 +587,32 @@ export async function createAdminRoutes(
     ),
   );
 
-  const monthlyRosterService =
-    new MonthlyRosterAdminService(
-      monthlyRosterRepository,
-      workPatternRepository,
-      holidayCalendarRepository,
-      workShiftRepository,
-      workShiftCodeSequenceRepository,
-      workScheduleOrgUnitReadonlyAccess,
-      workScheduleEmploymentProfileReadonlyAccess,
-      workScheduleStudioResourceReadonlyAccess,
-      authoritativeAuditGuard,
-      adminMutationBridge,
-    );
-  const monthlyRosterQueryService =
-    new MonthlyRosterAdminQueryService(
-      monthlyRosterReadRepository,
-      workScheduleEmploymentProfileReadonlyAccess,
-      workPatternReadRepository,
-      holidayCalendarReadRepository,
-      workShiftReadRepository,
-      workScheduleOrgUnitReadonlyAccess,
-    );
-  const monthlyRosterController =
-    new MonthlyRosterAdminController(
-      monthlyRosterService,
-    );
-  const monthlyRosterQueryController =
-    new MonthlyRosterAdminQueryController(
-      monthlyRosterQueryService,
-    );
+  const monthlyRosterService = new MonthlyRosterAdminService(
+    monthlyRosterRepository,
+    workPatternRepository,
+    holidayCalendarRepository,
+    workShiftRepository,
+    workShiftCodeSequenceRepository,
+    workScheduleOrgUnitReadonlyAccess,
+    workScheduleEmploymentProfileReadonlyAccess,
+    workScheduleStudioResourceReadonlyAccess,
+    authoritativeAuditGuard,
+    adminMutationBridge,
+  );
+  const monthlyRosterQueryService = new MonthlyRosterAdminQueryService(
+    monthlyRosterReadRepository,
+    workScheduleEmploymentProfileReadonlyAccess,
+    workPatternReadRepository,
+    holidayCalendarReadRepository,
+    workShiftReadRepository,
+    workScheduleOrgUnitReadonlyAccess,
+  );
+  const monthlyRosterController = new MonthlyRosterAdminController(
+    monthlyRosterService,
+  );
+  const monthlyRosterQueryController = new MonthlyRosterAdminQueryController(
+    monthlyRosterQueryService,
+  );
 
   r.use(
     "/work-schedule/rosters",
@@ -699,30 +623,25 @@ export async function createAdminRoutes(
   );
 
   /* EVENT ASSIGNMENT */
-  const eventAssignmentService =
-    new EventAssignmentAdminService(
-      eventAssignmentRepository,
-      eventAssignmentBusinessCodeSequenceRepository,
-      eventAssignmentEmploymentProfileReadonlyAccess,
-      eventAssignmentTalentReadonlyAccess,
-      eventAssignmentTalentGroupReadonlyAccess,
-      eventAssignmentStudioResourceReadonlyAccess,
-      eventAssignmentPlatformAccountReadonlyAccess,
-      authoritativeAuditGuard,
-      adminMutationBridge,
-    );
-  const eventAssignmentQueryService =
-    new EventAssignmentAdminQueryService(
-      eventAssignmentReadRepository,
-    );
-  const eventAssignmentController =
-    new EventAssignmentAdminController(
-      eventAssignmentService,
-    );
+  const eventAssignmentService = new EventAssignmentAdminService(
+    eventAssignmentRepository,
+    eventAssignmentBusinessCodeSequenceRepository,
+    eventAssignmentEmploymentProfileReadonlyAccess,
+    eventAssignmentTalentReadonlyAccess,
+    eventAssignmentTalentGroupReadonlyAccess,
+    eventAssignmentStudioResourceReadonlyAccess,
+    eventAssignmentPlatformAccountReadonlyAccess,
+    authoritativeAuditGuard,
+    adminMutationBridge,
+  );
+  const eventAssignmentQueryService = new EventAssignmentAdminQueryService(
+    eventAssignmentReadRepository,
+  );
+  const eventAssignmentController = new EventAssignmentAdminController(
+    eventAssignmentService,
+  );
   const eventAssignmentQueryController =
-    new EventAssignmentAdminQueryController(
-      eventAssignmentQueryService,
-    );
+    new EventAssignmentAdminQueryController(eventAssignmentQueryService);
 
   r.use(
     "/events",
@@ -733,27 +652,22 @@ export async function createAdminRoutes(
   );
 
   /* CONTRACT REGISTRY */
-  const contractRegistryService =
-    new ContractRegistryAdminService(
-      contractRegistryRepository,
-      contractRegistryBusinessCodeSequenceRepository,
-      contractRegistryEmploymentProfileReadonlyAccess,
-      contractRegistryTalentReadonlyAccess,
-      authoritativeAuditGuard,
-      adminMutationBridge,
-    );
-  const contractRegistryQueryService =
-    new ContractRegistryAdminQueryService(
-      contractRegistryReadRepository,
-    );
-  const contractRegistryController =
-    new ContractRegistryAdminController(
-      contractRegistryService,
-    );
+  const contractRegistryService = new ContractRegistryAdminService(
+    contractRegistryRepository,
+    contractRegistryBusinessCodeSequenceRepository,
+    contractRegistryEmploymentProfileReadonlyAccess,
+    contractRegistryTalentReadonlyAccess,
+    authoritativeAuditGuard,
+    adminMutationBridge,
+  );
+  const contractRegistryQueryService = new ContractRegistryAdminQueryService(
+    contractRegistryReadRepository,
+  );
+  const contractRegistryController = new ContractRegistryAdminController(
+    contractRegistryService,
+  );
   const contractRegistryQueryController =
-    new ContractRegistryAdminQueryController(
-      contractRegistryQueryService,
-    );
+    new ContractRegistryAdminQueryController(contractRegistryQueryService);
 
   r.use(
     "/contract-records",
@@ -764,94 +678,72 @@ export async function createAdminRoutes(
   );
 
   /* TALENT KPI */
-  const talentKpiService =
-    new TalentKpiAdminService(
-      talentKpiRepository,
-      talentKpiBusinessCodeSequenceRepository,
-      talentKpiTalentReadonlyAccess,
-      talentKpiPlatformAccountReadonlyAccess,
-      talentKpiEventReadonlyAccess,
-      authoritativeAuditGuard,
-      adminMutationBridge,
-    );
-  const talentKpiQueryService =
-    new TalentKpiAdminQueryService(
-      talentKpiReadRepository,
-    );
-  const talentKpiController =
-    new TalentKpiAdminController(
-      talentKpiService,
-    );
-  const talentKpiQueryController =
-    new TalentKpiAdminQueryController(
-      talentKpiQueryService,
-    );
+  const talentKpiService = new TalentKpiAdminService(
+    talentKpiRepository,
+    talentKpiBusinessCodeSequenceRepository,
+    talentKpiTalentReadonlyAccess,
+    talentKpiPlatformAccountReadonlyAccess,
+    talentKpiEventReadonlyAccess,
+    authoritativeAuditGuard,
+    adminMutationBridge,
+  );
+  const talentKpiQueryService = new TalentKpiAdminQueryService(
+    talentKpiReadRepository,
+  );
+  const talentKpiController = new TalentKpiAdminController(talentKpiService);
+  const talentKpiQueryController = new TalentKpiAdminQueryController(
+    talentKpiQueryService,
+  );
 
   r.use(
     "/talent-kpi-records",
-    adminTalentKpiRoutes(
-      talentKpiController,
-      talentKpiQueryController,
-    ),
+    adminTalentKpiRoutes(talentKpiController, talentKpiQueryController),
   );
 
   /* COMMISSION */
-  const commissionService =
-    new CommissionAdminService(
-      commissionRepository,
-      commissionBusinessCodeSequenceRepository,
-      commissionEmploymentProfileReadonlyAccess,
-      commissionTalentReadonlyAccess,
-      commissionContractRegistryReadonlyAccess,
-      commissionRevenueLedgerReadonlyAccess,
-      authoritativeAuditGuard,
-      adminMutationBridge,
-    );
-  const commissionQueryService =
-    new CommissionAdminQueryService(
-      commissionReadRepository,
-    );
-  const commissionController =
-    new CommissionAdminController(
-      commissionService,
-    );
-  const commissionQueryController =
-    new CommissionAdminQueryController(
-      commissionQueryService,
-    );
+  const commissionService = new CommissionAdminService(
+    commissionRepository,
+    commissionBusinessCodeSequenceRepository,
+    commissionEmploymentProfileReadonlyAccess,
+    commissionTalentReadonlyAccess,
+    commissionContractRegistryReadonlyAccess,
+    commissionRevenueLedgerReadonlyAccess,
+    authoritativeAuditGuard,
+    adminMutationBridge,
+  );
+  const commissionQueryService = new CommissionAdminQueryService(
+    commissionReadRepository,
+  );
+  const commissionController = new CommissionAdminController(commissionService);
+  const commissionQueryController = new CommissionAdminQueryController(
+    commissionQueryService,
+  );
 
   r.use(
     "/commission",
-    adminCommissionRoutes(
-      commissionController,
-      commissionQueryController,
-    ),
+    adminCommissionRoutes(commissionController, commissionQueryController),
   );
 
   /* REVENUE LEDGER */
-  const revenueLedgerService =
-    new RevenueLedgerAdminService(
-      revenueEntryRepository,
-      revenueLedgerBusinessCodeSequenceRepository,
-      revenueLedgerTalentReadonlyAccess,
-      revenueLedgerPlatformAccountReadonlyAccess,
-      revenueLedgerEventReadonlyAccess,
-      revenueLedgerCommissionReadonlyAccess,
-      authoritativeAuditGuard,
-      adminMutationBridge,
-    );
-  const revenueLedgerQueryService =
-    new RevenueLedgerAdminQueryService(
-      revenueLedgerReadRepository,
-    );
-  const revenueLedgerController =
-    new RevenueLedgerAdminController(
-      revenueLedgerService,
-    );
-  const revenueLedgerQueryController =
-    new RevenueLedgerAdminQueryController(
-      revenueLedgerQueryService,
-    );
+  const revenueLedgerService = new RevenueLedgerAdminService(
+    revenueEntryRepository,
+    revenueLedgerBusinessCodeSequenceRepository,
+    revenueLedgerTalentReadonlyAccess,
+    revenueLedgerPlatformAccountReadonlyAccess,
+    revenueLedgerEventReadonlyAccess,
+    revenueLedgerCommissionReadonlyAccess,
+    authoritativeAuditGuard,
+    adminMutationBridge,
+  );
+  const revenueLedgerQueryService = new RevenueLedgerAdminQueryService(
+    revenueLedgerReadRepository,
+  );
+  const revenueLedgerController = new RevenueLedgerAdminController(
+    revenueLedgerService,
+  );
+  const revenueLedgerQueryController = new RevenueLedgerAdminQueryController(
+    revenueLedgerQueryService,
+  );
 
   r.use(
     "/revenue-entries",
@@ -862,20 +754,16 @@ export async function createAdminRoutes(
   );
 
   /* DASHBOARD LITE */
-  const dashboardLiteQueryService =
-    new DashboardLiteAdminQueryService(
-      dashboardLiteReadRepository,
-    );
-  const dashboardLiteQueryController =
-    new DashboardLiteAdminQueryController(
-      dashboardLiteQueryService,
-    );
+  const dashboardLiteQueryService = new DashboardLiteAdminQueryService(
+    dashboardLiteReadRepository,
+  );
+  const dashboardLiteQueryController = new DashboardLiteAdminQueryController(
+    dashboardLiteQueryService,
+  );
 
   r.use(
     "/dashboard-lite",
-    adminDashboardLiteRoutes(
-      dashboardLiteQueryController,
-    ),
+    adminDashboardLiteRoutes(dashboardLiteQueryController),
   );
 
   return r;

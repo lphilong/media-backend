@@ -37,9 +37,33 @@ export interface DashboardLiteAttentionView {
   readonly expiringContractCount30d: number;
 }
 
+export interface DashboardLiteTimestampWindowView {
+  readonly startAtInclusive: number;
+  readonly endAtExclusive: number;
+}
+
+export interface DashboardLiteStaleDraftsWindowView {
+  readonly olderThanAtExclusive: number;
+}
+
+export interface DashboardLiteContractExpiryWindowView {
+  readonly startDateInclusive: string;
+  readonly endDateInclusive: string;
+}
+
+export interface DashboardLiteWindowsView {
+  readonly businessTimeZone: string;
+  readonly today: DashboardLiteTimestampWindowView;
+  readonly next7Days: DashboardLiteTimestampWindowView;
+  readonly trailing30Days: DashboardLiteTimestampWindowView;
+  readonly staleDrafts: DashboardLiteStaleDraftsWindowView;
+  readonly contractExpiry30Days: DashboardLiteContractExpiryWindowView;
+}
+
 export interface DashboardLiteSnapshotView {
   readonly generatedAt: number;
   readonly businessDate: string;
+  readonly windows: DashboardLiteWindowsView;
   readonly overview: DashboardLiteOverviewView;
   readonly operations: DashboardLiteOperationsView;
   readonly commercial: DashboardLiteCommercialView;

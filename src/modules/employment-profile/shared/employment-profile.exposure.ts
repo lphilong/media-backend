@@ -18,8 +18,11 @@ const EMPLOYMENT_PROFILE_ADMIN_LIST_FIELDS = [
   "employmentKind",
   "jobTitle",
   "orgUnitId",
+  "orgUnitRef",
   "managerEmploymentProfileId",
+  "managerEmploymentProfileRef",
   "linkedUserId",
+  "linkedUserRef",
   "employmentStatus",
   "contractStatus",
   "createdAt",
@@ -32,7 +35,9 @@ const EMPLOYMENT_PROFILE_ADMIN_DIRECT_REPORT_FIELDS = [
   "employmentStatus",
   "contractStatus",
   "orgUnitId",
+  "orgUnitRef",
   "managerEmploymentProfileId",
+  "managerEmploymentProfileRef",
 ] as const;
 
 const EMPLOYMENT_PROFILE_ADMIN_DETAIL_FIELDS = [
@@ -45,8 +50,11 @@ const EMPLOYMENT_PROFILE_ADMIN_DETAIL_FIELDS = [
   "titleDescription",
   "externalRef",
   "orgUnitId",
+  "orgUnitRef",
   "managerEmploymentProfileId",
+  "managerEmploymentProfileRef",
   "linkedUserId",
+  "linkedUserRef",
   "employmentStatus",
   "contractStatus",
   "employmentStartDate",
@@ -73,9 +81,13 @@ export const EmploymentProfileAdminListExposure =
               employmentKind: input.employmentKind,
               jobTitle: input.jobTitle,
               orgUnitId: input.orgUnitId,
+              orgUnitRef: input.orgUnitRef,
               managerEmploymentProfileId:
                 input.managerEmploymentProfileId,
+              managerEmploymentProfileRef:
+                input.managerEmploymentProfileRef,
               linkedUserId: input.linkedUserId,
+              linkedUserRef: input.linkedUserRef,
               employmentStatus:
                 input.employmentStatus,
               contractStatus: input.contractStatus,
@@ -94,8 +106,11 @@ export const EmploymentProfileAdminListExposure =
             employeeCode: input.employeeCode,
             displayName: input.displayName,
             orgUnitId: input.orgUnitId,
+            orgUnitRef: input.orgUnitRef,
             managerEmploymentProfileId:
               input.managerEmploymentProfileId,
+            managerEmploymentProfileRef:
+              input.managerEmploymentProfileRef,
             employmentStatus: input.employmentStatus,
             contractStatus: input.contractStatus,
           },
@@ -133,9 +148,13 @@ export const EmploymentProfileAdminDetailExposure =
               input.titleDescription,
             externalRef: input.externalRef,
             orgUnitId: input.orgUnitId,
+            orgUnitRef: input.orgUnitRef,
             managerEmploymentProfileId:
               input.managerEmploymentProfileId,
+            managerEmploymentProfileRef:
+              input.managerEmploymentProfileRef,
             linkedUserId: input.linkedUserId,
+            linkedUserRef: input.linkedUserRef,
             employmentStatus: input.employmentStatus,
             contractStatus: input.contractStatus,
             employmentStartDate:

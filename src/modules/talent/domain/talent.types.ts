@@ -1,3 +1,5 @@
+import { ReferenceSummary } from "@modules/reference-summary";
+
 export const TALENT_ORIGINS = [
   "INTERNAL",
   "EXTERNAL",
@@ -55,7 +57,9 @@ export interface TalentRecord {
   readonly talentOrigin: TalentOrigin;
   readonly operationalStatus: TalentOperationalStatus;
   readonly managerEmploymentProfileId: string | null;
+  readonly managerEmploymentProfileRef?: ReferenceSummary | null;
   readonly linkedEmploymentProfileId: string | null;
+  readonly linkedEmploymentProfileRef?: ReferenceSummary | null;
   readonly commercialParticipationStatus: TalentCommercialParticipationStatus;
   readonly livestreamEligible: boolean;
   readonly eventEligible: boolean;
@@ -74,7 +78,9 @@ export interface TalentListItemView {
   readonly talentOrigin: TalentOrigin;
   readonly operationalStatus: TalentOperationalStatus;
   readonly managerEmploymentProfileId: string | null;
+  readonly managerEmploymentProfileRef?: ReferenceSummary | null;
   readonly linkedEmploymentProfileId: string | null;
+  readonly linkedEmploymentProfileRef?: ReferenceSummary | null;
   readonly commercialParticipationStatus: TalentCommercialParticipationStatus;
   readonly livestreamEligible: boolean;
   readonly eventEligible: boolean;

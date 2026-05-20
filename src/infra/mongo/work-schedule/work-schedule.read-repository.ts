@@ -1,5 +1,6 @@
-import { Db } from "mongodb";
+import { Collection, Db } from "mongodb";
 import { BaseRepository } from "@infra/database/repository/base.repository";
+import { ReferenceSummary } from "@modules/reference-summary";
 import { WorkScheduleValidationError } from "@modules/work-schedule/domain/work-schedule.errors";
 import {
   WorkShiftByResourceListItemView,
@@ -53,6 +54,58 @@ interface WorkShiftReadDocument {
   readonly updatedAt: number;
 }
 
+interface EmploymentProfileReferenceReadDocument {
+  readonly _id: string;
+  readonly employeeCode: string;
+  readonly legalName: string;
+  readonly displayName: string;
+  readonly employmentStatus: string;
+}
+
+interface TalentReferenceReadDocument {
+  readonly _id: string;
+  readonly talentCode: string;
+  readonly stageName: string | null;
+  readonly legalName: string;
+  readonly displayShortName?: string | null;
+  readonly operationalStatus: string;
+}
+
+interface TalentGroupReferenceReadDocument {
+  readonly _id: string;
+  readonly groupCode: string;
+  readonly name: string;
+  readonly status: string;
+}
+
+interface StudioResourceReferenceReadDocument {
+  readonly _id: string;
+  readonly resourceCode: string;
+  readonly name: string;
+  readonly operationalStatus: string;
+}
+
+interface OrgUnitReferenceReadDocument {
+  readonly _id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly status: string;
+}
+
+interface MonthlyRosterReferenceReadDocument {
+  readonly _id: string;
+  readonly rosterCode: string;
+  readonly rosterMonth: string;
+  readonly status: string;
+}
+
+interface WorkPatternReferenceReadDocument {
+  readonly _id: string;
+  readonly patternCode: string;
+  readonly name: string;
+  readonly status: string;
+}
+
 type ReadViewKind =
   | "list"
   | "by-subject"
@@ -93,8 +146,44 @@ export class NativeMongoWorkShiftReadRepository
   extends BaseRepository<WorkShiftReadDocument>
   implements WorkShiftReadRepository
 {
+  private readonly employmentProfileCollection: Collection<EmploymentProfileReferenceReadDocument>;
+  private readonly talentCollection: Collection<TalentReferenceReadDocument>;
+  private readonly talentGroupCollection: Collection<TalentGroupReferenceReadDocument>;
+  private readonly studioResourceCollection: Collection<StudioResourceReferenceReadDocument>;
+  private readonly orgUnitCollection: Collection<OrgUnitReferenceReadDocument>;
+  private readonly monthlyRosterCollection: Collection<MonthlyRosterReferenceReadDocument>;
+  private readonly workPatternCollection: Collection<WorkPatternReferenceReadDocument>;
+
   constructor(db: Db) {
     super(db, "work_shifts");
+    this.employmentProfileCollection =
+      db.collection<EmploymentProfileReferenceReadDocument>(
+        "employment_profiles",
+      );
+    this.talentCollection =
+      db.collection<TalentReferenceReadDocument>(
+        "talents",
+      );
+    this.talentGroupCollection =
+      db.collection<TalentGroupReferenceReadDocument>(
+        "talent_groups",
+      );
+    this.studioResourceCollection =
+      db.collection<StudioResourceReferenceReadDocument>(
+        "studio_resources",
+      );
+    this.orgUnitCollection =
+      db.collection<OrgUnitReferenceReadDocument>(
+        "org_units",
+      );
+    this.monthlyRosterCollection =
+      db.collection<MonthlyRosterReferenceReadDocument>(
+        "work_monthly_rosters",
+      );
+    this.workPatternCollection =
+      db.collection<WorkPatternReferenceReadDocument>(
+        "work_patterns",
+      );
   }
 
   async listWorkShifts(
@@ -108,10 +197,29 @@ export class NativeMongoWorkShiftReadRepository
       },
     );
 
+    const items =
+      await enrichWorkShiftReferenceSummaries(
+        page.items.map((item) =>
+          toWorkShiftListItemView(item),
+        ),
+        {
+          employmentProfileCollection:
+            this.employmentProfileCollection,
+          talentCollection: this.talentCollection,
+          talentGroupCollection:
+            this.talentGroupCollection,
+          studioResourceCollection:
+            this.studioResourceCollection,
+          orgUnitCollection: this.orgUnitCollection,
+          monthlyRosterCollection:
+            this.monthlyRosterCollection,
+          workPatternCollection:
+            this.workPatternCollection,
+        },
+      );
+
     return {
-      items: page.items.map((item) =>
-        toWorkShiftListItemView(item),
-      ),
+      items,
       nextCursor: page.nextCursor,
     };
   }
@@ -161,7 +269,30 @@ export class NativeMongoWorkShiftReadRepository
       _id: workShiftId,
     });
 
-    return doc ? toWorkShiftDetailView(doc) : null;
+    if (!doc) {
+      return null;
+    }
+
+    const [detail] =
+      await enrichWorkShiftReferenceSummaries(
+        [toWorkShiftDetailView(doc)],
+        {
+          employmentProfileCollection:
+            this.employmentProfileCollection,
+          talentCollection: this.talentCollection,
+          talentGroupCollection:
+            this.talentGroupCollection,
+          studioResourceCollection:
+            this.studioResourceCollection,
+          orgUnitCollection: this.orgUnitCollection,
+          monthlyRosterCollection:
+            this.monthlyRosterCollection,
+          workPatternCollection:
+            this.workPatternCollection,
+        },
+      );
+
+    return detail ?? null;
   }
 
   async listActiveEmploymentProfileShiftsForWindow(
@@ -698,6 +829,466 @@ function toActiveEmploymentProfileConflictView(
       document.sourceRosterLocalDate ?? null,
     sourceRosterSlotKey:
       document.sourceRosterSlotKey ?? null,
+  };
+}
+
+async function enrichWorkShiftReferenceSummaries<
+  T extends {
+    readonly subjectKind: WorkShiftSubjectKind;
+    readonly subjectEmploymentProfileId: string | null;
+    readonly subjectTalentId: string | null;
+    readonly subjectTalentGroupId: string | null;
+    readonly sourceRosterId?: string | null;
+    readonly sourcePatternId?: string | null;
+    readonly sourceDepartmentOrgUnitId?: string | null;
+    readonly studioResourceIds?: readonly string[];
+  },
+>(
+  items: readonly T[],
+  collections: {
+    readonly employmentProfileCollection: Collection<EmploymentProfileReferenceReadDocument>;
+    readonly talentCollection: Collection<TalentReferenceReadDocument>;
+    readonly talentGroupCollection: Collection<TalentGroupReferenceReadDocument>;
+    readonly studioResourceCollection: Collection<StudioResourceReferenceReadDocument>;
+    readonly orgUnitCollection: Collection<OrgUnitReferenceReadDocument>;
+    readonly monthlyRosterCollection: Collection<MonthlyRosterReferenceReadDocument>;
+    readonly workPatternCollection: Collection<WorkPatternReferenceReadDocument>;
+  },
+): Promise<readonly T[]> {
+  if (items.length === 0) {
+    return items;
+  }
+
+  const employmentProfileIds = new Set<string>();
+  const talentIds = new Set<string>();
+  const talentGroupIds = new Set<string>();
+  const studioResourceIds = new Set<string>();
+  const orgUnitIds = new Set<string>();
+  const monthlyRosterIds = new Set<string>();
+  const workPatternIds = new Set<string>();
+
+  for (const item of items) {
+    switch (item.subjectKind) {
+      case "EMPLOYMENT_PROFILE":
+        addOptionalReferenceId(
+          employmentProfileIds,
+          item.subjectEmploymentProfileId,
+        );
+        break;
+
+      case "TALENT":
+        addOptionalReferenceId(talentIds, item.subjectTalentId);
+        break;
+
+      case "TALENT_GROUP":
+        addOptionalReferenceId(
+          talentGroupIds,
+          item.subjectTalentGroupId,
+        );
+        break;
+    }
+
+    for (const studioResourceId of item.studioResourceIds ?? []) {
+      addOptionalReferenceId(studioResourceIds, studioResourceId);
+    }
+
+    addOptionalReferenceId(monthlyRosterIds, item.sourceRosterId ?? null);
+    addOptionalReferenceId(workPatternIds, item.sourcePatternId ?? null);
+    addOptionalReferenceId(
+      orgUnitIds,
+      item.sourceDepartmentOrgUnitId ?? null,
+    );
+  }
+
+  const [
+    employmentProfileRefMap,
+    talentRefMap,
+    talentGroupRefMap,
+    studioResourceRefMap,
+    orgUnitRefMap,
+    monthlyRosterRefMap,
+    workPatternRefMap,
+  ] = await Promise.all([
+    loadEmploymentProfileReferenceSummaries(
+      employmentProfileIds,
+      collections.employmentProfileCollection,
+    ),
+    loadTalentReferenceSummaries(talentIds, collections.talentCollection),
+    loadTalentGroupReferenceSummaries(
+      talentGroupIds,
+      collections.talentGroupCollection,
+    ),
+    loadStudioResourceReferenceSummaries(
+      studioResourceIds,
+      collections.studioResourceCollection,
+    ),
+    loadOrgUnitReferenceSummaries(orgUnitIds, collections.orgUnitCollection),
+    loadMonthlyRosterReferenceSummaries(
+      monthlyRosterIds,
+      collections.monthlyRosterCollection,
+    ),
+    loadWorkPatternReferenceSummaries(
+      workPatternIds,
+      collections.workPatternCollection,
+    ),
+  ]);
+
+  return items.map((item) => ({
+    ...item,
+    subjectRef:
+      readSubjectReferenceSummary(item, {
+        employmentProfileRefMap,
+        talentRefMap,
+        talentGroupRefMap,
+      }) ?? null,
+    ...(item.studioResourceIds
+      ? {
+          studioResourceRefs: item.studioResourceIds.map(
+            (id) =>
+              studioResourceRefMap.get(id) ??
+              toFallbackReferenceSummary(id),
+          ),
+        }
+      : {}),
+    sourceRosterRef: item.sourceRosterId
+      ? (monthlyRosterRefMap.get(item.sourceRosterId) ?? null)
+      : null,
+    ...(item.sourcePatternId !== undefined
+      ? {
+          sourcePatternRef: item.sourcePatternId
+            ? (workPatternRefMap.get(item.sourcePatternId) ?? null)
+            : null,
+        }
+      : {}),
+    ...(item.sourceDepartmentOrgUnitId !== undefined
+      ? {
+          sourceDepartmentOrgUnitRef: item.sourceDepartmentOrgUnitId
+            ? (orgUnitRefMap.get(item.sourceDepartmentOrgUnitId) ?? null)
+            : null,
+        }
+      : {}),
+  }));
+}
+
+function readSubjectReferenceSummary(
+  item: {
+    readonly subjectKind: WorkShiftSubjectKind;
+    readonly subjectEmploymentProfileId: string | null;
+    readonly subjectTalentId: string | null;
+    readonly subjectTalentGroupId: string | null;
+  },
+  refs: {
+    readonly employmentProfileRefMap: ReadonlyMap<string, ReferenceSummary>;
+    readonly talentRefMap: ReadonlyMap<string, ReferenceSummary>;
+    readonly talentGroupRefMap: ReadonlyMap<string, ReferenceSummary>;
+  },
+): ReferenceSummary | null {
+  switch (item.subjectKind) {
+    case "EMPLOYMENT_PROFILE":
+      return item.subjectEmploymentProfileId
+        ? (refs.employmentProfileRefMap.get(
+            item.subjectEmploymentProfileId,
+          ) ?? null)
+        : null;
+
+    case "TALENT":
+      return item.subjectTalentId
+        ? (refs.talentRefMap.get(item.subjectTalentId) ?? null)
+        : null;
+
+    case "TALENT_GROUP":
+      return item.subjectTalentGroupId
+        ? (refs.talentGroupRefMap.get(item.subjectTalentGroupId) ?? null)
+        : null;
+  }
+}
+
+async function loadEmploymentProfileReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<EmploymentProfileReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      { _id: { $in: [...ids] } },
+      {
+        projection: {
+          _id: 1,
+          employeeCode: 1,
+          legalName: 1,
+          displayName: 1,
+          employmentStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toEmploymentProfileReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadTalentReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<TalentReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      { _id: { $in: [...ids] } },
+      {
+        projection: {
+          _id: 1,
+          talentCode: 1,
+          stageName: 1,
+          legalName: 1,
+          displayShortName: 1,
+          operationalStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toTalentReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadTalentGroupReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<TalentGroupReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      { _id: { $in: [...ids] } },
+      { projection: { _id: 1, groupCode: 1, name: 1, status: 1 } },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toTalentGroupReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadStudioResourceReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<StudioResourceReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      { _id: { $in: [...ids] } },
+      {
+        projection: {
+          _id: 1,
+          resourceCode: 1,
+          name: 1,
+          operationalStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toStudioResourceReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadOrgUnitReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<OrgUnitReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      { _id: { $in: [...ids] } },
+      { projection: { _id: 1, code: 1, name: 1, status: 1 } },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toOrgUnitReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadMonthlyRosterReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<MonthlyRosterReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      { _id: { $in: [...ids] } },
+      {
+        projection: {
+          _id: 1,
+          rosterCode: 1,
+          rosterMonth: 1,
+          status: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toMonthlyRosterReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadWorkPatternReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<WorkPatternReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      { _id: { $in: [...ids] } },
+      {
+        projection: {
+          _id: 1,
+          patternCode: 1,
+          name: 1,
+          status: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toWorkPatternReferenceSummary(document),
+    ]),
+  );
+}
+
+function addOptionalReferenceId(ids: Set<string>, value: string | null): void {
+  const normalized = value?.trim();
+
+  if (normalized) {
+    ids.add(normalized);
+  }
+}
+
+function toFallbackReferenceSummary(id: string): ReferenceSummary {
+  return { id };
+}
+
+function toEmploymentProfileReferenceSummary(
+  document: EmploymentProfileReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.employeeCode,
+    displayName: document.displayName,
+    name: document.legalName,
+    status: document.employmentStatus,
+  };
+}
+
+function toTalentReferenceSummary(
+  document: TalentReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.talentCode,
+    name: document.displayShortName ?? document.stageName ?? document.legalName,
+    status: document.operationalStatus,
+  };
+}
+
+function toTalentGroupReferenceSummary(
+  document: TalentGroupReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.groupCode,
+    name: document.name,
+    status: document.status,
+  };
+}
+
+function toStudioResourceReferenceSummary(
+  document: StudioResourceReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.resourceCode,
+    name: document.name,
+    status: document.operationalStatus,
+  };
+}
+
+function toOrgUnitReferenceSummary(
+  document: OrgUnitReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.code,
+    name: document.name,
+    status: document.status,
+  };
+}
+
+function toMonthlyRosterReferenceSummary(
+  document: MonthlyRosterReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.rosterCode,
+    title: document.rosterMonth,
+    status: document.status,
+  };
+}
+
+function toWorkPatternReferenceSummary(
+  document: WorkPatternReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.patternCode,
+    name: document.name,
+    status: document.status,
   };
 }
 

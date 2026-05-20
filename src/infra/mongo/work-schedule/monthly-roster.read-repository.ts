@@ -1,5 +1,6 @@
-import { Db } from "mongodb";
+import { Collection, Db } from "mongodb";
 import { BaseRepository } from "@infra/database/repository/base.repository";
+import { ReferenceSummary } from "@modules/reference-summary";
 import { WorkScheduleValidationError } from "@modules/work-schedule/domain/work-schedule.errors";
 import {
   MONTHLY_ROSTER_STATUSES,
@@ -43,6 +44,42 @@ interface MonthlyRosterReadDocument {
   readonly updatedAt: number;
 }
 
+interface OrgUnitReferenceReadDocument {
+  readonly _id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly status: string;
+}
+
+interface EmploymentProfileReferenceReadDocument {
+  readonly _id: string;
+  readonly employeeCode: string;
+  readonly legalName: string;
+  readonly displayName: string;
+  readonly employmentStatus: string;
+}
+
+interface StudioResourceReferenceReadDocument {
+  readonly _id: string;
+  readonly resourceCode: string;
+  readonly name: string;
+  readonly operationalStatus: string;
+}
+
+interface WorkPatternReferenceReadDocument {
+  readonly _id: string;
+  readonly patternCode: string;
+  readonly name: string;
+  readonly status: string;
+}
+
+interface HolidayCalendarReferenceReadDocument {
+  readonly _id: string;
+  readonly calendarCode: string;
+  readonly name: string;
+  readonly status: string;
+}
+
 interface EncodedCursor {
   readonly queryShapeSignature: string;
   readonly createdAt: number;
@@ -53,8 +90,34 @@ export class NativeMongoMonthlyRosterReadRepository
   extends BaseRepository<MonthlyRosterReadDocument>
   implements MonthlyRosterReadRepository
 {
+  private readonly orgUnitCollection: Collection<OrgUnitReferenceReadDocument>;
+  private readonly employmentProfileCollection: Collection<EmploymentProfileReferenceReadDocument>;
+  private readonly studioResourceCollection: Collection<StudioResourceReferenceReadDocument>;
+  private readonly workPatternCollection: Collection<WorkPatternReferenceReadDocument>;
+  private readonly holidayCalendarCollection: Collection<HolidayCalendarReferenceReadDocument>;
+
   constructor(db: Db) {
     super(db, "work_monthly_rosters");
+    this.orgUnitCollection =
+      db.collection<OrgUnitReferenceReadDocument>(
+        "org_units",
+      );
+    this.employmentProfileCollection =
+      db.collection<EmploymentProfileReferenceReadDocument>(
+        "employment_profiles",
+      );
+    this.studioResourceCollection =
+      db.collection<StudioResourceReferenceReadDocument>(
+        "studio_resources",
+      );
+    this.workPatternCollection =
+      db.collection<WorkPatternReferenceReadDocument>(
+        "work_patterns",
+      );
+    this.holidayCalendarCollection =
+      db.collection<HolidayCalendarReferenceReadDocument>(
+        "work_holiday_calendars",
+      );
   }
 
   async listMonthlyRosters(
@@ -122,10 +185,26 @@ export class NativeMongoMonthlyRosterReadRepository
       ? docs.slice(0, input.limit)
       : docs;
 
+    const items =
+      await enrichMonthlyRosterReferenceSummaries(
+        page.map((document) =>
+          toMonthlyRosterListItemView(document),
+        ),
+        {
+          orgUnitCollection: this.orgUnitCollection,
+          employmentProfileCollection:
+            this.employmentProfileCollection,
+          studioResourceCollection:
+            this.studioResourceCollection,
+          workPatternCollection:
+            this.workPatternCollection,
+          holidayCalendarCollection:
+            this.holidayCalendarCollection,
+        },
+      );
+
     return {
-      items: page.map((document) =>
-        toMonthlyRosterListItemView(document),
-      ),
+      items,
       nextCursor:
         hasNext && page.length > 0
           ? encodeCursor({
@@ -144,7 +223,27 @@ export class NativeMongoMonthlyRosterReadRepository
       _id: monthlyRosterId,
     });
 
-    return doc ? toMonthlyRosterView(doc) : null;
+    if (!doc) {
+      return null;
+    }
+
+    const [detail] =
+      await enrichMonthlyRosterReferenceSummaries(
+        [toMonthlyRosterView(doc)],
+        {
+          orgUnitCollection: this.orgUnitCollection,
+          employmentProfileCollection:
+            this.employmentProfileCollection,
+          studioResourceCollection:
+            this.studioResourceCollection,
+          workPatternCollection:
+            this.workPatternCollection,
+          holidayCalendarCollection:
+            this.holidayCalendarCollection,
+        },
+      );
+
+    return detail ?? null;
   }
 }
 
@@ -247,6 +346,315 @@ function toMonthlyRosterView(
         ...exception.studioResourceIds,
       ],
     })),
+  };
+}
+
+async function enrichMonthlyRosterReferenceSummaries<
+  T extends {
+    readonly departmentOrgUnitId: string;
+    readonly workPatternId: string;
+    readonly holidayCalendarId: string;
+    readonly exceptions?: readonly RosterExceptionRecord[];
+  },
+>(
+  items: readonly T[],
+  collections: {
+    readonly orgUnitCollection: Collection<OrgUnitReferenceReadDocument>;
+    readonly employmentProfileCollection: Collection<EmploymentProfileReferenceReadDocument>;
+    readonly studioResourceCollection: Collection<StudioResourceReferenceReadDocument>;
+    readonly workPatternCollection: Collection<WorkPatternReferenceReadDocument>;
+    readonly holidayCalendarCollection: Collection<HolidayCalendarReferenceReadDocument>;
+  },
+): Promise<readonly T[]> {
+  if (items.length === 0) {
+    return items;
+  }
+
+  const orgUnitIds = new Set<string>();
+  const employmentProfileIds = new Set<string>();
+  const studioResourceIds = new Set<string>();
+  const workPatternIds = new Set<string>();
+  const holidayCalendarIds = new Set<string>();
+
+  for (const item of items) {
+    addRequiredReferenceId(orgUnitIds, item.departmentOrgUnitId);
+    addRequiredReferenceId(workPatternIds, item.workPatternId);
+    addRequiredReferenceId(holidayCalendarIds, item.holidayCalendarId);
+
+    for (const exception of item.exceptions ?? []) {
+      addRequiredReferenceId(
+        employmentProfileIds,
+        exception.subjectEmploymentProfileId,
+      );
+
+      for (const studioResourceId of exception.studioResourceIds) {
+        addRequiredReferenceId(studioResourceIds, studioResourceId);
+      }
+    }
+  }
+
+  const [
+    orgUnitRefMap,
+    employmentProfileRefMap,
+    studioResourceRefMap,
+    workPatternRefMap,
+    holidayCalendarRefMap,
+  ] = await Promise.all([
+    loadOrgUnitReferenceSummaries(orgUnitIds, collections.orgUnitCollection),
+    loadEmploymentProfileReferenceSummaries(
+      employmentProfileIds,
+      collections.employmentProfileCollection,
+    ),
+    loadStudioResourceReferenceSummaries(
+      studioResourceIds,
+      collections.studioResourceCollection,
+    ),
+    loadWorkPatternReferenceSummaries(
+      workPatternIds,
+      collections.workPatternCollection,
+    ),
+    loadHolidayCalendarReferenceSummaries(
+      holidayCalendarIds,
+      collections.holidayCalendarCollection,
+    ),
+  ]);
+
+  return items.map((item) => ({
+    ...item,
+    departmentOrgUnitRef:
+      orgUnitRefMap.get(item.departmentOrgUnitId) ?? null,
+    workPatternRef:
+      workPatternRefMap.get(item.workPatternId) ?? null,
+    holidayCalendarRef:
+      holidayCalendarRefMap.get(item.holidayCalendarId) ?? null,
+    ...(item.exceptions
+      ? {
+          exceptions: item.exceptions.map((exception) => ({
+            ...exception,
+            subjectEmploymentProfileRef:
+              employmentProfileRefMap.get(
+                exception.subjectEmploymentProfileId,
+              ) ?? null,
+            studioResourceRefs: exception.studioResourceIds.map(
+              (id) =>
+                studioResourceRefMap.get(id) ??
+                toFallbackReferenceSummary(id),
+            ),
+          })),
+        }
+      : {}),
+  }));
+}
+
+async function loadOrgUnitReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<OrgUnitReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      { _id: { $in: [...ids] } },
+      { projection: { _id: 1, code: 1, name: 1, status: 1 } },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toOrgUnitReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadEmploymentProfileReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<EmploymentProfileReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      { _id: { $in: [...ids] } },
+      {
+        projection: {
+          _id: 1,
+          employeeCode: 1,
+          legalName: 1,
+          displayName: 1,
+          employmentStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toEmploymentProfileReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadStudioResourceReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<StudioResourceReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      { _id: { $in: [...ids] } },
+      {
+        projection: {
+          _id: 1,
+          resourceCode: 1,
+          name: 1,
+          operationalStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toStudioResourceReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadWorkPatternReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<WorkPatternReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      { _id: { $in: [...ids] } },
+      {
+        projection: {
+          _id: 1,
+          patternCode: 1,
+          name: 1,
+          status: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toWorkPatternReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadHolidayCalendarReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<HolidayCalendarReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      { _id: { $in: [...ids] } },
+      {
+        projection: {
+          _id: 1,
+          calendarCode: 1,
+          name: 1,
+          status: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toHolidayCalendarReferenceSummary(document),
+    ]),
+  );
+}
+
+function addRequiredReferenceId(ids: Set<string>, value: string): void {
+  const normalized = value.trim();
+
+  if (normalized) {
+    ids.add(normalized);
+  }
+}
+
+function toFallbackReferenceSummary(id: string): ReferenceSummary {
+  return { id };
+}
+
+function toOrgUnitReferenceSummary(
+  document: OrgUnitReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.code,
+    name: document.name,
+    status: document.status,
+  };
+}
+
+function toEmploymentProfileReferenceSummary(
+  document: EmploymentProfileReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.employeeCode,
+    displayName: document.displayName,
+    name: document.legalName,
+    status: document.employmentStatus,
+  };
+}
+
+function toStudioResourceReferenceSummary(
+  document: StudioResourceReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.resourceCode,
+    name: document.name,
+    status: document.operationalStatus,
+  };
+}
+
+function toWorkPatternReferenceSummary(
+  document: WorkPatternReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.patternCode,
+    name: document.name,
+    status: document.status,
+  };
+}
+
+function toHolidayCalendarReferenceSummary(
+  document: HolidayCalendarReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.calendarCode,
+    name: document.name,
+    status: document.status,
   };
 }
 

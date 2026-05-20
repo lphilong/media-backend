@@ -41,6 +41,7 @@ import {
   CommissionSettlementListReadInput,
   CommissionSettlementListReadResult,
 } from "@modules/commission/read/commission.read-repository";
+import { ReferenceSummary } from "@modules/reference-summary";
 import { RevenueKind } from "@modules/revenue-ledger/domain/revenue-ledger.types";
 
 interface CommissionRuleReadDocument {
@@ -106,6 +107,37 @@ interface CommissionSettlementLineReadDocument {
   readonly lineSettlementAmount: number;
   readonly createdAt: number;
   readonly updatedAt: number;
+}
+
+interface EmploymentProfileReferenceReadDocument {
+  readonly _id: string;
+  readonly employeeCode: string;
+  readonly legalName: string;
+  readonly displayName: string;
+  readonly employmentStatus: string;
+}
+
+interface TalentReferenceReadDocument {
+  readonly _id: string;
+  readonly talentCode: string;
+  readonly stageName: string;
+  readonly legalName: string;
+  readonly displayShortName: string | null;
+  readonly operationalStatus: string;
+}
+
+interface ContractRecordReferenceReadDocument {
+  readonly _id: string;
+  readonly contractCode: string;
+  readonly title: string;
+  readonly status: string;
+}
+
+interface RevenueEntryReferenceReadDocument {
+  readonly _id: string;
+  readonly revenueEntryCode: string;
+  readonly title: string;
+  readonly status: string;
 }
 
 type RuleReadViewKind =
@@ -189,6 +221,10 @@ export class NativeMongoCommissionReadRepository
 {
   private readonly settlementCollection: Collection<CommissionSettlementReadDocument>;
   private readonly settlementLineCollection: Collection<CommissionSettlementLineReadDocument>;
+  private readonly employmentProfileCollection: Collection<EmploymentProfileReferenceReadDocument>;
+  private readonly talentCollection: Collection<TalentReferenceReadDocument>;
+  private readonly contractRecordCollection: Collection<ContractRecordReferenceReadDocument>;
+  private readonly revenueEntryCollection: Collection<RevenueEntryReferenceReadDocument>;
 
   constructor(db: Db) {
     super(db, "commission_rules");
@@ -199,6 +235,22 @@ export class NativeMongoCommissionReadRepository
     this.settlementLineCollection =
       db.collection<CommissionSettlementLineReadDocument>(
         "commission_settlement_lines",
+      );
+    this.employmentProfileCollection =
+      db.collection<EmploymentProfileReferenceReadDocument>(
+        "employment_profiles",
+      );
+    this.talentCollection =
+      db.collection<TalentReferenceReadDocument>(
+        "talents",
+      );
+    this.contractRecordCollection =
+      db.collection<ContractRecordReferenceReadDocument>(
+        "contract_records",
+      );
+    this.revenueEntryCollection =
+      db.collection<RevenueEntryReferenceReadDocument>(
+        "revenue_entries",
       );
   }
 
@@ -242,8 +294,19 @@ export class NativeMongoCommissionReadRepository
       },
     );
 
+    const items = page.items.map(toCommissionRuleListItemView);
+
     return {
-      items: page.items.map(toCommissionRuleListItemView),
+      items: await enrichCommissionRuleReferenceSummaries(
+        items,
+        {
+          employmentProfileCollection:
+            this.employmentProfileCollection,
+          talentCollection: this.talentCollection,
+          contractRecordCollection:
+            this.contractRecordCollection,
+        },
+      ),
       nextCursor: page.nextCursor,
     };
   }
@@ -271,9 +334,20 @@ export class NativeMongoCommissionReadRepository
       },
     );
 
+    const items = page.items.map(
+      toCommissionRuleByBeneficiaryListItemView,
+    );
+
     return {
-      items: page.items.map(
-        toCommissionRuleByBeneficiaryListItemView,
+      items: await enrichCommissionRuleReferenceSummaries(
+        items,
+        {
+          employmentProfileCollection:
+            this.employmentProfileCollection,
+          talentCollection: this.talentCollection,
+          contractRecordCollection:
+            this.contractRecordCollection,
+        },
       ),
       nextCursor: page.nextCursor,
     };
@@ -294,9 +368,20 @@ export class NativeMongoCommissionReadRepository
       },
     );
 
+    const items = page.items.map(
+      toCommissionRuleByContractListItemView,
+    );
+
     return {
-      items: page.items.map(
-        toCommissionRuleByContractListItemView,
+      items: await enrichCommissionRuleReferenceSummaries(
+        items,
+        {
+          employmentProfileCollection:
+            this.employmentProfileCollection,
+          talentCollection: this.talentCollection,
+          contractRecordCollection:
+            this.contractRecordCollection,
+        },
       ),
       nextCursor: page.nextCursor,
     };
@@ -309,9 +394,23 @@ export class NativeMongoCommissionReadRepository
       _id: commissionRuleId,
     });
 
-    return document
-      ? toCommissionRuleDetailView(document)
-      : null;
+    if (!document) {
+      return null;
+    }
+
+    const [detail] =
+      await enrichCommissionRuleReferenceSummaries(
+        [toCommissionRuleDetailView(document)],
+        {
+          employmentProfileCollection:
+            this.employmentProfileCollection,
+          talentCollection: this.talentCollection,
+          contractRecordCollection:
+            this.contractRecordCollection,
+        },
+      );
+
+    return detail ?? null;
   }
 
   async listCommissionSettlements(
@@ -358,6 +457,14 @@ export class NativeMongoCommissionReadRepository
           windowStartAt: input.windowStartAt,
           windowEndAt: input.windowEndAt,
         });
+        applySettlementCreatedBeforeFilter(
+          filters,
+          input.createdBeforeAt,
+        );
+        applySettlementTimestampRangeFilter(filters, "finalizedAt", {
+          fromAt: input.finalizedFromAt,
+          toAt: input.finalizedToAt,
+        });
         applySettlementSearchFilter(
           filters,
           input.search,
@@ -365,10 +472,23 @@ export class NativeMongoCommissionReadRepository
       },
     );
 
+    const items = page.items.map(
+      toCommissionSettlementListItemView,
+    );
+
     return {
-      items: page.items.map(
-        toCommissionSettlementListItemView,
-      ),
+      items:
+        await enrichCommissionSettlementReferenceSummaries(
+          items,
+          {
+            employmentProfileCollection:
+              this.employmentProfileCollection,
+            talentCollection: this.talentCollection,
+            ruleCollection: this.collection,
+            revenueEntryCollection:
+              this.revenueEntryCollection,
+          },
+        ),
       nextCursor: page.nextCursor,
     };
   }
@@ -400,10 +520,23 @@ export class NativeMongoCommissionReadRepository
       },
     );
 
+    const items = page.items.map(
+      toCommissionSettlementByBeneficiaryListItemView,
+    );
+
     return {
-      items: page.items.map(
-        toCommissionSettlementByBeneficiaryListItemView,
-      ),
+      items:
+        await enrichCommissionSettlementReferenceSummaries(
+          items,
+          {
+            employmentProfileCollection:
+              this.employmentProfileCollection,
+            talentCollection: this.talentCollection,
+            ruleCollection: this.collection,
+            revenueEntryCollection:
+              this.revenueEntryCollection,
+          },
+        ),
       nextCursor: page.nextCursor,
     };
   }
@@ -427,10 +560,23 @@ export class NativeMongoCommissionReadRepository
       },
     );
 
+    const items = page.items.map(
+      toCommissionSettlementBySubjectTalentListItemView,
+    );
+
     return {
-      items: page.items.map(
-        toCommissionSettlementBySubjectTalentListItemView,
-      ),
+      items:
+        await enrichCommissionSettlementReferenceSummaries(
+          items,
+          {
+            employmentProfileCollection:
+              this.employmentProfileCollection,
+            talentCollection: this.talentCollection,
+            ruleCollection: this.collection,
+            revenueEntryCollection:
+              this.revenueEntryCollection,
+          },
+        ),
       nextCursor: page.nextCursor,
     };
   }
@@ -454,10 +600,23 @@ export class NativeMongoCommissionReadRepository
       },
     );
 
+    const items = page.items.map(
+      toCommissionSettlementByRevenueEntryListItemView,
+    );
+
     return {
-      items: page.items.map(
-        toCommissionSettlementByRevenueEntryListItemView,
-      ),
+      items:
+        await enrichCommissionSettlementReferenceSummaries(
+          items,
+          {
+            employmentProfileCollection:
+              this.employmentProfileCollection,
+            talentCollection: this.talentCollection,
+            ruleCollection: this.collection,
+            revenueEntryCollection:
+              this.revenueEntryCollection,
+          },
+        ),
       nextCursor: page.nextCursor,
     };
   }
@@ -488,9 +647,24 @@ export class NativeMongoCommissionReadRepository
         _id: commissionSettlementId,
       });
 
-    return document
-      ? toCommissionSettlementDetailView(document)
-      : null;
+    if (!document) {
+      return null;
+    }
+
+    const [detail] =
+      await enrichCommissionSettlementReferenceSummaries(
+        [toCommissionSettlementDetailView(document)],
+        {
+          employmentProfileCollection:
+            this.employmentProfileCollection,
+          talentCollection: this.talentCollection,
+          ruleCollection: this.collection,
+          revenueEntryCollection:
+            this.revenueEntryCollection,
+        },
+      );
+
+    return detail ?? null;
   }
 
   private async listRuleDocuments<TInput extends {
@@ -625,6 +799,447 @@ export class NativeMongoCommissionReadRepository
           : undefined,
     };
   }
+}
+
+async function enrichCommissionRuleReferenceSummaries<
+  T extends
+    | CommissionRuleListItemView
+    | CommissionRuleDetailView,
+>(
+  items: readonly T[],
+  collections: {
+    readonly employmentProfileCollection: Collection<EmploymentProfileReferenceReadDocument>;
+    readonly talentCollection: Collection<TalentReferenceReadDocument>;
+    readonly contractRecordCollection: Collection<ContractRecordReferenceReadDocument>;
+  },
+): Promise<readonly T[]> {
+  if (items.length === 0) {
+    return items;
+  }
+
+  const employmentProfileIds = new Set<string>();
+  const talentIds = new Set<string>();
+  const contractRecordIds = new Set<string>();
+
+  for (const item of items) {
+    addOptionalReferenceId(
+      employmentProfileIds,
+      item.beneficiaryEmploymentProfileId,
+    );
+    addOptionalReferenceId(
+      talentIds,
+      item.beneficiaryTalentId,
+    );
+    addOptionalReferenceId(
+      contractRecordIds,
+      item.sourceContractRecordId,
+    );
+  }
+
+  const [
+    employmentProfileRefMap,
+    talentRefMap,
+    contractRecordRefMap,
+  ] = await Promise.all([
+    loadEmploymentProfileReferenceSummaries(
+      employmentProfileIds,
+      collections.employmentProfileCollection,
+    ),
+    loadTalentReferenceSummaries(
+      talentIds,
+      collections.talentCollection,
+    ),
+    loadContractRecordReferenceSummaries(
+      contractRecordIds,
+      collections.contractRecordCollection,
+    ),
+  ]);
+
+  return items.map((item) => ({
+    ...item,
+    beneficiaryRef:
+      item.beneficiaryKind === "EMPLOYMENT_PROFILE"
+        ? readNullableRef(
+            employmentProfileRefMap,
+            item.beneficiaryEmploymentProfileId,
+          )
+        : readNullableRef(
+            talentRefMap,
+            item.beneficiaryTalentId,
+          ),
+    sourceContractRecordRef:
+      contractRecordRefMap.get(
+        item.sourceContractRecordId,
+      ) ?? null,
+  }));
+}
+
+async function enrichCommissionSettlementReferenceSummaries<
+  T extends
+    | CommissionSettlementListItemView
+    | CommissionSettlementDetailView
+    | CommissionSettlementByBeneficiaryListItemView
+    | CommissionSettlementBySubjectTalentListItemView
+    | CommissionSettlementByRevenueEntryListItemView,
+>(
+  items: readonly T[],
+  collections: {
+    readonly employmentProfileCollection: Collection<EmploymentProfileReferenceReadDocument>;
+    readonly talentCollection: Collection<TalentReferenceReadDocument>;
+    readonly ruleCollection: Collection<CommissionRuleReadDocument>;
+    readonly revenueEntryCollection: Collection<RevenueEntryReferenceReadDocument>;
+  },
+): Promise<readonly T[]> {
+  if (items.length === 0) {
+    return items;
+  }
+
+  const employmentProfileIds = new Set<string>();
+  const talentIds = new Set<string>();
+  const ruleIds = new Set<string>();
+  const revenueEntryIds = new Set<string>();
+
+  for (const item of items) {
+    if ("beneficiaryEmploymentProfileIdSnapshot" in item) {
+      addOptionalReferenceId(
+        employmentProfileIds,
+        item.beneficiaryEmploymentProfileIdSnapshot,
+      );
+    }
+    if ("beneficiaryTalentIdSnapshot" in item) {
+      addOptionalReferenceId(
+        talentIds,
+        item.beneficiaryTalentIdSnapshot,
+      );
+    }
+    if ("sourceRuleId" in item) {
+      addOptionalReferenceId(ruleIds, item.sourceRuleId);
+    }
+    if ("revenueEntryIds" in item) {
+      for (const revenueEntryId of item.revenueEntryIds) {
+        addOptionalReferenceId(
+          revenueEntryIds,
+          revenueEntryId,
+        );
+      }
+    }
+  }
+
+  const [
+    employmentProfileRefMap,
+    talentRefMap,
+    ruleRefMap,
+    revenueEntryRefMap,
+  ] = await Promise.all([
+    loadEmploymentProfileReferenceSummaries(
+      employmentProfileIds,
+      collections.employmentProfileCollection,
+    ),
+    loadTalentReferenceSummaries(
+      talentIds,
+      collections.talentCollection,
+    ),
+    loadCommissionRuleReferenceSummaries(
+      ruleIds,
+      collections.ruleCollection,
+    ),
+    loadRevenueEntryReferenceSummaries(
+      revenueEntryIds,
+      collections.revenueEntryCollection,
+    ),
+  ]);
+
+  return items.map((item) => ({
+    ...item,
+    ...("beneficiaryKindSnapshot" in item
+      ? {
+          beneficiaryRef:
+            item.beneficiaryKindSnapshot ===
+            "EMPLOYMENT_PROFILE"
+              ? readNullableRef(
+                  employmentProfileRefMap,
+                  item.beneficiaryEmploymentProfileIdSnapshot,
+                )
+              : readNullableRef(
+                  talentRefMap,
+                  item.beneficiaryTalentIdSnapshot,
+                ),
+        }
+      : {}),
+    ...("sourceRuleId" in item
+      ? {
+          sourceRuleRef:
+            ruleRefMap.get(item.sourceRuleId) ?? null,
+        }
+      : {}),
+    ...("revenueEntryIds" in item
+      ? {
+          revenueEntryRefs: item.revenueEntryIds.map(
+            (revenueEntryId) =>
+              revenueEntryRefMap.get(revenueEntryId) ?? {
+                id: revenueEntryId,
+              },
+          ),
+        }
+      : {}),
+  }));
+}
+
+function addOptionalReferenceId(
+  ids: Set<string>,
+  value: string | null,
+): void {
+  if (typeof value !== "string") {
+    return;
+  }
+
+  const normalized = value.trim();
+
+  if (normalized) {
+    ids.add(normalized);
+  }
+}
+
+function readNullableRef(
+  refs: ReadonlyMap<string, ReferenceSummary>,
+  id: string | null,
+): ReferenceSummary | null {
+  if (!id) {
+    return null;
+  }
+
+  return refs.get(id) ?? null;
+}
+
+async function loadEmploymentProfileReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<EmploymentProfileReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          employeeCode: 1,
+          legalName: 1,
+          displayName: 1,
+          employmentStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toEmploymentProfileReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadTalentReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<TalentReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          talentCode: 1,
+          stageName: 1,
+          legalName: 1,
+          displayShortName: 1,
+          operationalStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toTalentReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadContractRecordReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<ContractRecordReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          contractCode: 1,
+          title: 1,
+          status: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toContractRecordReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadCommissionRuleReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<CommissionRuleReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          ruleCode: 1,
+          title: 1,
+          status: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toCommissionRuleReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadRevenueEntryReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<RevenueEntryReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          revenueEntryCode: 1,
+          title: 1,
+          status: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toRevenueEntryReferenceSummary(document),
+    ]),
+  );
+}
+
+function toEmploymentProfileReferenceSummary(
+  document: EmploymentProfileReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.employeeCode,
+    name: document.displayName || document.legalName,
+    status: document.employmentStatus,
+  };
+}
+
+function toTalentReferenceSummary(
+  document: TalentReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.talentCode,
+    name:
+      document.displayShortName ??
+      document.stageName ??
+      document.legalName,
+    status: document.operationalStatus,
+  };
+}
+
+function toContractRecordReferenceSummary(
+  document: ContractRecordReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.contractCode,
+    title: document.title,
+    status: document.status,
+  };
+}
+
+function toCommissionRuleReferenceSummary(
+  document: CommissionRuleReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.ruleCode,
+    title: document.title,
+    status: document.status,
+  };
+}
+
+function toRevenueEntryReferenceSummary(
+  document: RevenueEntryReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.revenueEntryCode,
+    title: document.title,
+    status: document.status,
+  };
 }
 
 function applyRuleStatusFilter(
@@ -942,6 +1557,46 @@ function applySettlementWindowFilter(
   }
 }
 
+function applySettlementCreatedBeforeFilter(
+  filters: Array<Record<string, unknown>>,
+  createdBeforeAt: number | undefined,
+): void {
+  if (createdBeforeAt === undefined) {
+    return;
+  }
+
+  filters.push({
+    createdAt: {
+      $lt: createdBeforeAt,
+    },
+  });
+}
+
+function applySettlementTimestampRangeFilter(
+  filters: Array<Record<string, unknown>>,
+  field: "finalizedAt",
+  input: {
+    readonly fromAt?: number;
+    readonly toAt?: number;
+  },
+): void {
+  if (input.fromAt !== undefined) {
+    filters.push({
+      [field]: {
+        $gte: input.fromAt,
+      },
+    });
+  }
+
+  if (input.toAt !== undefined) {
+    filters.push({
+      [field]: {
+        $lt: input.toAt,
+      },
+    });
+  }
+}
+
 function applySettlementSearchFilter(
   filters: Array<Record<string, unknown>>,
   search: string | undefined,
@@ -1083,6 +1738,7 @@ function toCommissionSettlementListItemView(
     beneficiaryTalentIdSnapshot:
       input.beneficiaryTalentIdSnapshot,
     subjectTalentId: input.subjectTalentId,
+    revenueEntryIds: [...input.revenueEntryIds],
     settlementCurrencyCode:
       input.settlementCurrencyCode,
     grossRevenueAmount: input.grossRevenueAmount,
@@ -1099,62 +1755,19 @@ function toCommissionSettlementListItemView(
 function toCommissionSettlementByBeneficiaryListItemView(
   input: CommissionSettlementReadDocument,
 ): CommissionSettlementByBeneficiaryListItemView {
-  return {
-    id: input._id,
-    settlementCode: input.settlementCode,
-    title: input.title,
-    beneficiaryKindSnapshot:
-      input.beneficiaryKindSnapshot,
-    beneficiaryEmploymentProfileIdSnapshot:
-      input.beneficiaryEmploymentProfileIdSnapshot,
-    beneficiaryTalentIdSnapshot:
-      input.beneficiaryTalentIdSnapshot,
-    subjectTalentId: input.subjectTalentId,
-    settlementCurrencyCode:
-      input.settlementCurrencyCode,
-    settlementAmount: input.settlementAmount,
-    status: input.status,
-    settlementPeriodStartAt:
-      input.settlementPeriodStartAt,
-    settlementPeriodEndAt: input.settlementPeriodEndAt,
-  };
+  return toCommissionSettlementListItemView(input);
 }
 
 function toCommissionSettlementBySubjectTalentListItemView(
   input: CommissionSettlementReadDocument,
 ): CommissionSettlementBySubjectTalentListItemView {
-  return {
-    id: input._id,
-    settlementCode: input.settlementCode,
-    title: input.title,
-    subjectTalentId: input.subjectTalentId,
-    settlementCurrencyCode:
-      input.settlementCurrencyCode,
-    grossRevenueAmount: input.grossRevenueAmount,
-    settlementAmount: input.settlementAmount,
-    status: input.status,
-    settlementPeriodStartAt:
-      input.settlementPeriodStartAt,
-    settlementPeriodEndAt: input.settlementPeriodEndAt,
-  };
+  return toCommissionSettlementListItemView(input);
 }
 
 function toCommissionSettlementByRevenueEntryListItemView(
   input: CommissionSettlementReadDocument,
 ): CommissionSettlementByRevenueEntryListItemView {
-  return {
-    id: input._id,
-    settlementCode: input.settlementCode,
-    title: input.title,
-    subjectTalentId: input.subjectTalentId,
-    settlementCurrencyCode:
-      input.settlementCurrencyCode,
-    settlementAmount: input.settlementAmount,
-    status: input.status,
-    settlementPeriodStartAt:
-      input.settlementPeriodStartAt,
-    settlementPeriodEndAt: input.settlementPeriodEndAt,
-  };
+  return toCommissionSettlementListItemView(input);
 }
 
 function toCommissionSettlementLineListItemView(
@@ -1777,6 +2390,9 @@ function buildSettlementCursorQueryShapeSignature(
           typed.settlementCurrencyCode ?? null,
         windowStartAt: typed.windowStartAt ?? null,
         windowEndAt: typed.windowEndAt ?? null,
+        createdBeforeAt: typed.createdBeforeAt ?? null,
+        finalizedFromAt: typed.finalizedFromAt ?? null,
+        finalizedToAt: typed.finalizedToAt ?? null,
         search: typed.search ?? null,
         sortSpec,
       });

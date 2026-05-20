@@ -1,4 +1,4 @@
-import { Db } from "mongodb";
+import { Collection, Db } from "mongodb";
 import { BaseRepository } from "@infra/database/repository";
 import { OrgUnitValidationError } from "@modules/org-unit/domain/org-unit.errors";
 import {
@@ -17,6 +17,7 @@ import {
   ListOrgUnitReadResult,
   OrgUnitReadRepository,
 } from "@modules/org-unit/read/org-unit.read-repository";
+import { ReferenceSummary } from "@modules/reference-summary";
 
 interface OrgUnitReadDocument {
   readonly _id: string;
@@ -67,8 +68,12 @@ export class NativeMongoOrgUnitReadRepository
   extends BaseRepository<OrgUnitReadDocument>
   implements OrgUnitReadRepository
 {
+  private readonly orgUnitReferenceCollection: Collection<OrgUnitReadDocument>;
+
   constructor(db: Db) {
     super(db, "org_units");
+    this.orgUnitReferenceCollection =
+      db.collection<OrgUnitReadDocument>("org_units");
   }
 
   async listOrgUnits(
@@ -140,9 +145,11 @@ export class NativeMongoOrgUnitReadRepository
     const page = hasNext
       ? docs.slice(0, input.limit)
       : docs;
-    const items = page.map((doc) =>
-      toOrgUnitListItemView(doc),
-    );
+    const items =
+      await enrichOrgUnitParentReferenceSummaries(
+        page.map((doc) => toOrgUnitListItemView(doc)),
+        this.orgUnitReferenceCollection,
+      );
 
     return {
       items,
@@ -170,7 +177,13 @@ export class NativeMongoOrgUnitReadRepository
       return null;
     }
 
-    return toOrgUnitDetailView(doc);
+    const [detail] =
+      await enrichOrgUnitParentReferenceSummaries(
+        [toOrgUnitDetailView(doc)],
+        this.orgUnitReferenceCollection,
+      );
+
+    return detail ?? null;
   }
 
   async listDirectChildren(
@@ -216,9 +229,11 @@ export class NativeMongoOrgUnitReadRepository
     const page = hasNext
       ? docs.slice(0, input.limit)
       : docs;
-    const items = page.map((doc) =>
-      toOrgUnitChildListItemView(doc),
-    );
+    const items =
+      await enrichOrgUnitParentReferenceSummaries(
+        page.map((doc) => toOrgUnitChildListItemView(doc)),
+        this.orgUnitReferenceCollection,
+      );
 
     return {
       items,
@@ -233,6 +248,91 @@ export class NativeMongoOrgUnitReadRepository
             )
           : undefined,
     };
+  }
+}
+
+async function enrichOrgUnitParentReferenceSummaries<
+  T extends {
+    readonly parentOrgUnitId: string | null;
+  },
+>(
+  items: readonly T[],
+  collection: Collection<OrgUnitReadDocument>,
+): Promise<readonly (T & { readonly parentOrgUnitRef: ReferenceSummary | null })[]> {
+  if (items.length === 0) {
+    return items.map((item) => ({
+      ...item,
+      parentOrgUnitRef: null,
+    }));
+  }
+
+  const parentIds = new Set<string>();
+
+  for (const item of items) {
+    addOptionalReferenceId(parentIds, item.parentOrgUnitId);
+  }
+
+  const parentRefMap =
+    await loadOrgUnitReferenceSummaries(parentIds, collection);
+
+  return items.map((item) => ({
+    ...item,
+    parentOrgUnitRef: item.parentOrgUnitId
+      ? parentRefMap.get(item.parentOrgUnitId) ?? null
+      : null,
+  }));
+}
+
+async function loadOrgUnitReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<OrgUnitReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          code: 1,
+          name: 1,
+          status: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toOrgUnitReferenceSummary(document),
+    ]),
+  );
+}
+
+function toOrgUnitReferenceSummary(
+  document: Pick<OrgUnitReadDocument, "_id" | "code" | "name" | "status">,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.code,
+    name: document.name,
+    status: document.status,
+  };
+}
+
+function addOptionalReferenceId(ids: Set<string>, value: string | null): void {
+  const normalized = value?.trim();
+
+  if (normalized) {
+    ids.add(normalized);
   }
 }
 

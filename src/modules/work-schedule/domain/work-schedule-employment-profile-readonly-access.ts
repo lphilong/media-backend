@@ -1,5 +1,6 @@
 import { ClientSession } from "mongodb";
 import { EmploymentStatus } from "@modules/employment-profile/domain/employment-profile.types";
+import { ReferenceSummary } from "@modules/reference-summary";
 
 export interface WorkScheduleReferencedEmploymentProfile {
   readonly id: string;
@@ -7,6 +8,7 @@ export interface WorkScheduleReferencedEmploymentProfile {
   readonly orgUnitId: string;
   readonly managerEmploymentProfileId: string | null;
   readonly linkedUserId: string | null;
+  readonly ref?: ReferenceSummary;
 }
 
 export interface WorkScheduleEmploymentProfileReadonlyAccess {

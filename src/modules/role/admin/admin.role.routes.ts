@@ -21,6 +21,12 @@ export function adminRoleRoutes(
     queryController.execute,
   );
 
+  router.post(
+    "/from-template",
+    withCommand("ROLE_CREATE_FROM_TEMPLATE"),
+    mutationController.execute,
+  );
+
   router.get(
     "/:roleId",
     withCommand("ROLE_GET_DETAIL"),

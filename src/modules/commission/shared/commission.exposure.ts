@@ -27,6 +27,8 @@ const COMMISSION_RULE_DETAIL_FIELDS = [
   "beneficiaryEmploymentProfileId",
   "beneficiaryTalentId",
   "sourceContractRecordId",
+  "beneficiaryRef",
+  "sourceContractRecordRef",
   "settlementBasis",
   "ratePercent",
   "appliesToRevenueKinds",
@@ -48,6 +50,8 @@ const COMMISSION_RULE_LIST_FIELDS = [
   "beneficiaryEmploymentProfileId",
   "beneficiaryTalentId",
   "sourceContractRecordId",
+  "beneficiaryRef",
+  "sourceContractRecordRef",
   "ratePercent",
   "status",
   "effectiveStartDate",
@@ -66,6 +70,9 @@ const COMMISSION_SETTLEMENT_DETAIL_FIELDS = [
   "beneficiaryEmploymentProfileIdSnapshot",
   "beneficiaryTalentIdSnapshot",
   "subjectTalentId",
+  "beneficiaryRef",
+  "sourceRuleRef",
+  "revenueEntryRefs",
   "settlementBasisSnapshot",
   "ratePercentSnapshot",
   "revenueEntryIds",
@@ -93,6 +100,10 @@ const COMMISSION_SETTLEMENT_LIST_FIELDS = [
   "beneficiaryEmploymentProfileIdSnapshot",
   "beneficiaryTalentIdSnapshot",
   "subjectTalentId",
+  "revenueEntryIds",
+  "beneficiaryRef",
+  "sourceRuleRef",
+  "revenueEntryRefs",
   "settlementCurrencyCode",
   "grossRevenueAmount",
   "settlementAmount",
@@ -114,44 +125,52 @@ const COMMISSION_SETTLEMENT_LINE_LIST_FIELDS = [
   "lineSettlementAmount",
 ] as const;
 
-const COMMISSION_SETTLEMENT_BY_BENEFICIARY_LIST_FIELDS = [
-  "id",
-  "settlementCode",
-  "title",
-  "beneficiaryKindSnapshot",
-  "beneficiaryEmploymentProfileIdSnapshot",
-  "beneficiaryTalentIdSnapshot",
-  "subjectTalentId",
-  "settlementCurrencyCode",
-  "settlementAmount",
-  "status",
-  "settlementPeriodStartAt",
-  "settlementPeriodEndAt",
-] as const;
-
 const COMMISSION_SETTLEMENT_BY_SUBJECT_TALENT_LIST_FIELDS = [
   "id",
   "settlementCode",
   "title",
+  "sourceRuleId",
+  "settlementKindSnapshot",
+  "beneficiaryKindSnapshot",
+  "beneficiaryEmploymentProfileIdSnapshot",
+  "beneficiaryTalentIdSnapshot",
   "subjectTalentId",
+  "revenueEntryIds",
+  "beneficiaryRef",
+  "sourceRuleRef",
+  "revenueEntryRefs",
   "settlementCurrencyCode",
   "grossRevenueAmount",
   "settlementAmount",
   "status",
   "settlementPeriodStartAt",
   "settlementPeriodEndAt",
+  "finalizedAt",
+  "createdAt",
 ] as const;
 
 const COMMISSION_SETTLEMENT_BY_REVENUE_ENTRY_LIST_FIELDS = [
   "id",
   "settlementCode",
   "title",
+  "sourceRuleId",
+  "settlementKindSnapshot",
+  "beneficiaryKindSnapshot",
+  "beneficiaryEmploymentProfileIdSnapshot",
+  "beneficiaryTalentIdSnapshot",
   "subjectTalentId",
+  "revenueEntryIds",
+  "beneficiaryRef",
+  "sourceRuleRef",
+  "revenueEntryRefs",
   "settlementCurrencyCode",
+  "grossRevenueAmount",
   "settlementAmount",
   "status",
   "settlementPeriodStartAt",
   "settlementPeriodEndAt",
+  "finalizedAt",
+  "createdAt",
 ] as const;
 
 export const CommissionAdminRuleMutationExposure =
@@ -171,6 +190,9 @@ export const CommissionAdminRuleMutationExposure =
               input.beneficiaryTalentId,
             sourceContractRecordId:
               input.sourceContractRecordId,
+            beneficiaryRef: input.beneficiaryRef,
+            sourceContractRecordRef:
+              input.sourceContractRecordRef,
             settlementBasis: input.settlementBasis,
             ratePercent: input.ratePercent,
             appliesToRevenueKinds:
@@ -214,11 +236,14 @@ export const CommissionAdminSettlementMutationExposure =
             beneficiaryTalentIdSnapshot:
               input.beneficiaryTalentIdSnapshot,
             subjectTalentId: input.subjectTalentId,
+            revenueEntryIds: input.revenueEntryIds,
+            beneficiaryRef: input.beneficiaryRef,
+            sourceRuleRef: input.sourceRuleRef,
+            revenueEntryRefs: input.revenueEntryRefs,
             settlementBasisSnapshot:
               input.settlementBasisSnapshot,
             ratePercentSnapshot:
               input.ratePercentSnapshot,
-            revenueEntryIds: input.revenueEntryIds,
             settlementPeriodStartAt:
               input.settlementPeriodStartAt,
             settlementPeriodEndAt:
@@ -260,6 +285,9 @@ export const CommissionAdminRuleDetailExposure =
               input.beneficiaryTalentId,
             sourceContractRecordId:
               input.sourceContractRecordId,
+            beneficiaryRef: input.beneficiaryRef,
+            sourceContractRecordRef:
+              input.sourceContractRecordRef,
             settlementBasis: input.settlementBasis,
             ratePercent: input.ratePercent,
             appliesToRevenueKinds:
@@ -297,6 +325,9 @@ export const CommissionAdminRuleListExposure =
               input.beneficiaryTalentId,
             sourceContractRecordId:
               input.sourceContractRecordId,
+            beneficiaryRef: input.beneficiaryRef,
+            sourceContractRecordRef:
+              input.sourceContractRecordRef,
             ratePercent: input.ratePercent,
             status: input.status,
             effectiveStartDate:
@@ -374,11 +405,14 @@ export const CommissionAdminSettlementDetailExposure =
             beneficiaryTalentIdSnapshot:
               input.beneficiaryTalentIdSnapshot,
             subjectTalentId: input.subjectTalentId,
+            revenueEntryIds: input.revenueEntryIds,
+            beneficiaryRef: input.beneficiaryRef,
+            sourceRuleRef: input.sourceRuleRef,
+            revenueEntryRefs: input.revenueEntryRefs,
             settlementBasisSnapshot:
               input.settlementBasisSnapshot,
             ratePercentSnapshot:
               input.ratePercentSnapshot,
-            revenueEntryIds: input.revenueEntryIds,
             settlementPeriodStartAt:
               input.settlementPeriodStartAt,
             settlementPeriodEndAt:
@@ -424,6 +458,10 @@ export const CommissionAdminSettlementListExposure =
             beneficiaryTalentIdSnapshot:
               input.beneficiaryTalentIdSnapshot,
             subjectTalentId: input.subjectTalentId,
+            revenueEntryIds: input.revenueEntryIds,
+            beneficiaryRef: input.beneficiaryRef,
+            sourceRuleRef: input.sourceRuleRef,
+            revenueEntryRefs: input.revenueEntryRefs,
             settlementCurrencyCode:
               input.settlementCurrencyCode,
             grossRevenueAmount:
@@ -491,31 +529,8 @@ export const CommissionAdminSettlementByBeneficiaryListExposure =
     expose(
       input: CommissionSettlementByBeneficiaryListItemView,
     ): PlainObject {
-      return toPlainObject(
-        ExposurePolicy.expose(
-          {
-            id: input.id,
-            settlementCode: input.settlementCode,
-            title: input.title,
-            beneficiaryKindSnapshot:
-              input.beneficiaryKindSnapshot,
-            beneficiaryEmploymentProfileIdSnapshot:
-              input.beneficiaryEmploymentProfileIdSnapshot,
-            beneficiaryTalentIdSnapshot:
-              input.beneficiaryTalentIdSnapshot,
-            subjectTalentId: input.subjectTalentId,
-            settlementCurrencyCode:
-              input.settlementCurrencyCode,
-            settlementAmount: input.settlementAmount,
-            status: input.status,
-            settlementPeriodStartAt:
-              input.settlementPeriodStartAt,
-            settlementPeriodEndAt:
-              input.settlementPeriodEndAt,
-          },
-          COMMISSION_SETTLEMENT_BY_BENEFICIARY_LIST_FIELDS,
-        ),
-        "CommissionAdminSettlementByBeneficiaryList exposure",
+      return CommissionAdminSettlementListExposure.expose(
+        input,
       );
     },
 
@@ -537,7 +552,20 @@ export const CommissionAdminSettlementBySubjectTalentListExposure =
             id: input.id,
             settlementCode: input.settlementCode,
             title: input.title,
+            sourceRuleId: input.sourceRuleId,
+            settlementKindSnapshot:
+              input.settlementKindSnapshot,
+            beneficiaryKindSnapshot:
+              input.beneficiaryKindSnapshot,
+            beneficiaryEmploymentProfileIdSnapshot:
+              input.beneficiaryEmploymentProfileIdSnapshot,
+            beneficiaryTalentIdSnapshot:
+              input.beneficiaryTalentIdSnapshot,
             subjectTalentId: input.subjectTalentId,
+            revenueEntryIds: input.revenueEntryIds,
+            beneficiaryRef: input.beneficiaryRef,
+            sourceRuleRef: input.sourceRuleRef,
+            revenueEntryRefs: input.revenueEntryRefs,
             settlementCurrencyCode:
               input.settlementCurrencyCode,
             grossRevenueAmount:
@@ -548,6 +576,8 @@ export const CommissionAdminSettlementBySubjectTalentListExposure =
               input.settlementPeriodStartAt,
             settlementPeriodEndAt:
               input.settlementPeriodEndAt,
+            finalizedAt: input.finalizedAt,
+            createdAt: input.createdAt,
           },
           COMMISSION_SETTLEMENT_BY_SUBJECT_TALENT_LIST_FIELDS,
         ),
@@ -573,15 +603,32 @@ export const CommissionAdminSettlementByRevenueEntryListExposure =
             id: input.id,
             settlementCode: input.settlementCode,
             title: input.title,
+            sourceRuleId: input.sourceRuleId,
+            settlementKindSnapshot:
+              input.settlementKindSnapshot,
+            beneficiaryKindSnapshot:
+              input.beneficiaryKindSnapshot,
+            beneficiaryEmploymentProfileIdSnapshot:
+              input.beneficiaryEmploymentProfileIdSnapshot,
+            beneficiaryTalentIdSnapshot:
+              input.beneficiaryTalentIdSnapshot,
             subjectTalentId: input.subjectTalentId,
+            revenueEntryIds: input.revenueEntryIds,
+            beneficiaryRef: input.beneficiaryRef,
+            sourceRuleRef: input.sourceRuleRef,
+            revenueEntryRefs: input.revenueEntryRefs,
             settlementCurrencyCode:
               input.settlementCurrencyCode,
+            grossRevenueAmount:
+              input.grossRevenueAmount,
             settlementAmount: input.settlementAmount,
             status: input.status,
             settlementPeriodStartAt:
               input.settlementPeriodStartAt,
             settlementPeriodEndAt:
               input.settlementPeriodEndAt,
+            finalizedAt: input.finalizedAt,
+            createdAt: input.createdAt,
           },
           COMMISSION_SETTLEMENT_BY_REVENUE_ENTRY_LIST_FIELDS,
         ),

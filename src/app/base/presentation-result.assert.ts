@@ -90,6 +90,23 @@ function validatePlainObjectArray(
       throwPresentationViolation();
     }
 
+    if (
+      entry === null ||
+      entry === undefined ||
+      typeof entry !== "object"
+    ) {
+      validatePrimitive(entry);
+      continue;
+    }
+
+    validatePlainObject(entry);
+  }
+}
+
+function validatePresentationDataArray(
+  value: readonly unknown[],
+): void {
+  for (const entry of value) {
     validatePlainObject(entry);
   }
 }
@@ -148,7 +165,7 @@ export function assertPresentationResult(
 
   const data = envelope.data;
   if (Array.isArray(data)) {
-    validatePlainObjectArray(data);
+    validatePresentationDataArray(data);
   } else {
     validatePlainObject(data);
   }

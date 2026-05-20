@@ -12,3 +12,9 @@ export const ROLE_ADMIN_ASSIGNMENT_LIST_PRESENTER_KEY =
 
 export const ROLE_ADMIN_PERMISSION_MATRIX_PRESENTER_KEY =
   "role.admin.permission-matrix";
+
+export const ROLE_TEMPLATE_ADMIN_LIST_PRESENTER_KEY =
+  "role-template.admin.list";
+
+export const ROLE_TEMPLATE_ADMIN_PREVIEW_PRESENTER_KEY =
+  "role-template.admin.preview";

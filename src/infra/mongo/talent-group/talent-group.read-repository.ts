@@ -25,6 +25,8 @@ import {
   ListTalentGroupsByTalentReadResult,
   TalentGroupReadRepository,
 } from "@modules/talent-group/read/talent-group.read-repository";
+import { ReferenceSummary } from "@modules/reference-summary";
+import { TalentOperationalStatus } from "@modules/talent/domain/talent.types";
 
 interface TalentGroupReadDocument {
   readonly _id: string;
@@ -51,6 +53,15 @@ interface TalentGroupMemberReadDocument {
   readonly leftAt: number | null;
   readonly createdAt: number;
   readonly updatedAt: number;
+}
+
+interface TalentReferenceDocument {
+  readonly _id: string;
+  readonly talentCode: string;
+  readonly stageName: string;
+  readonly legalName: string;
+  readonly displayShortName: string | null;
+  readonly operationalStatus: TalentOperationalStatus;
 }
 
 interface TalentGroupMembershipSummary {
@@ -101,6 +112,7 @@ export class NativeMongoTalentGroupReadRepository
   implements TalentGroupReadRepository
 {
   private readonly memberCollection: Collection<TalentGroupMemberReadDocument>;
+  private readonly talentCollection: Collection<TalentReferenceDocument>;
 
   constructor(db: Db) {
     super(db, "talent_groups");
@@ -108,6 +120,8 @@ export class NativeMongoTalentGroupReadRepository
       db.collection<TalentGroupMemberReadDocument>(
         "talent_group_members",
       );
+    this.talentCollection =
+      db.collection<TalentReferenceDocument>("talents");
   }
 
   async listTalentGroups(
@@ -257,10 +271,16 @@ export class NativeMongoTalentGroupReadRepository
       ? docs.slice(0, input.limit)
       : docs;
 
+    const items =
+      await enrichTalentGroupMemberReferenceSummaries(
+        page.map((doc) =>
+          toTalentGroupMemberListItemView(doc),
+        ),
+        this.talentCollection,
+      );
+
     return {
-      items: page.map((doc) =>
-        toTalentGroupMemberListItemView(doc),
-      ),
+      items,
       nextCursor:
         hasNext && page.length > 0
           ? encodeMemberCursor({
@@ -359,13 +379,19 @@ export class NativeMongoTalentGroupReadRepository
       ? docs.slice(0, input.limit)
       : docs;
 
-    return {
-      items: page.map((doc) =>
-        toTalentGroupByTalentListItemView(
-          doc,
-          membershipByGroupId.get(doc._id),
+    const items =
+      await enrichTalentGroupMemberReferenceSummaries(
+        page.map((doc) =>
+          toTalentGroupByTalentListItemView(
+            doc,
+            membershipByGroupId.get(doc._id),
+          ),
         ),
-      ),
+        this.talentCollection,
+      );
+
+    return {
+      items,
       nextCursor:
         hasNext && page.length > 0
           ? encodeCursor(
@@ -377,6 +403,93 @@ export class NativeMongoTalentGroupReadRepository
             )
           : undefined,
     };
+  }
+}
+
+async function enrichTalentGroupMemberReferenceSummaries<
+  T extends {
+    readonly talentId: string;
+  },
+>(
+  items: readonly T[],
+  collection: Collection<TalentReferenceDocument>,
+): Promise<readonly (T & { readonly talentRef: ReferenceSummary | null })[]> {
+  if (items.length === 0) {
+    return items.map((item) => ({
+      ...item,
+      talentRef: null,
+    }));
+  }
+
+  const talentIds = new Set<string>();
+
+  for (const item of items) {
+    addRequiredReferenceId(talentIds, item.talentId);
+  }
+
+  const talentRefMap = await loadTalentReferenceSummaries(
+    talentIds,
+    collection,
+  );
+
+  return items.map((item) => ({
+    ...item,
+    talentRef: talentRefMap.get(item.talentId) ?? null,
+  }));
+}
+
+async function loadTalentReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<TalentReferenceDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          talentCode: 1,
+          stageName: 1,
+          legalName: 1,
+          displayShortName: 1,
+          operationalStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toTalentReferenceSummary(document),
+    ]),
+  );
+}
+
+function toTalentReferenceSummary(
+  document: TalentReferenceDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.talentCode,
+    name: document.displayShortName ?? document.stageName ?? document.legalName,
+    status: document.operationalStatus,
+  };
+}
+
+function addRequiredReferenceId(ids: Set<string>, value: string): void {
+  const normalized = value.trim();
+
+  if (normalized) {
+    ids.add(normalized);
   }
 }
 

@@ -1,3 +1,5 @@
+import { ReferenceSummary } from "@modules/reference-summary";
+
 export const WORK_SHIFT_SUBJECT_KINDS = [
   "EMPLOYMENT_PROFILE",
   "TALENT",
@@ -185,7 +187,9 @@ export interface WorkShiftDetailView {
   readonly subjectEmploymentProfileId: string | null;
   readonly subjectTalentId: string | null;
   readonly subjectTalentGroupId: string | null;
+  readonly subjectRef?: ReferenceSummary | null;
   readonly studioResourceIds: readonly string[];
+  readonly studioResourceRefs?: readonly ReferenceSummary[];
   readonly status: WorkShiftStatus;
   readonly shiftStartAt: number;
   readonly shiftEndAt: number;
@@ -193,11 +197,14 @@ export interface WorkShiftDetailView {
   readonly externalRef: string | null;
   readonly sourceType: WorkShiftSourceType;
   readonly sourceRosterId: string | null;
+  readonly sourceRosterRef?: ReferenceSummary | null;
   readonly sourcePatternId: string | null;
+  readonly sourcePatternRef?: ReferenceSummary | null;
   readonly sourceExceptionId: string | null;
   readonly sourceGenerationRunId: string | null;
   readonly sourceRosterMonth: string | null;
   readonly sourceDepartmentOrgUnitId: string | null;
+  readonly sourceDepartmentOrgUnitRef?: ReferenceSummary | null;
   readonly sourceRosterLocalDate: string | null;
   readonly sourceRosterSlotKey: string | null;
   readonly createdAt: number;
@@ -212,11 +219,13 @@ export interface WorkShiftListItemView {
   readonly subjectEmploymentProfileId: string | null;
   readonly subjectTalentId: string | null;
   readonly subjectTalentGroupId: string | null;
+  readonly subjectRef?: ReferenceSummary | null;
   readonly status: WorkShiftStatus;
   readonly shiftStartAt: number;
   readonly shiftEndAt: number;
   readonly sourceType: WorkShiftSourceType;
   readonly sourceRosterId: string | null;
+  readonly sourceRosterRef?: ReferenceSummary | null;
   readonly sourceRosterMonth: string | null;
   readonly sourceRosterLocalDate: string | null;
   readonly sourceRosterSlotKey: string | null;
@@ -350,6 +359,7 @@ export interface RosterExceptionRecord {
   readonly exceptionType: RosterExceptionType;
   readonly exceptionDate: string;
   readonly subjectEmploymentProfileId: string;
+  readonly subjectEmploymentProfileRef?: ReferenceSummary | null;
   readonly status: RosterExceptionStatus;
   readonly title: string | null;
   readonly startLocalTime: string | null;
@@ -357,6 +367,7 @@ export interface RosterExceptionRecord {
   readonly workingMinutes: number | null;
   readonly breakMinutes: number | null;
   readonly studioResourceIds: readonly string[];
+  readonly studioResourceRefs?: readonly ReferenceSummary[];
   readonly reason: string | null;
   readonly sourceNote: string | null;
   readonly description: string | null;
@@ -400,8 +411,11 @@ export interface MonthlyRosterListItemView {
   readonly targetSubjectKind: typeof MONTHLY_ROSTER_TARGET_SUBJECT_KIND;
   readonly targetOrgUnitMode: typeof MONTHLY_ROSTER_TARGET_ORG_UNIT_MODE;
   readonly departmentOrgUnitId: string;
+  readonly departmentOrgUnitRef?: ReferenceSummary | null;
   readonly workPatternId: string;
+  readonly workPatternRef?: ReferenceSummary | null;
   readonly holidayCalendarId: string;
+  readonly holidayCalendarRef?: ReferenceSummary | null;
   readonly status: MonthlyRosterStatus;
   readonly draftVersion: number;
   readonly exceptionCount: number;
@@ -438,8 +452,10 @@ export type MonthlyRosterPreviewRowKind =
 
 export interface MonthlyRosterPreviewEligibleProfileView {
   readonly subjectEmploymentProfileId: string;
+  readonly subjectEmploymentProfileRef?: ReferenceSummary | null;
   readonly employmentStatus: "ACTIVE";
   readonly departmentOrgUnitId: string;
+  readonly departmentOrgUnitRef?: ReferenceSummary | null;
 }
 
 export interface MonthlyRosterPreviewConflictView {
@@ -465,7 +481,9 @@ export interface MonthlyRosterPreviewRowView {
   readonly monthlyRosterId: string;
   readonly rosterMonth: string;
   readonly departmentOrgUnitId: string;
+  readonly departmentOrgUnitRef?: ReferenceSummary | null;
   readonly subjectEmploymentProfileId: string;
+  readonly subjectEmploymentProfileRef?: ReferenceSummary | null;
   readonly localDate: string;
   readonly rowKind: MonthlyRosterPreviewRowKind;
   readonly sourceExceptionId: string | null;
@@ -502,8 +520,11 @@ export interface MonthlyRosterPreviewView {
   readonly rosterMonth: string;
   readonly timezone: typeof MONTHLY_ROSTER_TIMEZONE;
   readonly departmentOrgUnitId: string;
+  readonly departmentOrgUnitRef?: ReferenceSummary | null;
   readonly workPatternId: string;
+  readonly workPatternRef?: ReferenceSummary | null;
   readonly holidayCalendarId: string;
+  readonly holidayCalendarRef?: ReferenceSummary | null;
   readonly rosterStatus: MonthlyRosterStatus;
   readonly draftVersion: number;
   readonly currentPreviewHash: string | null;

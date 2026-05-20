@@ -11,6 +11,7 @@ import {
   ReplaceRoleAssignmentRulesInput,
 } from "@modules/role/domain/role-assignment-rule.repository";
 import { UserRoleAssignmentRepository } from "@modules/role/domain/user-role-assignment.repository";
+import { ActorScopeGrants } from "@core/actor/actor";
 import {
   RoleAssignmentRuleRecord,
   RoleAssignmentState,
@@ -18,6 +19,7 @@ import {
   RoleState,
   UserRoleAssignmentRecord,
 } from "@modules/role/domain/role.types";
+import { isRoleTemplateCode } from "@modules/role/domain/role-template.catalog";
 
 interface RoleDocument {
   readonly _id: string;
@@ -28,14 +30,11 @@ interface RoleDocument {
   readonly description: string | null;
   readonly state: RoleState;
   readonly permissions: readonly string[];
-  readonly delegationBand?:
-    | "LIMITED"
-    | "PRIVILEGED"
-    | "FOUNDATION";
-  readonly maxDelegatableBand?:
-    | "NONE"
-    | "LIMITED"
-    | "PRIVILEGED";
+  readonly delegationBand?: "LIMITED" | "PRIVILEGED" | "FOUNDATION";
+  readonly maxDelegatableBand?: "NONE" | "LIMITED" | "PRIVILEGED";
+  readonly templateCode?: string;
+  readonly templateVersion?: string;
+  readonly templateAppliedAt?: number;
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly activatedAt: number | null;
@@ -57,6 +56,7 @@ interface UserRoleAssignmentDocument {
   readonly _id: string;
   readonly roleId: string;
   readonly userId: string;
+  readonly scopeGrants?: ActorScopeGrants;
   readonly state: RoleAssignmentState;
   readonly effectiveAt: number | null;
   readonly revokedAt: number | null;
@@ -73,10 +73,7 @@ export class NativeMongoRoleRepository
     super(db, "roles");
   }
 
-  async insert(
-    role: RoleRecord,
-    session: ClientSession,
-  ): Promise<RoleRecord> {
+  async insert(role: RoleRecord, session: ClientSession): Promise<RoleRecord> {
     await this.collection.insertOne(
       toRoleDocument(role),
       this.withSession(session),
@@ -121,9 +118,7 @@ export class NativeMongoRoleRepository
 
     if (input.name !== undefined) {
       set.name = input.name;
-      set.searchName = normalizeSearchField(
-        input.name,
-      );
+      set.searchName = normalizeSearchField(input.name);
     }
 
     if (input.description !== undefined) {
@@ -135,8 +130,7 @@ export class NativeMongoRoleRepository
     }
 
     if (input.maxDelegatableBand !== undefined) {
-      set.maxDelegatableBand =
-        input.maxDelegatableBand;
+      set.maxDelegatableBand = input.maxDelegatableBand;
     }
 
     const updated = await this.collection.findOneAndUpdate(
@@ -158,13 +152,9 @@ export class NativeMongoRoleRepository
     session: ClientSession,
   ): Promise<RoleRecord | null> {
     const activatedAt =
-      input.toState === "ACTIVE"
-        ? input.changedAt
-        : undefined;
+      input.toState === "ACTIVE" ? input.changedAt : undefined;
     const archivedAt =
-      input.toState === "ARCHIVED"
-        ? input.changedAt
-        : undefined;
+      input.toState === "ARCHIVED" ? input.changedAt : undefined;
 
     const updated = await this.collection.findOneAndUpdate(
       {
@@ -177,12 +167,8 @@ export class NativeMongoRoleRepository
         $set: {
           state: input.toState,
           updatedAt: input.changedAt,
-          ...(activatedAt !== undefined
-            ? { activatedAt }
-            : {}),
-          ...(archivedAt !== undefined
-            ? { archivedAt }
-            : {}),
+          ...(activatedAt !== undefined ? { activatedAt } : {}),
+          ...(archivedAt !== undefined ? { archivedAt } : {}),
         },
       },
       {
@@ -237,9 +223,7 @@ export class NativeMongoRoleAssignmentRuleRepository
 
     if (input.rules.length > 0) {
       await this.collection.insertMany(
-        input.rules.map((rule) =>
-          toRoleAssignmentRuleDocument(rule),
-        ),
+        input.rules.map((rule) => toRoleAssignmentRuleDocument(rule)),
         {
           ...this.withSession(session),
           ordered: true,
@@ -255,16 +239,11 @@ export class NativeMongoRoleAssignmentRuleRepository
     session?: ClientSession,
   ): Promise<readonly RoleAssignmentRuleRecord[]> {
     const docs = await this.collection
-      .find(
-        { roleId },
-        this.withSession(session),
-      )
+      .find({ roleId }, this.withSession(session))
       .sort({ createdAt: 1, _id: 1 })
       .toArray();
 
-    return docs.map((doc) =>
-      toRoleAssignmentRuleRecord(doc),
-    );
+    return docs.map((doc) => toRoleAssignmentRuleRecord(doc));
   }
 }
 
@@ -297,9 +276,7 @@ export class NativeMongoUserRoleAssignmentRepository
       this.withSession(session),
     );
 
-    return doc
-      ? toUserRoleAssignmentRecord(doc)
-      : null;
+    return doc ? toUserRoleAssignmentRecord(doc) : null;
   }
 
   async findActiveByRoleAndUser(
@@ -316,9 +293,7 @@ export class NativeMongoUserRoleAssignmentRepository
       this.withSession(session),
     );
 
-    return doc
-      ? toUserRoleAssignmentRecord(doc)
-      : null;
+    return doc ? toUserRoleAssignmentRecord(doc) : null;
   }
 
   async hasActiveAssignmentsForRole(
@@ -364,15 +339,11 @@ export class NativeMongoUserRoleAssignmentRepository
       },
     );
 
-    return updated
-      ? toUserRoleAssignmentRecord(updated)
-      : null;
+    return updated ? toUserRoleAssignmentRecord(updated) : null;
   }
 }
 
-function toRoleDocument(
-  role: RoleRecord,
-): RoleDocument {
+function toRoleDocument(role: RoleRecord): RoleDocument {
   return {
     _id: role.id,
     code: role.code,
@@ -383,8 +354,12 @@ function toRoleDocument(
     state: role.state,
     permissions: [...role.permissions],
     delegationBand: role.delegationBand,
-    maxDelegatableBand:
-      role.maxDelegatableBand,
+    maxDelegatableBand: role.maxDelegatableBand,
+    ...(role.templateCode ? { templateCode: role.templateCode } : {}),
+    ...(role.templateVersion ? { templateVersion: role.templateVersion } : {}),
+    ...(role.templateAppliedAt !== undefined
+      ? { templateAppliedAt: role.templateAppliedAt }
+      : {}),
     createdAt: role.createdAt,
     updatedAt: role.updatedAt,
     activatedAt: role.activatedAt,
@@ -392,9 +367,7 @@ function toRoleDocument(
   };
 }
 
-function toRoleRecord(
-  document: RoleDocument,
-): RoleRecord {
+function toRoleRecord(document: RoleDocument): RoleRecord {
   return {
     id: document._id,
     code: document.code,
@@ -402,10 +375,20 @@ function toRoleRecord(
     description: document.description,
     state: document.state,
     permissions: [...document.permissions],
-    delegationBand:
-      document.delegationBand ?? "LIMITED",
-    maxDelegatableBand:
-      document.maxDelegatableBand ?? "NONE",
+    delegationBand: document.delegationBand ?? "LIMITED",
+    maxDelegatableBand: document.maxDelegatableBand ?? "NONE",
+    ...(typeof document.templateCode === "string" &&
+    isRoleTemplateCode(document.templateCode)
+      ? { templateCode: document.templateCode }
+      : {}),
+    ...(typeof document.templateVersion === "string"
+      ? { templateVersion: document.templateVersion }
+      : {}),
+    ...(typeof document.templateAppliedAt === "number"
+      ? {
+          templateAppliedAt: document.templateAppliedAt,
+        }
+      : {}),
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
     activatedAt: document.activatedAt,
@@ -454,6 +437,7 @@ function toUserRoleAssignmentDocument(
     _id: assignment.assignmentId,
     roleId: assignment.roleId,
     userId: assignment.userId,
+    ...(assignment.scopeGrants ? { scopeGrants: assignment.scopeGrants } : {}),
     state: assignment.state,
     effectiveAt: assignment.effectiveAt,
     revokedAt: assignment.revokedAt,
@@ -470,6 +454,7 @@ function toUserRoleAssignmentRecord(
     assignmentId: document._id,
     roleId: document.roleId,
     userId: document.userId,
+    ...(document.scopeGrants ? { scopeGrants: document.scopeGrants } : {}),
     state: document.state,
     effectiveAt: document.effectiveAt,
     revokedAt: document.revokedAt,

@@ -1,3 +1,5 @@
+import { ReferenceSummary } from "@modules/reference-summary";
+
 export const TALENT_KPI_MEASUREMENT_SOURCES = [
   "MANUAL",
 ] as const;
@@ -85,6 +87,9 @@ export interface TalentKpiRecordDetailView {
   readonly subjectTalentId: string;
   readonly attributionPlatformAccountId: string | null;
   readonly attributionEventId: string | null;
+  readonly subjectTalentRef?: ReferenceSummary | null;
+  readonly attributionPlatformAccountRef?: ReferenceSummary | null;
+  readonly attributionEventRef?: ReferenceSummary | null;
   readonly measurementSource: TalentKpiMeasurementSource;
   readonly status: TalentKpiRecordStatus;
   readonly periodStartAt: number;
@@ -103,6 +108,9 @@ export interface TalentKpiRecordListItemView {
   readonly subjectTalentId: string;
   readonly attributionPlatformAccountId: string | null;
   readonly attributionEventId: string | null;
+  readonly subjectTalentRef?: ReferenceSummary | null;
+  readonly attributionPlatformAccountRef?: ReferenceSummary | null;
+  readonly attributionEventRef?: ReferenceSummary | null;
   readonly measurementSource: TalentKpiMeasurementSource;
   readonly status: TalentKpiRecordStatus;
   readonly periodStartAt: number;

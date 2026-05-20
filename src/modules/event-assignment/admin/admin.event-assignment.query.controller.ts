@@ -36,6 +36,7 @@ type EventAssignmentQueryCommand =
 const LIST_EVENTS_QUERY_FIELDS: readonly string[] =
   Object.freeze([
     "status",
+    "statusGroup",
     "assignmentKind",
     "assignmentEmploymentProfileId",
     "assignmentTalentId",
@@ -44,6 +45,10 @@ const LIST_EVENTS_QUERY_FIELDS: readonly string[] =
     "containsPlatformAccountId",
     "windowStartAt",
     "windowEndAt",
+    "eventOverlapStartAt",
+    "eventOverlapEndAt",
+    "eventStartFromAt",
+    "eventStartToAt",
     "limit",
     "cursor",
     "search",
@@ -244,6 +249,8 @@ function parseListEventsQuery(
 
   return {
     status: req.query.status as string | undefined,
+    statusGroup:
+      req.query.statusGroup as string | undefined,
     assignmentKind:
       req.query.assignmentKind as string | undefined,
     assignmentEmploymentProfileId:
@@ -273,6 +280,22 @@ function parseListEventsQuery(
     windowEndAt: req.query.windowEndAt as
       | string
       | undefined,
+    eventOverlapStartAt:
+      req.query.eventOverlapStartAt as
+        | string
+        | undefined,
+    eventOverlapEndAt:
+      req.query.eventOverlapEndAt as
+        | string
+        | undefined,
+    eventStartFromAt:
+      req.query.eventStartFromAt as
+        | string
+        | undefined,
+    eventStartToAt:
+      req.query.eventStartToAt as
+        | string
+        | undefined,
     limit: req.query.limit as string | undefined,
     cursor: req.query.cursor as string | undefined,
     search: req.query.search as string | undefined,

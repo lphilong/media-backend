@@ -1,3 +1,4 @@
+import { ReferenceSummary } from "@modules/reference-summary";
 import { RevenueKind } from "@modules/revenue-ledger/domain/revenue-ledger.types";
 
 export const COMMISSION_SETTLEMENT_KINDS = [
@@ -150,6 +151,8 @@ export interface CommissionRuleDetailView {
   readonly beneficiaryEmploymentProfileId: string | null;
   readonly beneficiaryTalentId: string | null;
   readonly sourceContractRecordId: string;
+  readonly beneficiaryRef?: ReferenceSummary | null;
+  readonly sourceContractRecordRef?: ReferenceSummary | null;
   readonly settlementBasis: CommissionSettlementBasis;
   readonly ratePercent: number;
   readonly appliesToRevenueKinds: readonly RevenueKind[];
@@ -171,6 +174,8 @@ export interface CommissionRuleListItemView {
   readonly beneficiaryEmploymentProfileId: string | null;
   readonly beneficiaryTalentId: string | null;
   readonly sourceContractRecordId: string;
+  readonly beneficiaryRef?: ReferenceSummary | null;
+  readonly sourceContractRecordRef?: ReferenceSummary | null;
   readonly ratePercent: number;
   readonly status: CommissionRuleStatus;
   readonly effectiveStartDate: number;
@@ -195,6 +200,9 @@ export interface CommissionSettlementDetailView {
   readonly beneficiaryEmploymentProfileIdSnapshot: string | null;
   readonly beneficiaryTalentIdSnapshot: string | null;
   readonly subjectTalentId: string;
+  readonly beneficiaryRef?: ReferenceSummary | null;
+  readonly sourceRuleRef?: ReferenceSummary | null;
+  readonly revenueEntryRefs?: readonly ReferenceSummary[];
   readonly settlementBasisSnapshot: CommissionSettlementBasis;
   readonly ratePercentSnapshot: number;
   readonly revenueEntryIds: readonly string[];
@@ -222,6 +230,10 @@ export interface CommissionSettlementListItemView {
   readonly beneficiaryEmploymentProfileIdSnapshot: string | null;
   readonly beneficiaryTalentIdSnapshot: string | null;
   readonly subjectTalentId: string;
+  readonly revenueEntryIds: readonly string[];
+  readonly beneficiaryRef?: ReferenceSummary | null;
+  readonly sourceRuleRef?: ReferenceSummary | null;
+  readonly revenueEntryRefs?: readonly ReferenceSummary[];
   readonly settlementCurrencyCode: string;
   readonly grossRevenueAmount: number;
   readonly settlementAmount: number;
@@ -243,45 +255,14 @@ export interface CommissionSettlementLineListItemView {
   readonly lineSettlementAmount: number;
 }
 
-export interface CommissionSettlementByBeneficiaryListItemView {
-  readonly id: string;
-  readonly settlementCode: string;
-  readonly title: string;
-  readonly beneficiaryKindSnapshot: CommissionBeneficiaryKind;
-  readonly beneficiaryEmploymentProfileIdSnapshot: string | null;
-  readonly beneficiaryTalentIdSnapshot: string | null;
-  readonly subjectTalentId: string;
-  readonly settlementCurrencyCode: string;
-  readonly settlementAmount: number;
-  readonly status: CommissionSettlementStatus;
-  readonly settlementPeriodStartAt: number;
-  readonly settlementPeriodEndAt: number;
-}
+export type CommissionSettlementByBeneficiaryListItemView =
+  CommissionSettlementListItemView;
 
-export interface CommissionSettlementBySubjectTalentListItemView {
-  readonly id: string;
-  readonly settlementCode: string;
-  readonly title: string;
-  readonly subjectTalentId: string;
-  readonly settlementCurrencyCode: string;
-  readonly grossRevenueAmount: number;
-  readonly settlementAmount: number;
-  readonly status: CommissionSettlementStatus;
-  readonly settlementPeriodStartAt: number;
-  readonly settlementPeriodEndAt: number;
-}
+export type CommissionSettlementBySubjectTalentListItemView =
+  CommissionSettlementListItemView;
 
-export interface CommissionSettlementByRevenueEntryListItemView {
-  readonly id: string;
-  readonly settlementCode: string;
-  readonly title: string;
-  readonly subjectTalentId: string;
-  readonly settlementCurrencyCode: string;
-  readonly settlementAmount: number;
-  readonly status: CommissionSettlementStatus;
-  readonly settlementPeriodStartAt: number;
-  readonly settlementPeriodEndAt: number;
-}
+export type CommissionSettlementByRevenueEntryListItemView =
+  CommissionSettlementListItemView;
 
 export interface CommissionRuleMutationView
   extends CommissionRuleDetailView {}

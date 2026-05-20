@@ -29,6 +29,7 @@ import {
   ListTalentReadResult,
   TalentReadRepository,
 } from "@modules/talent/read/talent.read-repository";
+import { ReferenceSummary } from "@modules/reference-summary";
 
 interface TalentReadDocument {
   readonly _id: string;
@@ -54,6 +55,9 @@ interface TalentReadDocument {
 
 interface EmploymentProfileReferenceDocument {
   readonly _id: string;
+  readonly employeeCode: string;
+  readonly legalName: string;
+  readonly displayName: string;
   readonly employmentStatus: EmploymentStatus;
 }
 
@@ -87,8 +91,14 @@ export class NativeMongoTalentReadRepository
   extends BaseRepository<TalentReadDocument>
   implements TalentReadRepository
 {
+  private readonly employmentProfileCollection: Collection<EmploymentProfileReferenceDocument>;
+
   constructor(db: Db) {
     super(db, "talents");
+    this.employmentProfileCollection =
+      db.collection<EmploymentProfileReferenceDocument>(
+        "employment_profiles",
+      );
   }
 
   async listTalents(
@@ -195,10 +205,14 @@ export class NativeMongoTalentReadRepository
       ? docs.slice(0, input.limit)
       : docs;
 
+    const items =
+      await enrichTalentEmploymentProfileReferenceSummaries(
+        page.map((doc) => toTalentListItemView(doc)),
+        this.employmentProfileCollection,
+      );
+
     return {
-      items: page.map((doc) =>
-        toTalentListItemView(doc),
-      ),
+      items,
       nextCursor:
         hasNext && page.length > 0
           ? encodeCursor(
@@ -219,7 +233,127 @@ export class NativeMongoTalentReadRepository
       _id: talentId,
     });
 
-    return doc ? toTalentDetailView(doc) : null;
+    if (!doc) {
+      return null;
+    }
+
+    const [detail] =
+      await enrichTalentEmploymentProfileReferenceSummaries(
+        [toTalentDetailView(doc)],
+        this.employmentProfileCollection,
+      );
+
+    return detail ?? null;
+  }
+}
+
+async function enrichTalentEmploymentProfileReferenceSummaries<
+  T extends {
+    readonly managerEmploymentProfileId: string | null;
+    readonly linkedEmploymentProfileId: string | null;
+  },
+>(
+  items: readonly T[],
+  collection: Collection<EmploymentProfileReferenceDocument>,
+): Promise<
+  readonly (T & {
+    readonly managerEmploymentProfileRef: ReferenceSummary | null;
+    readonly linkedEmploymentProfileRef: ReferenceSummary | null;
+  })[]
+> {
+  if (items.length === 0) {
+    return items.map((item) => ({
+      ...item,
+      managerEmploymentProfileRef: null,
+      linkedEmploymentProfileRef: null,
+    }));
+  }
+
+  const employmentProfileIds = new Set<string>();
+
+  for (const item of items) {
+    addOptionalReferenceId(
+      employmentProfileIds,
+      item.managerEmploymentProfileId,
+    );
+    addOptionalReferenceId(
+      employmentProfileIds,
+      item.linkedEmploymentProfileId,
+    );
+  }
+
+  const employmentProfileRefMap =
+    await loadEmploymentProfileReferenceSummaries(
+      employmentProfileIds,
+      collection,
+    );
+
+  return items.map((item) => ({
+    ...item,
+    managerEmploymentProfileRef: item.managerEmploymentProfileId
+      ? employmentProfileRefMap.get(item.managerEmploymentProfileId) ?? null
+      : null,
+    linkedEmploymentProfileRef: item.linkedEmploymentProfileId
+      ? employmentProfileRefMap.get(item.linkedEmploymentProfileId) ?? null
+      : null,
+  }));
+}
+
+async function loadEmploymentProfileReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<EmploymentProfileReferenceDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          employeeCode: 1,
+          legalName: 1,
+          displayName: 1,
+          employmentStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toEmploymentProfileReferenceSummary(document),
+    ]),
+  );
+}
+
+function toEmploymentProfileReferenceSummary(
+  document: EmploymentProfileReferenceDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.employeeCode,
+    displayName: document.displayName,
+    name: document.legalName,
+    status: document.employmentStatus,
+  };
+}
+
+function addOptionalReferenceId(
+  ids: Set<string>,
+  value: string | null,
+): void {
+  const normalized = value?.trim();
+
+  if (normalized) {
+    ids.add(normalized);
   }
 }
 

@@ -1,4 +1,4 @@
-import { Db } from "mongodb";
+import { Collection, Db } from "mongodb";
 import { BaseRepository } from "@infra/database/repository/base.repository";
 import { ContractRegistryValidationError } from "@modules/contract-registry/domain/contract-registry.errors";
 import {
@@ -19,6 +19,7 @@ import {
   ListContractRecordsReadInput,
   ListContractRecordsReadResult,
 } from "@modules/contract-registry/read/contract-registry.read-repository";
+import { ReferenceSummary } from "@modules/reference-summary";
 
 interface ContractRecordReadDocument {
   readonly _id: string;
@@ -44,6 +45,23 @@ interface ContractRecordReadDocument {
   readonly externalRef: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
+}
+
+interface EmploymentProfileReferenceReadDocument {
+  readonly _id: string;
+  readonly employeeCode: string;
+  readonly legalName: string;
+  readonly displayName: string;
+  readonly employmentStatus: string;
+}
+
+interface TalentReferenceReadDocument {
+  readonly _id: string;
+  readonly talentCode: string;
+  readonly stageName: string;
+  readonly legalName: string;
+  readonly displayShortName: string | null;
+  readonly operationalStatus: string;
 }
 
 type ReadViewKind =
@@ -87,8 +105,19 @@ export class NativeMongoContractRegistryReadRepository
   extends BaseRepository<ContractRecordReadDocument>
   implements ContractRegistryReadRepository
 {
+  private readonly employmentProfileCollection: Collection<EmploymentProfileReferenceReadDocument>;
+  private readonly talentCollection: Collection<TalentReferenceReadDocument>;
+
   constructor(db: Db) {
     super(db, "contract_records");
+    this.employmentProfileCollection =
+      db.collection<EmploymentProfileReferenceReadDocument>(
+        "employment_profiles",
+      );
+    this.talentCollection =
+      db.collection<TalentReferenceReadDocument>(
+        "talents",
+      );
   }
 
   async listContractRecords(
@@ -128,13 +157,28 @@ export class NativeMongoContractRegistryReadRepository
           windowStartDate: input.windowStartDate,
           windowEndDate: input.windowEndDate,
         });
+        applyEffectiveEndDateRangeFilter(filters, {
+          effectiveEndDateFrom:
+            input.effectiveEndDateFrom,
+          effectiveEndDateTo:
+            input.effectiveEndDateTo,
+        });
         applySearchFilter(filters, input.search);
       },
     );
 
+    const items = page.items.map(
+      toContractRecordListItemView,
+    );
+
     return {
-      items: page.items.map(
-        toContractRecordListItemView,
+      items: await enrichContractRecordReferenceSummaries(
+        items,
+        {
+          employmentProfileCollection:
+            this.employmentProfileCollection,
+          talentCollection: this.talentCollection,
+        },
       ),
       nextCursor: page.nextCursor,
     };
@@ -176,9 +220,18 @@ export class NativeMongoContractRegistryReadRepository
       },
     );
 
+    const items = page.items.map(
+      toContractRecordByLinkedEntityListItemView,
+    );
+
     return {
-      items: page.items.map(
-        toContractRecordByLinkedEntityListItemView,
+      items: await enrichContractRecordReferenceSummaries(
+        items,
+        {
+          employmentProfileCollection:
+            this.employmentProfileCollection,
+          talentCollection: this.talentCollection,
+        },
       ),
       nextCursor: page.nextCursor,
     };
@@ -203,9 +256,18 @@ export class NativeMongoContractRegistryReadRepository
       },
     );
 
+    const items = page.items.map(
+      toContractRecordByOwnerListItemView,
+    );
+
     return {
-      items: page.items.map(
-        toContractRecordByOwnerListItemView,
+      items: await enrichContractRecordReferenceSummaries(
+        items,
+        {
+          employmentProfileCollection:
+            this.employmentProfileCollection,
+          talentCollection: this.talentCollection,
+        },
       ),
       nextCursor: page.nextCursor,
     };
@@ -218,9 +280,21 @@ export class NativeMongoContractRegistryReadRepository
       _id: contractRecordId,
     });
 
-    return document
-      ? toContractRecordDetailView(document)
-      : null;
+    if (!document) {
+      return null;
+    }
+
+    const [detail] =
+      await enrichContractRecordReferenceSummaries(
+        [toContractRecordDetailView(document)],
+        {
+          employmentProfileCollection:
+            this.employmentProfileCollection,
+          talentCollection: this.talentCollection,
+        },
+      );
+
+    return detail ?? null;
   }
 
   private async listDocuments<TInput extends {
@@ -287,6 +361,202 @@ export class NativeMongoContractRegistryReadRepository
           : undefined,
     };
   }
+}
+
+async function enrichContractRecordReferenceSummaries<
+  T extends
+    | ContractRecordListItemView
+    | ContractRecordByLinkedEntityListItemView
+    | ContractRecordByOwnerListItemView
+    | ContractRecordDetailView,
+>(
+  items: readonly T[],
+  collections: {
+    readonly employmentProfileCollection: Collection<EmploymentProfileReferenceReadDocument>;
+    readonly talentCollection: Collection<TalentReferenceReadDocument>;
+  },
+): Promise<readonly T[]> {
+  if (items.length === 0) {
+    return items;
+  }
+
+  const employmentProfileIds = new Set<string>();
+  const talentIds = new Set<string>();
+
+  for (const item of items) {
+    if ("linkedEmploymentProfileId" in item) {
+      addOptionalReferenceId(
+        employmentProfileIds,
+        item.linkedEmploymentProfileId,
+      );
+    }
+
+    if ("ownerEmploymentProfileId" in item) {
+      addOptionalReferenceId(
+        employmentProfileIds,
+        item.ownerEmploymentProfileId,
+      );
+    }
+
+    if ("linkedTalentId" in item) {
+      addOptionalReferenceId(
+        talentIds,
+        item.linkedTalentId,
+      );
+    }
+  }
+
+  const [employmentProfileRefMap, talentRefMap] =
+    await Promise.all([
+      loadEmploymentProfileReferenceSummaries(
+        employmentProfileIds,
+        collections.employmentProfileCollection,
+      ),
+      loadTalentReferenceSummaries(
+        talentIds,
+        collections.talentCollection,
+      ),
+    ]);
+
+  return items.map((item) => ({
+    ...item,
+    ...("linkedEmploymentProfileId" in item
+      ? {
+          linkedEmploymentProfileRef:
+            item.linkedEmploymentProfileId
+              ? employmentProfileRefMap.get(
+                  item.linkedEmploymentProfileId,
+                ) ?? null
+              : null,
+        }
+      : {}),
+    ...("linkedTalentId" in item
+      ? {
+          linkedTalentRef: item.linkedTalentId
+            ? talentRefMap.get(item.linkedTalentId) ?? null
+            : null,
+        }
+      : {}),
+    ...("ownerEmploymentProfileId" in item
+      ? {
+          ownerEmploymentProfileRef:
+            employmentProfileRefMap.get(
+              item.ownerEmploymentProfileId,
+            ) ?? null,
+        }
+      : {}),
+  }));
+}
+
+function addOptionalReferenceId(
+  ids: Set<string>,
+  value: string | null,
+): void {
+  if (typeof value !== "string") {
+    return;
+  }
+
+  const normalized = value.trim();
+
+  if (normalized) {
+    ids.add(normalized);
+  }
+}
+
+async function loadEmploymentProfileReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<EmploymentProfileReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          employeeCode: 1,
+          legalName: 1,
+          displayName: 1,
+          employmentStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toEmploymentProfileReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadTalentReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<TalentReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          talentCode: 1,
+          stageName: 1,
+          legalName: 1,
+          displayShortName: 1,
+          operationalStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toTalentReferenceSummary(document),
+    ]),
+  );
+}
+
+function toEmploymentProfileReferenceSummary(
+  document: EmploymentProfileReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.employeeCode,
+    name: document.displayName || document.legalName,
+    status: document.employmentStatus,
+  };
+}
+
+function toTalentReferenceSummary(
+  document: TalentReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.talentCode,
+    name:
+      document.displayShortName ??
+      document.stageName ??
+      document.legalName,
+    status: document.operationalStatus,
+  };
 }
 
 function applyStatusFilter(
@@ -437,6 +707,32 @@ function applyWindowIntersectionFilter(
       },
     });
   }
+}
+
+function applyEffectiveEndDateRangeFilter(
+  filters: Array<Record<string, unknown>>,
+  input: {
+    readonly effectiveEndDateFrom?: number;
+    readonly effectiveEndDateTo?: number;
+  },
+): void {
+  const effectiveEndDate: Record<string, number> = {};
+
+  if (input.effectiveEndDateFrom !== undefined) {
+    effectiveEndDate.$gte = input.effectiveEndDateFrom;
+  }
+
+  if (input.effectiveEndDateTo !== undefined) {
+    effectiveEndDate.$lte = input.effectiveEndDateTo;
+  }
+
+  if (Object.keys(effectiveEndDate).length === 0) {
+    return;
+  }
+
+  filters.push({
+    effectiveEndDate,
+  });
 }
 
 function applySearchFilter(
@@ -859,6 +1155,10 @@ function buildCursorQueryShapeSignature(
           typed.windowStartDate ?? null,
         windowEndDate:
           typed.windowEndDate ?? null,
+        effectiveEndDateFrom:
+          typed.effectiveEndDateFrom ?? null,
+        effectiveEndDateTo:
+          typed.effectiveEndDateTo ?? null,
         search: typed.search ?? null,
         sortSpec,
       });

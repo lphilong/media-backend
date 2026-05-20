@@ -29,6 +29,7 @@ import {
   TalentKpiRecordListReadInput,
   TalentKpiRecordListReadResult,
 } from "@modules/talent-kpi/read/talent-kpi.read-repository";
+import { ReferenceSummary } from "@modules/reference-summary";
 
 interface TalentKpiRecordReadDocument {
   readonly _id: string;
@@ -57,6 +58,31 @@ interface TalentKpiMetricValueReadDocument {
   readonly numericValue: number;
   readonly createdAt: number;
   readonly updatedAt: number;
+}
+
+interface TalentReferenceReadDocument {
+  readonly _id: string;
+  readonly talentCode: string;
+  readonly stageName: string;
+  readonly legalName: string;
+  readonly displayShortName: string | null;
+  readonly operationalStatus: string;
+}
+
+interface PlatformAccountReferenceReadDocument {
+  readonly _id: string;
+  readonly accountCode: string;
+  readonly platform: string;
+  readonly displayName: string;
+  readonly handle: string | null;
+  readonly operationalStatus: string;
+}
+
+interface EventReferenceReadDocument {
+  readonly _id: string;
+  readonly eventCode: string;
+  readonly title: string;
+  readonly status: string;
 }
 
 type ReadViewKind =
@@ -101,6 +127,9 @@ export class NativeMongoTalentKpiReadRepository
   implements TalentKpiReadRepository
 {
   private readonly metricCollection: Collection<TalentKpiMetricValueReadDocument>;
+  private readonly talentCollection: Collection<TalentReferenceReadDocument>;
+  private readonly platformAccountCollection: Collection<PlatformAccountReferenceReadDocument>;
+  private readonly eventCollection: Collection<EventReferenceReadDocument>;
 
   constructor(db: Db) {
     super(db, "talent_kpi_records");
@@ -108,6 +137,14 @@ export class NativeMongoTalentKpiReadRepository
       db.collection<TalentKpiMetricValueReadDocument>(
         "talent_kpi_metric_values",
       );
+    this.talentCollection =
+      db.collection<TalentReferenceReadDocument>("talents");
+    this.platformAccountCollection =
+      db.collection<PlatformAccountReferenceReadDocument>(
+        "platform_accounts",
+      );
+    this.eventCollection =
+      db.collection<EventReferenceReadDocument>("events");
   }
 
   async listTalentKpiRecords(
@@ -143,13 +180,31 @@ export class NativeMongoTalentKpiReadRepository
           windowStartAt: input.windowStartAt,
           windowEndAt: input.windowEndAt,
         });
+        applyCreatedBeforeFilter(
+          filters,
+          input.createdBeforeAt,
+        );
+        applyTimestampRangeFilter(filters, "publishedAt", {
+          fromAt: input.publishedFromAt,
+          toAt: input.publishedToAt,
+        });
         applySearchFilter(filters, input.search);
       },
     );
 
+    const items = page.items.map(
+      toTalentKpiRecordListItemView,
+    );
+
     return {
-      items: page.items.map(
-        toTalentKpiRecordListItemView,
+      items: await enrichTalentKpiReferenceSummaries(
+        items,
+        {
+          talentCollection: this.talentCollection,
+          platformAccountCollection:
+            this.platformAccountCollection,
+          eventCollection: this.eventCollection,
+        },
       ),
       nextCursor: page.nextCursor,
     };
@@ -267,9 +322,22 @@ export class NativeMongoTalentKpiReadRepository
       _id: talentKpiRecordId,
     });
 
-    return document
-      ? toTalentKpiRecordDetailView(document)
-      : null;
+    if (!document) {
+      return null;
+    }
+
+    const [detail] =
+      await enrichTalentKpiReferenceSummaries(
+        [toTalentKpiRecordDetailView(document)],
+        {
+          talentCollection: this.talentCollection,
+          platformAccountCollection:
+            this.platformAccountCollection,
+          eventCollection: this.eventCollection,
+        },
+      );
+
+    return detail ?? null;
   }
 
   private async listDocuments<TInput extends {
@@ -334,6 +402,229 @@ export class NativeMongoTalentKpiReadRepository
           : undefined,
     };
   }
+}
+
+async function enrichTalentKpiReferenceSummaries<
+  T extends
+    | TalentKpiRecordListItemView
+    | TalentKpiRecordDetailView,
+>(
+  items: readonly T[],
+  collections: {
+    readonly talentCollection: Collection<TalentReferenceReadDocument>;
+    readonly platformAccountCollection: Collection<PlatformAccountReferenceReadDocument>;
+    readonly eventCollection: Collection<EventReferenceReadDocument>;
+  },
+): Promise<readonly T[]> {
+  if (items.length === 0) {
+    return items;
+  }
+
+  const talentIds = new Set<string>();
+  const platformAccountIds = new Set<string>();
+  const eventIds = new Set<string>();
+
+  for (const item of items) {
+    talentIds.add(item.subjectTalentId);
+    addOptionalReferenceId(
+      platformAccountIds,
+      item.attributionPlatformAccountId,
+    );
+    addOptionalReferenceId(
+      eventIds,
+      item.attributionEventId,
+    );
+  }
+
+  const [talentRefMap, platformRefMap, eventRefMap] =
+    await Promise.all([
+      loadTalentReferenceSummaries(
+        talentIds,
+        collections.talentCollection,
+      ),
+      loadPlatformAccountReferenceSummaries(
+        platformAccountIds,
+        collections.platformAccountCollection,
+      ),
+      loadEventReferenceSummaries(
+        eventIds,
+        collections.eventCollection,
+      ),
+    ]);
+
+  return items.map((item) => ({
+    ...item,
+    subjectTalentRef:
+      talentRefMap.get(item.subjectTalentId) ?? null,
+    attributionPlatformAccountRef:
+      item.attributionPlatformAccountId
+        ? platformRefMap.get(
+            item.attributionPlatformAccountId,
+          ) ?? null
+        : null,
+    attributionEventRef: item.attributionEventId
+      ? eventRefMap.get(item.attributionEventId) ?? null
+      : null,
+  }));
+}
+
+function addOptionalReferenceId(
+  ids: Set<string>,
+  value: string | null,
+): void {
+  if (typeof value !== "string") {
+    return;
+  }
+
+  const normalized = value.trim();
+
+  if (normalized) {
+    ids.add(normalized);
+  }
+}
+
+async function loadTalentReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<TalentReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          talentCode: 1,
+          stageName: 1,
+          legalName: 1,
+          displayShortName: 1,
+          operationalStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toTalentReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadPlatformAccountReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<PlatformAccountReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          accountCode: 1,
+          platform: 1,
+          displayName: 1,
+          handle: 1,
+          operationalStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toPlatformAccountReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadEventReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<EventReferenceReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          eventCode: 1,
+          title: 1,
+          status: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toEventReferenceSummary(document),
+    ]),
+  );
+}
+
+function toTalentReferenceSummary(
+  document: TalentReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.talentCode,
+    name:
+      document.displayShortName ??
+      document.stageName ??
+      document.legalName,
+    status: document.operationalStatus,
+  };
+}
+
+function toPlatformAccountReferenceSummary(
+  document: PlatformAccountReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.accountCode,
+    displayName: document.displayName,
+    handle: document.handle ?? undefined,
+    platform: document.platform,
+    status: document.operationalStatus,
+  };
+}
+
+function toEventReferenceSummary(
+  document: EventReferenceReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.eventCode,
+    title: document.title,
+    status: document.status,
+  };
 }
 
 function applyStatusFilter(
@@ -463,6 +754,46 @@ function applyWindowIntersectionFilter(
     filters.push({
       periodStartAt: {
         $lt: input.windowEndAt,
+      },
+    });
+  }
+}
+
+function applyCreatedBeforeFilter(
+  filters: Array<Record<string, unknown>>,
+  createdBeforeAt: number | undefined,
+): void {
+  if (createdBeforeAt === undefined) {
+    return;
+  }
+
+  filters.push({
+    createdAt: {
+      $lt: createdBeforeAt,
+    },
+  });
+}
+
+function applyTimestampRangeFilter(
+  filters: Array<Record<string, unknown>>,
+  field: "publishedAt",
+  input: {
+    readonly fromAt?: number;
+    readonly toAt?: number;
+  },
+): void {
+  if (input.fromAt !== undefined) {
+    filters.push({
+      [field]: {
+        $gte: input.fromAt,
+      },
+    });
+  }
+
+  if (input.toAt !== undefined) {
+    filters.push({
+      [field]: {
+        $lt: input.toAt,
       },
     });
   }
@@ -889,6 +1220,9 @@ function buildCursorQueryShapeSignature(
           typed.containsMetricCode ?? null,
         windowStartAt: typed.windowStartAt ?? null,
         windowEndAt: typed.windowEndAt ?? null,
+        createdBeforeAt: typed.createdBeforeAt ?? null,
+        publishedFromAt: typed.publishedFromAt ?? null,
+        publishedToAt: typed.publishedToAt ?? null,
         search: typed.search ?? null,
         sortSpec,
       });

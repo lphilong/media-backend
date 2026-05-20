@@ -11,6 +11,12 @@ import {
   RoleMutationView,
   RolePermissionMatrixView,
 } from "@modules/role/domain/role.types";
+import {
+  RoleTemplateDefinition,
+  RoleTemplateListItem,
+  RoleTemplateScopePlanEntry,
+} from "@modules/role/domain/role-template.catalog";
+import { RoleTemplatePreviewResult } from "./role.contracts";
 
 const ROLE_ASSIGNMENT_RULE_FIELDS = [
   "id",
@@ -30,6 +36,9 @@ const ROLE_ADMIN_MUTATION_FIELDS = [
   "delegationBand",
   "maxDelegatableBand",
   "assignmentRules",
+  "templateCode",
+  "templateVersion",
+  "templateAppliedAt",
   "updatedAt",
   "activatedAt",
   "archivedAt",
@@ -42,6 +51,9 @@ const ROLE_ADMIN_LIST_FIELDS = [
   "state",
   "permissionsSummary",
   "assignmentCountSummary",
+  "templateCode",
+  "templateVersion",
+  "templateAppliedAt",
   "updatedAt",
 ] as const;
 
@@ -55,16 +67,50 @@ const ROLE_ADMIN_DETAIL_FIELDS = [
   "delegationBand",
   "maxDelegatableBand",
   "assignmentRules",
+  "templateCode",
+  "templateVersion",
+  "templateAppliedAt",
   "createdAt",
   "updatedAt",
   "activatedAt",
   "archivedAt",
 ] as const;
 
+const ROLE_TEMPLATE_FIELDS = [
+  "code",
+  "version",
+  "name",
+  "description",
+  "category",
+  "permissionCount",
+  "permissions",
+  "scopePlan",
+  "warnings",
+  "implementationNotes",
+  "status",
+] as const;
+
+const ROLE_TEMPLATE_SCOPE_PLAN_FIELDS = [
+  "module",
+  "scopes",
+  "status",
+  "note",
+] as const;
+
+const ROLE_TEMPLATE_PREVIEW_FIELDS = [
+  "template",
+  "permissions",
+  "scopePlan",
+  "warnings",
+  "unsupportedScopeNotes",
+] as const;
+
 const ROLE_ADMIN_ASSIGNMENT_FIELDS = [
   "assignmentId",
   "roleId",
   "userId",
+  "userRef",
+  "scopeGrants",
   "state",
   "effectiveAt",
   "revokedAt",
@@ -86,9 +132,7 @@ function toPermissionObjects(
   return values.map((code) => ({ code }));
 }
 
-function exposeAssignmentRule(
-  rule: RoleAssignmentRuleView,
-): PlainObject {
+function exposeAssignmentRule(rule: RoleAssignmentRuleView): PlainObject {
   return toPlainObject(
     ExposurePolicy.expose(
       {
@@ -107,9 +151,7 @@ function exposeAssignmentRule(
 function exposeAssignmentRules(
   rules: readonly RoleAssignmentRuleView[],
 ): readonly PlainObject[] {
-  return rules.map((rule) =>
-    exposeAssignmentRule(rule),
-  );
+  return rules.map((rule) => exposeAssignmentRule(rule));
 }
 
 export const RoleAdminMutationExposure = Object.freeze({
@@ -122,15 +164,13 @@ export const RoleAdminMutationExposure = Object.freeze({
           name: input.name,
           description: input.description,
           state: input.state,
-          permissions: toPermissionObjects(
-            input.permissions,
-          ),
+          permissions: toPermissionObjects(input.permissions),
           delegationBand: input.delegationBand,
-          maxDelegatableBand:
-            input.maxDelegatableBand,
-          assignmentRules: exposeAssignmentRules(
-            input.assignmentRules,
-          ),
+          maxDelegatableBand: input.maxDelegatableBand,
+          assignmentRules: exposeAssignmentRules(input.assignmentRules),
+          templateCode: input.templateCode ?? null,
+          templateVersion: input.templateVersion ?? null,
+          templateAppliedAt: input.templateAppliedAt ?? null,
           updatedAt: input.updatedAt,
           activatedAt: input.activatedAt,
           archivedAt: input.archivedAt,
@@ -151,10 +191,11 @@ export const RoleAdminListExposure = Object.freeze({
           code: input.code,
           name: input.name,
           state: input.state,
-          permissionsSummary:
-            input.permissionsSummary,
-          assignmentCountSummary:
-            input.assignmentCountSummary,
+          permissionsSummary: input.permissionsSummary,
+          assignmentCountSummary: input.assignmentCountSummary,
+          templateCode: input.templateCode ?? null,
+          templateVersion: input.templateVersion ?? null,
+          templateAppliedAt: input.templateAppliedAt ?? null,
           updatedAt: input.updatedAt,
         },
         ROLE_ADMIN_LIST_FIELDS,
@@ -163,9 +204,7 @@ export const RoleAdminListExposure = Object.freeze({
     );
   },
 
-  exposeMany(
-    items: readonly RoleListItemView[],
-  ): readonly PlainObject[] {
+  exposeMany(items: readonly RoleListItemView[]): readonly PlainObject[] {
     return items.map((item) => this.expose(item));
   },
 });
@@ -180,15 +219,13 @@ export const RoleAdminDetailExposure = Object.freeze({
           name: input.name,
           description: input.description,
           state: input.state,
-          permissions: toPermissionObjects(
-            input.permissions,
-          ),
+          permissions: toPermissionObjects(input.permissions),
           delegationBand: input.delegationBand,
-          maxDelegatableBand:
-            input.maxDelegatableBand,
-          assignmentRules: exposeAssignmentRules(
-            input.assignmentRules,
-          ),
+          maxDelegatableBand: input.maxDelegatableBand,
+          assignmentRules: exposeAssignmentRules(input.assignmentRules),
+          templateCode: input.templateCode ?? null,
+          templateVersion: input.templateVersion ?? null,
+          templateAppliedAt: input.templateAppliedAt ?? null,
           createdAt: input.createdAt,
           updatedAt: input.updatedAt,
           activatedAt: input.activatedAt,
@@ -209,6 +246,8 @@ export const RoleAdminAssignmentExposure = Object.freeze({
           assignmentId: input.assignmentId,
           roleId: input.roleId,
           userId: input.userId,
+          userRef: input.userRef,
+          scopeGrants: input.scopeGrants ?? null,
           state: input.state,
           effectiveAt: input.effectiveAt,
           revokedAt: input.revokedAt,
@@ -220,34 +259,108 @@ export const RoleAdminAssignmentExposure = Object.freeze({
     );
   },
 
-  exposeMany(
-    items: readonly RoleAssignmentView[],
-  ): readonly PlainObject[] {
+  exposeMany(items: readonly RoleAssignmentView[]): readonly PlainObject[] {
     return items.map((item) => this.expose(item));
   },
 });
 
-export const RoleAdminPermissionMatrixExposure =
-  Object.freeze({
-    expose(
-      input: RolePermissionMatrixView,
-    ): PlainObject {
-      return toPlainObject(
-        ExposurePolicy.expose(
-          {
-            roleId: input.roleId,
-            roleCode: input.roleCode,
-            roleState: input.roleState,
-            permissions: toPermissionObjects(
-              input.permissions,
-            ),
-            delegationBand: input.delegationBand,
-            maxDelegatableBand:
-              input.maxDelegatableBand,
-          },
-          ROLE_ADMIN_PERMISSION_MATRIX_FIELDS,
-        ),
-        "RoleAdminPermissionMatrix exposure",
-      );
-    },
-  });
+export const RoleAdminPermissionMatrixExposure = Object.freeze({
+  expose(input: RolePermissionMatrixView): PlainObject {
+    return toPlainObject(
+      ExposurePolicy.expose(
+        {
+          roleId: input.roleId,
+          roleCode: input.roleCode,
+          roleState: input.roleState,
+          permissions: toPermissionObjects(input.permissions),
+          delegationBand: input.delegationBand,
+          maxDelegatableBand: input.maxDelegatableBand,
+        },
+        ROLE_ADMIN_PERMISSION_MATRIX_FIELDS,
+      ),
+      "RoleAdminPermissionMatrix exposure",
+    );
+  },
+});
+
+function exposeScopePlanEntry(entry: RoleTemplateScopePlanEntry): PlainObject {
+  return toPlainObject(
+    ExposurePolicy.expose(
+      {
+        module: entry.module,
+        scopes: [...entry.scopes],
+        status: entry.status,
+        note: entry.note,
+      },
+      ROLE_TEMPLATE_SCOPE_PLAN_FIELDS,
+    ),
+    "RoleTemplateScopePlan exposure",
+  );
+}
+
+function exposeScopePlan(
+  scopePlan: readonly RoleTemplateScopePlanEntry[],
+): readonly PlainObject[] {
+  return scopePlan.map((entry) => exposeScopePlanEntry(entry));
+}
+
+function exposeRoleTemplateBase(
+  template: RoleTemplateDefinition | RoleTemplateListItem,
+): PlainObject {
+  const permissionCount =
+    "permissionCount" in template
+      ? template.permissionCount
+      : template.permissions.length;
+  const permissions =
+    "permissions" in template
+      ? toPermissionObjects(template.permissions)
+      : undefined;
+
+  return toPlainObject(
+    ExposurePolicy.expose(
+      {
+        code: template.code,
+        version: template.version,
+        name: template.name,
+        description: template.description,
+        category: template.category,
+        permissionCount,
+        ...(permissions ? { permissions } : {}),
+        scopePlan: exposeScopePlan(template.scopePlan),
+        warnings: [...template.warnings],
+        implementationNotes: [...template.implementationNotes],
+        status: template.status,
+      },
+      ROLE_TEMPLATE_FIELDS,
+    ),
+    "RoleTemplate exposure",
+  );
+}
+
+export const RoleTemplateAdminListExposure = Object.freeze({
+  expose(input: RoleTemplateListItem): PlainObject {
+    return exposeRoleTemplateBase(input);
+  },
+
+  exposeMany(items: readonly RoleTemplateListItem[]): readonly PlainObject[] {
+    return items.map((item) => this.expose(item));
+  },
+});
+
+export const RoleTemplateAdminPreviewExposure = Object.freeze({
+  expose(input: RoleTemplatePreviewResult): PlainObject {
+    return toPlainObject(
+      ExposurePolicy.expose(
+        {
+          template: exposeRoleTemplateBase(input.template),
+          permissions: toPermissionObjects(input.permissions),
+          scopePlan: exposeScopePlan(input.scopePlan),
+          warnings: [...input.warnings],
+          unsupportedScopeNotes: [...input.unsupportedScopeNotes],
+        },
+        ROLE_TEMPLATE_PREVIEW_FIELDS,
+      ),
+      "RoleTemplatePreview exposure",
+    );
+  },
+});

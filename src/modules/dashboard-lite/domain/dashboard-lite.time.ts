@@ -3,6 +3,18 @@ import { DashboardLiteReadinessError } from "./dashboard-lite.errors";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TIME_ZONE_OFFSET_PATTERN =
   /^GMT(?:(?<sign>[+-])(?<hour>\d{1,2})(?::?(?<minute>\d{2}))?)?$/;
+const ZERO_OFFSET_TOKENS = new Set([
+  "GMT",
+  "UTC",
+  "GMT+0",
+  "GMT-0",
+  "GMT+00",
+  "GMT-00",
+  "GMT+0000",
+  "GMT-0000",
+  "GMT+00:00",
+  "GMT-00:00",
+]);
 
 interface CalendarDateParts {
   readonly year: number;
@@ -18,6 +30,7 @@ interface LocalDateTimeParts extends CalendarDateParts {
 
 export interface DashboardLiteWindowSnapshot {
   readonly generatedAt: number;
+  readonly businessTimeZone: string;
   readonly businessDate: string;
   readonly todayWindowStartAt: number;
   readonly todayWindowEndAt: number;
@@ -65,6 +78,7 @@ export function createDashboardLiteWindowSnapshot(
 
   return {
     generatedAt,
+    businessTimeZone,
     businessDate:
       toCanonicalCalendarDateString(businessDateParts),
     todayWindowStartAt:
@@ -142,10 +156,22 @@ function toLocalDateTimeParts(
     year: readPart(parts, "year", timeZone),
     month: readPart(parts, "month", timeZone),
     day: readPart(parts, "day", timeZone),
-    hour: readPart(parts, "hour", timeZone),
+    hour: readHourPart(parts, timeZone),
     minute: readPart(parts, "minute", timeZone),
     second: readPart(parts, "second", timeZone),
   };
+}
+
+export function toDashboardLiteUtcDateOnlyString(
+  timestamp: number,
+): string {
+  if (!Number.isFinite(timestamp)) {
+    throw new DashboardLiteReadinessError(
+      "Invalid Dashboard Lite UTC date-only timestamp",
+    );
+  }
+
+  return new Date(timestamp).toISOString().slice(0, 10);
 }
 
 function toUtcTimestampForLocalMidnight(
@@ -234,8 +260,20 @@ function resolveTimeZoneOffsetMs(
     );
   }
 
+  return parseTimeZoneOffsetTokenMs(zoneToken, timeZone);
+}
+
+export function parseTimeZoneOffsetTokenMs(
+  zoneToken: string,
+  timeZone: string,
+): number {
+  const normalizedToken = zoneToken.trim();
+  if (ZERO_OFFSET_TOKENS.has(normalizedToken)) {
+    return 0;
+  }
+
   const match = TIME_ZONE_OFFSET_PATTERN.exec(
-    zoneToken,
+    normalizedToken,
   );
   if (!match || !match.groups) {
     throw new DashboardLiteReadinessError(
@@ -344,6 +382,19 @@ function readPart(
     throw new DashboardLiteReadinessError(
       `Invalid ${type} token "${token}" for ${timeZone}`,
     );
+  }
+
+  return parsed;
+}
+
+function readHourPart(
+  parts: readonly Intl.DateTimeFormatPart[],
+  timeZone: string,
+): number {
+  const parsed = readPart(parts, "hour", timeZone);
+
+  if (parsed === 24) {
+    return 0;
   }
 
   return parsed;

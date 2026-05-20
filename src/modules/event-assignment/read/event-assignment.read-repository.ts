@@ -13,6 +13,7 @@ import {
 
 export interface EventListReadInput {
   readonly status?: EventStatus;
+  readonly statuses?: readonly EventStatus[];
   readonly assignmentKind?: EventAssignmentKind;
   readonly assignmentEmploymentProfileId?: string;
   readonly assignmentTalentId?: string;
@@ -21,6 +22,10 @@ export interface EventListReadInput {
   readonly containsPlatformAccountId?: string;
   readonly windowStartAt?: number;
   readonly windowEndAt?: number;
+  readonly eventOverlapStartAt?: number;
+  readonly eventOverlapEndAt?: number;
+  readonly eventStartFromAt?: number;
+  readonly eventStartToAt?: number;
   readonly limit: number;
   readonly cursor?: string;
   readonly search?: string;

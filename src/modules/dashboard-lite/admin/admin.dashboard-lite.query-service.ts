@@ -10,10 +10,13 @@ import {
 import {
   assertValidBusinessTimeZone,
   createDashboardLiteWindowSnapshot,
+  DashboardLiteWindowSnapshot,
+  toDashboardLiteUtcDateOnlyString,
 } from "@modules/dashboard-lite/domain/dashboard-lite.time";
 import {
   DashboardLiteSnapshotProjection,
   DashboardLiteSnapshotView,
+  DashboardLiteWindowsView,
 } from "@modules/dashboard-lite/domain/dashboard-lite.types";
 import { DashboardLiteReadRepository } from "@modules/dashboard-lite/read/dashboard-lite.read-repository";
 import {
@@ -84,8 +87,7 @@ export class DashboardLiteAdminQueryService {
       );
 
     return toSnapshotView(
-      window.generatedAt,
-      window.businessDate,
+      window,
       projection,
     );
   }
@@ -101,13 +103,13 @@ export class DashboardLiteAdminQueryService {
 }
 
 function toSnapshotView(
-  generatedAt: number,
-  businessDate: string,
+  window: DashboardLiteWindowSnapshot,
   projection: DashboardLiteSnapshotProjection,
 ): DashboardLiteSnapshotView {
   return {
-    generatedAt,
-    businessDate,
+    generatedAt: window.generatedAt,
+    businessDate: window.businessDate,
+    windows: toWindowsView(window),
     overview: {
       todayEventCount: projection.todayEventCount,
       draftTalentKpiCount:
@@ -153,6 +155,41 @@ function toSnapshotView(
         projection.staleSettlementDraftCount,
       expiringContractCount30d:
         projection.expiringContractCount30d,
+    },
+  };
+}
+
+function toWindowsView(
+  window: DashboardLiteWindowSnapshot,
+): DashboardLiteWindowsView {
+  return {
+    businessTimeZone: window.businessTimeZone,
+    today: {
+      startAtInclusive: window.todayWindowStartAt,
+      endAtExclusive: window.todayWindowEndAt,
+    },
+    next7Days: {
+      startAtInclusive: window.todayWindowStartAt,
+      endAtExclusive: window.next7DayWindowEndAt,
+    },
+    trailing30Days: {
+      startAtInclusive:
+        window.trailing30DayWindowStartAt,
+      endAtExclusive: window.generatedAt,
+    },
+    staleDrafts: {
+      olderThanAtExclusive:
+        window.staleDraftThresholdAt,
+    },
+    contractExpiry30Days: {
+      startDateInclusive:
+        toDashboardLiteUtcDateOnlyString(
+          window.expiringContractWindowStartDate,
+        ),
+      endDateInclusive:
+        toDashboardLiteUtcDateOnlyString(
+          window.expiringContractWindowEndDate,
+        ),
     },
   };
 }

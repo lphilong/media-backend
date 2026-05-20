@@ -59,6 +59,18 @@ interface ParsedWindowFilter {
   readonly windowEndAt?: number;
 }
 
+interface ParsedEventTargetFilters {
+  readonly eventOverlapStartAt?: number;
+  readonly eventOverlapEndAt?: number;
+  readonly eventStartFromAt?: number;
+  readonly eventStartToAt?: number;
+}
+
+const ACTIVE_EVENT_STATUSES: readonly EventStatus[] = [
+  "SCHEDULED",
+  "IN_PROGRESS",
+] as const;
+
 export class EventAssignmentAdminQueryService {
   constructor(
     private readonly readRepository: EventAssignmentReadRepository,
@@ -86,9 +98,20 @@ export class EventAssignmentAdminQueryService {
       windowStartAt: query.windowStartAt,
       windowEndAt: query.windowEndAt,
     });
+    const targetFilters = parseEventTargetFilters({
+      eventOverlapStartAt: query.eventOverlapStartAt,
+      eventOverlapEndAt: query.eventOverlapEndAt,
+      eventStartFromAt: query.eventStartFromAt,
+      eventStartToAt: query.eventStartToAt,
+    });
+    const statusFilters = parseEventStatusFilters({
+      status: query.status,
+      statusGroup: query.statusGroup,
+    });
 
     return this.readRepository.listEvents({
-      status: parseOptionalStatus(query.status),
+      status: statusFilters.status,
+      statuses: statusFilters.statuses,
       assignmentKind: assignmentFilter.assignmentKind,
       assignmentEmploymentProfileId:
         assignmentFilter.assignmentEmploymentProfileId,
@@ -106,6 +129,13 @@ export class EventAssignmentAdminQueryService {
       ),
       windowStartAt: window.windowStartAt,
       windowEndAt: window.windowEndAt,
+      eventOverlapStartAt:
+        targetFilters.eventOverlapStartAt,
+      eventOverlapEndAt:
+        targetFilters.eventOverlapEndAt,
+      eventStartFromAt:
+        targetFilters.eventStartFromAt,
+      eventStartToAt: targetFilters.eventStartToAt,
       limit: parseLimit(query.limit),
       cursor: parseOptionalCursor(query.cursor),
       search: parseOptionalSearch(query.search),
@@ -364,6 +394,64 @@ function parseOptionalStatus(
   );
 }
 
+function parseEventStatusFilters(input: {
+  readonly status: unknown;
+  readonly statusGroup: unknown;
+}): {
+  readonly status?: EventStatus;
+  readonly statuses?: readonly EventStatus[];
+} {
+  const status = parseOptionalStatus(input.status);
+  const statusGroup = parseOptionalStatusGroup(
+    input.statusGroup,
+  );
+
+  if (!statusGroup) {
+    return { status };
+  }
+
+  if (
+    status !== undefined &&
+    !ACTIVE_EVENT_STATUSES.includes(status)
+  ) {
+    throw new EventAssignmentValidationError(
+      "status is inconsistent with statusGroup ACTIVE",
+    );
+  }
+
+  return {
+    status,
+    statuses:
+      status === undefined
+        ? ACTIVE_EVENT_STATUSES
+        : undefined,
+  };
+}
+
+function parseOptionalStatusGroup(
+  value: unknown,
+): "ACTIVE" | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new EventAssignmentValidationError(
+      "statusGroup must be ACTIVE",
+    );
+  }
+
+  const normalized = value.trim().toUpperCase();
+
+  if (normalized === "ACTIVE") {
+    return "ACTIVE";
+  }
+
+  throw new EventAssignmentValidationError(
+    "statusGroup must be ACTIVE",
+  );
+}
+
 function parseAssignmentFilter(input: {
   readonly assignmentKind: unknown;
   readonly assignmentEmploymentProfileId: unknown;
@@ -571,6 +659,58 @@ function parseWindowFilter(input: {
   return {
     windowStartAt,
     windowEndAt,
+  };
+}
+
+function parseEventTargetFilters(input: {
+  readonly eventOverlapStartAt: unknown;
+  readonly eventOverlapEndAt: unknown;
+  readonly eventStartFromAt: unknown;
+  readonly eventStartToAt: unknown;
+}): ParsedEventTargetFilters {
+  const eventOverlapStartAt =
+    parseOptionalTimestamp(
+      input.eventOverlapStartAt,
+      "eventOverlapStartAt",
+    );
+  const eventOverlapEndAt = parseOptionalTimestamp(
+    input.eventOverlapEndAt,
+    "eventOverlapEndAt",
+  );
+  const eventStartFromAt = parseOptionalTimestamp(
+    input.eventStartFromAt,
+    "eventStartFromAt",
+  );
+  const eventStartToAt = parseOptionalTimestamp(
+    input.eventStartToAt,
+    "eventStartToAt",
+  );
+
+  if (
+    eventOverlapStartAt !== undefined &&
+    eventOverlapEndAt !== undefined &&
+    eventOverlapEndAt <= eventOverlapStartAt
+  ) {
+    throw new EventAssignmentValidationError(
+      "eventOverlapEndAt must be strictly later than eventOverlapStartAt",
+    );
+  }
+
+  if (
+    eventStartFromAt !== undefined &&
+    eventStartToAt !== undefined &&
+    eventStartToAt <= eventStartFromAt
+  ) {
+    throw new EventAssignmentValidationError(
+      "eventStartToAt must be strictly later than eventStartFromAt",
+    );
+  }
+
+  return {
+    eventOverlapStartAt,
+    eventOverlapEndAt,
+    eventStartFromAt,
+    eventStartToAt,
   };
 }
 

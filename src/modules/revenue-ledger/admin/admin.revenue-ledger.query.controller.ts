@@ -41,6 +41,11 @@ const LIST_REVENUE_ENTRIES_QUERY_FIELDS: readonly string[] =
     "currencyCode",
     "windowStartAt",
     "windowEndAt",
+    "createdBeforeAt",
+    "finalizedFromAt",
+    "finalizedToAt",
+    "reconciledFromAt",
+    "reconciledToAt",
     "limit",
     "cursor",
     "search",
@@ -246,6 +251,26 @@ function parseListRevenueEntriesQuery(
         | undefined,
     windowEndAt:
       req.query.windowEndAt as
+        | string
+        | undefined,
+    createdBeforeAt:
+      req.query.createdBeforeAt as
+        | string
+        | undefined,
+    finalizedFromAt:
+      req.query.finalizedFromAt as
+        | string
+        | undefined,
+    finalizedToAt:
+      req.query.finalizedToAt as
+        | string
+        | undefined,
+    reconciledFromAt:
+      req.query.reconciledFromAt as
+        | string
+        | undefined,
+    reconciledToAt:
+      req.query.reconciledToAt as
         | string
         | undefined,
     limit: req.query.limit as string | undefined,

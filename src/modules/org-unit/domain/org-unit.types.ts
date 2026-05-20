@@ -1,3 +1,5 @@
+import { ReferenceSummary } from "@modules/reference-summary";
+
 export const ORG_UNIT_TYPES = [
   "DEPARTMENT",
   "TEAM",
@@ -60,6 +62,7 @@ export interface OrgUnitListItemView {
   readonly type: OrgUnitType;
   readonly status: OrgUnitStatus;
   readonly parentOrgUnitId: string | null;
+  readonly parentOrgUnitRef?: ReferenceSummary | null;
   readonly depth: number;
   readonly displayOrder: number;
   readonly createdAt: number;
@@ -72,6 +75,7 @@ export interface OrgUnitChildListItemView {
   readonly type: OrgUnitType;
   readonly status: OrgUnitStatus;
   readonly parentOrgUnitId: string | null;
+  readonly parentOrgUnitRef?: ReferenceSummary | null;
   readonly depth: number;
   readonly displayOrder: number;
 }
@@ -92,6 +96,7 @@ export interface OrgUnitDetailView {
   readonly description: string | null;
   readonly externalRef: string | null;
   readonly parentOrgUnitId: string | null;
+  readonly parentOrgUnitRef?: ReferenceSummary | null;
   readonly depth: number;
   readonly displayOrder: number;
   readonly createdAt: number;

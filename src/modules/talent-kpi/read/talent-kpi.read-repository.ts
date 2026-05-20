@@ -21,6 +21,9 @@ export interface TalentKpiRecordListReadInput {
   readonly containsMetricCode?: TalentKpiMetricCode;
   readonly windowStartAt?: number;
   readonly windowEndAt?: number;
+  readonly createdBeforeAt?: number;
+  readonly publishedFromAt?: number;
+  readonly publishedToAt?: number;
   readonly limit: number;
   readonly cursor?: string;
   readonly search?: string;

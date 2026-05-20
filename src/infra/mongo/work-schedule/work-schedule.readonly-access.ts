@@ -30,6 +30,9 @@ import { TalentGroupWorkScheduleReadonlyAccess } from "@modules/talent-group/dom
 
 interface EmploymentProfileReferenceDocument {
   readonly _id: string;
+  readonly employeeCode: string;
+  readonly legalName: string;
+  readonly displayName: string;
   readonly employmentStatus: WorkScheduleReferencedEmploymentProfile["employmentStatus"];
   readonly orgUnitId: string;
   readonly managerEmploymentProfileId: string | null;
@@ -94,6 +97,9 @@ export class NativeMongoWorkScheduleEmploymentProfileReadonlyAccess
       {
         projection: {
           _id: 1,
+          employeeCode: 1,
+          legalName: 1,
+          displayName: 1,
           employmentStatus: 1,
           orgUnitId: 1,
           managerEmploymentProfileId: 1,
@@ -111,6 +117,7 @@ export class NativeMongoWorkScheduleEmploymentProfileReadonlyAccess
           managerEmploymentProfileId:
             doc.managerEmploymentProfileId,
           linkedUserId: doc.linkedUserId,
+          ref: toEmploymentProfileReferenceSummary(doc),
         }
       : null;
   }
@@ -129,6 +136,9 @@ export class NativeMongoWorkScheduleEmploymentProfileReadonlyAccess
       {
         projection: {
           _id: 1,
+          employeeCode: 1,
+          legalName: 1,
+          displayName: 1,
           employmentStatus: 1,
           orgUnitId: 1,
           managerEmploymentProfileId: 1,
@@ -146,6 +156,7 @@ export class NativeMongoWorkScheduleEmploymentProfileReadonlyAccess
           managerEmploymentProfileId:
             doc.managerEmploymentProfileId,
           linkedUserId: doc.linkedUserId,
+          ref: toEmploymentProfileReferenceSummary(doc),
         }
       : null;
   }
@@ -212,6 +223,9 @@ export class NativeMongoWorkScheduleEmploymentProfileReadonlyAccess
         {
           projection: {
             _id: 1,
+            employeeCode: 1,
+            legalName: 1,
+            displayName: 1,
             employmentStatus: 1,
             orgUnitId: 1,
             managerEmploymentProfileId: 1,
@@ -232,8 +246,21 @@ export class NativeMongoWorkScheduleEmploymentProfileReadonlyAccess
       managerEmploymentProfileId:
         doc.managerEmploymentProfileId,
       linkedUserId: doc.linkedUserId,
+      ref: toEmploymentProfileReferenceSummary(doc),
     }));
   }
+}
+
+function toEmploymentProfileReferenceSummary(
+  document: EmploymentProfileReferenceDocument,
+): WorkScheduleReferencedEmploymentProfile["ref"] {
+  return {
+    id: document._id,
+    code: document.employeeCode,
+    displayName: document.displayName,
+    name: document.legalName,
+    status: document.employmentStatus,
+  };
 }
 
 export class NativeMongoWorkScheduleOrgUnitReadonlyAccess

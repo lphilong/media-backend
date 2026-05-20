@@ -101,6 +101,9 @@ const LIST_SETTLEMENT_QUERY_FIELDS: readonly string[] =
     "settlementCurrencyCode",
     "windowStartAt",
     "windowEndAt",
+    "createdBeforeAt",
+    "finalizedFromAt",
+    "finalizedToAt",
     "limit",
     "cursor",
     "search",
@@ -507,6 +510,18 @@ function parseListSettlementsQuery(
         | undefined,
     windowEndAt:
       req.query.windowEndAt as
+        | string
+        | undefined,
+    createdBeforeAt:
+      req.query.createdBeforeAt as
+        | string
+        | undefined,
+    finalizedFromAt:
+      req.query.finalizedFromAt as
+        | string
+        | undefined,
+    finalizedToAt:
+      req.query.finalizedToAt as
         | string
         | undefined,
     limit: req.query.limit as string | undefined,

@@ -20,6 +20,9 @@ const CONTRACT_RECORD_ADMIN_DETAIL_FIELDS = [
   "linkedEmploymentProfileId",
   "linkedTalentId",
   "ownerEmploymentProfileId",
+  "linkedEmploymentProfileRef",
+  "linkedTalentRef",
+  "ownerEmploymentProfileRef",
   "confidentialityTier",
   "status",
   "effectiveStartDate",
@@ -41,6 +44,9 @@ const CONTRACT_RECORD_ADMIN_LIST_FIELDS = [
   "linkedEmploymentProfileId",
   "linkedTalentId",
   "ownerEmploymentProfileId",
+  "linkedEmploymentProfileRef",
+  "linkedTalentRef",
+  "ownerEmploymentProfileRef",
   "confidentialityTier",
   "status",
   "effectiveStartDate",
@@ -56,6 +62,8 @@ const CONTRACT_RECORD_ADMIN_BY_LINKED_ENTITY_LIST_FIELDS = [
   "linkedEntityKind",
   "linkedEmploymentProfileId",
   "linkedTalentId",
+  "linkedEmploymentProfileRef",
+  "linkedTalentRef",
   "status",
   "effectiveStartDate",
   "effectiveEndDate",
@@ -67,6 +75,7 @@ const CONTRACT_RECORD_ADMIN_BY_OWNER_LIST_FIELDS = [
   "title",
   "contractKind",
   "ownerEmploymentProfileId",
+  "ownerEmploymentProfileRef",
   "confidentialityTier",
   "status",
   "effectiveStartDate",
@@ -91,6 +100,11 @@ export const ContractRegistryAdminDetailExposure =
             linkedTalentId: input.linkedTalentId,
             ownerEmploymentProfileId:
               input.ownerEmploymentProfileId,
+            linkedEmploymentProfileRef:
+              input.linkedEmploymentProfileRef,
+            linkedTalentRef: input.linkedTalentRef,
+            ownerEmploymentProfileRef:
+              input.ownerEmploymentProfileRef,
             confidentialityTier:
               input.confidentialityTier,
             status: input.status,
@@ -131,6 +145,11 @@ export const ContractRegistryAdminListExposure =
             linkedTalentId: input.linkedTalentId,
             ownerEmploymentProfileId:
               input.ownerEmploymentProfileId,
+            linkedEmploymentProfileRef:
+              input.linkedEmploymentProfileRef,
+            linkedTalentRef: input.linkedTalentRef,
+            ownerEmploymentProfileRef:
+              input.ownerEmploymentProfileRef,
             confidentialityTier:
               input.confidentialityTier,
             status: input.status,
@@ -169,6 +188,9 @@ export const ContractRegistryAdminByLinkedEntityListExposure =
             linkedEmploymentProfileId:
               input.linkedEmploymentProfileId,
             linkedTalentId: input.linkedTalentId,
+            linkedEmploymentProfileRef:
+              input.linkedEmploymentProfileRef,
+            linkedTalentRef: input.linkedTalentRef,
             status: input.status,
             effectiveStartDate:
               input.effectiveStartDate,
@@ -202,6 +224,8 @@ export const ContractRegistryAdminByOwnerListExposure =
             contractKind: input.contractKind,
             ownerEmploymentProfileId:
               input.ownerEmploymentProfileId,
+            ownerEmploymentProfileRef:
+              input.ownerEmploymentProfileRef,
             confidentialityTier:
               input.confidentialityTier,
             status: input.status,

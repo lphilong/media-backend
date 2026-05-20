@@ -9,15 +9,40 @@ import {
   DashboardLiteOperationsView,
   DashboardLiteOverviewView,
   DashboardLiteSnapshotView,
+  DashboardLiteWindowsView,
 } from "@modules/dashboard-lite/domain/dashboard-lite.types";
 
 const DASHBOARD_LITE_SNAPSHOT_FIELDS = [
   "generatedAt",
   "businessDate",
+  "windows",
   "overview",
   "operations",
   "commercial",
   "attention",
+] as const;
+
+const DASHBOARD_LITE_WINDOWS_FIELDS = [
+  "businessTimeZone",
+  "today",
+  "next7Days",
+  "trailing30Days",
+  "staleDrafts",
+  "contractExpiry30Days",
+] as const;
+
+const DASHBOARD_LITE_TIMESTAMP_WINDOW_FIELDS = [
+  "startAtInclusive",
+  "endAtExclusive",
+] as const;
+
+const DASHBOARD_LITE_STALE_DRAFTS_FIELDS = [
+  "olderThanAtExclusive",
+] as const;
+
+const DASHBOARD_LITE_CONTRACT_EXPIRY_FIELDS = [
+  "startDateInclusive",
+  "endDateInclusive",
 ] as const;
 
 const DASHBOARD_LITE_OVERVIEW_FIELDS = [
@@ -62,6 +87,7 @@ export const DashboardLiteAdminSnapshotExposure =
           {
             generatedAt: input.generatedAt,
             businessDate: input.businessDate,
+            windows: exposeWindows(input.windows),
             overview: exposeOverview(input.overview),
             operations: exposeOperations(
               input.operations,
@@ -77,6 +103,67 @@ export const DashboardLiteAdminSnapshotExposure =
       );
     },
   });
+
+function exposeWindows(
+  input: DashboardLiteWindowsView,
+): PlainObject {
+  return toPlainObject(
+    ExposurePolicy.expose(
+      {
+        businessTimeZone: input.businessTimeZone,
+        today: exposeTimestampWindow(input.today),
+        next7Days: exposeTimestampWindow(
+          input.next7Days,
+        ),
+        trailing30Days: exposeTimestampWindow(
+          input.trailing30Days,
+        ),
+        staleDrafts: toPlainObject(
+          ExposurePolicy.expose(
+            {
+              olderThanAtExclusive:
+                input.staleDrafts.olderThanAtExclusive,
+            },
+            DASHBOARD_LITE_STALE_DRAFTS_FIELDS,
+          ),
+          "DashboardLiteStaleDraftsWindow exposure",
+        ),
+        contractExpiry30Days: toPlainObject(
+          ExposurePolicy.expose(
+            {
+              startDateInclusive:
+                input.contractExpiry30Days
+                  .startDateInclusive,
+              endDateInclusive:
+                input.contractExpiry30Days
+                  .endDateInclusive,
+            },
+            DASHBOARD_LITE_CONTRACT_EXPIRY_FIELDS,
+          ),
+          "DashboardLiteContractExpiryWindow exposure",
+        ),
+      },
+      DASHBOARD_LITE_WINDOWS_FIELDS,
+    ),
+    "DashboardLiteWindows exposure",
+  );
+}
+
+function exposeTimestampWindow(input: {
+  readonly startAtInclusive: number;
+  readonly endAtExclusive: number;
+}): PlainObject {
+  return toPlainObject(
+    ExposurePolicy.expose(
+      {
+        startAtInclusive: input.startAtInclusive,
+        endAtExclusive: input.endAtExclusive,
+      },
+      DASHBOARD_LITE_TIMESTAMP_WINDOW_FIELDS,
+    ),
+    "DashboardLiteTimestampWindow exposure",
+  );
+}
 
 function exposeOverview(
   input: DashboardLiteOverviewView,

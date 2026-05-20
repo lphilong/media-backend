@@ -1,3 +1,5 @@
+import { ReferenceSummary } from "@modules/reference-summary";
+
 export const PLATFORM_ACCOUNT_PLATFORMS = [
   "TIKTOK",
   "YOUTUBE",
@@ -68,6 +70,7 @@ export interface PlatformAccountRecord {
   readonly ownerOrgUnitId: string | null;
   readonly ownerTalentId: string | null;
   readonly ownerTalentGroupId: string | null;
+  readonly ownerRef?: ReferenceSummary | null;
   readonly operationalStatus: PlatformAccountOperationalStatus;
   readonly livestreamEnabled: boolean;
   readonly contentPublishingEnabled: boolean;
@@ -91,6 +94,7 @@ export interface PlatformAccountListItemView {
   readonly ownerOrgUnitId: string | null;
   readonly ownerTalentId: string | null;
   readonly ownerTalentGroupId: string | null;
+  readonly ownerRef?: ReferenceSummary | null;
   readonly operationalStatus: PlatformAccountOperationalStatus;
   readonly livestreamEnabled: boolean;
   readonly contentPublishingEnabled: boolean;

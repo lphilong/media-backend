@@ -5,8 +5,10 @@ import {
   GetRoleDetailResult,
   GetRolePermissionMatrixResult,
   ListRoleAssignmentsResult,
+  ListRoleTemplatesResult,
   ListRolesResult,
   RoleMutationResult,
+  RoleTemplatePreviewResult,
 } from "./role.contracts";
 import {
   RoleAdminAssignmentExposure,
@@ -14,6 +16,8 @@ import {
   RoleAdminListExposure,
   RoleAdminMutationExposure,
   RoleAdminPermissionMatrixExposure,
+  RoleTemplateAdminListExposure,
+  RoleTemplateAdminPreviewExposure,
 } from "./role.exposure";
 
 export class RoleAdminMutationPresenter extends Presenter<
@@ -102,6 +106,38 @@ export class RoleAdminPermissionMatrixPresenter extends Presenter<
   ): PresentationResult {
     return {
       data: RoleAdminPermissionMatrixExposure.expose(
+        input,
+      ),
+    };
+  }
+}
+
+export class RoleTemplateAdminListPresenter extends Presenter<
+  ListRoleTemplatesResult,
+  PresentationResult
+> {
+  present(
+    input: ListRoleTemplatesResult,
+    _context: ContextType,
+  ): PresentationResult {
+    return {
+      data: RoleTemplateAdminListExposure.exposeMany(
+        input.items,
+      ),
+    };
+  }
+}
+
+export class RoleTemplateAdminPreviewPresenter extends Presenter<
+  RoleTemplatePreviewResult,
+  PresentationResult
+> {
+  present(
+    input: RoleTemplatePreviewResult,
+    _context: ContextType,
+  ): PresentationResult {
+    return {
+      data: RoleTemplateAdminPreviewExposure.expose(
         input,
       ),
     };

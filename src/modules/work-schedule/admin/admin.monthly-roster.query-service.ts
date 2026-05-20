@@ -12,7 +12,10 @@ import {
   WorkSchedulePermissionScopeError,
   WorkScheduleValidationError,
 } from "@modules/work-schedule/domain/work-schedule.errors";
-import { WorkScheduleEmploymentProfileReadonlyAccess } from "@modules/work-schedule/domain/work-schedule-employment-profile-readonly-access";
+import {
+  WorkScheduleEmploymentProfileReadonlyAccess,
+  WorkScheduleReferencedEmploymentProfile,
+} from "@modules/work-schedule/domain/work-schedule-employment-profile-readonly-access";
 import { WorkScheduleOrgUnitReadonlyAccess } from "@modules/work-schedule/domain/work-schedule-org-unit-readonly-access";
 import {
   HOLIDAY_CALENDAR_TIMEZONE,
@@ -21,6 +24,7 @@ import {
   MONTHLY_ROSTER_TIMEZONE,
   MONTHLY_ROSTER_STATUSES,
   MonthlyRosterStatus,
+  MonthlyRosterPreviewView,
   MonthlyRosterView,
 } from "@modules/work-schedule/domain/work-schedule.types";
 import {
@@ -214,7 +218,7 @@ export class MonthlyRosterAdminQueryService {
           windowEndAt: monthWindow.windowEndAt,
         },
       );
-    return buildMonthlyRosterPreview({
+    const preview = buildMonthlyRosterPreview({
       roster,
       pattern,
       activeHolidayEntries: calendar.entries.filter(
@@ -227,6 +231,12 @@ export class MonthlyRosterAdminQueryService {
       })),
       existingActiveShifts: activeShifts,
     });
+
+    return enrichMonthlyRosterPreviewReferences(
+      preview,
+      roster,
+      profiles,
+    );
   }
 
   private assertReadPermission(actor: Actor): void {
@@ -474,6 +484,44 @@ function parseOptionalSearch(
   return normalized.length > 0
     ? normalized
     : undefined;
+}
+
+function enrichMonthlyRosterPreviewReferences(
+  preview: MonthlyRosterPreviewView,
+  roster: MonthlyRosterView,
+  profiles: readonly WorkScheduleReferencedEmploymentProfile[],
+): MonthlyRosterPreviewView {
+  const profileRefMap = new Map(
+    profiles.map((profile) => [profile.id, profile.ref ?? null]),
+  );
+  const departmentOrgUnitRef =
+    roster.departmentOrgUnitRef ?? null;
+
+  return {
+    ...preview,
+    departmentOrgUnitRef,
+    workPatternRef: roster.workPatternRef ?? null,
+    holidayCalendarRef:
+      roster.holidayCalendarRef ?? null,
+    eligibleProfiles: preview.eligibleProfiles.map(
+      (profile) => ({
+        ...profile,
+        subjectEmploymentProfileRef:
+          profileRefMap.get(
+            profile.subjectEmploymentProfileId,
+          ) ?? null,
+        departmentOrgUnitRef,
+      }),
+    ),
+    rows: preview.rows.map((row) => ({
+      ...row,
+      departmentOrgUnitRef,
+      subjectEmploymentProfileRef:
+        profileRefMap.get(
+          row.subjectEmploymentProfileId,
+        ) ?? null,
+    })),
+  };
 }
 
 function normalizeOptionalText(

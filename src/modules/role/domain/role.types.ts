@@ -1,24 +1,16 @@
-export const ROLE_STATES = [
-  "DRAFT",
-  "ACTIVE",
-  "INACTIVE",
-  "ARCHIVED",
-] as const;
+import { ReferenceSummary } from "@modules/reference-summary";
+import { ActorScopeGrants } from "@core/actor/actor";
+import type { RoleTemplateCode } from "./role-template.catalog";
+
+export const ROLE_STATES = ["DRAFT", "ACTIVE", "INACTIVE", "ARCHIVED"] as const;
 
 export type RoleState = (typeof ROLE_STATES)[number];
 
-export const ROLE_ASSIGNMENT_STATES = [
-  "ACTIVE",
-  "REVOKED",
-] as const;
+export const ROLE_ASSIGNMENT_STATES = ["ACTIVE", "REVOKED"] as const;
 
-export type RoleAssignmentState =
-  (typeof ROLE_ASSIGNMENT_STATES)[number];
+export type RoleAssignmentState = (typeof ROLE_ASSIGNMENT_STATES)[number];
 
-export const ROLE_ASSIGNMENT_RULE_STATES = [
-  "ACTIVE",
-  "INACTIVE",
-] as const;
+export const ROLE_ASSIGNMENT_RULE_STATES = ["ACTIVE", "INACTIVE"] as const;
 
 export type RoleAssignmentRuleState =
   (typeof ROLE_ASSIGNMENT_RULE_STATES)[number];
@@ -29,8 +21,7 @@ export const ROLE_DELEGATION_BANDS = [
   "FOUNDATION",
 ] as const;
 
-export type RoleDelegationBand =
-  (typeof ROLE_DELEGATION_BANDS)[number];
+export type RoleDelegationBand = (typeof ROLE_DELEGATION_BANDS)[number];
 
 export const ROLE_MAX_DELEGATABLE_BANDS = [
   "NONE",
@@ -50,6 +41,9 @@ export interface RoleRecord {
   readonly permissions: readonly string[];
   readonly delegationBand: RoleDelegationBand;
   readonly maxDelegatableBand: RoleMaxDelegatableBand;
+  readonly templateCode?: RoleTemplateCode;
+  readonly templateVersion?: string;
+  readonly templateAppliedAt?: number;
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly activatedAt: number | null;
@@ -71,6 +65,7 @@ export interface UserRoleAssignmentRecord {
   readonly assignmentId: string;
   readonly roleId: string;
   readonly userId: string;
+  readonly scopeGrants?: ActorScopeGrants;
   readonly state: RoleAssignmentState;
   readonly effectiveAt: number | null;
   readonly revokedAt: number | null;
@@ -86,6 +81,9 @@ export interface RoleListItemView {
   readonly state: RoleState;
   readonly permissionsSummary: number;
   readonly assignmentCountSummary: number;
+  readonly templateCode?: RoleTemplateCode;
+  readonly templateVersion?: string;
+  readonly templateAppliedAt?: number;
   readonly updatedAt: number;
 }
 
@@ -107,6 +105,9 @@ export interface RoleDetailView {
   readonly delegationBand: RoleDelegationBand;
   readonly maxDelegatableBand: RoleMaxDelegatableBand;
   readonly assignmentRules: readonly RoleAssignmentRuleView[];
+  readonly templateCode?: RoleTemplateCode;
+  readonly templateVersion?: string;
+  readonly templateAppliedAt?: number;
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly activatedAt: number | null;
@@ -123,6 +124,9 @@ export interface RoleMutationView {
   readonly delegationBand: RoleDelegationBand;
   readonly maxDelegatableBand: RoleMaxDelegatableBand;
   readonly assignmentRules: readonly RoleAssignmentRuleView[];
+  readonly templateCode?: RoleTemplateCode;
+  readonly templateVersion?: string;
+  readonly templateAppliedAt?: number;
   readonly updatedAt: number;
   readonly activatedAt: number | null;
   readonly archivedAt: number | null;
@@ -132,6 +136,8 @@ export interface RoleAssignmentView {
   readonly assignmentId: string;
   readonly roleId: string;
   readonly userId: string;
+  readonly userRef?: ReferenceSummary | null;
+  readonly scopeGrants?: ActorScopeGrants;
   readonly state: RoleAssignmentState;
   readonly effectiveAt: number | null;
   readonly revokedAt: number | null;

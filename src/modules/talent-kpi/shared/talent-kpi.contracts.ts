@@ -76,6 +76,9 @@ export interface ListTalentKpiRecordsQuery {
     | string;
   readonly windowStartAt?: number | string;
   readonly windowEndAt?: number | string;
+  readonly createdBeforeAt?: number | string;
+  readonly publishedFromAt?: number | string;
+  readonly publishedToAt?: number | string;
   readonly limit?: number | string;
   readonly cursor?: string;
   readonly search?: string;

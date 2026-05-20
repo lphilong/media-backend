@@ -38,6 +38,7 @@ import { TalentPlatformAccountReadonlyAccess } from "@modules/talent/domain/tale
 import { TalentOperationalStatus } from "@modules/talent/domain/talent.types";
 import { TalentGroupPlatformAccountReadonlyAccess } from "@modules/talent-group/domain/talent-group-platform-account-readonly-access";
 import { TalentGroupStatus } from "@modules/talent-group/domain/talent-group.types";
+import { ReferenceSummary } from "@modules/reference-summary";
 
 interface PlatformAccountReadDocument {
   readonly _id: string;
@@ -67,16 +68,24 @@ interface PlatformAccountReadDocument {
 
 interface OrgUnitReferenceDocument {
   readonly _id: string;
+  readonly code: string;
+  readonly name: string;
   readonly status: OrgUnitStatus;
 }
 
 interface TalentReferenceDocument {
   readonly _id: string;
+  readonly talentCode: string;
+  readonly stageName: string;
+  readonly legalName: string;
+  readonly displayShortName: string | null;
   readonly operationalStatus: TalentOperationalStatus;
 }
 
 interface TalentGroupReferenceDocument {
   readonly _id: string;
+  readonly groupCode: string;
+  readonly name: string;
   readonly status: TalentGroupStatus;
 }
 
@@ -110,8 +119,24 @@ export class NativeMongoPlatformAccountReadRepository
   extends BaseRepository<PlatformAccountReadDocument>
   implements PlatformAccountReadRepository
 {
+  private readonly orgUnitCollection: Collection<OrgUnitReferenceDocument>;
+  private readonly talentCollection: Collection<TalentReferenceDocument>;
+  private readonly talentGroupCollection: Collection<TalentGroupReferenceDocument>;
+
   constructor(db: Db) {
     super(db, "platform_accounts");
+    this.orgUnitCollection =
+      db.collection<OrgUnitReferenceDocument>(
+        "org_units",
+      );
+    this.talentCollection =
+      db.collection<TalentReferenceDocument>(
+        "talents",
+      );
+    this.talentGroupCollection =
+      db.collection<TalentGroupReferenceDocument>(
+        "talent_groups",
+      );
   }
 
   async listPlatformAccounts(
@@ -231,10 +256,20 @@ export class NativeMongoPlatformAccountReadRepository
       ? docs.slice(0, input.limit)
       : docs;
 
+    const items =
+      await enrichPlatformAccountOwnerReferenceSummaries(
+        page.map((doc) =>
+          toPlatformAccountListItemView(doc),
+        ),
+        {
+          orgUnitCollection: this.orgUnitCollection,
+          talentCollection: this.talentCollection,
+          talentGroupCollection: this.talentGroupCollection,
+        },
+      );
+
     return {
-      items: page.map((doc) =>
-        toPlatformAccountListItemView(doc),
-      ),
+      items,
       nextCursor:
         hasNext && page.length > 0
           ? encodeCursor(
@@ -255,9 +290,267 @@ export class NativeMongoPlatformAccountReadRepository
       _id: platformAccountId,
     });
 
-    return doc
-      ? toPlatformAccountDetailView(doc)
-      : null;
+    if (!doc) {
+      return null;
+    }
+
+    const [detail] =
+      await enrichPlatformAccountOwnerReferenceSummaries(
+        [toPlatformAccountDetailView(doc)],
+        {
+          orgUnitCollection: this.orgUnitCollection,
+          talentCollection: this.talentCollection,
+          talentGroupCollection: this.talentGroupCollection,
+        },
+      );
+
+    return detail ?? null;
+  }
+}
+
+async function enrichPlatformAccountOwnerReferenceSummaries<
+  T extends {
+    readonly ownerKind: PlatformAccountOwnerKind;
+    readonly ownerOrgUnitId: string | null;
+    readonly ownerTalentId: string | null;
+    readonly ownerTalentGroupId: string | null;
+  },
+>(
+  items: readonly T[],
+  collections: {
+    readonly orgUnitCollection: Collection<OrgUnitReferenceDocument>;
+    readonly talentCollection: Collection<TalentReferenceDocument>;
+    readonly talentGroupCollection: Collection<TalentGroupReferenceDocument>;
+  },
+): Promise<readonly (T & { readonly ownerRef: ReferenceSummary | null })[]> {
+  if (items.length === 0) {
+    return items.map((item) => ({
+      ...item,
+      ownerRef: null,
+    }));
+  }
+
+  const orgUnitIds = new Set<string>();
+  const talentIds = new Set<string>();
+  const talentGroupIds = new Set<string>();
+
+  for (const item of items) {
+    switch (item.ownerKind) {
+      case "ORG_UNIT":
+        addOptionalReferenceId(orgUnitIds, item.ownerOrgUnitId);
+        break;
+      case "TALENT":
+        addOptionalReferenceId(talentIds, item.ownerTalentId);
+        break;
+      case "TALENT_GROUP":
+        addOptionalReferenceId(
+          talentGroupIds,
+          item.ownerTalentGroupId,
+        );
+        break;
+    }
+  }
+
+  const [orgUnitRefMap, talentRefMap, talentGroupRefMap] =
+    await Promise.all([
+      loadOrgUnitReferenceSummaries(
+        orgUnitIds,
+        collections.orgUnitCollection,
+      ),
+      loadTalentReferenceSummaries(
+        talentIds,
+        collections.talentCollection,
+      ),
+      loadTalentGroupReferenceSummaries(
+        talentGroupIds,
+        collections.talentGroupCollection,
+      ),
+    ]);
+
+  return items.map((item) => ({
+    ...item,
+    ownerRef: readPlatformAccountOwnerRef(item, {
+      orgUnitRefMap,
+      talentRefMap,
+      talentGroupRefMap,
+    }),
+  }));
+}
+
+function readPlatformAccountOwnerRef(
+  item: {
+    readonly ownerKind: PlatformAccountOwnerKind;
+    readonly ownerOrgUnitId: string | null;
+    readonly ownerTalentId: string | null;
+    readonly ownerTalentGroupId: string | null;
+  },
+  refs: {
+    readonly orgUnitRefMap: ReadonlyMap<string, ReferenceSummary>;
+    readonly talentRefMap: ReadonlyMap<string, ReferenceSummary>;
+    readonly talentGroupRefMap: ReadonlyMap<string, ReferenceSummary>;
+  },
+): ReferenceSummary | null {
+  switch (item.ownerKind) {
+    case "ORG_UNIT":
+      return item.ownerOrgUnitId
+        ? refs.orgUnitRefMap.get(item.ownerOrgUnitId) ?? null
+        : null;
+    case "TALENT":
+      return item.ownerTalentId
+        ? refs.talentRefMap.get(item.ownerTalentId) ?? null
+        : null;
+    case "TALENT_GROUP":
+      return item.ownerTalentGroupId
+        ? refs.talentGroupRefMap.get(item.ownerTalentGroupId) ?? null
+        : null;
+  }
+}
+
+async function loadOrgUnitReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<OrgUnitReferenceDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          code: 1,
+          name: 1,
+          status: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toOrgUnitReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadTalentReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<TalentReferenceDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          talentCode: 1,
+          stageName: 1,
+          legalName: 1,
+          displayShortName: 1,
+          operationalStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toTalentReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadTalentGroupReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<TalentGroupReferenceDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          groupCode: 1,
+          name: 1,
+          status: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toTalentGroupReferenceSummary(document),
+    ]),
+  );
+}
+
+function toOrgUnitReferenceSummary(
+  document: OrgUnitReferenceDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.code,
+    name: document.name,
+    status: document.status,
+  };
+}
+
+function toTalentReferenceSummary(
+  document: TalentReferenceDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.talentCode,
+    name: document.displayShortName ?? document.stageName ?? document.legalName,
+    status: document.operationalStatus,
+  };
+}
+
+function toTalentGroupReferenceSummary(
+  document: TalentGroupReferenceDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.groupCode,
+    name: document.name,
+    status: document.status,
+  };
+}
+
+function addOptionalReferenceId(
+  ids: Set<string>,
+  value: string | null,
+): void {
+  const normalized = value?.trim();
+
+  if (normalized) {
+    ids.add(normalized);
   }
 }
 

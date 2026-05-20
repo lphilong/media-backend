@@ -5,6 +5,8 @@ import {
   ROLE_ADMIN_LIST_PRESENTER_KEY,
   ROLE_ADMIN_MUTATION_PRESENTER_KEY,
   ROLE_ADMIN_PERMISSION_MATRIX_PRESENTER_KEY,
+  ROLE_TEMPLATE_ADMIN_LIST_PRESENTER_KEY,
+  ROLE_TEMPLATE_ADMIN_PREVIEW_PRESENTER_KEY,
 } from "./role.presenter-keys";
 import {
   RoleAdminAssignmentListPresenter,
@@ -12,6 +14,8 @@ import {
   RoleAdminListPresenter,
   RoleAdminMutationPresenter,
   RoleAdminPermissionMatrixPresenter,
+  RoleTemplateAdminListPresenter,
+  RoleTemplateAdminPreviewPresenter,
 } from "./role.presenter";
 
 export function registerPresenters(
@@ -40,5 +44,15 @@ export function registerPresenters(
   registry.register(
     ROLE_ADMIN_PERMISSION_MATRIX_PRESENTER_KEY,
     new RoleAdminPermissionMatrixPresenter(),
+  );
+
+  registry.register(
+    ROLE_TEMPLATE_ADMIN_LIST_PRESENTER_KEY,
+    new RoleTemplateAdminListPresenter(),
+  );
+
+  registry.register(
+    ROLE_TEMPLATE_ADMIN_PREVIEW_PRESENTER_KEY,
+    new RoleTemplateAdminPreviewPresenter(),
   );
 }

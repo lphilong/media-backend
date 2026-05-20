@@ -50,3 +50,8 @@ export function getActor(req: Request): Actor {
 
   return candidate;
 }
+
+export function hasActor(req: Request): boolean {
+  const target = toActorCarrier(req);
+  return target[ACTOR_SYMBOL] instanceof Actor;
+}

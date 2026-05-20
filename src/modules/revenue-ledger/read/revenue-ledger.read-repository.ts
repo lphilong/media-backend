@@ -21,6 +21,11 @@ export interface RevenueEntryListReadInput {
   readonly currencyCode?: string;
   readonly windowStartAt?: number;
   readonly windowEndAt?: number;
+  readonly createdBeforeAt?: number;
+  readonly finalizedFromAt?: number;
+  readonly finalizedToAt?: number;
+  readonly reconciledFromAt?: number;
+  readonly reconciledToAt?: number;
   readonly limit: number;
   readonly cursor?: string;
   readonly search?: string;

@@ -33,6 +33,7 @@ import {
 import { OrgUnitStatus } from "@modules/org-unit/domain/org-unit.types";
 import { UserAccountStatus } from "@modules/user/domain/user.types";
 import { OrgUnitEmploymentReadonlyAccess } from "@modules/org-unit/domain/org-unit-employment-readonly-access";
+import { ReferenceSummary } from "@modules/reference-summary";
 
 interface EmploymentProfileReadDocument {
   readonly _id: string;
@@ -58,11 +59,17 @@ interface EmploymentProfileReadDocument {
 
 interface OrgUnitReferenceDocument {
   readonly _id: string;
+  readonly code: string;
+  readonly name: string;
   readonly status: OrgUnitStatus;
 }
 
 interface UserReferenceDocument {
   readonly _id: string;
+  readonly profile: {
+    readonly displayName: string;
+    readonly email?: string;
+  };
   readonly accountStatus: UserAccountStatus;
   readonly disabledAt: number | null;
   readonly archivedAt: number | null;
@@ -98,8 +105,22 @@ export class NativeMongoEmploymentProfileReadRepository
   extends BaseRepository<EmploymentProfileReadDocument>
   implements EmploymentProfileReadRepository
 {
+  private readonly orgUnitCollection: Collection<OrgUnitReferenceDocument>;
+  private readonly employmentProfileCollection: Collection<EmploymentProfileReadDocument>;
+  private readonly userCollection: Collection<UserReferenceDocument>;
+
   constructor(db: Db) {
     super(db, "employment_profiles");
+    this.employmentProfileCollection =
+      db.collection<EmploymentProfileReadDocument>(
+        "employment_profiles",
+      );
+    this.orgUnitCollection =
+      db.collection<OrgUnitReferenceDocument>(
+        "org_units",
+      );
+    this.userCollection =
+      db.collection<UserReferenceDocument>("users");
   }
 
   async listEmploymentProfiles(
@@ -191,10 +212,21 @@ export class NativeMongoEmploymentProfileReadRepository
       ? docs.slice(0, input.limit)
       : docs;
 
+    const items =
+      await enrichEmploymentProfileReferenceSummaries(
+        page.map((doc) =>
+          toEmploymentProfileListItemView(doc),
+        ),
+        {
+          orgUnitCollection: this.orgUnitCollection,
+          employmentProfileCollection:
+            this.employmentProfileCollection,
+          userCollection: this.userCollection,
+        },
+      );
+
     return {
-      items: page.map((doc) =>
-        toEmploymentProfileListItemView(doc),
-      ),
+      items,
       nextCursor:
         hasNext && page.length > 0
           ? encodeCursor(
@@ -215,9 +247,22 @@ export class NativeMongoEmploymentProfileReadRepository
       _id: employmentProfileId,
     });
 
-    return doc
-      ? toEmploymentProfileDetailView(doc)
-      : null;
+    if (!doc) {
+      return null;
+    }
+
+    const [detail] =
+      await enrichEmploymentProfileReferenceSummaries(
+        [toEmploymentProfileDetailView(doc)],
+        {
+          orgUnitCollection: this.orgUnitCollection,
+          employmentProfileCollection:
+            this.employmentProfileCollection,
+          userCollection: this.userCollection,
+        },
+      );
+
+    return detail ?? null;
   }
 
   async listDirectReports(
@@ -266,12 +311,23 @@ export class NativeMongoEmploymentProfileReadRepository
       ? docs.slice(0, input.limit)
       : docs;
 
-    return {
-      items: page.map((doc) =>
-        toEmploymentProfileDirectReportListItemView(
-          doc,
+    const items =
+      await enrichEmploymentProfileReferenceSummaries(
+        page.map((doc) =>
+          toEmploymentProfileDirectReportListItemView(
+            doc,
+          ),
         ),
-      ),
+        {
+          orgUnitCollection: this.orgUnitCollection,
+          employmentProfileCollection:
+            this.employmentProfileCollection,
+          userCollection: this.userCollection,
+        },
+      );
+
+    return {
+      items,
       nextCursor:
         hasNext && page.length > 0
           ? encodeCursor(
@@ -283,6 +339,235 @@ export class NativeMongoEmploymentProfileReadRepository
             )
           : undefined,
     };
+  }
+}
+
+async function enrichEmploymentProfileReferenceSummaries<
+  T extends {
+    readonly orgUnitId: string;
+    readonly managerEmploymentProfileId: string | null;
+    readonly linkedUserId?: string | null;
+  },
+>(
+  items: readonly T[],
+  collections: {
+    readonly orgUnitCollection: Collection<OrgUnitReferenceDocument>;
+    readonly employmentProfileCollection: Collection<EmploymentProfileReadDocument>;
+    readonly userCollection: Collection<UserReferenceDocument>;
+  },
+): Promise<
+  readonly (T & {
+    readonly orgUnitRef: ReferenceSummary | null;
+    readonly managerEmploymentProfileRef: ReferenceSummary | null;
+    readonly linkedUserRef?: ReferenceSummary | null;
+  })[]
+> {
+  if (items.length === 0) {
+    return items.map((item) => ({
+      ...item,
+      orgUnitRef: null,
+      managerEmploymentProfileRef: null,
+      linkedUserRef:
+        item.linkedUserId === undefined ? undefined : null,
+    }));
+  }
+
+  const orgUnitIds = new Set<string>();
+  const managerEmploymentProfileIds = new Set<string>();
+  const linkedUserIds = new Set<string>();
+
+  for (const item of items) {
+    addRequiredReferenceId(orgUnitIds, item.orgUnitId);
+    addOptionalReferenceId(
+      managerEmploymentProfileIds,
+      item.managerEmploymentProfileId,
+    );
+    addOptionalReferenceId(linkedUserIds, item.linkedUserId ?? null);
+  }
+
+  const [orgUnitRefMap, managerRefMap, userRefMap] =
+    await Promise.all([
+      loadOrgUnitReferenceSummaries(
+        orgUnitIds,
+        collections.orgUnitCollection,
+      ),
+      loadEmploymentProfileReferenceSummaries(
+        managerEmploymentProfileIds,
+        collections.employmentProfileCollection,
+      ),
+      loadUserReferenceSummaries(
+        linkedUserIds,
+        collections.userCollection,
+      ),
+    ]);
+
+  return items.map((item) => ({
+    ...item,
+    orgUnitRef: orgUnitRefMap.get(item.orgUnitId) ?? null,
+    managerEmploymentProfileRef: item.managerEmploymentProfileId
+      ? managerRefMap.get(item.managerEmploymentProfileId) ?? null
+      : null,
+    linkedUserRef:
+      item.linkedUserId === undefined
+        ? undefined
+        : item.linkedUserId
+          ? userRefMap.get(item.linkedUserId) ?? null
+          : null,
+  }));
+}
+
+async function loadOrgUnitReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<OrgUnitReferenceDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          code: 1,
+          name: 1,
+          status: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toOrgUnitReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadEmploymentProfileReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<EmploymentProfileReadDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          employeeCode: 1,
+          legalName: 1,
+          displayName: 1,
+          employmentStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toEmploymentProfileReferenceSummary(document),
+    ]),
+  );
+}
+
+async function loadUserReferenceSummaries(
+  ids: ReadonlySet<string>,
+  collection: Collection<UserReferenceDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  if (ids.size === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: [...ids],
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          profile: 1,
+          accountStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toUserReferenceSummary(document),
+    ]),
+  );
+}
+
+function toOrgUnitReferenceSummary(
+  document: OrgUnitReferenceDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.code,
+    name: document.name,
+    status: document.status,
+  };
+}
+
+function toEmploymentProfileReferenceSummary(
+  document: EmploymentProfileReadDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    code: document.employeeCode,
+    displayName: document.displayName,
+    name: document.legalName,
+    status: document.employmentStatus,
+  };
+}
+
+function toUserReferenceSummary(
+  document: UserReferenceDocument,
+): ReferenceSummary {
+  return {
+    id: document._id,
+    displayName: document.profile.displayName,
+    name: document.profile.email,
+    status: document.accountStatus,
+  };
+}
+
+function addRequiredReferenceId(ids: Set<string>, value: string): void {
+  const normalized = value.trim();
+
+  if (normalized) {
+    ids.add(normalized);
+  }
+}
+
+function addOptionalReferenceId(
+  ids: Set<string>,
+  value: string | null,
+): void {
+  const normalized = value?.trim();
+
+  if (normalized) {
+    ids.add(normalized);
   }
 }
 
