@@ -66,6 +66,9 @@ function createActor(): Actor {
       Permission.KPI_READ_PROGRESS,
       Permission.KPI_FINALIZE,
     ],
+    scopeGrants: {
+      kpi: ["global"],
+    },
     isActive: true,
   });
 }
@@ -81,6 +84,52 @@ function createManagerActor(): Actor {
       Permission.KPI_CORRECT_ACTUAL,
       Permission.KPI_READ_PROGRESS,
     ],
+    scopeGrants: {
+      kpi: ["managedGroup"],
+    },
+    isActive: true,
+  });
+}
+
+function createManagerActorWithoutKpiScope(): Actor {
+  return new Actor({
+    id: "manager-user",
+    type: "staff",
+    context: "ADMIN",
+    roles: [],
+    permissions: [
+      Permission.KPI_ENTER_ACTUAL,
+      Permission.KPI_CORRECT_ACTUAL,
+      Permission.KPI_READ_PROGRESS,
+    ],
+    isActive: true,
+  });
+}
+
+function createTalentActor(): Actor {
+  return new Actor({
+    id: "talent-user",
+    type: "staff",
+    context: "ADMIN",
+    roles: [],
+    permissions: [Permission.KPI_READ_PROGRESS],
+    scopeGrants: {
+      kpi: ["self"],
+    },
+    isActive: true,
+  });
+}
+
+function createKpiReadOnlyActor(): Actor {
+  return new Actor({
+    id: "read-only-user",
+    type: "admin",
+    context: "ADMIN",
+    roles: [],
+    permissions: [Permission.KPI_READ, Permission.KPI_READ_PROGRESS],
+    scopeGrants: {
+      kpi: ["global"],
+    },
     isActive: true,
   });
 }
@@ -1123,6 +1172,22 @@ test("KPI V2 manager may read actual grid for managed talent group", async () =>
   assert.equal(grid.rows.length, 2);
 });
 
+test("KPI V2 manager needs managedGroup scope in addition to group mapping", async () => {
+  const { service, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const published = await createPublishedGroupPlan(service);
+  seedManagerAssignment(managerRepository);
+
+  await assert.rejects(
+    service.getKpiActualDailyGrid(createManagerActorWithoutKpiScope(), {
+      kpiPlanId: published.id,
+      actualDate: "05-05-2026",
+    }),
+    KpiPermissionScopeError,
+  );
+});
+
 test("KPI V2 actual grid fails closed for manager without group mapping", async () => {
   const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
   const published = await createPublishedGroupPlan(service);
@@ -1133,6 +1198,61 @@ test("KPI V2 actual grid fails closed for manager without group mapping", async 
       actualDate: "05-05-2026",
     }),
     KpiPermissionScopeError,
+  );
+});
+
+test("KPI V2 manager cannot read progress for unmanaged talent group", async () => {
+  const { service, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const published = await createPublishedGroupPlan(service);
+  seedManagerAssignment(managerRepository, "group-2");
+
+  await assert.rejects(
+    service.getKpiProgress(createManagerActor(), {
+      kpiPlanId: published.id,
+    }),
+    KpiPermissionScopeError,
+  );
+});
+
+test("KPI V2 talent with self scope can read own progress but not full grid", async () => {
+  const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
+  const published = await createPublishedGroupPlan(service);
+
+  const progress = await service.getMyKpiProgress(createTalentActor(), {
+    kpiPlanId: published.id,
+  });
+
+  assert.deepEqual(
+    Array.from(
+      new Set(progress.memberProgress.map((member) => member.memberTalentId)),
+    ),
+    ["talent-1"],
+  );
+  await assert.rejects(
+    service.getKpiActualDailyGrid(createTalentActor(), {
+      kpiPlanId: published.id,
+      actualDate: "05-05-2026",
+    }),
+    KpiPermissionScopeError,
+  );
+});
+
+test("KPI V2 read-only KPI roles cannot mutate actuals", async () => {
+  const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
+  const published = await createPublishedGroupPlan(service);
+  const allocation = published.allocations[0] as KpiAllocation;
+
+  await assert.rejects(
+    service.createOrSetKpiActual(createKpiReadOnlyActor(), {
+      kpiPlanId: published.id,
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      actualValue: 80,
+    }),
+    /Missing permission kpi.enterActual/u,
   );
 });
 

@@ -29,7 +29,7 @@ function enabledLocalMockEnv(
     LOCAL_MOCK_AUTH_PERMISSIONS:
       "role:list,role:view,role:assignment:view",
     LOCAL_MOCK_AUTH_SCOPE_GRANTS:
-      '{"workSchedule":["self","team","department"],"eventAssignment":["global"],"dashboardLite":["global"]}',
+      '{"workSchedule":["self","team","department"],"eventAssignment":["global"],"kpi":["managedGroup","self"],"dashboardLite":["global"]}',
     ...overrides,
   });
 }
@@ -66,6 +66,7 @@ test("enabled local mock auth parses configured actor, permissions, and scope gr
   assert.deepEqual(parsed.LOCAL_MOCK_AUTH_SCOPE_GRANTS, {
     workSchedule: ["self", "team", "department"],
     eventAssignment: ["global"],
+    kpi: ["managedGroup", "self"],
     dashboardLite: ["global"],
   });
 });

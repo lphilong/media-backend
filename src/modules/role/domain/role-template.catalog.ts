@@ -1,4 +1,5 @@
 import { Permission } from "@core/permission/permission.enum";
+import { ActorScopeGrants } from "@core/actor/actor";
 
 export const ROLE_TEMPLATE_CODES = [
   "ADMIN_FULL",
@@ -32,6 +33,7 @@ export interface RoleTemplateDefinition {
   readonly description: string;
   readonly category: string;
   readonly permissions: readonly Permission[];
+  readonly recommendedScopeGrants: Readonly<ActorScopeGrants>;
   readonly scopePlan: readonly RoleTemplateScopePlanEntry[];
   readonly warnings: readonly string[];
   readonly implementationNotes: readonly string[];
@@ -57,6 +59,7 @@ const GLOBAL_PREVIEW_SCOPE_PLAN: readonly RoleTemplateScopePlanEntry[] =
     scopePlan("Event Assignment", ["global"], "PREVIEW_ONLY"),
     scopePlan("Contract Registry", ["global"], "PREVIEW_ONLY"),
     scopePlan("Talent KPI", ["global"], "PREVIEW_ONLY"),
+    scopePlan("KPI", ["global"], "READY", "Runtime grant: scopeGrants.kpi = [\"global\"]."),
     scopePlan("Revenue Ledger", ["global"], "PREVIEW_ONLY"),
     scopePlan("Commission", ["global"], "PREVIEW_ONLY"),
     scopePlan("Dashboard Lite", ["global"], "PREVIEW_ONLY"),
@@ -72,6 +75,16 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         "Full explicit permission preset for administrative operators.",
       category: "ADMINISTRATION",
       permissions: ALL_PERMISSIONS,
+      recommendedScopeGrants: scopeGrants({
+        workSchedule: Object.freeze(["global"]),
+        eventAssignment: Object.freeze(["global"]),
+        contractRegistry: Object.freeze(["global"]),
+        talentKpi: Object.freeze(["global"]),
+        kpi: Object.freeze(["global"]),
+        revenueLedger: Object.freeze(["global"]),
+        commission: Object.freeze(["global"]),
+        dashboardLite: Object.freeze(["global"]),
+      }),
       scopePlan: GLOBAL_PREVIEW_SCOPE_PLAN,
       warnings: Object.freeze([
         "Scope grants are preview-only until Batch 3-F assignment-scope materialization or existing user-level grants are configured.",
@@ -115,15 +128,29 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         Permission.TALENT_GROUP_MANAGE_LIFECYCLE,
         Permission.TALENT_GROUP_MANAGE_MEMBERSHIP,
         Permission.USER_VIEW,
+        Permission.USER_CREATE,
+        Permission.USER_PROVISION_ACCOUNT,
         Permission.USER_AUTH_LINKAGE_SET,
         Permission.WORK_SCHEDULE_READ,
+        Permission.KPI_READ,
+        Permission.KPI_READ_PROGRESS,
       ]),
+      recommendedScopeGrants: scopeGrants({
+        workSchedule: Object.freeze(["department"]),
+        kpi: Object.freeze(["global"]),
+      }),
       scopePlan: Object.freeze([
         scopePlan(
           "People and Organization",
           ["org-unit", "department"],
           "REQUIRES_FUTURE_SCOPE",
           "Desired HR scoping is org-unit or department, but these modules do not yet materialize object scope grants.",
+        ),
+        scopePlan(
+          "KPI",
+          ["global"],
+          "READY",
+          "Runtime grant: scopeGrants.kpi = [\"global\"] for read/progress visibility only; this template does not include KPI mutation permissions.",
         ),
         scopePlan(
           "Work Schedule",
@@ -163,13 +190,27 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         Permission.TALENT_KPI_CREATE,
         Permission.TALENT_KPI_UPDATE,
         Permission.TALENT_KPI_MANAGE_METRICS,
+        Permission.KPI_READ,
+        Permission.KPI_READ_PROGRESS,
+        Permission.KPI_ENTER_ACTUAL,
+        Permission.KPI_CORRECT_ACTUAL,
       ]),
+      recommendedScopeGrants: scopeGrants({
+        workSchedule: Object.freeze(["self", "team", "department"]),
+        kpi: Object.freeze(["managedGroup"]),
+      }),
       scopePlan: Object.freeze([
         scopePlan(
           "Work Schedule",
           ["self", "team", "department"],
           "PREVIEW_ONLY",
           "Current scope support exists primarily for work schedule routes.",
+        ),
+        scopePlan(
+          "KPI",
+          ["managedGroup"],
+          "READY",
+          "Runtime grant: scopeGrants.kpi = [\"managedGroup\"]; access still requires active manager assignment.",
         ),
         scopePlan(
           "Team and Direct Reports",
@@ -212,6 +253,9 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
         Permission.PLATFORM_ACCOUNT_READ,
       ]),
+      recommendedScopeGrants: scopeGrants({
+        workSchedule: Object.freeze(["department"]),
+      }),
       scopePlan: Object.freeze([
         scopePlan(
           "Production Operations",
@@ -257,14 +301,29 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         Permission.COMMISSION_SETTLEMENT_UPDATE,
         Permission.COMMISSION_SETTLEMENT_MANAGE_LIFECYCLE,
         Permission.CONTRACT_REGISTRY_READ,
+        Permission.KPI_READ,
+        Permission.KPI_READ_PROGRESS,
         Permission.DASHBOARD_LITE_READ,
       ]),
+      recommendedScopeGrants: scopeGrants({
+        contractRegistry: Object.freeze(["global"]),
+        kpi: Object.freeze(["global"]),
+        revenueLedger: Object.freeze(["global"]),
+        commission: Object.freeze(["global"]),
+        dashboardLite: Object.freeze(["global"]),
+      }),
       scopePlan: Object.freeze([
         scopePlan(
           "Commercial Finance",
           ["finance", "business-unit", "global"],
           "REQUIRES_FUTURE_SCOPE",
           "Current commercial finance route scope is mostly global-only until assignment-scope grants are implemented.",
+        ),
+        scopePlan(
+          "KPI",
+          ["global"],
+          "READY",
+          "Runtime grant: scopeGrants.kpi = [\"global\"] for read/progress reporting only; actual entry, correction, and finalization are excluded.",
         ),
       ]),
       warnings: Object.freeze([
@@ -287,10 +346,21 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         Permission.WORK_SCHEDULE_READ,
         Permission.EVENT_READ,
         Permission.TALENT_KPI_READ,
+        Permission.KPI_READ_PROGRESS,
         Permission.EMPLOYMENT_PROFILE_READ,
         Permission.TALENT_READ,
       ]),
+      recommendedScopeGrants: scopeGrants({
+        workSchedule: Object.freeze(["self"]),
+        kpi: Object.freeze(["self"]),
+      }),
       scopePlan: Object.freeze([
+        scopePlan(
+          "KPI",
+          ["self"],
+          "READY",
+          "Runtime grant: scopeGrants.kpi = [\"self\"] for own progress only.",
+        ),
         scopePlan(
           "Self Service",
           ["self"],
@@ -325,17 +395,35 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         Permission.WORK_SCHEDULE_READ,
         Permission.CONTRACT_REGISTRY_READ,
         Permission.TALENT_KPI_READ,
+        Permission.KPI_READ,
+        Permission.KPI_READ_PROGRESS,
         Permission.COMMISSION_RULE_READ,
         Permission.COMMISSION_SETTLEMENT_READ,
         Permission.REVENUE_LEDGER_READ,
         Permission.DASHBOARD_LITE_READ,
       ]),
+      recommendedScopeGrants: scopeGrants({
+        workSchedule: Object.freeze(["global"]),
+        eventAssignment: Object.freeze(["global"]),
+        contractRegistry: Object.freeze(["global"]),
+        talentKpi: Object.freeze(["global"]),
+        kpi: Object.freeze(["global"]),
+        revenueLedger: Object.freeze(["global"]),
+        commission: Object.freeze(["global"]),
+        dashboardLite: Object.freeze(["global"]),
+      }),
       scopePlan: Object.freeze([
         scopePlan(
           "Read Only Audit",
           ["module", "org", "global"],
           "REQUIRES_FUTURE_SCOPE",
           "Final auditor scope policy must be product-confirmed per module.",
+        ),
+        scopePlan(
+          "KPI",
+          ["global"],
+          "READY",
+          "Runtime grant: scopeGrants.kpi = [\"global\"] for read/progress audit only; no KPI mutations are included.",
         ),
       ]),
       warnings: Object.freeze([
@@ -366,6 +454,7 @@ export function listRoleTemplates(): readonly RoleTemplateListItem[] {
     description: template.description,
     category: template.category,
     scopePlan: template.scopePlan,
+    recommendedScopeGrants: template.recommendedScopeGrants,
     warnings: template.warnings,
     implementationNotes: template.implementationNotes,
     status: template.status,
@@ -455,4 +544,10 @@ function scopePlan(
     status,
     note,
   });
+}
+
+function scopeGrants(
+  grants: ActorScopeGrants,
+): Readonly<ActorScopeGrants> {
+  return Object.freeze(grants);
 }

@@ -15,6 +15,7 @@ const USER_ADMIN_LIST_FIELDS = [
   "email",
   "actorKind",
   "accountStatus",
+  "authLinkage",
   "updatedAt",
 ] as const;
 
@@ -33,9 +34,7 @@ const USER_ADMIN_DETAIL_FIELDS = [
   "archivedAt",
 ] as const;
 
-function toDetailView(
-  user: UserRecord,
-): UserDetailView {
+function toDetailView(user: UserRecord): UserDetailView {
   return {
     id: user.id,
     accountStatus: user.accountStatus,
@@ -43,6 +42,7 @@ function toDetailView(
     authLinkage: {
       provider: user.authLinkage.provider,
       subject: user.authLinkage.subject,
+      status: user.authLinkage.status ?? "LINKED",
     },
     contextAccess: {
       contexts: user.contextAccess.contexts,
@@ -74,6 +74,9 @@ export const UserAdminListExposure = Object.freeze({
           email: input.email,
           actorKind: input.actorKind,
           accountStatus: input.accountStatus,
+          authLinkage: {
+            status: input.authLinkage.status,
+          },
           updatedAt: input.updatedAt,
         },
         USER_ADMIN_LIST_FIELDS,
@@ -82,9 +85,7 @@ export const UserAdminListExposure = Object.freeze({
     );
   },
 
-  exposeMany(
-    items: readonly UserListItemView[],
-  ): readonly PlainObject[] {
+  exposeMany(items: readonly UserListItemView[]): readonly PlainObject[] {
     return items.map((item) => this.expose(item));
   },
 });
@@ -99,10 +100,9 @@ export const UserAdminDetailExposure = Object.freeze({
           actorKind: input.actorKind,
           authLinkage: input.authLinkage,
           contextAccess: {
-            contexts:
-              input.contextAccess.contexts.map(
-                (context) => ({ context }),
-              ),
+            contexts: input.contextAccess.contexts.map((context) => ({
+              context,
+            })),
           },
           profile: input.profile,
           preferences: input.preferences,
@@ -121,8 +121,6 @@ export const UserAdminDetailExposure = Object.freeze({
 
 export const UserAdminMutationExposure = Object.freeze({
   expose(input: UserRecord): PlainObject {
-    return UserAdminDetailExposure.expose(
-      toDetailView(input),
-    );
+    return UserAdminDetailExposure.expose(toDetailView(input));
   },
 });

@@ -6,6 +6,7 @@ import {
   ContractRegistryActorScopeGrant,
   DashboardLiteActorScopeGrant,
   EventAssignmentActorScopeGrant,
+  KpiActorScopeGrant,
   RevenueLedgerActorScopeGrant,
   TalentKpiActorScopeGrant,
   WorkScheduleActorScopeGrant,
@@ -32,6 +33,11 @@ const CONTRACT_REGISTRY_SCOPE_GRANTS_ORDER: readonly ContractRegistryActorScopeG
   Object.freeze(["global"]);
 const TALENT_KPI_SCOPE_GRANTS_ORDER: readonly TalentKpiActorScopeGrant[] =
   Object.freeze(["global"]);
+const KPI_SCOPE_GRANTS_ORDER: readonly KpiActorScopeGrant[] = Object.freeze([
+  "global",
+  "managedGroup",
+  "self",
+]);
 const REVENUE_LEDGER_SCOPE_GRANTS_ORDER: readonly RevenueLedgerActorScopeGrant[] =
   Object.freeze(["global"]);
 const COMMISSION_SCOPE_GRANTS_ORDER: readonly CommissionActorScopeGrant[] =
@@ -822,6 +828,7 @@ function toRuntimeActorScopeGrants(
     eventAssignment?: readonly EventAssignmentActorScopeGrant[];
     contractRegistry?: readonly ContractRegistryActorScopeGrant[];
     talentKpi?: readonly TalentKpiActorScopeGrant[];
+    kpi?: readonly KpiActorScopeGrant[];
     revenueLedger?: readonly RevenueLedgerActorScopeGrant[];
     commission?: readonly CommissionActorScopeGrant[];
     dashboardLite?: readonly DashboardLiteActorScopeGrant[];
@@ -844,6 +851,7 @@ function toRuntimeActorScopeGrants(
     normalized.eventAssignment === undefined &&
     normalized.contractRegistry === undefined &&
     normalized.talentKpi === undefined &&
+    normalized.kpi === undefined &&
     normalized.revenueLedger === undefined &&
     normalized.commission === undefined &&
     normalized.dashboardLite === undefined
@@ -874,6 +882,7 @@ function normalizeRuntimeActorScopeGrantsPayload(
   const rawEventAssignment = raw.eventAssignment;
   const rawContractRegistry = raw.contractRegistry;
   const rawTalentKpi = raw.talentKpi;
+  const rawKpi = raw.kpi;
   const rawRevenueLedger = raw.revenueLedger;
   const rawCommission = raw.commission;
   const rawDashboardLite = raw.dashboardLite;
@@ -883,6 +892,7 @@ function normalizeRuntimeActorScopeGrantsPayload(
     eventAssignment?: readonly EventAssignmentActorScopeGrant[];
     contractRegistry?: readonly ContractRegistryActorScopeGrant[];
     talentKpi?: readonly TalentKpiActorScopeGrant[];
+    kpi?: readonly KpiActorScopeGrant[];
     revenueLedger?: readonly RevenueLedgerActorScopeGrant[];
     commission?: readonly CommissionActorScopeGrant[];
     dashboardLite?: readonly DashboardLiteActorScopeGrant[];
@@ -1007,6 +1017,32 @@ function normalizeRuntimeActorScopeGrantsPayload(
     );
   }
 
+  if (rawKpi !== undefined) {
+    if (!Array.isArray(rawKpi)) {
+      throw new InfrastructureError(
+        "USER_AUTH_SCOPE_GRANTS_INVALID_SHAPE",
+        `Invalid actor kpi scope grants payload for user ${userId}`,
+      );
+    }
+
+    const uniqueKpiScopes = new Set<KpiActorScopeGrant>();
+
+    for (const scope of rawKpi) {
+      if (scope !== "global" && scope !== "managedGroup" && scope !== "self") {
+        throw new InfrastructureError(
+          "USER_AUTH_SCOPE_GRANTS_INVALID_VALUE",
+          `Invalid actor kpi scope grant value for user ${userId}`,
+        );
+      }
+
+      uniqueKpiScopes.add(scope as KpiActorScopeGrant);
+    }
+
+    normalized.kpi = Object.freeze(
+      KPI_SCOPE_GRANTS_ORDER.filter((scope) => uniqueKpiScopes.has(scope)),
+    );
+  }
+
   if (rawRevenueLedger !== undefined) {
     if (!Array.isArray(rawRevenueLedger)) {
       throw new InfrastructureError(
@@ -1096,6 +1132,7 @@ function normalizeRuntimeActorScopeGrantsPayload(
     normalized.eventAssignment === undefined &&
     normalized.contractRegistry === undefined &&
     normalized.talentKpi === undefined &&
+    normalized.kpi === undefined &&
     normalized.revenueLedger === undefined &&
     normalized.commission === undefined &&
     normalized.dashboardLite === undefined
@@ -1112,6 +1149,7 @@ function mergeRuntimeActorScopeGrants(
     eventAssignment?: readonly EventAssignmentActorScopeGrant[];
     contractRegistry?: readonly ContractRegistryActorScopeGrant[];
     talentKpi?: readonly TalentKpiActorScopeGrant[];
+    kpi?: readonly KpiActorScopeGrant[];
     revenueLedger?: readonly RevenueLedgerActorScopeGrant[];
     commission?: readonly CommissionActorScopeGrant[];
     dashboardLite?: readonly DashboardLiteActorScopeGrant[];
@@ -1156,6 +1194,15 @@ function mergeRuntimeActorScopeGrants(
   );
   if (talentKpi !== undefined) {
     target.talentKpi = talentKpi;
+  }
+
+  const kpi = mergeOrderedScopeGrants(
+    target.kpi,
+    source.kpi,
+    KPI_SCOPE_GRANTS_ORDER,
+  );
+  if (kpi !== undefined) {
+    target.kpi = kpi;
   }
 
   const revenueLedger = mergeOrderedScopeGrants(

@@ -6,6 +6,7 @@ import {
   ContractRegistryActorScopeGrant,
   DashboardLiteActorScopeGrant,
   EventAssignmentActorScopeGrant,
+  KpiActorScopeGrant,
   RevenueLedgerActorScopeGrant,
   TalentKpiActorScopeGrant,
   WorkScheduleActorScopeGrant,
@@ -59,6 +60,12 @@ const CONTRACT_REGISTRY_SCOPE_GRANT_SET = new Set<
 const TALENT_KPI_SCOPE_GRANT_SET = new Set<
   TalentKpiActorScopeGrant
 >(["global"]);
+
+const KPI_SCOPE_GRANT_SET = new Set<KpiActorScopeGrant>([
+  "global",
+  "managedGroup",
+  "self",
+]);
 
 const REVENUE_LEDGER_SCOPE_GRANT_SET = new Set<
   RevenueLedgerActorScopeGrant
@@ -601,6 +608,18 @@ function isTrustedActorScopeGrants(
           TALENT_KPI_SCOPE_GRANT_SET.has(
             scope as TalentKpiActorScopeGrant,
           ),
+      ))
+  ) {
+    return false;
+  }
+
+  if (
+    candidate.kpi !== undefined &&
+    (!Array.isArray(candidate.kpi) ||
+      !candidate.kpi.every(
+        (scope) =>
+          typeof scope === "string" &&
+          KPI_SCOPE_GRANT_SET.has(scope as KpiActorScopeGrant),
       ))
   ) {
     return false;

@@ -5,6 +5,7 @@ import {
   ContractRegistryActorScopeGrant,
   DashboardLiteActorScopeGrant,
   EventAssignmentActorScopeGrant,
+  KpiActorScopeGrant,
   RevenueLedgerActorScopeGrant,
   TalentKpiActorScopeGrant,
   WorkScheduleActorScopeGrant,
@@ -16,6 +17,7 @@ const ASSIGNMENT_SCOPE_MODULES = [
   "eventAssignment",
   "contractRegistry",
   "talentKpi",
+  "kpi",
   "revenueLedger",
   "commission",
   "dashboardLite",
@@ -28,6 +30,11 @@ const ASSIGNMENT_SCOPE_MODULE_SET = new Set<string>(ASSIGNMENT_SCOPE_MODULES);
 const WORK_SCHEDULE_SCOPE_ORDER: readonly WorkScheduleActorScopeGrant[] =
   Object.freeze(["self", "team", "department", "global"]);
 const GLOBAL_SCOPE_ORDER = Object.freeze(["global"]);
+const KPI_SCOPE_ORDER: readonly KpiActorScopeGrant[] = Object.freeze([
+  "global",
+  "managedGroup",
+  "self",
+]);
 
 export function normalizeAssignmentScopeGrants(
   value: unknown,
@@ -58,6 +65,7 @@ export function normalizeAssignmentScopeGrants(
     eventAssignment?: readonly EventAssignmentActorScopeGrant[];
     contractRegistry?: readonly ContractRegistryActorScopeGrant[];
     talentKpi?: readonly TalentKpiActorScopeGrant[];
+    kpi?: readonly KpiActorScopeGrant[];
     revenueLedger?: readonly RevenueLedgerActorScopeGrant[];
     commission?: readonly CommissionActorScopeGrant[];
     dashboardLite?: readonly DashboardLiteActorScopeGrant[];
@@ -97,6 +105,15 @@ export function normalizeAssignmentScopeGrants(
   ) as readonly TalentKpiActorScopeGrant[];
   if (talentKpi.length > 0) {
     normalized.talentKpi = talentKpi;
+  }
+
+  const kpi = normalizeScopeArray(
+    raw.kpi,
+    KPI_SCOPE_ORDER,
+    `${field}.kpi`,
+  );
+  if (kpi.length > 0) {
+    normalized.kpi = kpi;
   }
 
   const revenueLedger = normalizeScopeArray(
@@ -166,6 +183,15 @@ export function assertActorCanGrantAssignmentScopeGrants(
     "talentKpi",
     field,
   );
+  for (const scope of requestedScopeGrants.kpi ?? []) {
+    if (actorCanGrantKpiScope(actor, scope)) {
+      continue;
+    }
+
+    throw new RoleValidationError(
+      `${field}.kpi contains unauthorized scope grant: ${scope}`,
+    );
+  }
   assertActorCanGrantGlobalModuleScope(
     actor,
     requestedScopeGrants.revenueLedger,
@@ -230,6 +256,15 @@ function actorCanGrantWorkScheduleScope(
   return actorScopes.includes(scope) || actorScopes.includes("global");
 }
 
+function actorCanGrantKpiScope(
+  actor: Actor,
+  scope: KpiActorScopeGrant,
+): boolean {
+  const actorScopes = actor.scopeGrants.kpi ?? [];
+
+  return actorScopes.includes(scope) || actorScopes.includes("global");
+}
+
 function assertActorCanGrantGlobalModuleScope(
   actor: Actor,
   scopes: readonly "global"[] | undefined,
@@ -257,6 +292,7 @@ function hasAnyScopeGrant(grants: ActorScopeGrants): boolean {
     (grants.eventAssignment?.length ?? 0) > 0 ||
     (grants.contractRegistry?.length ?? 0) > 0 ||
     (grants.talentKpi?.length ?? 0) > 0 ||
+    (grants.kpi?.length ?? 0) > 0 ||
     (grants.revenueLedger?.length ?? 0) > 0 ||
     (grants.commission?.length ?? 0) > 0 ||
     (grants.dashboardLite?.length ?? 0) > 0

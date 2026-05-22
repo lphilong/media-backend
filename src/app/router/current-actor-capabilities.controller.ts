@@ -78,6 +78,7 @@ function cloneScopeGrants(
       ? { contractRegistry: [...scopeGrants.contractRegistry] }
       : {}),
     ...(scopeGrants.talentKpi ? { talentKpi: [...scopeGrants.talentKpi] } : {}),
+    ...(scopeGrants.kpi ? { kpi: [...scopeGrants.kpi] } : {}),
     ...(scopeGrants.revenueLedger
       ? { revenueLedger: [...scopeGrants.revenueLedger] }
       : {}),

@@ -13,11 +13,7 @@ import {
 
 interface UserReadDocument {
   readonly _id: string;
-  readonly accountStatus:
-    | "PENDING"
-    | "ACTIVE"
-    | "DISABLED"
-    | "ARCHIVED";
+  readonly accountStatus: "PENDING" | "ACTIVE" | "DISABLED" | "ARCHIVED";
   readonly actorKind: "ADMIN" | "STAFF";
   readonly authLinkage: {
     readonly provider: "auth0";
@@ -58,15 +54,12 @@ export class MongoUserReadRepository
     super(db, "users");
   }
 
-  async listUsers(
-    input: ListUserReadInput,
-  ): Promise<ListUserReadResult> {
+  async listUsers(input: ListUserReadInput): Promise<ListUserReadResult> {
     const cursor =
       input.cursor === undefined
         ? undefined
         : decodeCompositeCursor(input.cursor);
-    const queryFilters: Array<Record<string, unknown>> =
-      [];
+    const queryFilters: Array<Record<string, unknown>> = [];
 
     if (input.state) {
       queryFilters.push({
@@ -81,15 +74,11 @@ export class MongoUserReadRepository
     }
 
     if (input.search) {
-      queryFilters.push(
-        buildPrefixSearchFilter(input.search),
-      );
+      queryFilters.push(buildPrefixSearchFilter(input.search));
     }
 
     if (cursor) {
-      queryFilters.push(
-        buildPageAfterFilter(cursor),
-      );
+      queryFilters.push(buildPageAfterFilter(cursor));
     }
 
     const docs = await this.collection
@@ -99,30 +88,23 @@ export class MongoUserReadRepository
       .toArray();
 
     const hasNext = docs.length > input.limit;
-    const page = hasNext
-      ? docs.slice(0, input.limit)
-      : docs;
+    const page = hasNext ? docs.slice(0, input.limit) : docs;
 
-    const items = page.map((doc) =>
-      toUserListItemView(doc),
-    );
+    const items = page.map((doc) => toUserListItemView(doc));
 
     return {
       items,
       nextCursor:
         hasNext && items.length > 0
           ? encodeCompositeCursor({
-              updatedAt:
-                items[items.length - 1].updatedAt,
+              updatedAt: items[items.length - 1].updatedAt,
               id: items[items.length - 1].id,
             })
           : undefined,
     };
   }
 
-  async getUserDetail(
-    userId: string,
-  ): Promise<UserDetailView | null> {
+  async getUserDetail(userId: string): Promise<UserDetailView | null> {
     const doc = await this.collection.findOne({
       _id: userId,
     });
@@ -135,22 +117,21 @@ export class MongoUserReadRepository
   }
 }
 
-function toUserListItemView(
-  document: UserReadDocument,
-): UserListItemView {
+function toUserListItemView(document: UserReadDocument): UserListItemView {
   return {
     id: document._id,
     displayName: document.profile.displayName,
     email: document.profile.email,
     actorKind: document.actorKind,
     accountStatus: document.accountStatus,
+    authLinkage: {
+      status: document.authLinkage.status ?? "LINKED",
+    },
     updatedAt: document.updatedAt,
   };
 }
 
-function toUserDetailView(
-  document: UserReadDocument,
-): UserDetailView {
+function toUserDetailView(document: UserReadDocument): UserDetailView {
   return {
     id: document._id,
     accountStatus: document.accountStatus,
@@ -208,21 +189,14 @@ function buildPageAfterFilter(
   };
 }
 
-function encodeCompositeCursor(
-  cursor: CompositeCursor,
-): string {
+function encodeCompositeCursor(cursor: CompositeCursor): string {
   return Buffer.from(
-    JSON.stringify([
-      cursor.updatedAt,
-      cursor.id,
-    ]),
+    JSON.stringify([cursor.updatedAt, cursor.id]),
     "utf8",
   ).toString("base64url");
 }
 
-function decodeCompositeCursor(
-  cursor: string,
-): CompositeCursor {
+function decodeCompositeCursor(cursor: string): CompositeCursor {
   const normalized = cursor.trim();
 
   if (!normalized) {
@@ -232,10 +206,7 @@ function decodeCompositeCursor(
   let decodedText: string;
 
   try {
-    decodedText = Buffer.from(
-      normalized,
-      "base64url",
-    ).toString("utf8");
+    decodedText = Buffer.from(normalized, "base64url").toString("utf8");
   } catch {
     throw invalidCursorError();
   }
@@ -248,10 +219,7 @@ function decodeCompositeCursor(
     throw invalidCursorError();
   }
 
-  if (
-    !Array.isArray(decodedPayload) ||
-    decodedPayload.length !== 2
-  ) {
+  if (!Array.isArray(decodedPayload) || decodedPayload.length !== 2) {
     throw invalidCursorError();
   }
 
@@ -282,17 +250,12 @@ function decodeCompositeCursor(
   };
 }
 
-function buildPrefixSearchFilter(
-  search: string,
-): Record<string, unknown> {
+function buildPrefixSearchFilter(search: string): Record<string, unknown> {
   const prefix = toSearchPrefix(search);
 
   return {
     $or: [
-      buildPrefixRange(
-        "searchDisplayName",
-        prefix,
-      ),
+      buildPrefixRange("searchDisplayName", prefix),
       buildPrefixRange("searchEmail", prefix),
     ],
   };
@@ -315,7 +278,5 @@ function toSearchPrefix(search: string): string {
 }
 
 function invalidCursorError(): UserValidationError {
-  return new UserValidationError(
-    "cursor is invalid",
-  );
+  return new UserValidationError("cursor is invalid");
 }

@@ -1,25 +1,17 @@
 import { ContextType } from "@core/context/context.types";
 
-export type UserAccountStatus =
-  | "PENDING"
-  | "ACTIVE"
-  | "DISABLED"
-  | "ARCHIVED";
+export type UserAccountStatus = "PENDING" | "ACTIVE" | "DISABLED" | "ARCHIVED";
 
 export type UserActorKind = "ADMIN" | "STAFF";
 
-export const USER_ACCOUNT_STATUSES: readonly UserAccountStatus[] =
-  [
-    "PENDING",
-    "ACTIVE",
-    "DISABLED",
-    "ARCHIVED",
-  ];
-
-export const USER_ACTOR_KINDS: readonly UserActorKind[] = [
-  "ADMIN",
-  "STAFF",
+export const USER_ACCOUNT_STATUSES: readonly UserAccountStatus[] = [
+  "PENDING",
+  "ACTIVE",
+  "DISABLED",
+  "ARCHIVED",
 ];
+
+export const USER_ACTOR_KINDS: readonly UserActorKind[] = ["ADMIN", "STAFF"];
 
 export interface UserAuthLinkage {
   readonly provider: "auth0";
@@ -63,6 +55,10 @@ export interface UserDetailAuthLinkageView {
   readonly status?: "LINKED" | "UNLINKED";
 }
 
+export interface UserListAuthLinkageView {
+  readonly status: "LINKED" | "UNLINKED";
+}
+
 export interface UserDetailContextAccessView {
   readonly contexts: readonly ["ADMIN"];
 }
@@ -84,6 +80,7 @@ export interface UserListItemView {
   readonly email?: string;
   readonly actorKind: UserActorKind;
   readonly accountStatus: UserAccountStatus;
+  readonly authLinkage: UserListAuthLinkageView;
   readonly updatedAt: number;
 }
 

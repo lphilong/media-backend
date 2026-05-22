@@ -13,6 +13,10 @@ export type ContractRegistryActorScopeGrant =
   | "global";
 export type TalentKpiActorScopeGrant =
   | "global";
+export type KpiActorScopeGrant =
+  | "global"
+  | "managedGroup"
+  | "self";
 export type RevenueLedgerActorScopeGrant =
   | "global";
 export type CommissionActorScopeGrant =
@@ -25,6 +29,7 @@ export interface ActorScopeGrants {
   readonly eventAssignment?: readonly EventAssignmentActorScopeGrant[];
   readonly contractRegistry?: readonly ContractRegistryActorScopeGrant[];
   readonly talentKpi?: readonly TalentKpiActorScopeGrant[];
+  readonly kpi?: readonly KpiActorScopeGrant[];
   readonly revenueLedger?: readonly RevenueLedgerActorScopeGrant[];
   readonly commission?: readonly CommissionActorScopeGrant[];
   readonly dashboardLite?: readonly DashboardLiteActorScopeGrant[];
@@ -62,6 +67,17 @@ const TALENT_KPI_SCOPE_GRANTS_ORDER: readonly TalentKpiActorScopeGrant[] =
 const TALENT_KPI_SCOPE_GRANT_SET = new Set<
   TalentKpiActorScopeGrant
 >(TALENT_KPI_SCOPE_GRANTS_ORDER);
+
+const KPI_SCOPE_GRANTS_ORDER: readonly KpiActorScopeGrant[] =
+  Object.freeze([
+    "global",
+    "managedGroup",
+    "self",
+  ]);
+
+const KPI_SCOPE_GRANT_SET = new Set<KpiActorScopeGrant>(
+  KPI_SCOPE_GRANTS_ORDER,
+);
 
 const REVENUE_LEDGER_SCOPE_GRANTS_ORDER: readonly RevenueLedgerActorScopeGrant[] =
   Object.freeze(["global"]);
@@ -148,6 +164,7 @@ function normalizeActorScopeGrants(
     eventAssignment?: readonly EventAssignmentActorScopeGrant[];
     contractRegistry?: readonly ContractRegistryActorScopeGrant[];
     talentKpi?: readonly TalentKpiActorScopeGrant[];
+    kpi?: readonly KpiActorScopeGrant[];
     revenueLedger?: readonly RevenueLedgerActorScopeGrant[];
     commission?: readonly CommissionActorScopeGrant[];
     dashboardLite?: readonly DashboardLiteActorScopeGrant[];
@@ -287,6 +304,34 @@ function normalizeActorScopeGrants(
     normalized.talentKpi = Object.freeze(
       TALENT_KPI_SCOPE_GRANTS_ORDER.filter(
         (scope) => requestedScopes.has(scope),
+      ),
+    );
+  }
+
+  if (grants.kpi !== undefined) {
+    if (!Array.isArray(grants.kpi)) {
+      throw new SystemInvariantError(
+        "ACTOR_INVALID_PAYLOAD",
+        "Actor kpi scope grants must be an array",
+      );
+    }
+
+    const requestedScopes = new Set<KpiActorScopeGrant>();
+
+    for (const scope of grants.kpi) {
+      if (!KPI_SCOPE_GRANT_SET.has(scope as KpiActorScopeGrant)) {
+        throw new SystemInvariantError(
+          "ACTOR_INVALID_PAYLOAD",
+          "Actor kpi scope grants contain unsupported value",
+        );
+      }
+
+      requestedScopes.add(scope as KpiActorScopeGrant);
+    }
+
+    normalized.kpi = Object.freeze(
+      KPI_SCOPE_GRANTS_ORDER.filter((scope) =>
+        requestedScopes.has(scope),
       ),
     );
   }

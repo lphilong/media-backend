@@ -31,13 +31,78 @@ import {
 import { UserAdminCapabilityRepository } from "@modules/user/domain/user.admin-capability.repository";
 import {
   UserAccountStatus,
+  UserDetailView,
+  UserListItemView,
   UserRecord,
 } from "@modules/user/domain/user.types";
+import {
+  UserAdminDetailExposure,
+  UserAdminListExposure,
+} from "@modules/user/shared/user.exposure";
 import {
   UserActorResolutionFacade,
   UserAuthResolutionRepository,
 } from "@modules/user/shared/user.actor-resolution.facade";
 import { runWithDomainEventCollector } from "@system/event-bridge/domain-event.types";
+
+test("user list exposure includes auth linkage status but not subject", () => {
+  const exposed = UserAdminListExposure.expose({
+    id: "user-list",
+    displayName: "List User",
+    email: "list@example.test",
+    actorKind: "ADMIN",
+    accountStatus: "ACTIVE",
+    authLinkage: {
+      status: "LINKED",
+    },
+    updatedAt: 2,
+  } satisfies UserListItemView);
+  const authLinkage = exposed.authLinkage as Record<string, unknown>;
+
+  assert.deepEqual(authLinkage, {
+    status: "LINKED",
+  });
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(authLinkage, "subject"),
+    false,
+  );
+});
+
+test("user detail exposure keeps existing auth linkage detail fields", () => {
+  const exposed = UserAdminDetailExposure.expose({
+    id: "user-detail",
+    actorKind: "ADMIN",
+    accountStatus: "ACTIVE",
+    authLinkage: {
+      provider: "auth0",
+      subject: "auth0|detail",
+      status: "LINKED",
+    },
+    profile: {
+      displayName: "Detail User",
+      email: "detail@example.test",
+    },
+    contextAccess: {
+      contexts: ["ADMIN"],
+    },
+    preferences: {
+      locale: "en",
+      timezone: "Asia/Saigon",
+    },
+    createdAt: 1,
+    updatedAt: 2,
+    activatedAt: 2,
+    disabledAt: null,
+    archivedAt: null,
+  } satisfies UserDetailView);
+  const authLinkage = exposed.authLinkage as Record<string, unknown>;
+
+  assert.deepEqual(authLinkage, {
+    provider: "auth0",
+    subject: "auth0|detail",
+    status: "LINKED",
+  });
+});
 
 const ALL_PERMISSIONS = Object.values(Permission);
 
@@ -97,10 +162,7 @@ test("duplicate email rejects before Auth0 mutation", async () => {
 
 test("missing Auth0 Management config fails closed without internal user", async () => {
   const repo = new InMemoryUserRepository();
-  const service = createService(
-    repo,
-    new DisabledAuth0ManagementClient(),
-  );
+  const service = createService(repo, new DisabledAuth0ManagementClient());
 
   await assert.rejects(
     () =>
@@ -203,12 +265,7 @@ test("unlink blocks self lockout and audits successful unlink", async () => {
   );
   const audit = new RecordingAuditGuard();
   const bridge = new InlineMutationBridge();
-  const service = createService(
-    repo,
-    new MockAuth0Management(),
-    audit,
-    bridge,
-  );
+  const service = createService(repo, new MockAuth0Management(), audit, bridge);
 
   await assert.rejects(
     () =>
@@ -229,13 +286,18 @@ test("unlink blocks self lockout and audits successful unlink", async () => {
   assert.equal(result.user.accountStatus, "PENDING");
   assert.equal(result.user.authLinkage.status, "UNLINKED");
   assert.equal(audit.records.length, 1);
-  assert.equal(audit.records[0]?.metadata.mutationType, "user.auth-linkage.unlink");
+  assert.equal(
+    audit.records[0]?.metadata.mutationType,
+    "user.auth-linkage.unlink",
+  );
   assert.equal(bridge.authSecurityChanged, 1);
 });
 
 test("password setup calls Auth0 ticket port and audits without returning ticket URL", async () => {
   const repo = new InMemoryUserRepository();
-  repo.records.push(userRecord({ id: "setup-user", authSubject: "auth0|setup" }));
+  repo.records.push(
+    userRecord({ id: "setup-user", authSubject: "auth0|setup" }),
+  );
   const auth0 = new MockAuth0Management();
   const audit = new RecordingAuditGuard();
   const service = createService(repo, auth0, audit);
@@ -251,7 +313,10 @@ test("password setup calls Auth0 ticket port and audits without returning ticket
   assert.equal(result.passwordSetup?.ticketCreated, true);
   assert.equal(serialized.includes("ticket.example.test"), false);
   assert.equal(serialized.includes("secret"), false);
-  assert.equal(audit.records[0]?.metadata.mutationType, "user.password-setup.send");
+  assert.equal(
+    audit.records[0]?.metadata.mutationType,
+    "user.password-setup.send",
+  );
 });
 
 test("legacy manual create rejects explicit auth binding fields", async () => {
@@ -332,10 +397,7 @@ test("Auth0 HTTP client sends database password and redacts HTTP failures", asyn
       throw auth0AxiosError();
     },
   } as unknown as AxiosInstance;
-  const client = new Auth0ManagementHttpClient(
-    auth0Config(),
-    http,
-  );
+  const client = new Auth0ManagementHttpClient(auth0Config(), http);
 
   await client.createDatabaseUser({
     email: "adapter@example.test",
@@ -364,14 +426,11 @@ test("Auth0 HTTP client sends database password and redacts HTTP failures", asyn
     await assert.rejects(operation, assertRedactedAuth0Error);
   }
 
-  const failingTokenClient = new Auth0ManagementHttpClient(
-    auth0Config(),
-    {
-      async post(): Promise<{ data: unknown }> {
-        throw auth0AxiosError();
-      },
-    } as unknown as AxiosInstance,
-  );
+  const failingTokenClient = new Auth0ManagementHttpClient(auth0Config(), {
+    async post(): Promise<{ data: unknown }> {
+      throw auth0AxiosError();
+    },
+  } as unknown as AxiosInstance);
 
   await assert.rejects(
     () => failingTokenClient.findUserByEmail("leak@example.test"),
@@ -421,13 +480,15 @@ test("new account provisioning mutations resolve to dedicated permissions", () =
     Permission.USER_PROVISION_ACCOUNT,
   );
   assert.equal(
-    resolveAuthoritativePermissionForMutationIdentity("user.auth-linkage.unlink")
-      .code,
+    resolveAuthoritativePermissionForMutationIdentity(
+      "user.auth-linkage.unlink",
+    ).code,
     Permission.USER_AUTH_LINKAGE_UNLINK,
   );
   assert.equal(
-    resolveAuthoritativePermissionForMutationIdentity("user.password-setup.send")
-      .code,
+    resolveAuthoritativePermissionForMutationIdentity(
+      "user.password-setup.send",
+    ).code,
     Permission.USER_PASSWORD_SETUP_SEND,
   );
 });
@@ -459,15 +520,13 @@ function createService(
 }
 
 async function runService<T>(fn: () => Promise<T>): Promise<T> {
-  return await bindTraceId("trace-account-provisioning-test", async () =>
-    await runWithDomainEventCollector(fn),
+  return await bindTraceId(
+    "trace-account-provisioning-test",
+    async () => await runWithDomainEventCollector(fn),
   );
 }
 
-function createActor(
-  permissions: readonly string[],
-  id = "admin-user",
-): Actor {
+function createActor(permissions: readonly string[], id = "admin-user"): Actor {
   return new Actor({
     id,
     type: "admin",
@@ -706,7 +765,9 @@ class PermissiveCapabilityRepository implements UserAdminCapabilityRepository {
     return false;
   }
 
-  async listActiveDelegationCeilingsByUserId(): Promise<readonly "PRIVILEGED"[]> {
+  async listActiveDelegationCeilingsByUserId(): Promise<
+    readonly "PRIVILEGED"[]
+  > {
     return ["PRIVILEGED"];
   }
 

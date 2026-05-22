@@ -5,6 +5,7 @@ import {
   ContractRegistryActorScopeGrant,
   DashboardLiteActorScopeGrant,
   EventAssignmentActorScopeGrant,
+  KpiActorScopeGrant,
   RevenueLedgerActorScopeGrant,
   TalentKpiActorScopeGrant,
   WorkScheduleActorScopeGrant,
@@ -61,6 +62,13 @@ const TALENT_KPI_SCOPE_GRANTS_ORDER: readonly TalentKpiActorScopeGrant[] =
 const TALENT_KPI_SCOPE_GRANT_SET = new Set<
   TalentKpiActorScopeGrant
 >(TALENT_KPI_SCOPE_GRANTS_ORDER);
+
+const KPI_SCOPE_GRANTS_ORDER: readonly KpiActorScopeGrant[] =
+  Object.freeze(["global", "managedGroup", "self"]);
+
+const KPI_SCOPE_GRANT_SET = new Set<KpiActorScopeGrant>(
+  KPI_SCOPE_GRANTS_ORDER,
+);
 
 const REVENUE_LEDGER_SCOPE_GRANTS_ORDER: readonly RevenueLedgerActorScopeGrant[] =
   Object.freeze(["global"]);
@@ -252,6 +260,26 @@ export class PermissionGuard {
     ).includes(scope);
   }
 
+  static resolveKpiScopeGrants(
+    actor: Actor,
+  ): readonly KpiActorScopeGrant[] {
+    this.assertActorPresentAndActive(actor);
+
+    const declared = actor.scopeGrants.kpi;
+    if (!declared) {
+      return [];
+    }
+
+    return normalizeKpiScopeGrants(declared);
+  }
+
+  static hasKpiScopeGrant(
+    actor: Actor,
+    scope: KpiActorScopeGrant,
+  ): boolean {
+    return this.resolveKpiScopeGrants(actor).includes(scope);
+  }
+
   static resolveRevenueLedgerScopeGrants(
     actor: Actor,
   ): readonly RevenueLedgerActorScopeGrant[] {
@@ -416,6 +444,22 @@ function normalizeTalentKpiScopeGrants(
 
   return TALENT_KPI_SCOPE_GRANTS_ORDER.filter(
     (scope) => normalized.has(scope),
+  );
+}
+
+function normalizeKpiScopeGrants(
+  scopes: readonly KpiActorScopeGrant[],
+): readonly KpiActorScopeGrant[] {
+  const normalized = new Set<KpiActorScopeGrant>();
+
+  for (const scope of scopes) {
+    if (KPI_SCOPE_GRANT_SET.has(scope)) {
+      normalized.add(scope);
+    }
+  }
+
+  return KPI_SCOPE_GRANTS_ORDER.filter((scope) =>
+    normalized.has(scope),
   );
 }
 

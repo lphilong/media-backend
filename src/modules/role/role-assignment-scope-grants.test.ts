@@ -53,11 +53,13 @@ test("assignment scope grants accept valid modules and de-duplicate in determini
         "team",
       ],
       eventAssignment: ["global", "global"],
+      kpi: ["self", "managedGroup", "self"],
       dashboardLite: ["global"],
     }),
     {
       workSchedule: ["self", "team", "global"],
       eventAssignment: ["global"],
+      kpi: ["managedGroup", "self"],
       dashboardLite: ["global"],
     },
   );
@@ -82,6 +84,13 @@ test("assignment scope grants reject unsupported modules, values, and shapes", (
     () =>
       normalizeAssignmentScopeGrants({
         workSchedule: "global",
+      }),
+    RoleValidationError,
+  );
+  assert.throws(
+    () =>
+      normalizeAssignmentScopeGrants({
+        kpi: ["team"],
       }),
     RoleValidationError,
   );
@@ -131,6 +140,34 @@ test("admin actor type and role assignment permission do not override scope gran
             Permission.DASHBOARD_LITE_READ,
           ],
           scopeGrants: {},
+        }),
+        requested,
+      ),
+    RoleValidationError,
+  );
+});
+
+test("KPI assignment scope grants require existing KPI grant or global grant ceiling", () => {
+  const requested = normalizeAssignmentScopeGrants({
+    kpi: ["managedGroup", "self"],
+  });
+
+  assertActorCanGrantAssignmentScopeGrants(
+    createActor({
+      scopeGrants: {
+        kpi: ["global"],
+      },
+    }),
+    requested,
+  );
+
+  assert.throws(
+    () =>
+      assertActorCanGrantAssignmentScopeGrants(
+        createActor({
+          scopeGrants: {
+            kpi: ["self"],
+          },
         }),
         requested,
       ),
@@ -255,6 +292,7 @@ test("auth materialization unions user-level and assignment-level scope grants d
                 ],
                 scopeGrants: {
                   workSchedule: ["self"],
+                  kpi: ["self"],
                   commission: ["global"],
                 },
                 assignmentScopeGrants: [
@@ -264,11 +302,13 @@ test("auth materialization unions user-level and assignment-level scope grants d
                       "team",
                       "team",
                     ],
+                    kpi: ["managedGroup"],
                     eventAssignment: ["global"],
                   },
                   null,
                   {
                     dashboardLite: ["global"],
+                    kpi: ["self"],
                   },
                 ],
               },
@@ -293,6 +333,7 @@ test("auth materialization unions user-level and assignment-level scope grants d
   assert.deepEqual(candidates[0]?.scopeGrants, {
     workSchedule: ["self", "team", "global"],
     eventAssignment: ["global"],
+    kpi: ["managedGroup", "self"],
     commission: ["global"],
     dashboardLite: ["global"],
   });

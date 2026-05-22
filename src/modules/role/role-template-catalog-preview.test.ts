@@ -81,6 +81,80 @@ test("role template catalog contains exactly the seven core templates with valid
   );
 });
 
+test("seven role templates align KPI V2 permissions with runtime scope recommendations", () => {
+  const admin = getRoleTemplate("ADMIN_FULL");
+  const hr = getRoleTemplate("HR_OPERATIONS");
+  const manager = getRoleTemplate("TEAM_MANAGER");
+  const production = getRoleTemplate("PRODUCTION_OPS");
+  const finance = getRoleTemplate("COMMERCIAL_FINANCE");
+  const self = getRoleTemplate("TALENT_STAFF_SELF");
+  const auditor = getRoleTemplate("VIEWER_AUDITOR");
+
+  assert.deepEqual(admin?.recommendedScopeGrants.kpi, ["global"]);
+  assert.equal(
+    admin?.permissions.includes(Permission.KPI_FINALIZE),
+    true,
+  );
+
+  assert.equal(
+    hr?.permissions.includes(Permission.USER_PROVISION_ACCOUNT),
+    true,
+  );
+  assert.equal(hr?.permissions.includes(Permission.ROLE_ASSIGN_TO_USER), false);
+  assert.deepEqual(hr?.recommendedScopeGrants.kpi, ["global"]);
+  assert.equal(hr?.permissions.includes(Permission.KPI_READ), true);
+  assert.equal(hr?.permissions.includes(Permission.KPI_ENTER_ACTUAL), false);
+
+  assert.deepEqual(manager?.recommendedScopeGrants.kpi, ["managedGroup"]);
+  assert.equal(manager?.permissions.includes(Permission.KPI_READ), true);
+  assert.equal(
+    manager?.permissions.includes(Permission.KPI_READ_PROGRESS),
+    true,
+  );
+  assert.equal(
+    manager?.permissions.includes(Permission.KPI_ENTER_ACTUAL),
+    true,
+  );
+  assert.equal(
+    manager?.permissions.includes(Permission.KPI_CORRECT_ACTUAL),
+    true,
+  );
+  assert.equal(manager?.permissions.includes(Permission.KPI_PUBLISH), false);
+
+  assert.equal(production?.recommendedScopeGrants.kpi, undefined);
+  assert.equal(production?.permissions.includes(Permission.KPI_READ), false);
+
+  assert.deepEqual(finance?.recommendedScopeGrants.kpi, ["global"]);
+  assert.equal(finance?.permissions.includes(Permission.KPI_READ), true);
+  assert.equal(
+    finance?.permissions.includes(Permission.KPI_READ_PROGRESS),
+    true,
+  );
+  assert.equal(
+    finance?.permissions.includes(Permission.KPI_ENTER_ACTUAL),
+    false,
+  );
+  assert.equal(finance?.permissions.includes(Permission.KPI_FINALIZE), false);
+
+  assert.deepEqual(self?.recommendedScopeGrants.kpi, ["self"]);
+  assert.equal(
+    self?.permissions.includes(Permission.KPI_READ_PROGRESS),
+    true,
+  );
+  assert.equal(self?.permissions.includes(Permission.KPI_READ), false);
+
+  assert.deepEqual(auditor?.recommendedScopeGrants.kpi, ["global"]);
+  assert.equal(auditor?.permissions.includes(Permission.KPI_READ), true);
+  assert.equal(
+    auditor?.permissions.includes(Permission.KPI_READ_PROGRESS),
+    true,
+  );
+  assert.equal(
+    auditor?.permissions.includes(Permission.KPI_CORRECT_ACTUAL),
+    false,
+  );
+});
+
 test("role template list and preview service are permission-gated and preview-only", () => {
   const service = new RoleTemplateAdminService();
   const actor = createActor([

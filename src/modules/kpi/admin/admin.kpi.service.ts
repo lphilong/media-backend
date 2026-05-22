@@ -151,6 +151,7 @@ export class KpiAdminService {
       actor,
       Permission.KPI_CREATE_PLAN,
     );
+    this.assertKpiGlobalScope(actor, "create KPI plan");
     const period = normalizePlanPeriod({
       periodMonth: command.periodMonth,
       periodStartAt: command.periodStartAt,
@@ -256,6 +257,7 @@ export class KpiAdminService {
     query: ListKpiPlansQuery,
   ): Promise<ListKpiPlansResult> {
     this.assertPermission(actor, Permission.KPI_READ);
+    this.assertKpiGlobalScope(actor, "list KPI plans");
 
     const items = await this.repository.listPlans({
       subjectType: query.subjectType
@@ -288,6 +290,7 @@ export class KpiAdminService {
     query: GetKpiPlanDetailQuery,
   ): Promise<KpiPlanDetailView> {
     this.assertPermission(actor, Permission.KPI_READ);
+    this.assertKpiGlobalScope(actor, "read KPI plan detail");
     return this.loadPlanDetail(query.kpiPlanId);
   }
 
@@ -299,6 +302,7 @@ export class KpiAdminService {
       actor,
       Permission.KPI_UPDATE_DRAFT,
     );
+    this.assertKpiGlobalScope(actor, "update KPI draft");
     const operation: AuthoritativeAdminMutationIdentity =
       "kpi.update-draft-core";
     const changedFields = listDefinedFields(command, [
@@ -399,6 +403,7 @@ export class KpiAdminService {
       actor,
       Permission.KPI_UPDATE_DRAFT,
     );
+    this.assertKpiGlobalScope(actor, "replace KPI target metrics");
     const operation: AuthoritativeAdminMutationIdentity =
       "kpi.replace-target-metrics";
 
@@ -453,6 +458,7 @@ export class KpiAdminService {
       actor,
       Permission.KPI_MANAGE_ALLOCATION,
     );
+    this.assertKpiGlobalScope(actor, "replace KPI allocations");
     const operation: AuthoritativeAdminMutationIdentity =
       "kpi.replace-allocations";
 
@@ -517,6 +523,7 @@ export class KpiAdminService {
       actor,
       Permission.KPI_PUBLISH,
     );
+    this.assertKpiGlobalScope(actor, "publish KPI plan");
     const operation: AuthoritativeAdminMutationIdentity = "kpi.publish";
 
     return this.executeMutation(
@@ -613,6 +620,7 @@ export class KpiAdminService {
       actor,
       Permission.KPI_ARCHIVE,
     );
+    this.assertKpiGlobalScope(actor, "archive KPI plan");
     const operation: AuthoritativeAdminMutationIdentity = "kpi.archive";
 
     return this.executeMutation(
@@ -950,6 +958,7 @@ export class KpiAdminService {
       actor,
       Permission.KPI_FINALIZE,
     );
+    this.assertKpiGlobalScope(actor, "finalize KPI plan");
     const operation: AuthoritativeAdminMutationIdentity = "kpi.finalize";
 
     return this.executeMutation(
@@ -1021,6 +1030,11 @@ export class KpiAdminService {
     query: GetMyKpiProgressQuery,
   ): Promise<KpiProgressView> {
     this.assertContextPermission(actor, Permission.KPI_READ_PROGRESS);
+    if (!this.hasKpiSelfScope(actor) && !this.hasKpiGlobalScope(actor)) {
+      throw new KpiPermissionScopeError(
+        "KPI self progress requires kpi.self scope",
+      );
+    }
     const actorTalent = await this.resolveActorTalentId(actor);
     if (!actorTalent) {
       throw new KpiPermissionScopeError(
@@ -1165,8 +1179,13 @@ export class KpiAdminService {
     allocation: KpiAllocation,
     session?: ClientSession,
   ): Promise<void> {
-    if (actor.type === "admin") {
+    if (this.hasKpiGlobalScope(actor)) {
       return;
+    }
+    if (!this.hasKpiManagedGroupScope(actor)) {
+      throw new KpiPermissionScopeError(
+        "KPI actual entry requires kpi.global or kpi.managedGroup scope",
+      );
     }
     if (actor.type !== "staff") {
       throw new KpiPermissionScopeError(
@@ -1210,10 +1229,22 @@ export class KpiAdminService {
     actor: Actor,
     plan: KpiPlan,
   ): Promise<Set<string> | undefined> {
-    if (actor.type === "admin") {
+    if (this.hasKpiGlobalScope(actor)) {
       return undefined;
     }
+    const hasManagedGroupScope = this.hasKpiManagedGroupScope(actor);
+    const hasSelfScope = this.hasKpiSelfScope(actor);
+    if (!hasManagedGroupScope && !hasSelfScope) {
+      throw new KpiPermissionScopeError(
+        "KPI progress read requires kpi.global, kpi.managedGroup, or kpi.self scope",
+      );
+    }
     if (actor.type !== "staff") {
+      if (!hasSelfScope) {
+        throw new KpiPermissionScopeError(
+          "KPI progress read scope denied",
+        );
+      }
       const talentId = await this.resolveActorTalentId(actor);
       if (talentId) {
         return new Set([talentId]);
@@ -1235,7 +1266,7 @@ export class KpiAdminService {
         "KPI progress read requires actor mapping",
       );
     }
-    if (plan.subjectType === "TALENT_GROUP") {
+    if (hasManagedGroupScope && plan.subjectType === "TALENT_GROUP") {
       const assignments =
         await this.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
           employmentProfile.employmentProfileId,
@@ -1244,6 +1275,11 @@ export class KpiAdminService {
       if (assignments.some((assignment) => assignment.groupId === plan.subjectId)) {
         return undefined;
       }
+    }
+    if (!hasSelfScope) {
+      throw new KpiPermissionScopeError(
+        "KPI progress read scope denied",
+      );
     }
     const talent =
       await this.subjectReadonlyAccess.findNonArchivedTalentByLinkedEmploymentProfileId(
@@ -1276,8 +1312,13 @@ export class KpiAdminService {
     actor: Actor,
     plan: KpiPlan,
   ): Promise<void> {
-    if (actor.type === "admin") {
+    if (this.hasKpiGlobalScope(actor)) {
       return;
+    }
+    if (!this.hasKpiManagedGroupScope(actor)) {
+      throw new KpiPermissionScopeError(
+        "KPI actual grid read requires kpi.global or kpi.managedGroup scope",
+      );
     }
     if (actor.type !== "staff") {
       throw new KpiPermissionScopeError(
@@ -1316,8 +1357,13 @@ export class KpiAdminService {
     plan: KpiPlan,
     entry: KpiActualEntry,
   ): Promise<void> {
-    if (actor.type === "admin") {
+    if (this.hasKpiGlobalScope(actor)) {
       return;
+    }
+    if (!this.hasKpiManagedGroupScope(actor)) {
+      throw new KpiPermissionScopeError(
+        "KPI correction history read requires kpi.global or kpi.managedGroup scope",
+      );
     }
     if (actor.type !== "staff") {
       throw new KpiPermissionScopeError(
@@ -1576,6 +1622,28 @@ export class KpiAdminService {
     const permission = PermissionResolver.resolve(permissionCode);
     PermissionGuard.assert(actor, permission);
     return permission;
+  }
+
+  private assertKpiGlobalScope(actor: Actor, operation: string): void {
+    if (this.hasKpiGlobalScope(actor)) {
+      return;
+    }
+
+    throw new KpiPermissionScopeError(
+      `Cannot ${operation}: kpi.global scope is required`,
+    );
+  }
+
+  private hasKpiGlobalScope(actor: Actor): boolean {
+    return PermissionGuard.hasKpiScopeGrant(actor, "global");
+  }
+
+  private hasKpiManagedGroupScope(actor: Actor): boolean {
+    return PermissionGuard.hasKpiScopeGrant(actor, "managedGroup");
+  }
+
+  private hasKpiSelfScope(actor: Actor): boolean {
+    return PermissionGuard.hasKpiScopeGrant(actor, "self");
   }
 
   private assertActualMutationPlanOpen(
