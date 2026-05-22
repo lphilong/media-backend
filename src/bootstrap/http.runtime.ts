@@ -32,6 +32,7 @@ import { createStructuredLogger } from "@infra/logger.adapter";
 import { bootstrapDatabaseIndexes } from "./db-index.bootstrap";
 import { InfrastructureError } from "@infra/errors/infrastructure.error";
 import { startHttpManagementPlane } from "./http-management.runtime";
+import { measureStartupStage } from "./startup-timing";
 
 /* =========================================================
    CONFIG
@@ -52,17 +53,65 @@ export async function startHttpRuntime(): Promise<void> {
   const logger = createStructuredLogger();
   const runtimeTraceId = crypto.randomUUID();
 
-  const mongo = await createMongoRuntime();
-  await bootstrapDatabaseIndexes(mongo.primaryDb);
-
-  const redis = createRedisConnection(
-    logger,
-    runtimeTraceId,
+  await measureStartupStage(
+    {
+      label: "startup.total",
+      logger,
+      traceId: runtimeTraceId,
+    },
+    () => startHttpRuntimeWithTiming(logger, runtimeTraceId),
   );
-  await awaitRedisReady(redis, {
-    logger,
-    traceId: runtimeTraceId,
-  });
+}
+
+async function startHttpRuntimeWithTiming(
+  logger: ReturnType<typeof createStructuredLogger>,
+  runtimeTraceId: string,
+): Promise<void> {
+  const mongo = await measureStartupStage(
+    {
+      label: "startup.mongoRuntime",
+      logger,
+      traceId: runtimeTraceId,
+    },
+    () => createMongoRuntime(),
+  );
+  await measureStartupStage(
+    {
+      label: "startup.indexBootstrap",
+      logger,
+      traceId: runtimeTraceId,
+      metadata: {
+        skipped: env.SKIP_DB_INDEX_BOOTSTRAP,
+      },
+    },
+    () =>
+      bootstrapDatabaseIndexes(mongo.primaryDb, {
+        skip: env.SKIP_DB_INDEX_BOOTSTRAP,
+        logger,
+        traceId: runtimeTraceId,
+      }),
+  );
+
+  const redis = await measureStartupStage(
+    {
+      label: "startup.redisConnection",
+      logger,
+      traceId: runtimeTraceId,
+    },
+    () => createRedisConnection(logger, runtimeTraceId),
+  );
+  await measureStartupStage(
+    {
+      label: "startup.redisReady",
+      logger,
+      traceId: runtimeTraceId,
+    },
+    () =>
+      awaitRedisReady(redis, {
+        logger,
+        traceId: runtimeTraceId,
+      }),
+  );
 
   const storage = createStorageAdapter(loadStorageConfig());
   const presenterRegistry = new PresenterRegistry();
@@ -94,14 +143,22 @@ export async function startHttpRuntime(): Promise<void> {
 
   /* 3️⃣ Create Express app */
 
-  const app = await createApp({
-    actorResolver: new Auth0ActorResolver(
-      userAuthRepository,
-      infra.cacheAdapter,
-    ),
-    infra,
-    presenterRegistry: container.presenterRegistry,
-  });
+  const app = await measureStartupStage(
+    {
+      label: "startup.appCreate",
+      logger,
+      traceId: runtimeTraceId,
+    },
+    () =>
+      createApp({
+        actorResolver: new Auth0ActorResolver(
+          userAuthRepository,
+          infra.cacheAdapter,
+        ),
+        infra,
+        presenterRegistry: container.presenterRegistry,
+      }),
+  );
 
   /* 4️⃣ Create and harden HTTP server */
 
@@ -113,13 +170,29 @@ export async function startHttpRuntime(): Promise<void> {
   const sockets = new Set<Socket>();
   let shutdownRequested = false;
   let exitCode = 0;
-  const managementPlane = await startHttpManagementPlane({
-    enabled: env.HTTP_MANAGEMENT_ENABLED,
-    host: env.HTTP_MANAGEMENT_HOST,
-    port: env.HTTP_MANAGEMENT_PORT,
-    logger: container.logger,
-    runtimeTraceId,
-  });
+  const managementPlane = await measureStartupStage(
+    {
+      label: "startup.managementListen",
+      logger,
+      traceId: runtimeTraceId,
+      metadata: {
+        enabled: env.HTTP_MANAGEMENT_ENABLED,
+        host: env.HTTP_MANAGEMENT_HOST,
+        port: env.HTTP_MANAGEMENT_PORT,
+        endpoints: env.HTTP_MANAGEMENT_ENABLED
+          ? ["/livez", "/readyz", "/metrics"]
+          : [],
+      },
+    },
+    () =>
+      startHttpManagementPlane({
+        enabled: env.HTTP_MANAGEMENT_ENABLED,
+        host: env.HTTP_MANAGEMENT_HOST,
+        port: env.HTTP_MANAGEMENT_PORT,
+        logger: container.logger,
+        runtimeTraceId,
+      }),
+  );
 
   if (managementPlane) {
     managementPlane.setReadiness(false);
@@ -137,21 +210,33 @@ export async function startHttpRuntime(): Promise<void> {
     }
   });
 
-  await new Promise<void>((resolve, reject) => {
-    const onError = (err: Error) => {
-      server.removeListener("listening", onListening);
-      reject(err);
-    };
+  await measureStartupStage(
+    {
+      label: "startup.businessListen",
+      logger,
+      traceId: runtimeTraceId,
+      metadata: {
+        host: env.HTTP_BIND_HOST,
+        port: env.PORT,
+      },
+    },
+    () =>
+      new Promise<void>((resolve, reject) => {
+        const onError = (err: Error) => {
+          server.removeListener("listening", onListening);
+          reject(err);
+        };
 
-    const onListening = () => {
-      server.removeListener("error", onError);
-      resolve();
-    };
+        const onListening = () => {
+          server.removeListener("error", onError);
+          resolve();
+        };
 
-    server.once("error", onError);
-    server.once("listening", onListening);
-    server.listen(env.PORT, env.HTTP_BIND_HOST);
-  });
+        server.once("error", onError);
+        server.once("listening", onListening);
+        server.listen(env.PORT, env.HTTP_BIND_HOST);
+      }),
+  );
 
   if (managementPlane) {
     managementPlane.setReadiness(true);

@@ -29,7 +29,7 @@ export interface RoleAssignmentRuleInput {
 
 export interface CreateRoleCommand {
   readonly name: string;
-  readonly code: string;
+  readonly code?: string;
   readonly description?: string | null;
   readonly initialPermissions?: readonly string[];
   readonly initialDelegationBand?: RoleDelegationBand;
@@ -42,7 +42,7 @@ export interface CreateRoleCommand {
 
 export interface CreateRoleFromTemplateCommand {
   readonly templateCode: string;
-  readonly code: string;
+  readonly code?: string;
   readonly name: string;
   readonly description?: string | null;
 }

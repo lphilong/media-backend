@@ -1,5 +1,8 @@
 import { ClientSession } from "mongodb";
 import {
+  BusinessCodePolicy,
+} from "@core/business-code/business-code-sequence.repository";
+import {
   RoleDelegationBand,
   RoleMaxDelegatableBand,
   RoleRecord,
@@ -43,6 +46,11 @@ export interface RoleRepository {
     code: string,
     session?: ClientSession,
   ): Promise<RoleRecord | null>;
+
+  findMaxGeneratedCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session: ClientSession,
+  ): Promise<number>;
 
   updateMetadata(
     /**

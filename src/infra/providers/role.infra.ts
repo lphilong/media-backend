@@ -1,4 +1,5 @@
 import { Db } from "mongodb";
+import { NativeMongoBusinessCodeSequenceRepository } from "@infra/mongo/business-code/business-code-sequence.repository";
 import {
   NativeMongoRoleReadRepository,
   NativeMongoRoleAssignmentReadRepository,
@@ -17,6 +18,7 @@ export interface RoleInfra {
   readonly roleReadonlyAccess: NativeMongoRoleUserReadonlyAccess;
   readonly roleReadRepository: NativeMongoRoleReadRepository;
   readonly roleAssignmentReadRepository: NativeMongoRoleAssignmentReadRepository;
+  readonly businessCodeSequenceRepository: NativeMongoBusinessCodeSequenceRepository;
 }
 
 export function createRoleInfra(db: Db): RoleInfra {
@@ -33,5 +35,7 @@ export function createRoleInfra(db: Db): RoleInfra {
     ),
     roleAssignmentReadRepository:
       new NativeMongoRoleAssignmentReadRepository(db),
+    businessCodeSequenceRepository:
+      new NativeMongoBusinessCodeSequenceRepository(db),
   };
 }

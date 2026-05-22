@@ -25,6 +25,7 @@ const KNOWN_ENV_KEYS = [
   "MONGO_URI",
   "MONGO_DB_NAME",
   "MONGO_MAX_POOL_SIZE",
+  "SKIP_DB_INDEX_BOOTSTRAP",
   "REDIS_URL",
   "QUEUE_BACKLOG_THRESHOLD",
   "WORKER_CRASH_WINDOW_MS",
@@ -424,6 +425,24 @@ const envSchema = z
       .positive()
       .default(200),
 
+    SKIP_DB_INDEX_BOOTSTRAP: z
+      .string()
+      .optional()
+      .transform((value, ctx) => {
+        try {
+          return parseBooleanFlag(value, false);
+        } catch (error) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              error instanceof Error
+                ? error.message
+                : "Invalid SKIP_DB_INDEX_BOOTSTRAP value",
+          });
+          return z.NEVER;
+        }
+      }),
+
     REDIS_URL: z.string().url(),
 
     /* =========================
@@ -589,6 +608,26 @@ const envSchema = z
     HEROKU_APP_NAME: z.string().optional(),
   })
   .superRefine((env, ctx) => {
+    if (env.SKIP_DB_INDEX_BOOTSTRAP) {
+      if (env.NODE_ENV === "production") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["SKIP_DB_INDEX_BOOTSTRAP"],
+          message:
+            "SKIP_DB_INDEX_BOOTSTRAP is forbidden when NODE_ENV=production",
+        });
+      }
+
+      if (hasDeployedRuntimeMarker(env)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["SKIP_DB_INDEX_BOOTSTRAP"],
+          message:
+            "SKIP_DB_INDEX_BOOTSTRAP is forbidden in deployed or staging runtimes",
+        });
+      }
+    }
+
     if (env.LOCAL_MOCK_AUTH_ENABLED) {
       if (env.APP_RUNTIME !== "http") {
         ctx.addIssue({

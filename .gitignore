@@ -33,6 +33,10 @@ tools/
 !src/app/auth/local-mock-auth.middleware.test.ts
 !src/config/local-mock-auth.env.test.ts
 !src/modules/dashboard-lite/domain/dashboard-lite.time.test.ts
+!src/modules/dashboard-lite/diagnostics/
+!src/modules/dashboard-lite/diagnostics/dashboard-lite.timing.test.ts
+!src/modules/dashboard-lite/admin/admin.dashboard-lite.query-service.timing.test.ts
+!src/infra/mongo/dashboard-lite/dashboard-lite.read-repository.test.ts
 !src/modules/event-assignment/event-assignment-target-filters.test.ts
 !src/modules/contract-registry/contract-registry-target-filters.test.ts
 !src/modules/talent-kpi/talent-kpi-target-filters.test.ts
@@ -44,6 +48,9 @@ tools/
 !src/modules/role/role-assignment-reference-summaries.test.ts
 !src/modules/role/role-template-catalog-preview.test.ts
 !src/modules/role/role-assignment-scope-grants.test.ts
+!src/bootstrap/db-index.bootstrap.test.ts
+!src/bootstrap/startup-timing.test.ts
+!src/config/db-index-bootstrap.env.test.ts
 !src/tools/
 !src/tools/smoke/
 !src/tools/smoke/seed-real-auth-first-admin.ts

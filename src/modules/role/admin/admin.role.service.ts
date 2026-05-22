@@ -3,6 +3,10 @@ import { ClientSession, MongoServerError } from "mongodb";
 import { Actor } from "@core/actor/actor";
 import { AuditGuard } from "@core/audit/audit.guard";
 import {
+  BusinessCodeSequenceRepository,
+  formatBusinessCode,
+} from "@core/business-code/business-code-sequence.repository";
+import {
   AuthoritativeAdminMutationBridge,
   AuthoritativeMutationControls,
 } from "@core/application/authoritative-admin-mutation.bridge";
@@ -46,6 +50,7 @@ import {
   createRoleUpdatedEvent,
 } from "@modules/role/domain/role.events";
 import { RoleRepository } from "@modules/role/domain/role.repository";
+import { ROLE_CODE_POLICY } from "@modules/role/domain/role-code-policy";
 import {
   getRoleTemplate,
   isRoleTemplateCode,
@@ -119,6 +124,7 @@ export class RoleAdminService {
     private readonly roleRepository: RoleRepository,
     private readonly userRoleAssignmentRepository: UserRoleAssignmentRepository,
     private readonly roleAssignmentRuleRepository: RoleAssignmentRuleRepository,
+    private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
     private readonly userReadonlyAccess: RoleUserReadonlyAccess,
     private readonly adminCapabilityRepository: UserAdminCapabilityRepository,
     private readonly audit: AuditGuard,
@@ -141,7 +147,7 @@ export class RoleAdminService {
       async (mutationTargetDescriptor) => {
         const permission = this.assertPermission(actor, Permission.ROLE_CREATE);
 
-        const code = normalizeRoleCode(command.code);
+        const requestedCode = normalizeOptionalRoleCode(command.code);
         const name = normalizeRequiredText(command.name, "name");
         const description = normalizeNullableText(
           command.description,
@@ -185,53 +191,74 @@ export class RoleAdminService {
           mutationType,
           mutationTargetDescriptor,
           async (session) => {
-            const existing = await this.roleRepository.findByCode(
-              code,
-              session,
-            );
+            if (requestedCode !== undefined) {
+              const existing = await this.roleRepository.findByCode(
+                requestedCode,
+                session,
+              );
 
-            if (existing) {
-              throw new RoleConflictError(`Role code already exists: ${code}`);
-            }
-
-            const now = Date.now();
-            const roleId = crypto.randomUUID();
-            const initialAssignmentRules = normalizeRoleAssignmentRules({
-              roleId,
-              rules: command.initialAssignmentRules ?? [],
-              now,
-            });
-
-            const role: RoleRecord = {
-              id: roleId,
-              code,
-              name,
-              description,
-              state: "DRAFT",
-              permissions: initialPermissions,
-              delegationBand: initialDelegationBand,
-              maxDelegatableBand: initialMaxDelegatableBand,
-              ...(templateCode ? { templateCode } : {}),
-              ...(templateVersion ? { templateVersion } : {}),
-              ...(templateAppliedAt !== undefined ? { templateAppliedAt } : {}),
-              createdAt: now,
-              updatedAt: now,
-              activatedAt: null,
-              archivedAt: null,
-            };
-
-            let created: RoleRecord;
-
-            try {
-              created = await this.roleRepository.insert(role, session);
-            } catch (error) {
-              if (isDuplicateKeyError(error)) {
+              if (existing) {
                 throw new RoleConflictError(
-                  `Role code already exists: ${code}`,
+                  `Role code already exists: ${requestedCode}`,
                 );
               }
+            }
 
-              throw error;
+            let created!: RoleRecord;
+            let initialAssignmentRules: readonly RoleAssignmentRuleRecord[] = [];
+            const maxAttempts = requestedCode === undefined ? 5 : 1;
+
+            for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+              const code =
+                requestedCode ?? (await this.allocateGeneratedCode(session));
+              const now = Date.now();
+              const roleId = crypto.randomUUID();
+              initialAssignmentRules = normalizeRoleAssignmentRules({
+                roleId,
+                rules: command.initialAssignmentRules ?? [],
+                now,
+              });
+
+              const role: RoleRecord = {
+                id: roleId,
+                code,
+                name,
+                description,
+                state: "DRAFT",
+                permissions: initialPermissions,
+                delegationBand: initialDelegationBand,
+                maxDelegatableBand: initialMaxDelegatableBand,
+                ...(templateCode ? { templateCode } : {}),
+                ...(templateVersion ? { templateVersion } : {}),
+                ...(templateAppliedAt !== undefined
+                  ? { templateAppliedAt }
+                  : {}),
+                createdAt: now,
+                updatedAt: now,
+                activatedAt: null,
+                archivedAt: null,
+              };
+
+              try {
+                created = await this.roleRepository.insert(role, session);
+                break;
+              } catch (error) {
+                if (!isDuplicateKeyError(error)) {
+                  throw error;
+                }
+
+                if (requestedCode !== undefined) {
+                  throw new RoleConflictError(
+                    `Role code already exists: ${requestedCode}`,
+                  );
+                }
+
+                if (attempt >= maxAttempts) {
+                  throw new RoleConflictError(
+                    "Generated role code conflict detected on create",
+                  );
+                }
+              }
             }
 
             const createdRules =
@@ -277,6 +304,31 @@ export class RoleAdminService {
         assignmentRuleCount: result.assignmentRules.length,
       }),
     );
+  }
+
+  private async allocateGeneratedCode(
+    session: ClientSession,
+  ): Promise<string> {
+    const maxExisting =
+      await this.roleRepository.findMaxGeneratedCodeSequence(
+        ROLE_CODE_POLICY,
+        session,
+      );
+
+    await this.codeSequenceRepository.ensureAtLeast(
+      ROLE_CODE_POLICY.moduleKey,
+      ROLE_CODE_POLICY.bucket,
+      maxExisting,
+      session,
+    );
+
+    const sequence = await this.codeSequenceRepository.allocateNext(
+      ROLE_CODE_POLICY.moduleKey,
+      ROLE_CODE_POLICY.bucket,
+      session,
+    );
+
+    return formatBusinessCode(ROLE_CODE_POLICY, sequence);
   }
 
   async createRoleFromTemplate(
@@ -1724,6 +1776,11 @@ function assertRoleStateAllowed(
 function normalizeRoleCode(value: unknown): string {
   const raw = normalizeRequiredText(value, "code");
   return raw.trim().toUpperCase();
+}
+
+function normalizeOptionalRoleCode(value: unknown): string | undefined {
+  const raw = normalizeOptionalText(value, "code");
+  return raw === undefined ? undefined : normalizeRoleCode(raw);
 }
 
 function normalizeRequiredText(value: unknown, field: string): string {

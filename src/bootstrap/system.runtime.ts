@@ -37,6 +37,7 @@ import { HttpError } from "@app/http/http-error.types";
 import { writeCanonicalHttpErrorResponse } from "@app/http/http-error-response.contract";
 import { getSystemWorkerRegistrations } from "./system-worker.registrar";
 import { RunningSystemWorker } from "./system-worker.contract";
+import { measureStartupStage } from "./startup-timing";
 
 type RuntimeProcess = {
   readonly pid: number;
@@ -217,19 +218,93 @@ export async function startSystemRuntime(
   const logger = createStructuredLogger();
   const runtimeTraceId = crypto.randomUUID();
 
-  const mongo = await deps.createMongoRuntimeFn();
+  await measureStartupStage(
+    {
+      label: "startup.total",
+      logger,
+      traceId: runtimeTraceId,
+      metadata: {
+        runtime: "system",
+      },
+    },
+    () =>
+      startSystemRuntimeWithTiming({
+        deps,
+        runtimeContext,
+        logger,
+        runtimeTraceId,
+      }),
+  );
+}
+
+async function startSystemRuntimeWithTiming(params: {
+  readonly deps: SystemRuntimeDependencies;
+  readonly runtimeContext: ReturnType<
+    typeof createWorkerRuntimeContext
+  >;
+  readonly logger: ReturnType<typeof createStructuredLogger>;
+  readonly runtimeTraceId: string;
+}): Promise<void> {
+  const { deps, runtimeContext, logger, runtimeTraceId } =
+    params;
+
+  const mongo = await measureStartupStage(
+    {
+      label: "startup.mongoRuntime",
+      logger,
+      traceId: runtimeTraceId,
+      metadata: {
+        runtime: "system",
+      },
+    },
+    () => deps.createMongoRuntimeFn(),
+  );
   const primaryDb = mongo.primaryDb;
 
-  await deps.bootstrapDatabaseIndexesFn(primaryDb);
-
-  const redis = deps.createRedisConnectionFn(
-    logger,
-    runtimeTraceId,
+  await measureStartupStage(
+    {
+      label: "startup.indexBootstrap",
+      logger,
+      traceId: runtimeTraceId,
+      metadata: {
+        runtime: "system",
+        skipped: env.SKIP_DB_INDEX_BOOTSTRAP,
+      },
+    },
+    () =>
+      deps.bootstrapDatabaseIndexesFn(primaryDb, {
+        skip: env.SKIP_DB_INDEX_BOOTSTRAP,
+        logger,
+        traceId: runtimeTraceId,
+      }),
   );
-  await deps.awaitRedisReadyFn(redis, {
-    logger,
-    traceId: runtimeTraceId,
-  });
+
+  const redis = await measureStartupStage(
+    {
+      label: "startup.redisConnection",
+      logger,
+      traceId: runtimeTraceId,
+      metadata: {
+        runtime: "system",
+      },
+    },
+    () => deps.createRedisConnectionFn(logger, runtimeTraceId),
+  );
+  await measureStartupStage(
+    {
+      label: "startup.redisReady",
+      logger,
+      traceId: runtimeTraceId,
+      metadata: {
+        runtime: "system",
+      },
+    },
+    () =>
+      deps.awaitRedisReadyFn(redis, {
+        logger,
+        traceId: runtimeTraceId,
+      }),
+  );
 
   const storage = deps.createStorageAdapterFn(
     deps.loadStorageConfigFn(),
@@ -329,17 +404,32 @@ export async function startSystemRuntime(
     },
   );
 
-  await new Promise<void>((resolve, reject) => {
-    metricsServer.once("error", reject);
-    metricsServer.listen(
-      SYSTEM_METRICS_PORT,
-      SYSTEM_METRICS_HOST,
-      () => {
-        metricsServer.removeListener("error", reject);
-        resolve();
+  await measureStartupStage(
+    {
+      label: "startup.managementListen",
+      logger,
+      traceId: runtimeTraceId,
+      metadata: {
+        runtime: "system",
+        enabled: true,
+        host: SYSTEM_METRICS_HOST,
+        port: SYSTEM_METRICS_PORT,
+        endpoints: ["/metrics"],
       },
-    );
-  });
+    },
+    () =>
+      new Promise<void>((resolve, reject) => {
+        metricsServer.once("error", reject);
+        metricsServer.listen(
+          SYSTEM_METRICS_PORT,
+          SYSTEM_METRICS_HOST,
+          () => {
+            metricsServer.removeListener("error", reject);
+            resolve();
+          },
+        );
+      }),
+  );
 
   /* 3️⃣ Start workers */
 

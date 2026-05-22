@@ -2,6 +2,8 @@ import { Db } from "mongodb";
 import { PresenterRegistryWriter } from "@app/presenter/presenter.runtime-access";
 import { initDomainEventOutbox } from "@system/outbox/outbox.schema";
 import { initBusinessCodeSequenceIndexes } from "@infra/mongo/business-code/business-code-sequence.index";
+import { StructuredLogger } from "@infra/logger.adapter";
+import { measureStartupStage } from "./startup-timing";
 import { createRoleBootstrapRegistrar } from "@modules/role/shared/role.bootstrap";
 import { SystemInvariantError } from "@core/error/system-error";
 import { createUserBootstrapRegistrar } from "@modules/user/shared/user.bootstrap";
@@ -28,6 +30,14 @@ export interface BootstrapRegistrar {
   initIndexes?(db: Db): Promise<void>;
   assertReadiness?(db: Db): Promise<void>;
 }
+
+export interface BootstrapRegisteredIndexesOptions {
+  readonly logger?: StructuredLogger;
+  readonly traceId?: string;
+  readonly slowStageThresholdMs?: number;
+}
+
+const INDEX_BOOTSTRAP_SLOW_STAGE_MS = 1_000;
 
 const FOUNDATION_BOOTSTRAP_REGISTRAR: BootstrapRegistrar =
   Object.freeze({
@@ -75,18 +85,64 @@ export function registerBootstrapPresenters(
 
 export async function bootstrapRegisteredIndexes(
   db: Db,
+  options: BootstrapRegisteredIndexesOptions = {},
 ): Promise<void> {
   for (const registrar of BOOTSTRAP_REGISTRARS) {
     if (registrar.initIndexes) {
-      await registrar.initIndexes(db);
+      await runRegistrarStage(
+        `indexBootstrap.${registrar.name}.init`,
+        registrar.name,
+        "init",
+        options,
+        () => registrar.initIndexes?.(db),
+      );
     }
   }
 
   for (const registrar of BOOTSTRAP_REGISTRARS) {
     if (registrar.assertReadiness) {
-      await registrar.assertReadiness(db);
+      await runRegistrarStage(
+        `indexBootstrap.${registrar.name}.readiness`,
+        registrar.name,
+        "readiness",
+        options,
+        () => registrar.assertReadiness?.(db),
+      );
     }
   }
+}
+
+async function runRegistrarStage(
+  label: string,
+  registrar: string,
+  phase: "init" | "readiness",
+  options: BootstrapRegisteredIndexesOptions,
+  task: () => Promise<void> | undefined,
+): Promise<void> {
+  const stageTask = async (): Promise<void> => {
+    await task();
+  };
+
+  if (!options.logger || !options.traceId) {
+    await stageTask();
+    return;
+  }
+
+  await measureStartupStage(
+    {
+      label,
+      logger: options.logger,
+      traceId: options.traceId,
+      warnAfterMs:
+        options.slowStageThresholdMs ??
+        INDEX_BOOTSTRAP_SLOW_STAGE_MS,
+      metadata: {
+        registrar,
+        phase,
+      },
+    },
+    stageTask,
+  );
 }
 
 function assertUniqueRegistrarNames(

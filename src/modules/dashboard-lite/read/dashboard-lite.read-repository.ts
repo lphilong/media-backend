@@ -1,4 +1,5 @@
 import { DashboardLiteSnapshotProjection } from "@modules/dashboard-lite/domain/dashboard-lite.types";
+import { DashboardLiteTimingContext } from "@modules/dashboard-lite/diagnostics/dashboard-lite.timing";
 
 export interface DashboardLiteSnapshotReadInput {
   readonly generatedAt: number;
@@ -14,5 +15,6 @@ export interface DashboardLiteSnapshotReadInput {
 export interface DashboardLiteReadRepository {
   getDashboardLiteSnapshotProjection(
     input: DashboardLiteSnapshotReadInput,
+    timingContext?: DashboardLiteTimingContext,
   ): Promise<DashboardLiteSnapshotProjection>;
 }

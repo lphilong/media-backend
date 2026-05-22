@@ -1,6 +1,10 @@
 import { ClientSession, Db } from "mongodb";
 import { BaseRepository } from "@infra/database/repository";
 import {
+  BusinessCodePolicy,
+  parseGeneratedBusinessCodeSequence,
+} from "@core/business-code/business-code-sequence.repository";
+import {
   ReplaceRolePermissionsInput,
   RoleRepository,
   TransitionRoleStateInput,
@@ -104,6 +108,30 @@ export class NativeMongoRoleRepository
     );
 
     return doc ? toRoleRecord(doc) : null;
+  }
+
+  async findMaxGeneratedCodeSequence(
+    policy: Pick<BusinessCodePolicy, "prefix" | "width">,
+    session: ClientSession,
+  ): Promise<number> {
+    const docs = await this.collection
+      .find(
+        {
+          code: {
+            $regex: `^${escapeRegExp(policy.prefix)}-\\d{${policy.width}}$`,
+          },
+        },
+        {
+          ...this.withSession(session),
+          projection: { code: 1 },
+        },
+      )
+      .toArray();
+
+    return docs.reduce((max, doc) => {
+      const sequence = parseGeneratedBusinessCodeSequence(doc.code, policy);
+      return sequence !== null && sequence > max ? sequence : max;
+    }, 0);
   }
 
   async updateMetadata(
@@ -398,6 +426,10 @@ function toRoleRecord(document: RoleDocument): RoleRecord {
 
 function normalizeSearchField(value: string): string {
   return value.trim().toLowerCase();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function toRoleAssignmentRuleDocument(

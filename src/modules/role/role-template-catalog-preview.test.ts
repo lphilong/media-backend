@@ -3,7 +3,7 @@ import { createServer, Server } from "node:http";
 import { AddressInfo } from "node:net";
 import { test } from "node:test";
 import express, { NextFunction, Request, Response } from "express";
-import { ClientSession } from "mongodb";
+import { ClientSession, MongoServerError } from "mongodb";
 import { bindActor } from "@core/actor/actor-context";
 import { Actor } from "@core/actor/actor";
 import { contextMiddleware } from "@core/context/context.middleware.adapter";
@@ -14,6 +14,7 @@ import { Permission } from "@core/permission/permission.enum";
 import { bindTraceId } from "@core/trace/trace.context";
 import { AuthoritativeAdminMutationBridge } from "@core/application/authoritative-admin-mutation.bridge";
 import { AuditGuard } from "@core/audit/audit.guard";
+import { BusinessCodeSequenceRepository } from "@core/business-code/business-code-sequence.repository";
 import { ActorSnapshotCacheInvalidator } from "@infra/cache/actor.snapshot.cache";
 import { StructuredLogger } from "@infra/logger.adapter";
 import { runWithDomainEventCollector } from "@system/event-bridge/domain-event.types";
@@ -42,6 +43,7 @@ import {
   UserRoleAssignmentRecord,
 } from "@modules/role/domain/role.types";
 import { RoleUserReadonlyAccess } from "@modules/role/domain/role-user-readonly-access";
+import { RoleConflictError } from "@modules/role/domain/role.errors";
 import { UserAdminCapabilityRepository } from "@modules/user/domain/user.admin-capability.repository";
 
 const ALL_PERMISSION_CODES = Object.values(Permission);
@@ -233,6 +235,7 @@ test("create role from template persists explicit permissions and provenance onl
     roleRepository,
     assignmentRepository,
     assignmentRuleRepository,
+    new InMemoryBusinessCodeSequenceRepository(),
     new AlwaysAssignableUserAccess(),
     new PermissiveAdminCapabilityRepository(),
     createAuditGuard(),
@@ -292,6 +295,7 @@ test("create role from template respects existing permission authoring constrain
     new InMemoryRoleRepository(),
     new InMemoryUserRoleAssignmentRepository(),
     new InMemoryRoleAssignmentRuleRepository(),
+    new InMemoryBusinessCodeSequenceRepository(),
     new AlwaysAssignableUserAccess(),
     new PermissiveAdminCapabilityRepository(),
     createAuditGuard(),
@@ -320,6 +324,192 @@ test("create role from template respects existing permission authoring constrain
       ),
     /initialPermissions contains unauthorized permission code/,
   );
+});
+
+test("create role and create-from-template generate backend-owned role code when omitted", async () => {
+  const roleRepository = new InMemoryRoleRepository();
+  roleRepository.inserted.push({
+    id: "role-existing-generated",
+    code: "ROLE-000004",
+    name: "Existing generated role",
+    description: null,
+    state: "DRAFT",
+    permissions: [],
+    delegationBand: "LIMITED",
+    maxDelegatableBand: "NONE",
+    createdAt: 1,
+    updatedAt: 1,
+    activatedAt: null,
+    archivedAt: null,
+  });
+
+  const service = new RoleAdminService(
+    roleRepository,
+    new InMemoryUserRoleAssignmentRepository(),
+    new InMemoryRoleAssignmentRuleRepository(),
+    new InMemoryBusinessCodeSequenceRepository(),
+    new AlwaysAssignableUserAccess(),
+    new PermissiveAdminCapabilityRepository(),
+    createAuditGuard(),
+    new InlineMutationBridge(),
+    createActorSnapshotCacheInvalidator(),
+    noOpLogger,
+  );
+
+  const actor = createActor(ALL_PERMISSION_CODES);
+
+  const custom = await bindTraceId(
+    "trace-role-code-generate-custom",
+    async () =>
+      runWithDomainEventCollector(() =>
+        service.createRole(actor, {
+          name: "Generated custom role",
+          initialPermissions: [Permission.ROLE_VIEW],
+        }),
+      ),
+  );
+
+  assert.equal(custom.code, "ROLE-000005");
+  assert.deepEqual(custom.permissions, [Permission.ROLE_VIEW]);
+
+  const templated = await bindTraceId(
+    "trace-role-code-generate-template",
+    async () =>
+      runWithDomainEventCollector(() =>
+        service.createRoleFromTemplate(actor, {
+          templateCode: "VIEWER_AUDITOR",
+          name: "Generated template role",
+        }),
+      ),
+  );
+
+  assert.equal(templated.code, "ROLE-000006");
+  assert.equal(templated.templateCode, "VIEWER_AUDITOR");
+  assert.equal(
+    "scopeGrants" in
+      roleRepository.inserted[roleRepository.inserted.length - 1],
+    false,
+  );
+});
+
+test("create role rejects duplicate manual code after normalization", async () => {
+  const roleRepository = new InMemoryRoleRepository();
+  const service = new RoleAdminService(
+    roleRepository,
+    new InMemoryUserRoleAssignmentRepository(),
+    new InMemoryRoleAssignmentRuleRepository(),
+    new InMemoryBusinessCodeSequenceRepository(),
+    new AlwaysAssignableUserAccess(),
+    new PermissiveAdminCapabilityRepository(),
+    createAuditGuard(),
+    new InlineMutationBridge(),
+    createActorSnapshotCacheInvalidator(),
+    noOpLogger,
+  );
+  const actor = createActor(ALL_PERMISSION_CODES);
+
+  await bindTraceId("trace-role-manual-code-first", async () =>
+    runWithDomainEventCollector(() =>
+      service.createRole(actor, {
+        code: " manual_role ",
+        name: "Manual role",
+      }),
+    ),
+  );
+
+  assert.equal(roleRepository.inserted[0]?.code, "MANUAL_ROLE");
+
+  await assert.rejects(
+    () =>
+      bindTraceId("trace-role-manual-code-duplicate", async () =>
+        runWithDomainEventCollector(() =>
+          service.createRole(actor, {
+            code: "MANUAL_ROLE",
+            name: "Duplicate manual role",
+          }),
+        ),
+      ),
+    RoleConflictError,
+  );
+});
+
+test("create role retries generated duplicate-key collision and succeeds with later code", async () => {
+  const roleRepository = new CollisionRoleRepository({
+    duplicateGeneratedCodes: ["ROLE-000001"],
+  });
+  const sequenceRepository = new InMemoryBusinessCodeSequenceRepository();
+  const service = new RoleAdminService(
+    roleRepository,
+    new InMemoryUserRoleAssignmentRepository(),
+    new InMemoryRoleAssignmentRuleRepository(),
+    sequenceRepository,
+    new AlwaysAssignableUserAccess(),
+    new PermissiveAdminCapabilityRepository(),
+    createAuditGuard(),
+    new InlineMutationBridge(),
+    createActorSnapshotCacheInvalidator(),
+    noOpLogger,
+  );
+  const actor = createActor(ALL_PERMISSION_CODES);
+
+  const result = await bindTraceId(
+    "trace-role-generated-code-collision-retry",
+    async () =>
+      runWithDomainEventCollector(() =>
+        service.createRole(actor, {
+          name: "Generated collision retry role",
+        }),
+      ),
+  );
+
+  assert.equal(result.code, "ROLE-000002");
+  assert.equal(roleRepository.insertAttempts, 2);
+  assert.equal(sequenceRepository.allocateCount, 2);
+});
+
+test("create role fails after bounded generated duplicate-key collisions are exhausted", async () => {
+  const roleRepository = new CollisionRoleRepository({
+    duplicateGeneratedCodes: [
+      "ROLE-000001",
+      "ROLE-000002",
+      "ROLE-000003",
+      "ROLE-000004",
+      "ROLE-000005",
+    ],
+  });
+  const sequenceRepository = new InMemoryBusinessCodeSequenceRepository();
+  const service = new RoleAdminService(
+    roleRepository,
+    new InMemoryUserRoleAssignmentRepository(),
+    new InMemoryRoleAssignmentRuleRepository(),
+    sequenceRepository,
+    new AlwaysAssignableUserAccess(),
+    new PermissiveAdminCapabilityRepository(),
+    createAuditGuard(),
+    new InlineMutationBridge(),
+    createActorSnapshotCacheInvalidator(),
+    noOpLogger,
+  );
+  const actor = createActor(ALL_PERMISSION_CODES);
+
+  await assert.rejects(
+    () =>
+      bindTraceId("trace-role-generated-code-collision-exhausted", async () =>
+        runWithDomainEventCollector(() =>
+          service.createRole(actor, {
+            name: "Generated collision exhausted role",
+          }),
+        ),
+      ),
+    (error: unknown) =>
+      error instanceof RoleConflictError &&
+      error.message ===
+        "Generated role code conflict detected on create",
+  );
+
+  assert.equal(roleRepository.insertAttempts, 5);
+  assert.equal(sequenceRepository.allocateCount, 5);
+  assert.equal(roleRepository.inserted.length, 0);
 });
 
 function createActor(
@@ -373,6 +563,10 @@ class InMemoryRoleRepository implements RoleRepository {
     role: RoleRecord,
     _session: ClientSession,
   ): Promise<RoleRecord> {
+    if (this.inserted.some((record) => record.code === role.code)) {
+      throw duplicateKeyError();
+    }
+
     this.inserted.push(role);
     return role;
   }
@@ -395,6 +589,27 @@ class InMemoryRoleRepository implements RoleRepository {
     );
   }
 
+  async findMaxGeneratedCodeSequence(
+    policy: { readonly prefix: string; readonly width: number },
+  ): Promise<number> {
+    const regex = new RegExp(
+      `^${policy.prefix}-(\\d{${policy.width}})$`,
+      "u",
+    );
+
+    return this.inserted.reduce((max, role) => {
+      const match = regex.exec(role.code);
+      if (!match) {
+        return max;
+      }
+
+      const sequence = Number(match[1]);
+      return Number.isSafeInteger(sequence) && sequence > max
+        ? sequence
+        : max;
+    }, 0);
+  }
+
   async updateMetadata(
     _input: UpdateRoleMetadataInput,
     _session: ClientSession,
@@ -415,6 +630,69 @@ class InMemoryRoleRepository implements RoleRepository {
   ): Promise<RoleRecord | null> {
     return null;
   }
+}
+
+class CollisionRoleRepository extends InMemoryRoleRepository {
+  private readonly duplicateGeneratedCodes: Set<string>;
+  insertAttempts = 0;
+
+  constructor(params: {
+    readonly duplicateGeneratedCodes: readonly string[];
+  }) {
+    super();
+    this.duplicateGeneratedCodes = new Set(params.duplicateGeneratedCodes);
+  }
+
+  override async insert(
+    role: RoleRecord,
+    session: ClientSession,
+  ): Promise<RoleRecord> {
+    this.insertAttempts += 1;
+
+    if (this.duplicateGeneratedCodes.has(role.code)) {
+      this.duplicateGeneratedCodes.delete(role.code);
+      throw duplicateKeyError();
+    }
+
+    return super.insert(role, session);
+  }
+}
+
+class InMemoryBusinessCodeSequenceRepository
+  implements BusinessCodeSequenceRepository
+{
+  private values = new Map<string, number>();
+  allocateCount = 0;
+
+  async allocateNext(
+    moduleKey: string,
+    bucket: string,
+  ): Promise<number> {
+    this.allocateCount += 1;
+    const key = `${moduleKey}:${bucket}`;
+    const next = (this.values.get(key) ?? 0) + 1;
+    this.values.set(key, next);
+    return next;
+  }
+
+  async ensureAtLeast(
+    moduleKey: string,
+    bucket: string,
+    minimumValue: number,
+  ): Promise<void> {
+    const key = `${moduleKey}:${bucket}`;
+    const current = this.values.get(key) ?? 0;
+    if (minimumValue > current) {
+      this.values.set(key, minimumValue);
+    }
+  }
+}
+
+function duplicateKeyError(): MongoServerError {
+  return new MongoServerError({
+    message: "duplicate key",
+    code: 11000,
+  });
 }
 
 class InMemoryRoleAssignmentRuleRepository

@@ -182,7 +182,7 @@ function parseCreateRoleCommand(req: Request): CreateRoleCommand {
 
   return {
     name: body.name as string,
-    code: body.code as string,
+    code: body.code as string | undefined,
     description:
       body.description === undefined
         ? null
@@ -244,7 +244,7 @@ function parseCreateRoleFromTemplateCommand(
   return {
     templateCode: body.templateCode as string,
     name: body.name as string,
-    code: body.code as string,
+    code: body.code as string | undefined,
     description:
       body.description === undefined
         ? null
