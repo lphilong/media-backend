@@ -5,6 +5,7 @@ import {
   USER_ACCOUNT_STATUS_UPDATED_LIST_INDEX_NAME,
   USER_ACTOR_KIND_UPDATED_LIST_INDEX_NAME,
   USER_AUTH_LINKAGE_UNIQ_INDEX_NAME,
+  USER_EMAIL_UNIQ_INDEX_NAME,
   USER_SEARCH_DISPLAY_NAME_UPDATED_LIST_INDEX_NAME,
   USER_SEARCH_EMAIL_UPDATED_LIST_INDEX_NAME,
   USER_UPDATED_LIST_INDEX_NAME,
@@ -99,6 +100,15 @@ export function createUserBootstrapRegistrar(): BootstrapRegistrar {
           searchEmail: 1,
           updatedAt: -1,
           _id: 1,
+        },
+      );
+
+      await assertRequiredUniqueIndex(
+        db,
+        "users",
+        USER_EMAIL_UNIQ_INDEX_NAME,
+        {
+          searchEmail: 1,
         },
       );
     },

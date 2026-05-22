@@ -1,6 +1,7 @@
 import { Presenter } from "@app/presenter/presenter.base";
 import { ContextType } from "@core/context/context.types";
 import { PresentationResult } from "@app/base/presentation-result.types";
+import { PlainObject } from "@app/base/presentation-result.types";
 import {
   UserDetailResult,
   UserListResult,
@@ -20,11 +21,27 @@ export class UserAdminMutationPresenter extends Presenter<
     input: UserMutationResult,
     _context: ContextType,
   ): PresentationResult {
-    return {
+    const output: PresentationResult = {
       data: UserAdminMutationExposure.expose(
         input.user,
       ),
     };
+
+    const meta: PlainObject = {};
+
+    if (input.provisioning) {
+      meta.provisioning = input.provisioning;
+    }
+
+    if (input.passwordSetup) {
+      meta.passwordSetup = input.passwordSetup;
+    }
+
+    if (Object.keys(meta).length > 0) {
+      output.meta = meta;
+    }
+
+    return output;
   }
 }
 

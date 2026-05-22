@@ -22,6 +22,7 @@ interface UserReadDocument {
   readonly authLinkage: {
     readonly provider: "auth0";
     readonly subject: string;
+    readonly status?: "LINKED" | "UNLINKED";
   };
   readonly profile: {
     readonly displayName: string;
@@ -157,6 +158,7 @@ function toUserDetailView(
     authLinkage: {
       provider: document.authLinkage.provider,
       subject: document.authLinkage.subject,
+      status: document.authLinkage.status ?? "LINKED",
     },
     contextAccess: {
       contexts: document.contextAccess.contexts,

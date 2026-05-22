@@ -36,6 +36,11 @@ const KNOWN_ENV_KEYS = [
   "AUTH0_CLIENT_ID",
   "AUTH0_CLIENT_SECRET",
   "AUTH0_NAMESPACE",
+  "AUTH0_MANAGEMENT_DOMAIN",
+  "AUTH0_MANAGEMENT_CLIENT_ID",
+  "AUTH0_MANAGEMENT_CLIENT_SECRET",
+  "AUTH0_DATABASE_CONNECTION",
+  "AUTH0_PASSWORD_SETUP_RESULT_URL",
   "ENCRYPTION_KEY",
   "LOG_LEVEL",
   "STORAGE_PROVIDER",
@@ -482,6 +487,30 @@ const envSchema = z
     AUTH0_CLIENT_SECRET: z.string().min(1).optional(),
 
     AUTH0_NAMESPACE: z.string().url().optional(),
+    AUTH0_MANAGEMENT_DOMAIN: z
+      .string()
+      .trim()
+      .min(1)
+      .optional(),
+    AUTH0_MANAGEMENT_CLIENT_ID: z
+      .string()
+      .trim()
+      .min(1)
+      .optional(),
+    AUTH0_MANAGEMENT_CLIENT_SECRET: z
+      .string()
+      .trim()
+      .min(1)
+      .optional(),
+    AUTH0_DATABASE_CONNECTION: z
+      .string()
+      .trim()
+      .min(1)
+      .optional(),
+    AUTH0_PASSWORD_SETUP_RESULT_URL: z
+      .string()
+      .url()
+      .optional(),
 
     /* =========================
      * SECURITY

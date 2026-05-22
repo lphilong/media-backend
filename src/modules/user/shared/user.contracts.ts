@@ -9,13 +9,23 @@ import {
 } from "@modules/user/domain/user.types";
 
 export interface CreateUserCommand {
-  readonly authSubject: string;
   readonly actorKind?: UserActorKind;
   readonly displayName: string;
   readonly email?: string;
   readonly phone?: string;
   readonly locale?: string;
   readonly timezone?: string;
+}
+
+export interface ProvisionUserCommand {
+  readonly actorKind?: UserActorKind;
+  readonly displayName: string;
+  readonly email: string;
+  readonly phone?: string;
+  readonly locale?: string;
+  readonly timezone?: string;
+  readonly credentialMode?: "INVITE_LINK";
+  readonly sendInvitation?: boolean;
 }
 
 export interface UpdateUserCommand {
@@ -45,6 +55,14 @@ export interface SetAuthLinkageCommand {
   readonly subject: string;
 }
 
+export interface UnlinkAuthLinkageCommand {
+  readonly userId: string;
+}
+
+export interface SendPasswordSetupCommand {
+  readonly userId: string;
+}
+
 export interface GetUserDetailQuery {
   readonly userId: string;
 }
@@ -59,6 +77,14 @@ export interface ListUsersQuery {
 
 export interface UserMutationResult {
   readonly user: UserRecord;
+  readonly provisioning?: {
+    readonly credentialMode: "INVITE_LINK";
+    readonly auth0UserCreated: boolean;
+    readonly invitationTicketCreated: boolean;
+  };
+  readonly passwordSetup?: {
+    readonly ticketCreated: boolean;
+  };
 }
 
 export type UserDetailResult = UserDetailView;

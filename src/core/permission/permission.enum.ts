@@ -9,6 +9,9 @@ export enum Permission {
   USER_DISABLE = "user:disable",
   USER_ARCHIVE = "user:archive",
   USER_AUTH_LINKAGE_SET = "user:auth_linkage:set",
+  USER_PROVISION_ACCOUNT = "user:provision_account",
+  USER_AUTH_LINKAGE_UNLINK = "user:auth_linkage:unlink",
+  USER_PASSWORD_SETUP_SEND = "user:password_setup:send",
 
   
   /* =========================

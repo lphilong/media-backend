@@ -12,6 +12,7 @@ export interface CreateUserInput {
   readonly authLinkage: {
     readonly provider: "auth0";
     readonly subject: string;
+    readonly status?: "LINKED" | "UNLINKED";
   };
   readonly profile: {
     readonly displayName: string;
@@ -53,6 +54,8 @@ export interface SetUserAuthLinkageInput {
   readonly userId: string;
   readonly provider: "auth0";
   readonly subject: string;
+  readonly status?: "LINKED" | "UNLINKED";
+  readonly accountStatus?: UserAccountStatus;
   readonly updatedAt: number;
 }
 
@@ -69,6 +72,11 @@ export interface UserMutationRepository {
 
   findByAuthSubject(
     authSubject: string,
+    session: ClientSession,
+  ): Promise<UserRecord | null>;
+
+  findByEmail(
+    email: string,
     session: ClientSession,
   ): Promise<UserRecord | null>;
 

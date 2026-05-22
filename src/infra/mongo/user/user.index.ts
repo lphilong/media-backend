@@ -14,6 +14,8 @@ export const USER_SEARCH_DISPLAY_NAME_UPDATED_LIST_INDEX_NAME =
   "idx_user_search_display_name_updated";
 export const USER_SEARCH_EMAIL_UPDATED_LIST_INDEX_NAME =
   "idx_user_search_email_updated";
+export const USER_EMAIL_UNIQ_INDEX_NAME =
+  "uniq_user_search_email";
 
 export async function initUserIndexes(
   db: Db,
@@ -85,6 +87,22 @@ export async function initUserIndexes(
     },
     {
       name: USER_SEARCH_EMAIL_UPDATED_LIST_INDEX_NAME,
+    },
+  );
+
+  await collection.createIndex(
+    {
+      searchEmail: 1,
+    },
+    {
+      name: USER_EMAIL_UNIQ_INDEX_NAME,
+      unique: true,
+      partialFilterExpression: {
+        searchEmail: {
+          $type: "string",
+          $gt: "",
+        },
+      },
     },
   );
 }

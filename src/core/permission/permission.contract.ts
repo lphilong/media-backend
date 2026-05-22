@@ -84,6 +84,27 @@ export const PermissionContracts: PermissionContractRegistry =
     auditAction: "user.auth_linkage.set",
     riskLevel: "CRITICAL",
   },
+  [Permission.USER_PROVISION_ACCOUNT]: {
+    code: Permission.USER_PROVISION_ACCOUNT,
+    context: "ADMIN",
+    resource: "USER",
+    auditAction: "user.provision_account",
+    riskLevel: "CRITICAL",
+  },
+  [Permission.USER_AUTH_LINKAGE_UNLINK]: {
+    code: Permission.USER_AUTH_LINKAGE_UNLINK,
+    context: "ADMIN",
+    resource: "USER",
+    auditAction: "user.auth_linkage.unlink",
+    riskLevel: "CRITICAL",
+  },
+  [Permission.USER_PASSWORD_SETUP_SEND]: {
+    code: Permission.USER_PASSWORD_SETUP_SEND,
+    context: "ADMIN",
+    resource: "USER",
+    auditAction: "user.password_setup.send",
+    riskLevel: "CRITICAL",
+  },
 
   /* =========================
      ROLE

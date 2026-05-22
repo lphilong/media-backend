@@ -24,6 +24,11 @@ import { MongoAuditLogger } from "@core/audit/mongo.audit.logger";
 import { MongoAuditWriteRepository } from "@infra/mongo/audit/audit.write.repository";
 import { AuditContext } from "@core/audit/audit.context";
 import { ActorSnapshotCacheInvalidator } from "@infra/cache/actor.snapshot.cache";
+import {
+  Auth0ManagementHttpClient,
+  DisabledAuth0ManagementClient,
+  resolveAuth0ManagementConfigFromEnv,
+} from "@infra/auth0/auth0-management.client";
 import { CurrentActorCapabilitiesController } from "./current-actor-capabilities.controller";
 
 /* USER */
@@ -180,6 +185,11 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     infra.cacheAdapter,
   );
 
+  const auth0ManagementConfig = resolveAuth0ManagementConfigFromEnv();
+  const auth0ManagementClient = auth0ManagementConfig
+    ? new Auth0ManagementHttpClient(auth0ManagementConfig)
+    : new DisabledAuth0ManagementClient();
+
   /* USER */
   const { userRepository, userReadRepository, userAuthRepository } =
     createUserInfra(infra.primaryDb);
@@ -190,6 +200,13 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     authoritativeAuditGuard,
     adminMutationBridge,
     actorSnapshotCacheInvalidator,
+    auth0ManagementClient,
+    {
+      databaseConnection:
+        auth0ManagementConfig?.databaseConnection ?? "",
+      passwordSetupResultUrl:
+        auth0ManagementConfig?.passwordSetupResultUrl,
+    },
   );
 
   const userQueryService = new UserAdminQueryService(userReadRepository);

@@ -30,6 +30,7 @@ export class UserMapper {
       authLinkage: {
         provider: "auth0",
         subject: doc.authLinkage.subject,
+        status: doc.authLinkage.status ?? "LINKED",
       },
       profile: {
         displayName: doc.profile.displayName,

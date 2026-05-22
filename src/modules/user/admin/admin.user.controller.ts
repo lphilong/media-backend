@@ -11,7 +11,10 @@ import {
   ArchiveUserCommand,
   CreateUserCommand,
   DisableUserCommand,
+  ProvisionUserCommand,
+  SendPasswordSetupCommand,
   SetAuthLinkageCommand,
+  UnlinkAuthLinkageCommand,
   UpdateUserCommand,
 } from "@modules/user/shared/user.contracts";
 import { UserValidationError } from "@modules/user/domain/user.errors";
@@ -26,11 +29,13 @@ type UserMutationCommand =
   | "USER_ACTIVATE"
   | "USER_DISABLE"
   | "USER_ARCHIVE"
-  | "USER_AUTH_LINKAGE_SET";
+  | "USER_AUTH_LINKAGE_SET"
+  | "USER_PROVISION"
+  | "USER_AUTH_LINKAGE_UNLINK"
+  | "USER_PASSWORD_SETUP_SEND";
 
 const CREATE_USER_BODY_FIELDS: readonly string[] =
   Object.freeze([
-    "authSubject",
     "actorKind",
     "displayName",
     "email",
@@ -50,6 +55,18 @@ const UPDATE_USER_BODY_FIELDS: readonly string[] =
 
 const SET_AUTH_LINKAGE_BODY_FIELDS: readonly string[] =
   Object.freeze(["provider", "subject"]);
+
+const PROVISION_USER_BODY_FIELDS: readonly string[] =
+  Object.freeze([
+    "actorKind",
+    "displayName",
+    "email",
+    "phone",
+    "locale",
+    "timezone",
+    "credentialMode",
+    "sendInvitation",
+  ]);
 
 export class UserAdminController extends SecureController {
   constructor(
@@ -110,6 +127,24 @@ export class UserAdminController extends SecureController {
           parseSetAuthLinkageCommand(req),
         );
 
+      case "USER_PROVISION":
+        return this.service.provisionUser(
+          actor,
+          parseProvisionUserCommand(req),
+        );
+
+      case "USER_AUTH_LINKAGE_UNLINK":
+        return this.service.unlinkAuthLinkage(
+          actor,
+          parseUnlinkAuthLinkageCommand(req),
+        );
+
+      case "USER_PASSWORD_SETUP_SEND":
+        return this.service.sendPasswordSetup(
+          actor,
+          parseSendPasswordSetupCommand(req),
+        );
+
       default:
         throw new SystemInvariantError(
           "SYSTEM_INVARIANT_VIOLATION",
@@ -136,6 +171,7 @@ function parseCreateUserCommand(
   req: Request,
 ): CreateUserCommand {
   const body = requireRecord(req.body);
+  assertNoLegacyCreateAuthBinding(body);
   assertNoUnexpectedFields(
     body,
     CREATE_USER_BODY_FIELDS,
@@ -143,7 +179,6 @@ function parseCreateUserCommand(
   );
 
   return {
-    authSubject: body.authSubject as string,
     actorKind: body.actorKind as
       | CreateUserCommand["actorKind"]
       | undefined,
@@ -153,6 +188,23 @@ function parseCreateUserCommand(
     locale: body.locale as string | undefined,
     timezone: body.timezone as string | undefined,
   };
+}
+
+function assertNoLegacyCreateAuthBinding(
+  body: Readonly<Record<string, unknown>>,
+): void {
+  const rejectedFields = ["authSubject", "authLinkage"].filter(
+    (field) =>
+      Object.prototype.hasOwnProperty.call(body, field),
+  );
+
+  if (rejectedFields.length === 0) {
+    return;
+  }
+
+  throw new UserValidationError(
+    `USER_CREATE payload cannot include ${rejectedFields.join(", ")}; use USER_PROVISION or USER_AUTH_LINKAGE_SET`,
+  );
 }
 
 function parseUpdateUserCommand(
@@ -192,6 +244,32 @@ function parseActivateUserCommand(
 
   return {
     userId: req.params.userId,
+  };
+}
+
+function parseProvisionUserCommand(
+  req: Request,
+): ProvisionUserCommand {
+  const body = requireRecord(req.body);
+  assertNoUnexpectedFields(
+    body,
+    PROVISION_USER_BODY_FIELDS,
+    "USER_PROVISION",
+  );
+
+  return {
+    actorKind: body.actorKind as
+      | ProvisionUserCommand["actorKind"]
+      | undefined,
+    displayName: body.displayName as string,
+    email: body.email as string,
+    phone: body.phone as string | undefined,
+    locale: body.locale as string | undefined,
+    timezone: body.timezone as string | undefined,
+    credentialMode: body.credentialMode as
+      | ProvisionUserCommand["credentialMode"]
+      | undefined,
+    sendInvitation: body.sendInvitation as boolean | undefined,
   };
 }
 
@@ -258,6 +336,40 @@ function requireRecord(
   }
 
   return value as Record<string, unknown>;
+}
+
+function parseUnlinkAuthLinkageCommand(
+  req: Request,
+): UnlinkAuthLinkageCommand {
+  assertNoUnexpectedFields(
+    requirePlainObjectBodyForZeroBodyMutation(
+      req.body,
+      "USER_AUTH_LINKAGE_UNLINK",
+    ),
+    [],
+    "USER_AUTH_LINKAGE_UNLINK",
+  );
+
+  return {
+    userId: req.params.userId,
+  };
+}
+
+function parseSendPasswordSetupCommand(
+  req: Request,
+): SendPasswordSetupCommand {
+  assertNoUnexpectedFields(
+    requirePlainObjectBodyForZeroBodyMutation(
+      req.body,
+      "USER_PASSWORD_SETUP_SEND",
+    ),
+    [],
+    "USER_PASSWORD_SETUP_SEND",
+  );
+
+  return {
+    userId: req.params.userId,
+  };
 }
 
 function requirePlainObjectBodyForZeroBodyMutation(

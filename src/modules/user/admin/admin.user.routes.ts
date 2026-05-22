@@ -15,6 +15,12 @@ export function userAdminRoutes(
     mutationController.execute,
   );
 
+  router.post(
+    "/provision",
+    withCommand("USER_PROVISION"),
+    mutationController.execute,
+  );
+
   router.get(
     "/",
     withCommand("USER_LIST"),
@@ -54,6 +60,18 @@ export function userAdminRoutes(
   router.put(
     "/:userId/auth-linkage",
     withCommand("USER_AUTH_LINKAGE_SET"),
+    mutationController.execute,
+  );
+
+  router.delete(
+    "/:userId/auth-linkage",
+    withCommand("USER_AUTH_LINKAGE_UNLINK"),
+    mutationController.execute,
+  );
+
+  router.post(
+    "/:userId/send-password-setup",
+    withCommand("USER_PASSWORD_SETUP_SEND"),
     mutationController.execute,
   );
 

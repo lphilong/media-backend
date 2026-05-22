@@ -347,6 +347,7 @@ function buildAuthResolutionPipeline(authSubject: string): Document[] {
       $match: {
         "authLinkage.provider": "auth0",
         "authLinkage.subject": authSubject,
+        "authLinkage.status": { $ne: "UNLINKED" },
       },
     },
     {

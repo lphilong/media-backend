@@ -10,6 +10,7 @@ export interface UserPersistence {
   readonly authLinkage: {
     readonly provider: "auth0";
     readonly subject: string;
+    readonly status?: "LINKED" | "UNLINKED";
   };
   readonly profile: {
     readonly displayName: string;

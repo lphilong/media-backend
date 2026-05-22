@@ -23,6 +23,10 @@ import {
 } from "@infra/logger.adapter";
 import { ActorSnapshotCacheInvalidator } from "@infra/cache/actor.snapshot.cache";
 import {
+  Auth0ManagementPort,
+  Auth0ManagementUser,
+} from "@modules/user/domain/auth0-management.port";
+import {
   createUserActivatedEvent,
   createUserArchivedEvent,
   createUserAuthLinkedEvent,
@@ -40,7 +44,10 @@ import {
   ArchiveUserCommand,
   CreateUserCommand,
   DisableUserCommand,
+  ProvisionUserCommand,
+  SendPasswordSetupCommand,
   SetAuthLinkageCommand,
+  UnlinkAuthLinkageCommand,
   UpdateUserCommand,
   UserMutationResult,
 } from "@modules/user/shared/user.contracts";
@@ -65,6 +72,9 @@ const GOVERNANCE_RECOVERY_PERMISSION_CODES: readonly string[] =
   Permission.USER_DISABLE,
   Permission.USER_ARCHIVE,
   Permission.USER_AUTH_LINKAGE_SET,
+  Permission.USER_PROVISION_ACCOUNT,
+  Permission.USER_AUTH_LINKAGE_UNLINK,
+  Permission.USER_PASSWORD_SETUP_SEND,
   Permission.ROLE_CREATE,
   Permission.ROLE_UPDATE,
   Permission.ROLE_ACTIVATE,
@@ -103,6 +113,11 @@ export class UserLifecycleService {
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
     private readonly actorSnapshotCacheInvalidator: ActorSnapshotCacheInvalidator,
+    private readonly auth0Management: Auth0ManagementPort,
+    private readonly provisioningOptions: {
+      readonly databaseConnection: string;
+      readonly passwordSetupResultUrl?: string;
+    },
     private readonly logger: StructuredLogger = createStructuredLogger(),
   ) {}
 
@@ -122,39 +137,32 @@ export class UserLifecycleService {
       permission,
       mutationType,
       {
-        authSubject: readOptionalLogString(
-          command.authSubject,
-        ),
         actorKind: readOptionalLogString(
           command.actorKind,
         ),
       },
       async (session) => {
-        const duplicate =
-          await this.repository.findByAuthSubject(
-            input.authSubject,
-            session,
-          );
-
-        if (duplicate) {
-          throw new UserConflictError(
-            `Auth subject already linked: ${input.authSubject}`,
-          );
-        }
+        await this.assertEmailIsAvailable(
+          input.email,
+          undefined,
+          session,
+        );
 
         let created: UserRecord;
 
         try {
           const now = Date.now();
+          const userId = crypto.randomUUID();
 
           created = await this.repository.insert(
             {
-              id: crypto.randomUUID(),
+              id: userId,
               accountStatus: "PENDING",
               actorKind: input.actorKind,
               authLinkage: {
                 provider: "auth0",
-                subject: input.authSubject,
+                subject: createUnlinkedSubject(userId),
+                status: "UNLINKED",
               },
               profile: {
                 displayName: input.displayName,
@@ -179,7 +187,7 @@ export class UserLifecycleService {
         } catch (error) {
           if (isDuplicateKeyError(error)) {
             throw new UserConflictError(
-              `Auth subject already linked: ${input.authSubject}`,
+              "Email or auth linkage already exists",
             );
           }
 
@@ -264,11 +272,28 @@ export class UserLifecycleService {
           );
         }
 
-        const updated =
-          await this.repository.updateProfile(
+        await this.assertEmailIsAvailable(
+          profilePatch.email,
+          userId,
+          session,
+        );
+
+        let updated: UserRecord | null;
+
+        try {
+          updated = await this.repository.updateProfile(
             profilePatch,
             session,
           );
+        } catch (error) {
+          if (isDuplicateKeyError(error)) {
+            throw new UserConflictError(
+              "User email already exists",
+            );
+          }
+
+          throw error;
+        }
 
         if (!updated) {
           throw new UserConflictError(
@@ -385,6 +410,158 @@ export class UserLifecycleService {
       {
         invalidateActorSnapshots: true,
       },
+    );
+  }
+
+  async provisionUser(
+    actor: Actor,
+    command: ProvisionUserCommand,
+  ): Promise<UserMutationResult> {
+    const mutationType = "user.provision-account";
+    const permission = this.assertPermission(
+      actor,
+      Permission.USER_PROVISION_ACCOUNT,
+    );
+    const input = normalizeProvisionCommand(command);
+
+    return this.executeMutation(
+      actor,
+      permission,
+      mutationType,
+      {
+        emailHash: hashForAudit(input.email),
+        credentialMode: input.credentialMode,
+      },
+      async (session) => {
+        await this.assertEmailIsAvailable(
+          input.email,
+          undefined,
+          session,
+        );
+
+        const existingAuth0User =
+          await this.auth0Management.findUserByEmail(
+            input.email,
+          );
+        const auth0User =
+          existingAuth0User ??
+          (await this.auth0Management.createDatabaseUser({
+            email: input.email,
+            displayName: input.displayName,
+            connection:
+              this.provisioningOptions.databaseConnection,
+            password: generateTemporaryPassword(),
+            verifyEmail: false,
+          }));
+
+        const duplicateAuth =
+          await this.repository.findByAuthSubject(
+            auth0User.id,
+            session,
+          );
+
+        if (duplicateAuth) {
+          throw new UserConflictError(
+            "Auth0 user is already linked to an internal user",
+          );
+        }
+
+        const ticket =
+          input.sendInvitation === false
+            ? null
+            : await this.auth0Management.createPasswordChangeTicket(
+                {
+                  userId: auth0User.id,
+                  resultUrl:
+                    this.provisioningOptions
+                      .passwordSetupResultUrl,
+                },
+              );
+
+        let created: UserRecord;
+
+        try {
+          const now = Date.now();
+
+          created = await this.repository.insert(
+            {
+              id: crypto.randomUUID(),
+              accountStatus: "PENDING",
+              actorKind: input.actorKind,
+              authLinkage: {
+                provider: "auth0",
+                subject: auth0User.id,
+                status: "LINKED",
+              },
+              profile: {
+                displayName: input.displayName,
+                email: input.email,
+                phone: input.phone,
+              },
+              contextAccess: {
+                contexts: ["ADMIN"],
+              },
+              preferences: {
+                locale: input.locale,
+                timezone: input.timezone,
+              },
+              createdAt: now,
+              updatedAt: now,
+              activatedAt: null,
+              disabledAt: null,
+              archivedAt: null,
+            },
+            session,
+          );
+        } catch (error) {
+          if (isDuplicateKeyError(error)) {
+            throw new UserConflictError(
+              "Email or auth linkage already exists",
+            );
+          }
+
+          throw error;
+        }
+
+        await this.recordUserAudit({
+          actor,
+          permission,
+          userId: created.id,
+          mutationType,
+          metadata: {
+            emailHash: hashForAudit(input.email),
+            auth0Subject: redactSubjectForAudit(auth0User.id),
+            auth0UserCreated: existingAuth0User === null,
+            invitationTicketCreated:
+              ticket?.ticketCreated === true,
+          },
+          session,
+        });
+
+        getCurrentDomainEventCollector().emit(
+          createUserCreatedEvent({
+            userId: created.id,
+            aggregateVersion: created.updatedAt,
+            occurredAt: created.updatedAt,
+          }),
+        );
+
+        return {
+          user: created,
+          provisioning: {
+            credentialMode: "INVITE_LINK",
+            auth0UserCreated: existingAuth0User === null,
+            invitationTicketCreated:
+              ticket?.ticketCreated === true,
+          },
+        };
+      },
+      (result) => ({
+        userId: result.user.id,
+        accountStatus: result.user.accountStatus,
+        invitationTicketCreated:
+          result.provisioning?.invitationTicketCreated === true,
+      }),
     );
   }
 
@@ -651,6 +828,10 @@ export class UserLifecycleService {
           );
         }
 
+        const auth0User = await this.requireAuth0User(
+          input.subject,
+        );
+
         let updated: UserRecord | null = null;
 
         try {
@@ -659,6 +840,7 @@ export class UserLifecycleService {
               userId: input.userId,
               provider: input.provider,
               subject: input.subject,
+              status: "LINKED",
               updatedAt: Date.now(),
             },
             session,
@@ -688,12 +870,15 @@ export class UserLifecycleService {
             previousAuthLinkage: {
               provider:
                 current.authLinkage.provider,
-              subject:
+              subject: redactSubjectForAudit(
                 current.authLinkage.subject,
+              ),
+              status: current.authLinkage.status ?? "LINKED",
             },
             nextAuthLinkage: {
               provider: input.provider,
-              subject: input.subject,
+              subject: redactSubjectForAudit(auth0User.id),
+              status: "LINKED",
             },
           },
           session,
@@ -731,6 +916,203 @@ export class UserLifecycleService {
       {
         invalidateActorSnapshots: true,
       },
+    );
+  }
+
+  async unlinkAuthLinkage(
+    actor: Actor,
+    command: UnlinkAuthLinkageCommand,
+  ): Promise<UserMutationResult> {
+    const mutationType = "user.auth-linkage.unlink";
+    const permission = this.assertPermission(
+      actor,
+      Permission.USER_AUTH_LINKAGE_UNLINK,
+    );
+    const userId = normalizeRequiredText(
+      command.userId,
+      "userId",
+    );
+
+    if (userId === actor.id) {
+      throw new UserDependencyError(
+        "Cannot unlink Auth0 linkage for the current actor",
+      );
+    }
+
+    return this.executeMutation(
+      actor,
+      permission,
+      mutationType,
+      {
+        userId: readOptionalLogString(command.userId),
+      },
+      async (session, controls) => {
+        const current = await this.requireUser(
+          userId,
+          session,
+        );
+
+        if (current.accountStatus === "ARCHIVED") {
+          throw new UserStateError(
+            `User in state ARCHIVED cannot execute operation: unlinkAuthLinkage`,
+          );
+        }
+
+        if (
+          (current.authLinkage.status ?? "LINKED") ===
+          "UNLINKED"
+        ) {
+          throw new UserValidationError(
+            "Auth linkage is already unlinked",
+          );
+        }
+
+        await this.assertNotLastGovernanceRecoveryActor(
+          current,
+          "unlinkAuthLinkage",
+          session,
+        );
+
+        const updated =
+          await this.repository.setAuthLinkage(
+            {
+              userId,
+              provider: "auth0",
+              subject: createUnlinkedSubject(userId),
+              status: "UNLINKED",
+              accountStatus: "PENDING",
+              updatedAt: Date.now(),
+            },
+            session,
+          );
+
+        if (!updated) {
+          throw new UserConflictError(
+            `Failed to unlink auth linkage for user: ${userId}`,
+          );
+        }
+
+        await this.recordUserAudit({
+          actor,
+          permission,
+          userId,
+          mutationType,
+          metadata: {
+            previousAuthLinkage: {
+              provider:
+                current.authLinkage.provider,
+              subject: redactSubjectForAudit(
+                current.authLinkage.subject,
+              ),
+              status: current.authLinkage.status ?? "LINKED",
+            },
+            nextAuthLinkage: {
+              provider: "auth0",
+              status: "UNLINKED",
+            },
+            previousState: current.accountStatus,
+            nextState: "PENDING",
+          },
+          session,
+        });
+
+        if (current.accountStatus === "ACTIVE") {
+          controls.markAuthSecurityTruthChanged();
+        }
+
+        return { user: updated };
+      },
+      (result) => ({
+        userId: result.user.id,
+        accountStatus: result.user.accountStatus,
+        authLinkageStatus:
+          result.user.authLinkage.status ?? "LINKED",
+      }),
+      {
+        invalidateActorSnapshots: true,
+      },
+    );
+  }
+
+  async sendPasswordSetup(
+    actor: Actor,
+    command: SendPasswordSetupCommand,
+  ): Promise<UserMutationResult> {
+    const mutationType = "user.password-setup.send";
+    const permission = this.assertPermission(
+      actor,
+      Permission.USER_PASSWORD_SETUP_SEND,
+    );
+    const userId = normalizeRequiredText(
+      command.userId,
+      "userId",
+    );
+
+    return this.executeMutation(
+      actor,
+      permission,
+      mutationType,
+      {
+        userId: readOptionalLogString(command.userId),
+      },
+      async (session) => {
+        const current = await this.requireUser(
+          userId,
+          session,
+        );
+
+        if (current.accountStatus === "ARCHIVED") {
+          throw new UserStateError(
+            `User in state ARCHIVED cannot execute operation: sendPasswordSetup`,
+          );
+        }
+
+        if (
+          (current.authLinkage.status ?? "LINKED") !==
+          "LINKED"
+        ) {
+          throw new UserValidationError(
+            "User must have linked Auth0 identity",
+          );
+        }
+
+        const ticket =
+          await this.auth0Management.createPasswordChangeTicket(
+            {
+              userId: current.authLinkage.subject,
+              resultUrl:
+                this.provisioningOptions
+                  .passwordSetupResultUrl,
+            },
+          );
+
+        await this.recordUserAudit({
+          actor,
+          permission,
+          userId,
+          mutationType,
+          metadata: {
+            auth0Subject: redactSubjectForAudit(
+              current.authLinkage.subject,
+            ),
+            ticketCreated: ticket.ticketCreated === true,
+          },
+          session,
+        });
+
+        return {
+          user: current,
+          passwordSetup: {
+            ticketCreated: ticket.ticketCreated,
+          },
+        };
+      },
+      (result) => ({
+        userId: result.user.id,
+        accountStatus: result.user.accountStatus,
+        ticketCreated:
+          result.passwordSetup?.ticketCreated === true,
+      }),
     );
   }
 
@@ -899,7 +1281,8 @@ export class UserLifecycleService {
     operation:
       | "disableUser"
       | "archiveUser"
-      | "setAuthLinkage",
+      | "setAuthLinkage"
+      | "unlinkAuthLinkage",
     session: ClientSession,
   ): Promise<void> {
     if (target.accountStatus !== "ACTIVE") {
@@ -944,6 +1327,43 @@ export class UserLifecycleService {
       `Cannot ${operation}: ${userId} has ACTIVE role assignments`,
     );
   }
+
+  private async assertEmailIsAvailable(
+    email: string | undefined,
+    currentUserId: string | undefined,
+    session: ClientSession,
+  ): Promise<void> {
+    if (email === undefined) {
+      return;
+    }
+
+    const existing = await this.repository.findByEmail(
+      email,
+      session,
+    );
+
+    if (existing && existing.id !== currentUserId) {
+      throw new UserConflictError(
+        "User email already exists",
+      );
+    }
+  }
+
+  private async requireAuth0User(
+    subject: string,
+  ): Promise<Auth0ManagementUser> {
+    const user = await this.auth0Management.getUserById(
+      subject,
+    );
+
+    if (!user) {
+      throw new UserDependencyError(
+        "Auth0 user does not exist",
+      );
+    }
+
+    return user;
+  }
 }
 
 function buildMutationTargetDescriptor(
@@ -962,13 +1382,23 @@ function buildMutationTargetDescriptor(
 }
 
 interface NormalizedCreateCommand {
-  readonly authSubject: string;
   readonly actorKind: UserActorKind;
   readonly displayName: string;
   readonly email?: string;
   readonly phone?: string;
   readonly locale?: string;
   readonly timezone?: string;
+}
+
+interface NormalizedProvisionCommand {
+  readonly actorKind: UserActorKind;
+  readonly displayName: string;
+  readonly email: string;
+  readonly phone?: string;
+  readonly locale?: string;
+  readonly timezone?: string;
+  readonly credentialMode: "INVITE_LINK";
+  readonly sendInvitation?: boolean;
 }
 
 interface NormalizedSetAuthLinkageCommand {
@@ -980,17 +1410,15 @@ interface NormalizedSetAuthLinkageCommand {
 function normalizeCreateCommand(
   command: CreateUserCommand,
 ): NormalizedCreateCommand {
+  assertNoLegacyCreateAuthBinding(command);
+
   return {
-    authSubject: normalizeRequiredText(
-      command.authSubject,
-      "authSubject",
-    ),
     actorKind: normalizeActorKind(command.actorKind),
     displayName: normalizeRequiredText(
       command.displayName,
       "displayName",
     ),
-    email: normalizeOptionalText(
+    email: normalizeOptionalEmail(
       command.email,
       "email",
     ),
@@ -1009,6 +1437,68 @@ function normalizeCreateCommand(
   };
 }
 
+function assertNoLegacyCreateAuthBinding(
+  command: object,
+): void {
+  const rejectedFields = ["authSubject", "authLinkage"].filter(
+    (field) =>
+      Object.prototype.hasOwnProperty.call(command, field),
+  );
+
+  if (rejectedFields.length === 0) {
+    return;
+  }
+
+  throw new UserValidationError(
+    `USER_CREATE payload cannot include ${rejectedFields.join(", ")}; use USER_PROVISION or USER_AUTH_LINKAGE_SET`,
+  );
+}
+
+function normalizeProvisionCommand(
+  command: ProvisionUserCommand,
+): NormalizedProvisionCommand {
+  const credentialMode =
+    command.credentialMode ?? "INVITE_LINK";
+
+  if (credentialMode !== "INVITE_LINK") {
+    throw new UserValidationError(
+      "credentialMode must be INVITE_LINK",
+    );
+  }
+
+  if (
+    command.sendInvitation !== undefined &&
+    typeof command.sendInvitation !== "boolean"
+  ) {
+    throw new UserValidationError(
+      "sendInvitation must be a boolean",
+    );
+  }
+
+  return {
+    actorKind: normalizeActorKind(command.actorKind),
+    displayName: normalizeRequiredText(
+      command.displayName,
+      "displayName",
+    ),
+    email: normalizeRequiredEmail(command.email, "email"),
+    phone: normalizeOptionalText(
+      command.phone,
+      "phone",
+    ),
+    locale: normalizeOptionalText(
+      command.locale,
+      "locale",
+    ),
+    timezone: normalizeOptionalText(
+      command.timezone,
+      "timezone",
+    ),
+    credentialMode,
+    sendInvitation: command.sendInvitation,
+  };
+}
+
 function normalizeUpdateFieldsFromCommand(
   command: UpdateUserCommand,
 ): Omit<
@@ -1020,7 +1510,7 @@ function normalizeUpdateFieldsFromCommand(
       command.displayName,
       "displayName",
     ),
-    email: normalizeOptionalText(
+    email: normalizeOptionalEmail(
       command.email,
       "email",
     ),
@@ -1111,6 +1601,42 @@ function normalizeOptionalText(
   }
 
   return normalized;
+}
+
+function normalizeRequiredEmail(
+  input: unknown,
+  field: string,
+): string {
+  const normalized = normalizeRequiredText(input, field)
+    .toLowerCase();
+
+  assertEmailShape(normalized, field);
+  return normalized;
+}
+
+function normalizeOptionalEmail(
+  input: unknown,
+  field: string,
+): string | undefined {
+  const normalized = normalizeOptionalText(input, field);
+
+  if (normalized === undefined) {
+    return undefined;
+  }
+
+  const email = normalized.toLowerCase();
+  assertEmailShape(email, field);
+  return email;
+}
+
+function assertEmailShape(email: string, field: string): void {
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email)) {
+    return;
+  }
+
+  throw new UserValidationError(
+    `${field} must be a valid email address`,
+  );
 }
 
 function normalizeActorKind(
@@ -1292,4 +1818,29 @@ function readOptionalLogString(
   return normalized.length > 0
     ? normalized
     : undefined;
+}
+
+function hashForAudit(value: string): string {
+  return crypto
+    .createHash("sha256")
+    .update(value)
+    .digest("hex");
+}
+
+function generateTemporaryPassword(): string {
+  return `T1!${crypto.randomBytes(32).toString("base64url")}aZ9#`;
+}
+
+function redactSubjectForAudit(subject: string): string {
+  const normalized = subject.trim();
+
+  if (normalized.length <= 8) {
+    return "[redacted]";
+  }
+
+  return `${normalized.slice(0, 4)}...${normalized.slice(-4)}`;
+}
+
+function createUnlinkedSubject(userId: string): string {
+  return `unlinked:${userId}:${crypto.randomUUID()}`;
 }

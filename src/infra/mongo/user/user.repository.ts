@@ -32,6 +32,7 @@ export class UserRepository
       authLinkage: {
         provider: input.authLinkage.provider,
         subject: input.authLinkage.subject,
+        status: input.authLinkage.status ?? "LINKED",
       },
       profile: {
         displayName: input.profile.displayName,
@@ -86,6 +87,23 @@ export class UserRepository
       {
         "authLinkage.provider": "auth0",
         "authLinkage.subject": authSubject,
+      },
+      {
+        ...this.withSession(session),
+        sort: { _id: 1 },
+      },
+    );
+
+    return doc ? UserMapper.toDomain(doc) : null;
+  }
+
+  async findByEmail(
+    email: string,
+    session?: ClientSession,
+  ): Promise<UserRecord | null> {
+    const doc = await this.collection.findOne(
+      {
+        searchEmail: normalizeSearchField(email),
       },
       {
         ...this.withSession(session),
@@ -189,14 +207,21 @@ export class UserRepository
     input: SetUserAuthLinkageInput,
     session: ClientSession,
   ): Promise<UserRecord | null> {
+    const set: Record<string, unknown> = {
+      "authLinkage.provider": input.provider,
+      "authLinkage.subject": input.subject,
+      "authLinkage.status": input.status ?? "LINKED",
+      updatedAt: input.updatedAt,
+    };
+
+    if (input.accountStatus !== undefined) {
+      set.accountStatus = input.accountStatus;
+    }
+
     const updated = await this.collection.findOneAndUpdate(
       { _id: input.userId },
       {
-        $set: {
-          "authLinkage.provider": input.provider,
-          "authLinkage.subject": input.subject,
-          updatedAt: input.updatedAt,
-        },
+        $set: set,
       },
       {
         ...this.withSession(session),

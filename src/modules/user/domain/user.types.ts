@@ -24,6 +24,7 @@ export const USER_ACTOR_KINDS: readonly UserActorKind[] = [
 export interface UserAuthLinkage {
   readonly provider: "auth0";
   readonly subject: string;
+  readonly status?: "LINKED" | "UNLINKED";
 }
 
 export interface UserProfile {
@@ -59,6 +60,7 @@ export interface UserRecord {
 export interface UserDetailAuthLinkageView {
   readonly provider: "auth0";
   readonly subject: string;
+  readonly status?: "LINKED" | "UNLINKED";
 }
 
 export interface UserDetailContextAccessView {
