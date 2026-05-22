@@ -599,6 +599,80 @@ export const PermissionContracts: PermissionContractRegistry =
   },
 
   /* =========================
+     KPI V2
+  ========================= */
+  [Permission.KPI_READ]: {
+    code: Permission.KPI_READ,
+    context: "ADMIN",
+    resource: "KPI",
+    auditAction: "kpi.read",
+    riskLevel: "LOW",
+  },
+  [Permission.KPI_CREATE_PLAN]: {
+    code: Permission.KPI_CREATE_PLAN,
+    context: "ADMIN",
+    resource: "KPI",
+    auditAction: "kpi.create-plan",
+    riskLevel: "CRITICAL",
+  },
+  [Permission.KPI_UPDATE_DRAFT]: {
+    code: Permission.KPI_UPDATE_DRAFT,
+    context: "ADMIN",
+    resource: "KPI",
+    auditAction: "kpi.update-draft",
+    riskLevel: "CRITICAL",
+  },
+  [Permission.KPI_PUBLISH]: {
+    code: Permission.KPI_PUBLISH,
+    context: "ADMIN",
+    resource: "KPI",
+    auditAction: "kpi.publish",
+    riskLevel: "CRITICAL",
+  },
+  [Permission.KPI_MANAGE_ALLOCATION]: {
+    code: Permission.KPI_MANAGE_ALLOCATION,
+    context: "ADMIN",
+    resource: "KPI",
+    auditAction: "kpi.manage-allocation",
+    riskLevel: "CRITICAL",
+  },
+  [Permission.KPI_ARCHIVE]: {
+    code: Permission.KPI_ARCHIVE,
+    context: "ADMIN",
+    resource: "KPI",
+    auditAction: "kpi.archive",
+    riskLevel: "CRITICAL",
+  },
+  [Permission.KPI_ENTER_ACTUAL]: {
+    code: Permission.KPI_ENTER_ACTUAL,
+    context: "ADMIN",
+    resource: "KPI_ACTUAL",
+    auditAction: "kpi.enter-actual",
+    riskLevel: "CRITICAL",
+  },
+  [Permission.KPI_CORRECT_ACTUAL]: {
+    code: Permission.KPI_CORRECT_ACTUAL,
+    context: "ADMIN",
+    resource: "KPI_ACTUAL",
+    auditAction: "kpi.correct-actual",
+    riskLevel: "CRITICAL",
+  },
+  [Permission.KPI_READ_PROGRESS]: {
+    code: Permission.KPI_READ_PROGRESS,
+    context: "ADMIN",
+    resource: "KPI_PROGRESS",
+    auditAction: "kpi.read-progress",
+    riskLevel: "LOW",
+  },
+  [Permission.KPI_FINALIZE]: {
+    code: Permission.KPI_FINALIZE,
+    context: "ADMIN",
+    resource: "KPI",
+    auditAction: "kpi.finalize",
+    riskLevel: "CRITICAL",
+  },
+
+  /* =========================
      COMMISSION
   ========================= */
   [Permission.COMMISSION_RULE_READ]: {

@@ -36,6 +36,7 @@ tools/
 !src/modules/event-assignment/event-assignment-target-filters.test.ts
 !src/modules/contract-registry/contract-registry-target-filters.test.ts
 !src/modules/talent-kpi/talent-kpi-target-filters.test.ts
+!src/modules/kpi/kpi-admin.service.test.ts
 !src/modules/revenue-ledger/revenue-ledger-target-filters.test.ts
 !src/modules/commission/commission-settlement-target-filters.test.ts
 !src/modules/work-schedule/work-schedule-reference-summaries.test.ts

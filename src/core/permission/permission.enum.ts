@@ -123,6 +123,20 @@ export enum Permission {
   TALENT_KPI_MANAGE_LIFECYCLE = "talentKpi.manageLifecycle",
 
   /* =========================
+     KPI V2
+  ========================= */
+  KPI_READ = "kpi.read",
+  KPI_CREATE_PLAN = "kpi.createPlan",
+  KPI_UPDATE_DRAFT = "kpi.updateDraft",
+  KPI_PUBLISH = "kpi.publish",
+  KPI_MANAGE_ALLOCATION = "kpi.manageAllocation",
+  KPI_ARCHIVE = "kpi.archive",
+  KPI_ENTER_ACTUAL = "kpi.enterActual",
+  KPI_CORRECT_ACTUAL = "kpi.correctActual",
+  KPI_READ_PROGRESS = "kpi.readProgress",
+  KPI_FINALIZE = "kpi.finalize",
+
+  /* =========================
      COMMISSION
   ========================= */
   COMMISSION_RULE_READ = "commissionRule.read",

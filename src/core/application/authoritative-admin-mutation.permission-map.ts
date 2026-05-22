@@ -121,6 +121,16 @@ export const AUTHORITATIVE_ADMIN_MUTATION_IDENTITIES = [
   "talent-kpi.replace-metrics",
   "talent-kpi.finalize",
   "talent-kpi.archive",
+  "kpi.create-plan",
+  "kpi.update-draft-core",
+  "kpi.replace-target-metrics",
+  "kpi.replace-allocations",
+  "kpi.publish",
+  "kpi.enter-actual",
+  "kpi.update-actual",
+  "kpi.correct-actual",
+  "kpi.finalize",
+  "kpi.archive",
   "commission.create-rule",
   "commission.update-rule-draft-core",
   "commission.activate-rule",
@@ -376,6 +386,18 @@ const ADMIN_MUTATION_PERMISSION_BY_IDENTITY: Readonly<
     Permission.TALENT_KPI_MANAGE_LIFECYCLE,
   "talent-kpi.archive":
     Permission.TALENT_KPI_MANAGE_LIFECYCLE,
+
+  "kpi.create-plan": Permission.KPI_CREATE_PLAN,
+  "kpi.update-draft-core": Permission.KPI_UPDATE_DRAFT,
+  "kpi.replace-target-metrics": Permission.KPI_UPDATE_DRAFT,
+  "kpi.replace-allocations":
+    Permission.KPI_MANAGE_ALLOCATION,
+  "kpi.publish": Permission.KPI_PUBLISH,
+  "kpi.enter-actual": Permission.KPI_ENTER_ACTUAL,
+  "kpi.update-actual": Permission.KPI_ENTER_ACTUAL,
+  "kpi.correct-actual": Permission.KPI_CORRECT_ACTUAL,
+  "kpi.finalize": Permission.KPI_FINALIZE,
+  "kpi.archive": Permission.KPI_ARCHIVE,
 
   "commission.create-rule":
     Permission.COMMISSION_RULE_CREATE,

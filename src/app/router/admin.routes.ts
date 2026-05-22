@@ -13,6 +13,7 @@ import { createWorkScheduleInfra } from "@infra/providers/work-schedule.infra";
 import { createEventAssignmentInfra } from "@infra/providers/event-assignment.infra";
 import { createContractRegistryInfra } from "@infra/providers/contract-registry.infra";
 import { createTalentKpiInfra } from "@infra/providers/talent-kpi.infra";
+import { createKpiInfra } from "@infra/providers/kpi.infra";
 import { createCommissionRevenueShareInfra } from "@infra/providers/commission.infra";
 import { createRevenueLedgerInfra } from "@infra/providers/revenue-ledger.infra";
 import { createDashboardLiteInfra } from "@infra/providers/dashboard-lite.infra";
@@ -126,6 +127,12 @@ import { TalentKpiAdminController } from "@modules/talent-kpi/admin/admin.talent
 import { TalentKpiAdminQueryController } from "@modules/talent-kpi/admin/admin.talent-kpi.query.controller";
 import { TalentKpiAdminService } from "@modules/talent-kpi/admin/admin.talent-kpi.service";
 import { TalentKpiAdminQueryService } from "@modules/talent-kpi/admin/admin.talent-kpi.query-service";
+
+/* KPI V2 */
+import { adminKpiRoutes } from "@modules/kpi/admin/admin.kpi.routes";
+import { KpiAdminController } from "@modules/kpi/admin/admin.kpi.controller";
+import { KpiAdminQueryController } from "@modules/kpi/admin/admin.kpi.query.controller";
+import { KpiAdminService } from "@modules/kpi/admin/admin.kpi.service";
 
 /* COMMISSION */
 import { adminCommissionRoutes } from "@modules/commission/admin/admin.commission.routes";
@@ -328,6 +335,13 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     talentKpiPlatformAccountReadonlyAccess,
     talentKpiEventReadonlyAccess,
   } = createTalentKpiInfra(infra.primaryDb);
+  const {
+    kpiPlanRepository,
+    kpiActualRepository,
+    kpiBusinessCodeSequenceRepository,
+    kpiSubjectReadonlyAccess,
+    talentGroupManagerAssignmentRepository,
+  } = createKpiInfra(infra.primaryDb);
   const {
     commissionRepository,
     businessCodeSequenceRepository: commissionBusinessCodeSequenceRepository,
@@ -699,6 +713,21 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     "/talent-kpi-records",
     adminTalentKpiRoutes(talentKpiController, talentKpiQueryController),
   );
+
+  /* KPI V2 */
+  const kpiService = new KpiAdminService(
+    kpiPlanRepository,
+    kpiActualRepository,
+    kpiBusinessCodeSequenceRepository,
+    kpiSubjectReadonlyAccess,
+    talentGroupManagerAssignmentRepository,
+    authoritativeAuditGuard,
+    adminMutationBridge,
+  );
+  const kpiController = new KpiAdminController(kpiService);
+  const kpiQueryController = new KpiAdminQueryController(kpiService);
+
+  r.use("/kpi", adminKpiRoutes(kpiController, kpiQueryController));
 
   /* COMMISSION */
   const commissionService = new CommissionAdminService(
