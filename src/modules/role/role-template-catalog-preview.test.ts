@@ -297,6 +297,109 @@ test("role template endpoints return catalog and preview without mutating roles"
   }
 });
 
+test("role assignment validates role code against target user actorKind", async () => {
+  const cases: Array<{
+    readonly roleCode: string;
+    readonly actorKind: "ADMIN" | "STAFF";
+    readonly allowed: boolean;
+    readonly errorPattern?: RegExp;
+  }> = [
+    {
+      roleCode: "HR_OPERATIONS",
+      actorKind: "STAFF",
+      allowed: false,
+      errorPattern: /HR_OPERATIONS requires an admin console account/u,
+    },
+    {
+      roleCode: "HR_OPERATIONS",
+      actorKind: "ADMIN",
+      allowed: true,
+    },
+    {
+      roleCode: "TEAM_MANAGER",
+      actorKind: "STAFF",
+      allowed: false,
+      errorPattern: /TEAM_MANAGER requires an admin console account/u,
+    },
+    {
+      roleCode: "TALENT_STAFF_SELF",
+      actorKind: "ADMIN",
+      allowed: false,
+      errorPattern:
+        /TALENT_STAFF_SELF requires a self-service staff account/u,
+    },
+    {
+      roleCode: "TALENT_STAFF_SELF",
+      actorKind: "STAFF",
+      allowed: true,
+    },
+    {
+      roleCode: "ADMIN_FULL",
+      actorKind: "STAFF",
+      allowed: false,
+      errorPattern: /ADMIN_FULL requires an admin console account/u,
+    },
+  ];
+
+  for (const testCase of cases) {
+    const roleRepository = new InMemoryRoleRepository();
+    const assignmentRepository =
+      new InMemoryUserRoleAssignmentRepository();
+    const service = new RoleAdminService(
+      roleRepository,
+      assignmentRepository,
+      new InMemoryRoleAssignmentRuleRepository(),
+      new InMemoryBusinessCodeSequenceRepository(),
+      new AlwaysAssignableUserAccess(testCase.actorKind),
+      new PermissiveAdminCapabilityRepository(),
+      createAuditGuard(),
+      new InlineMutationBridge(),
+      createActorSnapshotCacheInvalidator(),
+      noOpLogger,
+    );
+    const now = Date.now();
+    await roleRepository.insert(
+      {
+        id: `role-${testCase.roleCode}`,
+        code: testCase.roleCode,
+        name: testCase.roleCode,
+        description: null,
+        state: "ACTIVE",
+        permissions: [Permission.USER_VIEW],
+        delegationBand: "LIMITED",
+        maxDelegatableBand: "NONE",
+        createdAt: now,
+        updatedAt: now,
+        activatedAt: now,
+        archivedAt: null,
+      },
+      {} as ClientSession,
+    );
+
+    const action = () =>
+      bindTraceId(
+        `trace-role-actor-kind-${testCase.roleCode}-${testCase.actorKind}`,
+        async () =>
+          runWithDomainEventCollector(() =>
+            service.assignRoleToUser(createActor(ALL_PERMISSION_CODES), {
+              roleId: `role-${testCase.roleCode}`,
+              userId: "target-user",
+              reason: "ActorKind compatibility test",
+            }),
+          ),
+      );
+
+    if (testCase.allowed) {
+      await action();
+      assert.equal(assignmentRepository.insertCount, 1);
+    } else {
+      assert.ok(testCase.errorPattern);
+      await assert.rejects(action, testCase.errorPattern);
+      assert.equal(assignmentRepository.insertCount, 0);
+    }
+  }
+});
+
 test("create role from template persists explicit permissions and provenance only", async () => {
   const roleRepository = new InMemoryRoleRepository();
   const assignmentRepository =
@@ -685,10 +788,35 @@ class InMemoryRoleRepository implements RoleRepository {
   }
 
   async updateMetadata(
-    _input: UpdateRoleMetadataInput,
+    input: UpdateRoleMetadataInput,
     _session: ClientSession,
   ): Promise<RoleRecord | null> {
-    return null;
+    const index = this.inserted.findIndex((role) => role.id === input.roleId);
+    if (index < 0) {
+      return null;
+    }
+
+    const current = this.inserted[index];
+    if (!current) {
+      return null;
+    }
+
+    const updated: RoleRecord = {
+      ...current,
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      ...(input.description !== undefined
+        ? { description: input.description }
+        : {}),
+      ...(input.delegationBand !== undefined
+        ? { delegationBand: input.delegationBand }
+        : {}),
+      ...(input.maxDelegatableBand !== undefined
+        ? { maxDelegatableBand: input.maxDelegatableBand }
+        : {}),
+      updatedAt: input.updatedAt,
+    };
+    this.inserted[index] = updated;
+    return updated;
   }
 
   async transitionState(
@@ -826,8 +954,20 @@ class InMemoryUserRoleAssignmentRepository
 class AlwaysAssignableUserAccess
   implements RoleUserReadonlyAccess
 {
+  constructor(private readonly actorKind: "ADMIN" | "STAFF" = "ADMIN") {}
+
   async isAssignableById(): Promise<boolean> {
     return true;
+  }
+
+  async getAssignableById(): Promise<{
+    readonly id: string;
+    readonly actorKind: "ADMIN" | "STAFF";
+  } | null> {
+    return {
+      id: "target-user",
+      actorKind: this.actorKind,
+    };
   }
 }
 
@@ -848,6 +988,10 @@ class PermissiveAdminCapabilityRepository
 
   async hasActiveRoleAssignments(): Promise<boolean> {
     return true;
+  }
+
+  async listActiveAdminConsoleRoleCodesByUserId(): Promise<readonly string[]> {
+    return ["ADMIN_FULL"];
   }
 
   async listActiveDelegationCeilingsByUserId(): Promise<

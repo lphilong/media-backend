@@ -4,6 +4,7 @@ import {
   CreateUserInput,
   SetUserAuthLinkageInput,
   TransitionUserLifecycleInput,
+  UpdateUserActorKindInput,
   UpdateUserProfileInput,
   UserMutationRepository,
 } from "@modules/user/domain/user.repository";
@@ -97,6 +98,25 @@ export class UserRepository
     return doc ? UserMapper.toDomain(doc) : null;
   }
 
+  async findManyByAuthSubject(
+    authSubject: string,
+    session?: ClientSession,
+  ): Promise<readonly UserRecord[]> {
+    const docs = await this.collection
+      .find(
+        {
+          "authLinkage.provider": "auth0",
+          "authLinkage.subject": authSubject,
+          accountStatus: { $ne: "ARCHIVED" },
+        },
+        this.withSession(session),
+      )
+      .sort({ _id: 1 })
+      .toArray();
+
+    return docs.map((doc) => UserMapper.toDomain(doc));
+  }
+
   async findByEmail(
     email: string,
     session?: ClientSession,
@@ -112,6 +132,23 @@ export class UserRepository
     );
 
     return doc ? UserMapper.toDomain(doc) : null;
+  }
+
+  async findManyByEmail(
+    email: string,
+    session?: ClientSession,
+  ): Promise<readonly UserRecord[]> {
+    const docs = await this.collection
+      .find(
+        {
+          searchEmail: normalizeSearchField(email),
+        },
+        this.withSession(session),
+      )
+      .sort({ _id: 1 })
+      .toArray();
+
+    return docs.map((doc) => UserMapper.toDomain(doc));
   }
 
   async updateProfile(
@@ -222,6 +259,27 @@ export class UserRepository
       { _id: input.userId },
       {
         $set: set,
+      },
+      {
+        ...this.withSession(session),
+        returnDocument: "after",
+      },
+    );
+
+    return updated ? UserMapper.toDomain(updated) : null;
+  }
+
+  async updateActorKind(
+    input: UpdateUserActorKindInput,
+    session: ClientSession,
+  ): Promise<UserRecord | null> {
+    const updated = await this.collection.findOneAndUpdate(
+      { _id: input.userId },
+      {
+        $set: {
+          actorKind: input.actorKind,
+          updatedAt: input.updatedAt,
+        },
       },
       {
         ...this.withSession(session),

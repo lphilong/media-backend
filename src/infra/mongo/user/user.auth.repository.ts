@@ -44,6 +44,14 @@ const COMMISSION_SCOPE_GRANTS_ORDER: readonly CommissionActorScopeGrant[] =
   Object.freeze(["global"]);
 const DASHBOARD_LITE_SCOPE_GRANTS_ORDER: readonly DashboardLiteActorScopeGrant[] =
   Object.freeze(["global"]);
+const ADMIN_CONSOLE_ROLE_CODES: readonly string[] = Object.freeze([
+  "ADMIN_FULL",
+  "HR_OPERATIONS",
+  "TEAM_MANAGER",
+  "PRODUCTION_OPS",
+  "COMMERCIAL_FINANCE",
+  "VIEWER_AUDITOR",
+]);
 
 interface UserAuthResolutionAggregateDocument {
   readonly _id: string;
@@ -59,6 +67,10 @@ interface UserAuthResolutionAggregateDocument {
 
 interface ActiveRoleAssignmentProbeDocument {
   readonly hasActiveRoleAssignments?: unknown;
+}
+
+interface ActiveAdminConsoleRoleDocument {
+  readonly activeAdminConsoleRoleCodes?: readonly unknown[];
 }
 
 interface AuthSecurityVersionDocument {
@@ -196,6 +208,28 @@ export class MongoUserAuthRepository
       docs[0]?.hasActiveRoleAssignments,
       userId,
     );
+  }
+
+  async listActiveAdminConsoleRoleCodesByUserId(
+    userId: string,
+    session: ClientSession,
+  ): Promise<readonly string[]> {
+    const docs = await this.collection
+      .aggregate<ActiveAdminConsoleRoleDocument>(
+        buildActiveAdminConsoleRoleCodePipeline(userId),
+        { session },
+      )
+      .toArray();
+
+    if (docs.length === 0) {
+      return [];
+    }
+
+    return toSortedUniqueStrings(
+      docs[0]?.activeAdminConsoleRoleCodes,
+      "USER_AUTH_ADMIN_ROLE_CODE_INVALID",
+      `Invalid active admin-console role code for user ${userId}`,
+    ).filter((code) => ADMIN_CONSOLE_ROLE_CODES.includes(code));
   }
 
   async listActiveDelegationCeilingsByUserId(
@@ -784,6 +818,111 @@ function buildActiveRoleAssignmentProbePipeline(userId: string): Document[] {
         _id: 0,
         hasActiveRoleAssignments: {
           $gt: [{ $size: "$activeAssignments" }, 0],
+        },
+      },
+    },
+  ];
+}
+
+function buildActiveAdminConsoleRoleCodePipeline(userId: string): Document[] {
+  return [
+    {
+      $match: {
+        _id: userId,
+      },
+    },
+    {
+      $limit: 1,
+    },
+    {
+      $lookup: {
+        from: "role_assignments",
+        let: { userId: "$_id" },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ["$userId", "$$userId"] },
+                  { $eq: ["$state", "ACTIVE"] },
+                ],
+              },
+            },
+          },
+          {
+            $project: {
+              _id: 0,
+              roleId: 1,
+            },
+          },
+        ],
+        as: "activeAssignments",
+      },
+    },
+    {
+      $set: {
+        assignmentRoleIds: {
+          $setUnion: [
+            {
+              $map: {
+                input: "$activeAssignments",
+                as: "assignment",
+                in: "$$assignment.roleId",
+              },
+            },
+            [],
+          ],
+        },
+      },
+    },
+    {
+      $lookup: {
+        from: "roles",
+        let: { roleIds: "$assignmentRoleIds" },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $in: ["$_id", "$$roleIds"] },
+                  { $eq: ["$state", "ACTIVE"] },
+                  {
+                    $or: [
+                      { $in: ["$code", ADMIN_CONSOLE_ROLE_CODES] },
+                      { $in: ["$templateCode", ADMIN_CONSOLE_ROLE_CODES] },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+          {
+            $sort: { code: 1, _id: 1 },
+          },
+          {
+            $project: {
+              _id: 0,
+              code: { $ifNull: ["$templateCode", "$code"] },
+            },
+          },
+        ],
+        as: "activeAdminConsoleRoles",
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        activeAdminConsoleRoleCodes: {
+          $setUnion: [
+            {
+              $map: {
+                input: "$activeAdminConsoleRoles",
+                as: "role",
+                in: "$$role.code",
+              },
+            },
+            [],
+          ],
         },
       },
     },

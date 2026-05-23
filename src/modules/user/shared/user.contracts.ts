@@ -63,6 +63,16 @@ export interface SendPasswordSetupCommand {
   readonly userId: string;
 }
 
+export interface UpdateUserActorKindCommand {
+  readonly userId: string;
+  readonly actorKind: UserActorKind;
+  readonly reason: string;
+}
+
+export type PasswordSetupDeliveryMode =
+  | "auth0_email"
+  | "backend_ticket";
+
 export interface GetUserDetailQuery {
   readonly userId: string;
 }
@@ -81,9 +91,13 @@ export interface UserMutationResult {
     readonly credentialMode: "INVITE_LINK";
     readonly auth0UserCreated: boolean;
     readonly invitationTicketCreated: boolean;
+    readonly invitationEmailSent: boolean;
+    readonly passwordSetupDeliveryMode: PasswordSetupDeliveryMode;
   };
   readonly passwordSetup?: {
-    readonly ticketCreated: boolean;
+    readonly deliveryMode: PasswordSetupDeliveryMode;
+    readonly emailSent?: boolean;
+    readonly ticketCreated?: boolean;
   };
 }
 

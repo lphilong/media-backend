@@ -48,7 +48,9 @@ import {
   SendPasswordSetupCommand,
   SetAuthLinkageCommand,
   UnlinkAuthLinkageCommand,
+  UpdateUserActorKindCommand,
   UpdateUserCommand,
+  PasswordSetupDeliveryMode,
   UserMutationResult,
 } from "@modules/user/shared/user.contracts";
 import {
@@ -75,6 +77,7 @@ const GOVERNANCE_RECOVERY_PERMISSION_CODES: readonly string[] =
   Permission.USER_PROVISION_ACCOUNT,
   Permission.USER_AUTH_LINKAGE_UNLINK,
   Permission.USER_PASSWORD_SETUP_SEND,
+  Permission.USER_ACTOR_KIND_UPDATE,
   Permission.ROLE_CREATE,
   Permission.ROLE_UPDATE,
   Permission.ROLE_ACTIVATE,
@@ -106,6 +109,12 @@ type UserFailureClassification =
   | "invariant"
   | "unknown";
 
+interface PasswordSetupDeliveryResult {
+  readonly deliveryMode: PasswordSetupDeliveryMode;
+  readonly emailSent: boolean;
+  readonly ticketCreated: boolean;
+}
+
 export class UserLifecycleService {
   constructor(
     private readonly repository: UserMutationRepository,
@@ -116,6 +125,8 @@ export class UserLifecycleService {
     private readonly auth0Management: Auth0ManagementPort,
     private readonly provisioningOptions: {
       readonly databaseConnection: string;
+      readonly passwordResetClientId?: string;
+      readonly passwordSetupDeliveryMode: PasswordSetupDeliveryMode;
       readonly passwordSetupResultUrl?: string;
     },
     private readonly logger: StructuredLogger = createStructuredLogger(),
@@ -413,6 +424,126 @@ export class UserLifecycleService {
     );
   }
 
+  async updateActorKind(
+    actor: Actor,
+    command: UpdateUserActorKindCommand,
+  ): Promise<UserMutationResult> {
+    const mutationType = "user.actor-kind.update";
+    const permission = this.assertPermission(
+      actor,
+      Permission.USER_ACTOR_KIND_UPDATE,
+    );
+
+    const userId = normalizeRequiredText(
+      command.userId,
+      "userId",
+    );
+    const input = normalizeUpdateActorKindCommand(command);
+
+    return this.executeMutation(
+      actor,
+      permission,
+      mutationType,
+      {
+        userId: readOptionalLogString(command.userId),
+        actorKind: readOptionalLogString(command.actorKind),
+        reasonLength: input.reason.length,
+      },
+      async (session, controls) => {
+        const current = await this.requireUser(
+          userId,
+          session,
+        );
+
+        if (current.id === actor.id) {
+          throw new UserValidationError(
+            "Cannot update your own account type",
+          );
+        }
+
+        if (current.accountStatus === "ARCHIVED") {
+          throw new UserStateError(
+            `User in state ARCHIVED cannot execute operation: updateActorKind`,
+          );
+        }
+
+        if (current.actorKind === input.actorKind) {
+          throw new UserValidationError(
+            `User already has actorKind ${input.actorKind}`,
+          );
+        }
+
+        if (
+          current.actorKind === "ADMIN" &&
+          input.actorKind === "STAFF"
+        ) {
+          const activeAdminRoleCodes =
+            await this.adminCapabilityRepository.listActiveAdminConsoleRoleCodesByUserId(
+              userId,
+              session,
+            );
+
+          if (activeAdminRoleCodes.length > 0) {
+            throw new UserValidationError(
+              `Cannot convert ADMIN account to STAFF while active admin-console role assignments exist: ${activeAdminRoleCodes.join(", ")}`,
+            );
+          }
+        }
+
+        const updated = await this.repository.updateActorKind(
+          {
+            userId,
+            actorKind: input.actorKind,
+            updatedAt: Date.now(),
+          },
+          session,
+        );
+
+        if (!updated) {
+          throw new UserConflictError(
+            `Failed to update user actorKind: ${userId}`,
+          );
+        }
+
+        await this.recordUserAudit({
+          actor,
+          permission,
+          userId,
+          mutationType,
+          metadata: {
+            fromActorKind: current.actorKind,
+            toActorKind: updated.actorKind,
+            reasonLength: input.reason.length,
+            reason: input.reason,
+          },
+          session,
+        });
+
+        getCurrentDomainEventCollector().emit(
+          createUserUpdatedEvent({
+            userId,
+            changedFields: ["actorKind"],
+            aggregateVersion: updated.updatedAt,
+            occurredAt: updated.updatedAt,
+          }),
+        );
+
+        if (current.accountStatus === "ACTIVE") {
+          controls.markAuthSecurityTruthChanged();
+        }
+
+        return { user: updated };
+      },
+      (result) => ({
+        userId: result.user.id,
+        actorKind: result.user.actorKind,
+      }),
+      {
+        invalidateActorSnapshots: true,
+      },
+    );
+  }
+
   async provisionUser(
     actor: Actor,
     command: ProvisionUserCommand,
@@ -466,17 +597,13 @@ export class UserLifecycleService {
           );
         }
 
-        const ticket =
+        const passwordSetup =
           input.sendInvitation === false
             ? null
-            : await this.auth0Management.createPasswordChangeTicket(
-                {
-                  userId: auth0User.id,
-                  resultUrl:
-                    this.provisioningOptions
-                      .passwordSetupResultUrl,
-                },
-              );
+            : await this.deliverPasswordSetup({
+                auth0UserId: auth0User.id,
+                email: input.email,
+              });
 
         let created: UserRecord;
 
@@ -532,8 +659,14 @@ export class UserLifecycleService {
             emailHash: hashForAudit(input.email),
             auth0Subject: redactSubjectForAudit(auth0User.id),
             auth0UserCreated: existingAuth0User === null,
+            provider: "auth0",
+            deliveryMode:
+              this.provisioningOptions
+                .passwordSetupDeliveryMode,
+            invitationEmailSent:
+              passwordSetup?.emailSent === true,
             invitationTicketCreated:
-              ticket?.ticketCreated === true,
+              passwordSetup?.ticketCreated === true,
           },
           session,
         });
@@ -551,9 +684,21 @@ export class UserLifecycleService {
           provisioning: {
             credentialMode: "INVITE_LINK",
             auth0UserCreated: existingAuth0User === null,
+            invitationEmailSent:
+              passwordSetup?.emailSent === true,
             invitationTicketCreated:
-              ticket?.ticketCreated === true,
+              passwordSetup?.ticketCreated === true,
+            passwordSetupDeliveryMode:
+              this.provisioningOptions
+                .passwordSetupDeliveryMode,
           },
+          passwordSetup: passwordSetup
+            ? {
+                deliveryMode: passwordSetup.deliveryMode,
+                emailSent: passwordSetup.emailSent,
+                ticketCreated: passwordSetup.ticketCreated,
+              }
+            : undefined,
         };
       },
       (result) => ({
@@ -561,6 +706,10 @@ export class UserLifecycleService {
         accountStatus: result.user.accountStatus,
         invitationTicketCreated:
           result.provisioning?.invitationTicketCreated === true,
+        invitationEmailSent:
+          result.provisioning?.invitationEmailSent === true,
+        deliveryMode:
+          result.provisioning?.passwordSetupDeliveryMode,
       }),
     );
   }
@@ -1076,15 +1225,18 @@ export class UserLifecycleService {
           );
         }
 
-        const ticket =
-          await this.auth0Management.createPasswordChangeTicket(
-            {
-              userId: current.authLinkage.subject,
-              resultUrl:
-                this.provisioningOptions
-                  .passwordSetupResultUrl,
-            },
+        const email = current.profile.email;
+        if (!email) {
+          throw new UserValidationError(
+            "User must have an email address",
           );
+        }
+
+        const passwordSetup =
+          await this.deliverPasswordSetup({
+            auth0UserId: current.authLinkage.subject,
+            email,
+          });
 
         await this.recordUserAudit({
           actor,
@@ -1095,7 +1247,12 @@ export class UserLifecycleService {
             auth0Subject: redactSubjectForAudit(
               current.authLinkage.subject,
             ),
-            ticketCreated: ticket.ticketCreated === true,
+            provider: "auth0",
+            deliveryMode: passwordSetup.deliveryMode,
+            emailHash: hashForAudit(email),
+            emailSent: passwordSetup.emailSent === true,
+            ticketCreated:
+              passwordSetup.ticketCreated === true,
           },
           session,
         });
@@ -1103,15 +1260,20 @@ export class UserLifecycleService {
         return {
           user: current,
           passwordSetup: {
-            ticketCreated: ticket.ticketCreated,
+            deliveryMode: passwordSetup.deliveryMode,
+            emailSent: passwordSetup.emailSent,
+            ticketCreated: passwordSetup.ticketCreated,
           },
         };
       },
       (result) => ({
         userId: result.user.id,
         accountStatus: result.user.accountStatus,
+        emailSent:
+          result.passwordSetup?.emailSent === true,
         ticketCreated:
           result.passwordSetup?.ticketCreated === true,
+        deliveryMode: result.passwordSetup?.deliveryMode,
       }),
     );
   }
@@ -1349,6 +1511,43 @@ export class UserLifecycleService {
     }
   }
 
+  private async deliverPasswordSetup(params: {
+    readonly auth0UserId: string;
+    readonly email: string;
+  }): Promise<PasswordSetupDeliveryResult> {
+    const deliveryMode =
+      this.provisioningOptions.passwordSetupDeliveryMode;
+
+    if (deliveryMode === "auth0_email") {
+      await this.auth0Management.sendPasswordResetEmail({
+        email: params.email,
+        connection:
+          this.provisioningOptions.databaseConnection,
+        clientId:
+          this.provisioningOptions.passwordResetClientId,
+      });
+
+      return {
+        deliveryMode,
+        emailSent: true,
+        ticketCreated: false,
+      };
+    }
+
+    const ticket =
+      await this.auth0Management.createPasswordChangeTicket({
+        userId: params.auth0UserId,
+        resultUrl:
+          this.provisioningOptions.passwordSetupResultUrl,
+      });
+
+    return {
+      deliveryMode,
+      emailSent: false,
+      ticketCreated: ticket.ticketCreated,
+    };
+  }
+
   private async requireAuth0User(
     subject: string,
   ): Promise<Auth0ManagementUser> {
@@ -1405,6 +1604,11 @@ interface NormalizedSetAuthLinkageCommand {
   readonly userId: string;
   readonly provider: "auth0";
   readonly subject: string;
+}
+
+interface NormalizedUpdateActorKindCommand {
+  readonly actorKind: UserActorKind;
+  readonly reason: string;
 }
 
 function normalizeCreateCommand(
@@ -1603,6 +1807,26 @@ function normalizeOptionalText(
   return normalized;
 }
 
+function normalizeUpdateActorKindCommand(
+  command: UpdateUserActorKindCommand,
+): NormalizedUpdateActorKindCommand {
+  const reason = normalizeRequiredText(
+    command.reason,
+    "reason",
+  );
+
+  if (reason.length > 500) {
+    throw new UserValidationError(
+      "reason must be at most 500 characters",
+    );
+  }
+
+  return {
+    actorKind: normalizeActorKind(command.actorKind),
+    reason,
+  };
+}
+
 function normalizeRequiredEmail(
   input: unknown,
   field: string,
@@ -1643,7 +1867,7 @@ function normalizeActorKind(
   input: unknown,
 ): UserActorKind {
   if (input === undefined) {
-    return "STAFF";
+    return "ADMIN";
   }
 
   if (input === "ADMIN" || input === "STAFF") {

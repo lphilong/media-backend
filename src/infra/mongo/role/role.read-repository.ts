@@ -23,6 +23,7 @@ import {
   RoleState,
 } from "@modules/role/domain/role.types";
 import { RoleUserReadonlyAccess } from "@modules/role/domain/role-user-readonly-access";
+import { RoleAssignableUser } from "@modules/role/domain/role-user-readonly-access";
 import { isRoleTemplateCode } from "@modules/role/domain/role-template.catalog";
 
 interface RoleDocument {
@@ -71,6 +72,7 @@ interface RoleAssignmentDocument {
 
 interface UserDocument {
   readonly _id: string;
+  readonly actorKind: "ADMIN" | "STAFF";
   readonly profile: {
     readonly displayName: string;
     readonly email?: string;
@@ -329,6 +331,13 @@ export class NativeMongoRoleUserReadonlyAccess implements RoleUserReadonlyAccess
     userId: string,
     session?: ClientSession,
   ): Promise<boolean> {
+    return (await this.getAssignableById(userId, session)) !== null;
+  }
+
+  async getAssignableById(
+    userId: string,
+    session?: ClientSession,
+  ): Promise<RoleAssignableUser | null> {
     const user = await this.userCollection.findOne(
       {
         _id: userId,
@@ -337,12 +346,14 @@ export class NativeMongoRoleUserReadonlyAccess implements RoleUserReadonlyAccess
         archivedAt: null,
       },
       {
-        projection: { _id: 1 },
+        projection: { _id: 1, actorKind: 1 },
         ...(session ? { session } : {}),
       },
     );
 
-    return user !== null;
+    return user
+      ? { id: user._id, actorKind: user.actorKind }
+      : null;
   }
 }
 

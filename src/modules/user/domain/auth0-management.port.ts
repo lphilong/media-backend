@@ -16,6 +16,12 @@ export interface Auth0PasswordChangeTicketInput {
   readonly resultUrl?: string;
 }
 
+export interface Auth0PasswordResetEmailInput {
+  readonly email: string;
+  readonly connection: string;
+  readonly clientId?: string;
+}
+
 export interface Auth0ManagementPort {
   findUserByEmail(email: string): Promise<Auth0ManagementUser | null>;
 
@@ -28,4 +34,8 @@ export interface Auth0ManagementPort {
   createPasswordChangeTicket(
     input: Auth0PasswordChangeTicketInput,
   ): Promise<{ readonly ticketCreated: true; readonly ticketUrl?: string }>;
+
+  sendPasswordResetEmail(
+    input: Auth0PasswordResetEmailInput,
+  ): Promise<void>;
 }

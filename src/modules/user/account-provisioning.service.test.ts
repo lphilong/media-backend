@@ -27,6 +27,7 @@ import {
   Auth0ManagementPort,
   Auth0ManagementUser,
   Auth0PasswordChangeTicketInput,
+  Auth0PasswordResetEmailInput,
 } from "@modules/user/domain/auth0-management.port";
 import { UserAdminCapabilityRepository } from "@modules/user/domain/user.admin-capability.repository";
 import {
@@ -106,7 +107,7 @@ test("user detail exposure keeps existing auth linkage detail fields", () => {
 
 const ALL_PERMISSIONS = Object.values(Permission);
 
-test("provision user creates internal user, links Auth0, and creates invite ticket", async () => {
+test("provision user creates internal user, links Auth0, and sends Auth0 setup email", async () => {
   const repo = new InMemoryUserRepository();
   const auth0 = new MockAuth0Management();
   const audit = new RecordingAuditGuard();
@@ -120,10 +121,18 @@ test("provision user creates internal user, links Auth0, and creates invite tick
   );
 
   assert.equal(repo.records.length, 1);
+  assert.equal(result.user.actorKind, "ADMIN");
   assert.equal(result.user.profile.email, "jane.admin@example.test");
   assert.equal(result.user.authLinkage.subject, "auth0|jane.admin");
   assert.equal(result.provisioning?.auth0UserCreated, true);
-  assert.equal(result.provisioning?.invitationTicketCreated, true);
+  assert.equal(result.provisioning?.invitationEmailSent, true);
+  assert.equal(result.provisioning?.invitationTicketCreated, false);
+  assert.equal(
+    result.provisioning?.passwordSetupDeliveryMode,
+    "auth0_email",
+  );
+  assert.equal(result.passwordSetup?.emailSent, true);
+  assert.equal(result.passwordSetup?.ticketCreated, false);
   assert.equal(auth0.createUserCalls.length, 1);
   assert.equal(typeof auth0.createUserCalls[0]?.password, "string");
   assert.match(auth0.createUserCalls[0]?.password ?? "", /[A-Z]/u);
@@ -131,14 +140,20 @@ test("provision user creates internal user, links Auth0, and creates invite tick
   assert.match(auth0.createUserCalls[0]?.password ?? "", /[0-9]/u);
   assert.match(auth0.createUserCalls[0]?.password ?? "", /[!#]/u);
   assert.ok((auth0.createUserCalls[0]?.password.length ?? 0) >= 32);
-  assert.equal(auth0.ticketCalls.length, 1);
+  assert.equal(auth0.emailCalls.length, 1);
+  assert.deepEqual(auth0.emailCalls[0], {
+    email: "jane.admin@example.test",
+    connection: "Username-Password-Authentication",
+    clientId: "client-id",
+  });
+  assert.equal(auth0.ticketCalls.length, 0);
 
   const serializedResult = JSON.stringify(result);
   const serializedAudit = JSON.stringify(audit.records);
-  assert.equal(serializedResult.includes("password"), false);
   assert.equal(serializedResult.includes("ticket.example.test"), false);
-  assert.equal(serializedAudit.includes("password"), false);
   assert.equal(serializedAudit.includes("ticket.example.test"), false);
+  assert.equal(serializedResult.includes("TempSecret"), false);
+  assert.equal(serializedAudit.includes("TempSecret"), false);
 });
 
 test("duplicate email rejects before Auth0 mutation", async () => {
@@ -215,7 +230,8 @@ test("existing Auth0 user by email is reused without creating password", async (
   assert.equal(result.user.authLinkage.subject, "auth0|existing");
   assert.equal(result.provisioning?.auth0UserCreated, false);
   assert.equal(auth0.createUserCalls.length, 0);
-  assert.equal(auth0.ticketCalls.length, 1);
+  assert.equal(auth0.emailCalls.length, 1);
+  assert.equal(auth0.ticketCalls.length, 0);
 });
 
 test("manual auth link validates Auth0 subject and rejects duplicates", async () => {
@@ -293,10 +309,14 @@ test("unlink blocks self lockout and audits successful unlink", async () => {
   assert.equal(bridge.authSecurityChanged, 1);
 });
 
-test("password setup calls Auth0 ticket port and audits without returning ticket URL", async () => {
+test("password setup sends Auth0 email and audits without returning ticket URL", async () => {
   const repo = new InMemoryUserRepository();
   repo.records.push(
-    userRecord({ id: "setup-user", authSubject: "auth0|setup" }),
+    userRecord({
+      id: "setup-user",
+      email: "setup@example.test",
+      authSubject: "auth0|setup",
+    }),
   );
   const auth0 = new MockAuth0Management();
   const audit = new RecordingAuditGuard();
@@ -309,14 +329,100 @@ test("password setup calls Auth0 ticket port and audits without returning ticket
   );
   const serialized = JSON.stringify(result);
 
-  assert.equal(auth0.ticketCalls.length, 1);
-  assert.equal(result.passwordSetup?.ticketCreated, true);
+  assert.equal(auth0.emailCalls.length, 1);
+  assert.equal(auth0.ticketCalls.length, 0);
+  assert.equal(result.passwordSetup?.deliveryMode, "auth0_email");
+  assert.equal(result.passwordSetup?.emailSent, true);
+  assert.equal(result.passwordSetup?.ticketCreated, false);
   assert.equal(serialized.includes("ticket.example.test"), false);
   assert.equal(serialized.includes("secret"), false);
   assert.equal(
     audit.records[0]?.metadata.mutationType,
     "user.password-setup.send",
   );
+  assert.equal(
+    audit.records[0]?.metadata.deliveryMode,
+    "auth0_email",
+  );
+  assert.equal(audit.records[0]?.metadata.provider, "auth0");
+  assert.equal(audit.records[0]?.metadata.emailSent, true);
+  assert.equal(audit.records[0]?.metadata.ticketCreated, false);
+  const serializedAudit = JSON.stringify(audit.records);
+  assert.equal(serializedAudit.includes("setup@example.test"), false);
+  assert.equal(serializedAudit.includes("ticket.example.test"), false);
+});
+
+test("password setup backend_ticket mode creates ticket but does not claim email sent", async () => {
+  const repo = new InMemoryUserRepository();
+  repo.records.push(
+    userRecord({
+      id: "setup-ticket-user",
+      email: "setup-ticket@example.test",
+      authSubject: "auth0|setup-ticket",
+    }),
+  );
+  const auth0 = new MockAuth0Management();
+  const service = createService(repo, auth0, undefined, undefined, {
+    passwordSetupDeliveryMode: "backend_ticket",
+  });
+
+  const result = await runService(() =>
+    service.sendPasswordSetup(createActor(ALL_PERMISSIONS), {
+      userId: "setup-ticket-user",
+    }),
+  );
+
+  assert.equal(auth0.emailCalls.length, 0);
+  assert.equal(auth0.ticketCalls.length, 1);
+  assert.equal(result.passwordSetup?.deliveryMode, "backend_ticket");
+  assert.equal(result.passwordSetup?.emailSent, false);
+  assert.equal(result.passwordSetup?.ticketCreated, true);
+  assert.equal(
+    JSON.stringify(result).includes("ticket.example.test"),
+    false,
+  );
+});
+
+test("password setup rejects unlinked and missing email users before Auth0 delivery", async () => {
+  const repo = new InMemoryUserRepository();
+  repo.records.push(
+    userRecord({
+      id: "setup-unlinked",
+      email: "setup-unlinked@example.test",
+      authSubject: "unlinked:setup-unlinked",
+      authStatus: "UNLINKED",
+    }),
+    userRecord({
+      id: "setup-missing-email",
+      email: undefined,
+      authSubject: "auth0|missing-email",
+    }),
+  );
+  const auth0 = new MockAuth0Management();
+  const service = createService(repo, auth0);
+
+  await assert.rejects(
+    () =>
+      runService(() =>
+        service.sendPasswordSetup(createActor(ALL_PERMISSIONS), {
+          userId: "setup-unlinked",
+        }),
+      ),
+    /linked Auth0 identity/,
+  );
+
+  await assert.rejects(
+    () =>
+      runService(() =>
+        service.sendPasswordSetup(createActor(ALL_PERMISSIONS), {
+          userId: "setup-missing-email",
+        }),
+      ),
+    /email address/,
+  );
+
+  assert.equal(auth0.emailCalls.length, 0);
+  assert.equal(auth0.ticketCalls.length, 0);
 });
 
 test("legacy manual create rejects explicit auth binding fields", async () => {
@@ -370,6 +476,7 @@ test("legacy manual create creates pending unlinked internal user", async () => 
 
 test("Auth0 HTTP client sends database password and redacts HTTP failures", async () => {
   const userBodies: unknown[] = [];
+  const resetEmailBodies: unknown[] = [];
   const http = {
     async post(url: string, body: unknown): Promise<{ data: unknown }> {
       if (url === "/oauth/token") {
@@ -389,6 +496,23 @@ test("Auth0 HTTP client sends database password and redacts HTTP failures", asyn
             email: "adapter@example.test",
           },
         };
+      }
+
+      if (url === "/dbconnections/change_password") {
+        if (
+          typeof body === "object" &&
+          body !== null &&
+          !Array.isArray(body) &&
+          (body as Record<string, unknown>).email ===
+            "adapter@example.test"
+        ) {
+          resetEmailBodies.push(body);
+          return {
+            data: "We have just sent you an email to reset your password.",
+          };
+        }
+
+        resetEmailBodies.push(body);
       }
 
       throw auth0AxiosError();
@@ -415,6 +539,17 @@ test("Auth0 HTTP client sends database password and redacts HTTP failures", asyn
     verify_email: false,
   });
 
+  await client.sendPasswordResetEmail({
+    email: "adapter@example.test",
+    connection: "Username-Password-Authentication",
+  });
+
+  assert.deepEqual(resetEmailBodies[0], {
+    client_id: "reset-client-id",
+    email: "adapter@example.test",
+    connection: "Username-Password-Authentication",
+  });
+
   for (const operation of [
     () => client.findUserByEmail("leak@example.test"),
     () =>
@@ -422,6 +557,11 @@ test("Auth0 HTTP client sends database password and redacts HTTP failures", asyn
         userId: "auth0|leaky",
       }),
     () => client.getUserById("auth0|leaky"),
+    () =>
+      client.sendPasswordResetEmail({
+        email: "leak@example.test",
+        connection: "Username-Password-Authentication",
+      }),
   ]) {
     await assert.rejects(operation, assertRedactedAuth0Error);
   }
@@ -491,6 +631,161 @@ test("new account provisioning mutations resolve to dedicated permissions", () =
     ).code,
     Permission.USER_PASSWORD_SETUP_SEND,
   );
+  assert.equal(
+    resolveAuthoritativePermissionForMutationIdentity(
+      "user.actor-kind.update",
+    ).code,
+    Permission.USER_ACTOR_KIND_UPDATE,
+  );
+});
+
+test("actorKind conversion requires reason and rejects self-update", async () => {
+  const repo = new InMemoryUserRepository();
+  const service = createService(repo, new MockAuth0Management());
+  const now = Date.now();
+  await repo.insert({
+    id: "target-user",
+    accountStatus: "ACTIVE",
+    actorKind: "STAFF",
+    authLinkage: {
+      provider: "auth0",
+      subject: "auth0|target",
+      status: "LINKED",
+    },
+    profile: {
+      displayName: "Target User",
+      email: "target@example.test",
+    },
+    contextAccess: { contexts: ["ADMIN"] },
+    preferences: {},
+    createdAt: now,
+    updatedAt: now,
+    activatedAt: now,
+    disabledAt: null,
+    archivedAt: null,
+  });
+
+  await assert.rejects(
+    () =>
+      runService(() =>
+        service.updateActorKind(createActor(ALL_PERMISSIONS), {
+          userId: "target-user",
+          actorKind: "ADMIN",
+          reason: " ",
+        }),
+      ),
+    /reason is required/u,
+  );
+
+  await assert.rejects(
+    () =>
+      runService(() =>
+        service.updateActorKind(createActor(ALL_PERMISSIONS, "target-user"), {
+          userId: "target-user",
+          actorKind: "ADMIN",
+          reason: "Promote for HR console access",
+        }),
+      ),
+    /Cannot update your own account type/u,
+  );
+});
+
+test("actorKind conversion STAFF to ADMIN audits and invalidates auth security", async () => {
+  const repo = new InMemoryUserRepository();
+  const audit = new RecordingAuditGuard();
+  const bridge = new InlineMutationBridge();
+  const service = createService(
+    repo,
+    new MockAuth0Management(),
+    audit,
+    bridge,
+  );
+  const now = Date.now();
+  await repo.insert({
+    id: "target-user",
+    accountStatus: "ACTIVE",
+    actorKind: "STAFF",
+    authLinkage: {
+      provider: "auth0",
+      subject: "auth0|target",
+      status: "LINKED",
+    },
+    profile: {
+      displayName: "Target User",
+      email: "target@example.test",
+    },
+    contextAccess: { contexts: ["ADMIN"] },
+    preferences: {},
+    createdAt: now,
+    updatedAt: now,
+    activatedAt: now,
+    disabledAt: null,
+    archivedAt: null,
+  });
+
+  const result = await runService(() =>
+    service.updateActorKind(createActor(ALL_PERMISSIONS), {
+      userId: "target-user",
+      actorKind: "ADMIN",
+      reason: "Promote for HR console access",
+    }),
+  );
+
+  assert.equal(result.user.actorKind, "ADMIN");
+  assert.equal(bridge.authSecurityChanged, 1);
+  const latestAuditRecord = audit.records[audit.records.length - 1];
+  assert.equal(latestAuditRecord?.metadata.fromActorKind, "STAFF");
+  assert.equal(latestAuditRecord?.metadata.toActorKind, "ADMIN");
+  assert.equal(
+    latestAuditRecord?.metadata.reason,
+    "Promote for HR console access",
+  );
+});
+
+test("actorKind conversion ADMIN to STAFF is blocked by active admin-console roles", async () => {
+  const repo = new InMemoryUserRepository();
+  const service = createService(
+    repo,
+    new MockAuth0Management(),
+    new RecordingAuditGuard(),
+    new InlineMutationBridge(),
+    {},
+    new AdminRoleCapabilityRepository(["HR_OPERATIONS"]),
+  );
+  const now = Date.now();
+  await repo.insert({
+    id: "target-user",
+    accountStatus: "ACTIVE",
+    actorKind: "ADMIN",
+    authLinkage: {
+      provider: "auth0",
+      subject: "auth0|target",
+      status: "LINKED",
+    },
+    profile: {
+      displayName: "Target User",
+      email: "target@example.test",
+    },
+    contextAccess: { contexts: ["ADMIN"] },
+    preferences: {},
+    createdAt: now,
+    updatedAt: now,
+    activatedAt: now,
+    disabledAt: null,
+    archivedAt: null,
+  });
+
+  await assert.rejects(
+    () =>
+      runService(() =>
+        service.updateActorKind(createActor(ALL_PERMISSIONS), {
+          userId: "target-user",
+          actorKind: "STAFF",
+          reason: "Move to self-service only",
+        }),
+      ),
+    /active admin-console role assignments exist: HR_OPERATIONS/u,
+  );
 });
 
 function createService(
@@ -498,17 +793,25 @@ function createService(
   auth0: Auth0ManagementPort,
   audit: RecordingAuditGuard = new RecordingAuditGuard(),
   bridge: InlineMutationBridge = new InlineMutationBridge(),
+  provisioningOptions: Partial<
+    ConstructorParameters<typeof UserLifecycleService>[6]
+  > = {},
+  capabilityRepository: UserAdminCapabilityRepository =
+    new PermissiveCapabilityRepository(),
 ): UserLifecycleService {
   return new UserLifecycleService(
     repo,
-    new PermissiveCapabilityRepository(),
+    capabilityRepository,
     audit as unknown as AuditGuard,
     bridge,
     { async invalidateAll() {} } as unknown as ActorSnapshotCacheInvalidator,
     auth0,
     {
       databaseConnection: "Username-Password-Authentication",
+      passwordResetClientId: "client-id",
+      passwordSetupDeliveryMode: "auth0_email",
       passwordSetupResultUrl: "https://app.example.test/password-ready",
+      ...provisioningOptions,
     },
     {
       info() {},
@@ -546,6 +849,8 @@ function auth0Config(): ConstructorParameters<
     clientId: "client-id",
     clientSecret: "client-secret",
     databaseConnection: "Username-Password-Authentication",
+    passwordResetClientId: "reset-client-id",
+    passwordSetupDeliveryMode: "auth0_email",
   };
 }
 
@@ -587,8 +892,10 @@ class MockAuth0Management implements Auth0ManagementPort {
   readonly usersById = new Map<string, Auth0ManagementUser>();
   readonly createUserCalls: Auth0CreateDatabaseUserInput[] = [];
   readonly ticketCalls: Auth0PasswordChangeTicketInput[] = [];
+  readonly emailCalls: Auth0PasswordResetEmailInput[] = [];
   getUserCalls = 0;
   failCreate = false;
+  failEmail = false;
 
   async findUserByEmail(email: string): Promise<Auth0ManagementUser | null> {
     const normalized = email.trim().toLowerCase();
@@ -628,6 +935,16 @@ class MockAuth0Management implements Auth0ManagementPort {
       ticketCreated: true,
       ticketUrl: "https://ticket.example.test/secret-ticket",
     };
+  }
+
+  async sendPasswordResetEmail(
+    input: Auth0PasswordResetEmailInput,
+  ): Promise<void> {
+    if (this.failEmail) {
+      throw new Error("Auth0 email failed");
+    }
+
+    this.emailCalls.push(input);
   }
 }
 
@@ -742,6 +1059,27 @@ class InMemoryUserRepository implements UserMutationRepository {
     return updated;
   }
 
+  async updateActorKind(
+    input: {
+      readonly userId: string;
+      readonly actorKind: "ADMIN" | "STAFF";
+      readonly updatedAt: number;
+    },
+  ): Promise<UserRecord | null> {
+    const current = await this.findById(input.userId);
+    if (!current) {
+      return null;
+    }
+
+    const updated = {
+      ...current,
+      actorKind: input.actorKind,
+      updatedAt: input.updatedAt,
+    };
+    this.replace(updated);
+    return updated;
+  }
+
   private replace(record: UserRecord): void {
     const index = this.records.findIndex((item) => item.id === record.id);
     assert.notEqual(index, -1);
@@ -765,6 +1103,10 @@ class PermissiveCapabilityRepository implements UserAdminCapabilityRepository {
     return false;
   }
 
+  async listActiveAdminConsoleRoleCodesByUserId(): Promise<readonly string[]> {
+    return [];
+  }
+
   async listActiveDelegationCeilingsByUserId(): Promise<
     readonly "PRIVILEGED"[]
   > {
@@ -775,6 +1117,18 @@ class PermissiveCapabilityRepository implements UserAdminCapabilityRepository {
     readonly string[]
   > {
     return ["admin-user", "target-user"];
+  }
+}
+
+class AdminRoleCapabilityRepository extends PermissiveCapabilityRepository {
+  constructor(private readonly roleCodes: readonly string[]) {
+    super();
+  }
+
+  override async listActiveAdminConsoleRoleCodesByUserId(): Promise<
+    readonly string[]
+  > {
+    return this.roleCodes;
   }
 }
 
@@ -828,6 +1182,7 @@ function userRecord(params: {
   readonly id?: string;
   readonly email?: string;
   readonly authSubject?: string;
+  readonly authStatus?: "LINKED" | "UNLINKED";
   readonly accountStatus?: UserAccountStatus;
 }): UserRecord {
   const now = Date.now();
@@ -838,7 +1193,7 @@ function userRecord(params: {
     authLinkage: {
       provider: "auth0",
       subject: params.authSubject ?? `auth0|${params.id ?? "user"}`,
-      status: "LINKED",
+      status: params.authStatus ?? "LINKED",
     },
     profile: {
       displayName: params.id ?? "User",

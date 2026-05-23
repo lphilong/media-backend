@@ -40,6 +40,7 @@ const KNOWN_ENV_KEYS = [
   "AUTH0_MANAGEMENT_CLIENT_ID",
   "AUTH0_MANAGEMENT_CLIENT_SECRET",
   "AUTH0_DATABASE_CONNECTION",
+  "PASSWORD_SETUP_DELIVERY_MODE",
   "AUTH0_PASSWORD_SETUP_RESULT_URL",
   "ENCRYPTION_KEY",
   "LOG_LEVEL",
@@ -508,6 +509,9 @@ const envSchema = z
       .string()
       .trim()
       .min(1)
+      .optional(),
+    PASSWORD_SETUP_DELIVERY_MODE: z
+      .enum(["auth0_email", "backend_ticket"])
       .optional(),
     AUTH0_PASSWORD_SETUP_RESULT_URL: z
       .string()

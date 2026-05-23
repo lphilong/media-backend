@@ -1,0 +1,496 @@
+import path from "node:path";
+import dotenv from "dotenv";
+import { Db, MongoClient } from "mongodb";
+import { clearEnvCacheForTests, getEnv } from "@config/env";
+import { RoleRecord } from "@modules/role/domain/role.types";
+import {
+  getRoleTemplate,
+  isRoleTemplateCode,
+  normalizeRoleTemplateCode,
+  RoleTemplateCode,
+} from "@modules/role/domain/role-template.catalog";
+
+export type RuntimeRoleSyncMode = "dry-run" | "write";
+
+export class RuntimeRoleSyncError extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "RuntimeRoleSyncError";
+    this.code = code;
+  }
+}
+
+export interface RuntimeRoleSyncInput {
+  readonly roleCode: string;
+  readonly mode: RuntimeRoleSyncMode;
+  readonly mongoDbName?: string;
+}
+
+export interface RuntimeRoleSyncSummary {
+  readonly roleCode: RoleTemplateCode;
+  readonly mongoDbName?: string;
+  readonly mode: RuntimeRoleSyncMode;
+  readonly roleExists: boolean;
+  readonly missingPermissions: readonly string[];
+  readonly extraPermissions: readonly string[];
+  readonly updateNeeded: boolean;
+  readonly updated: boolean;
+  readonly created: false;
+}
+
+interface RuntimeRoleSyncRepository
+{
+  findByCode(code: string): Promise<RoleRecord | null>;
+  replacePermissions(input: {
+    readonly roleId: string;
+    readonly permissions: readonly string[];
+    readonly updatedAt: number;
+  }): Promise<RoleRecord | null>;
+}
+
+interface RuntimeRoleSyncDependencies {
+  readonly roleRepository: RuntimeRoleSyncRepository;
+  readonly now?: () => number;
+}
+
+const TARGET_ROLE_CODE: RoleTemplateCode = "ADMIN_FULL";
+
+export class RuntimeRoleSyncService {
+  constructor(private readonly deps: RuntimeRoleSyncDependencies) {}
+
+  async run(
+    input: RuntimeRoleSyncInput,
+  ): Promise<RuntimeRoleSyncSummary> {
+    const roleCode = normalizeTargetRoleCode(input.roleCode);
+    const template = getRoleTemplate(roleCode);
+    if (!template) {
+      throw new RuntimeRoleSyncError(
+        "RUNTIME_ROLE_SYNC_TEMPLATE_MISSING",
+        `Runtime role sync template is missing: ${roleCode}`,
+      );
+    }
+
+    const role = await this.deps.roleRepository.findByCode(roleCode);
+    if (!role) {
+      if (input.mode === "write") {
+        throw new RuntimeRoleSyncError(
+          "RUNTIME_ROLE_SYNC_ROLE_MISSING",
+          `Runtime role does not exist and will not be created: ${roleCode}`,
+        );
+      }
+
+      return buildSummary({
+        input,
+        roleCode,
+        role: null,
+        templatePermissions: template.permissions,
+        updated: false,
+      });
+    }
+
+    assertSafeRuntimeRole(role, roleCode);
+    const summary = buildSummary({
+      input,
+      roleCode,
+      role,
+      templatePermissions: template.permissions,
+      updated: false,
+    });
+
+    if (input.mode === "dry-run" || !summary.updateNeeded) {
+      return summary;
+    }
+
+    const permissions = mergePermissionCodeSets(
+      role.permissions,
+      summary.missingPermissions,
+    );
+    const updated = await this.deps.roleRepository.replacePermissions({
+      roleId: role.id,
+      permissions,
+      updatedAt: this.now(),
+    });
+    if (!updated) {
+      throw new RuntimeRoleSyncError(
+        "RUNTIME_ROLE_SYNC_UPDATE_FAILED",
+        `Failed to update runtime role permissions: ${roleCode}`,
+      );
+    }
+
+    return buildSummary({
+      input,
+      roleCode,
+      role: updated,
+      templatePermissions: template.permissions,
+      updated: true,
+    });
+  }
+
+  private now(): number {
+    return this.deps.now?.() ?? Date.now();
+  }
+}
+
+export function createRuntimeRoleSyncService(params: {
+  readonly mongoClient: MongoClient;
+  readonly mongoDbName: string;
+}): RuntimeRoleSyncService {
+  return new RuntimeRoleSyncService({
+    roleRepository: new MongoRuntimeRoleSyncRepository(
+      params.mongoClient.db(params.mongoDbName),
+    ),
+  });
+}
+
+interface RuntimeRoleDocument {
+  readonly _id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly description: string | null;
+  readonly state: RoleRecord["state"];
+  readonly permissions: readonly string[];
+  readonly delegationBand?: RoleRecord["delegationBand"];
+  readonly maxDelegatableBand?: RoleRecord["maxDelegatableBand"];
+  readonly templateCode?: string;
+  readonly templateVersion?: string;
+  readonly templateAppliedAt?: number;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly activatedAt: number | null;
+  readonly archivedAt: number | null;
+}
+
+class MongoRuntimeRoleSyncRepository implements RuntimeRoleSyncRepository {
+  private readonly roles;
+
+  constructor(db: Db) {
+    this.roles = db.collection<RuntimeRoleDocument>("roles");
+  }
+
+  async findByCode(code: string): Promise<RoleRecord | null> {
+    const doc = await this.roles.findOne({ code });
+    return doc ? toRoleRecord(doc) : null;
+  }
+
+  async replacePermissions(input: {
+    readonly roleId: string;
+    readonly permissions: readonly string[];
+    readonly updatedAt: number;
+  }): Promise<RoleRecord | null> {
+    const doc = await this.roles.findOneAndUpdate(
+      { _id: input.roleId, code: TARGET_ROLE_CODE, state: "ACTIVE" },
+      {
+        $set: {
+          permissions: [...input.permissions],
+          updatedAt: input.updatedAt,
+        },
+      },
+      { returnDocument: "after" },
+    );
+
+    return doc ? toRoleRecord(doc) : null;
+  }
+}
+
+function toRoleRecord(document: RuntimeRoleDocument): RoleRecord {
+  return {
+    id: document._id,
+    code: document.code,
+    name: document.name,
+    description: document.description,
+    state: document.state,
+    permissions: [...document.permissions],
+    delegationBand: document.delegationBand ?? "LIMITED",
+    maxDelegatableBand: document.maxDelegatableBand ?? "NONE",
+    ...(typeof document.templateCode === "string" &&
+    isRoleTemplateCode(document.templateCode)
+      ? { templateCode: document.templateCode }
+      : {}),
+    ...(typeof document.templateVersion === "string"
+      ? { templateVersion: document.templateVersion }
+      : {}),
+    ...(typeof document.templateAppliedAt === "number"
+      ? { templateAppliedAt: document.templateAppliedAt }
+      : {}),
+    createdAt: document.createdAt,
+    updatedAt: document.updatedAt,
+    activatedAt: document.activatedAt,
+    archivedAt: document.archivedAt,
+  };
+}
+
+function buildSummary(params: {
+  readonly input: RuntimeRoleSyncInput;
+  readonly roleCode: RoleTemplateCode;
+  readonly role: RoleRecord | null;
+  readonly templatePermissions: readonly string[];
+  readonly updated: boolean;
+}): RuntimeRoleSyncSummary {
+  const currentPermissions = params.role?.permissions ?? [];
+  const missingPermissions = setDifference(
+    params.templatePermissions,
+    currentPermissions,
+  );
+  const extraPermissions = setDifference(
+    currentPermissions,
+    params.templatePermissions,
+  );
+
+  return Object.freeze({
+    roleCode: params.roleCode,
+    ...(params.input.mongoDbName
+      ? { mongoDbName: params.input.mongoDbName }
+      : {}),
+    mode: params.input.mode,
+    roleExists: params.role !== null,
+    missingPermissions,
+    extraPermissions,
+    updateNeeded: missingPermissions.length > 0,
+    updated: params.updated,
+    created: false as const,
+  });
+}
+
+export function formatRuntimeRoleSyncSummary(
+  summary: RuntimeRoleSyncSummary,
+): string {
+  return [
+    "Runtime role sync summary",
+    `mode: ${summary.mode}`,
+    `db: ${summary.mongoDbName ?? "not-provided"}`,
+    `role: ${summary.roleCode}`,
+    `roleExists: ${summary.roleExists}`,
+    `missingPermissions: ${formatList(summary.missingPermissions)}`,
+    `extraPermissions: ${formatList(summary.extraPermissions)}`,
+    `updateNeeded: ${summary.updateNeeded}`,
+    `updated: ${summary.updated}`,
+    `created: ${summary.created}`,
+  ].join("\n");
+}
+
+function normalizeTargetRoleCode(value: string): RoleTemplateCode {
+  const normalized = normalizeRoleTemplateCode(value);
+  if (normalized !== TARGET_ROLE_CODE) {
+    throw new RuntimeRoleSyncError(
+      "RUNTIME_ROLE_SYNC_UNSUPPORTED_ROLE",
+      "Runtime role sync currently supports ADMIN_FULL only",
+    );
+  }
+
+  return TARGET_ROLE_CODE;
+}
+
+function assertSafeRuntimeRole(
+  role: RoleRecord,
+  expectedCode: RoleTemplateCode,
+): void {
+  if (role.code !== expectedCode) {
+    throw new RuntimeRoleSyncError(
+      "RUNTIME_ROLE_SYNC_ROLE_CODE_CONFLICT",
+      `Runtime role code mismatch: ${expectedCode}`,
+    );
+  }
+
+  if (role.state !== "ACTIVE") {
+    throw new RuntimeRoleSyncError(
+      "RUNTIME_ROLE_SYNC_ROLE_STATE_CONFLICT",
+      `Runtime role exists but is not ACTIVE: ${expectedCode}`,
+    );
+  }
+}
+
+function mergePermissionCodeSets(
+  current: readonly string[],
+  additions: readonly string[],
+): readonly string[] {
+  return [...new Set([...current, ...additions])];
+}
+
+function setDifference(
+  left: readonly string[],
+  right: readonly string[],
+): readonly string[] {
+  const rightSet = new Set(right);
+  return [...new Set(left)].filter((value) => !rightSet.has(value));
+}
+
+function formatList(values: readonly string[]): string {
+  return values.length > 0 ? values.join(", ") : "none";
+}
+
+interface CliOptions {
+  readonly envFile?: string;
+  readonly roleCode: string;
+  readonly mode: RuntimeRoleSyncMode;
+  readonly help: boolean;
+}
+
+export function parseCliArgs(argv: readonly string[]): CliOptions {
+  let envFile: string | undefined;
+  let roleCode: string = TARGET_ROLE_CODE;
+  let confirm = false;
+  let dryRun = false;
+  let help = false;
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--help" || arg === "-h") {
+      help = true;
+      continue;
+    }
+
+    if (arg === "--confirm-runtime-role-sync") {
+      confirm = true;
+      continue;
+    }
+
+    if (arg === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+
+    if (arg === "--env-file" || arg === "--role") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--")) {
+        throw new RuntimeRoleSyncError(
+          "RUNTIME_ROLE_SYNC_CLI_VALUE_MISSING",
+          `${arg} requires a value`,
+        );
+      }
+
+      if (arg === "--env-file") {
+        envFile = value;
+      } else {
+        roleCode = value;
+      }
+      index += 1;
+      continue;
+    }
+
+    throw new RuntimeRoleSyncError(
+      "RUNTIME_ROLE_SYNC_CLI_FLAG_UNSUPPORTED",
+      `Unsupported CLI flag: ${arg ?? ""}`,
+    );
+  }
+
+  if (confirm && dryRun) {
+    throw new RuntimeRoleSyncError(
+      "RUNTIME_ROLE_SYNC_CLI_MODE_CONFLICT",
+      "--dry-run cannot be combined with --confirm-runtime-role-sync",
+    );
+  }
+
+  if (confirm && !envFile) {
+    throw new RuntimeRoleSyncError(
+      "RUNTIME_ROLE_SYNC_ENV_FILE_REQUIRED_FOR_WRITE",
+      "Runtime role sync write mode requires --env-file",
+    );
+  }
+
+  if (confirm && !isDevEnvFile(envFile)) {
+    throw new RuntimeRoleSyncError(
+      "RUNTIME_ROLE_SYNC_ENV_FILE_MUST_BE_DEV",
+      "Runtime role sync write mode requires --env-file .env.dev",
+    );
+  }
+
+  normalizeTargetRoleCode(roleCode);
+
+  return {
+    ...(envFile ? { envFile } : {}),
+    roleCode: normalizeTargetRoleCode(roleCode),
+    mode: confirm ? "write" : "dry-run",
+    help,
+  };
+}
+
+function helpText(): string {
+  return [
+    "Runtime role sync",
+    "",
+    "Dry run:",
+    "  npm run role:sync-runtime -- --env-file .env.dev --role ADMIN_FULL --dry-run",
+    "",
+    "Write mode:",
+    "  npm run role:sync-runtime -- --env-file .env.dev --role ADMIN_FULL --confirm-runtime-role-sync",
+    "",
+    "Notes:",
+    "  Only ADMIN_FULL is supported.",
+    "  Write mode union-adds missing template permissions and never creates roles.",
+  ].join("\n");
+}
+
+function isDevEnvFile(value: string | undefined): boolean {
+  return value !== undefined && path.basename(value) === ".env.dev";
+}
+
+function assertSafeRuntimeForWrite(): void {
+  const nodeEnv = process.env.NODE_ENV?.trim().toLowerCase();
+  if (nodeEnv === "production") {
+    throw new RuntimeRoleSyncError(
+      "RUNTIME_ROLE_SYNC_PRODUCTION_FORBIDDEN",
+      "Runtime role sync write mode is forbidden when NODE_ENV=production",
+    );
+  }
+}
+
+async function runCli(): Promise<void> {
+  const options = parseCliArgs(process.argv.slice(2));
+  if (options.help) {
+    console.log(helpText());
+    return;
+  }
+
+  if (options.envFile) {
+    dotenv.config({
+      path: path.resolve(process.cwd(), options.envFile),
+      override: true,
+    });
+    clearEnvCacheForTests();
+  }
+
+  if (options.mode === "write") {
+    assertSafeRuntimeForWrite();
+  }
+
+  const env = getEnv();
+  const client = new MongoClient(env.MONGO_URI, {
+    maxPoolSize: env.MONGO_MAX_POOL_SIZE,
+  });
+
+  try {
+    await client.connect();
+    const service = createRuntimeRoleSyncService({
+      mongoClient: client,
+      mongoDbName: env.MONGO_DB_NAME,
+    });
+    const summary = await service.run({
+      roleCode: options.roleCode,
+      mode: options.mode,
+      mongoDbName: env.MONGO_DB_NAME,
+    });
+    console.log(formatRuntimeRoleSyncSummary(summary));
+  } finally {
+    await client.close();
+  }
+}
+
+if (require.main === module) {
+  runCli().catch((error: unknown) => {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Runtime role sync failed";
+    console.error(redactForOutput(message));
+    process.exitCode = 1;
+  });
+}
+
+function redactForOutput(value: string): string {
+  return value
+    .replace(/auth0\|[^\s]+/giu, "[redacted-auth0-subject]")
+    .replace(/(password|secret|token|ticket)=\S+/giu, "$1=[redacted]")
+    .replace(/mongodb(\+srv)?:\/\/\S+/giu, "[redacted-mongo-uri]");
+}

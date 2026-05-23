@@ -24,6 +24,14 @@ export interface UserAdminCapabilityRepository {
   ): Promise<boolean>;
 
   /**
+   * Returns active admin-console role codes/template codes assigned to a user.
+   */
+  listActiveAdminConsoleRoleCodesByUserId(
+    userId: string,
+    session: ClientSession,
+  ): Promise<readonly string[]>;
+
+  /**
    * Returns delegation ceilings from ACTIVE role assignments resolved against ACTIVE roles.
    */
   listActiveDelegationCeilingsByUserId(

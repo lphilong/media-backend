@@ -204,6 +204,11 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     {
       databaseConnection:
         auth0ManagementConfig?.databaseConnection ?? "",
+      passwordResetClientId:
+        auth0ManagementConfig?.passwordResetClientId,
+      passwordSetupDeliveryMode:
+        auth0ManagementConfig?.passwordSetupDeliveryMode ??
+        "auth0_email",
       passwordSetupResultUrl:
         auth0ManagementConfig?.passwordSetupResultUrl,
     },

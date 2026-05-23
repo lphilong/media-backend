@@ -105,6 +105,13 @@ export const PermissionContracts: PermissionContractRegistry =
     auditAction: "user.password_setup.send",
     riskLevel: "CRITICAL",
   },
+  [Permission.USER_ACTOR_KIND_UPDATE]: {
+    code: Permission.USER_ACTOR_KIND_UPDATE,
+    context: "ADMIN",
+    resource: "USER",
+    auditAction: "user.actor_kind.update",
+    riskLevel: "CRITICAL",
+  },
 
   /* =========================
      ROLE

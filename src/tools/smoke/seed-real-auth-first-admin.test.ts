@@ -1,8 +1,46 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { Actor } from "@core/actor/actor";
+import { ClientSession } from "mongodb";
+import { Actor, ActorScopeGrants } from "@core/actor/actor";
 import { Permission } from "@core/permission/permission.enum";
+import {
+  ReplaceRolePermissionsInput,
+  TransitionRoleStateInput,
+  UpdateRoleMetadataInput,
+} from "@modules/role/domain/role.repository";
+import {
+  RoleRecord as BootstrapRoleRecord,
+  RoleState as BootstrapRoleState,
+  UserRoleAssignmentRecord as BootstrapRoleAssignmentRecord,
+} from "@modules/role/domain/role.types";
+import {
+  ROLE_TEMPLATE_CODES,
+  getRoleTemplate,
+} from "@modules/role/domain/role-template.catalog";
+import {
+  CreateUserInput,
+  SetUserAuthLinkageInput,
+  TransitionUserLifecycleInput,
+  UpdateUserProfileInput,
+} from "@modules/user/domain/user.repository";
+import {
+  UserRecord,
+} from "@modules/user/domain/user.types";
+import {
+  Auth0ManagementUser,
+} from "@modules/user/domain/auth0-management.port";
+import {
+  FirstAdminBootstrapAuth0Port,
+  FirstAdminBootstrapAssignmentRepository,
+  FirstAdminBootstrapError,
+  FirstAdminBootstrapRoleRepository,
+  FirstAdminBootstrapService,
+  FirstAdminBootstrapTransactionRunner,
+  FirstAdminBootstrapUserRepository,
+  formatFirstAdminBootstrapSummary,
+  parseCliArgs,
+} from "./first-admin-bootstrap";
 import {
   buildExpectedRoleAssignmentDocument,
   buildExpectedRoleDocument,
@@ -550,6 +588,390 @@ test("help output does not include raw secret-looking env values or service URLs
   assert.doesNotMatch(output, /user:pass/u);
 });
 
+test("first-admin bootstrap creates seven runtime roles when missing", async () => {
+  const fixture = createFirstAdminFixture();
+
+  const summary = await fixture.run();
+
+  assert.equal(summary.roles.created, 7);
+  assert.equal(fixture.roles.records.size, 7);
+  assert.deepEqual(
+    [...fixture.roles.records.keys()].sort(),
+    [...ROLE_TEMPLATE_CODES].sort(),
+  );
+});
+
+test("first-admin bootstrap reuses existing runtime roles", async () => {
+  const fixture = createFirstAdminFixture();
+  fixture.roles.addRuntimeRoles();
+
+  const summary = await fixture.run();
+
+  assert.equal(summary.roles.created, 0);
+  assert.equal(summary.roles.reused, 7);
+});
+
+test("first-admin bootstrap fails if Auth0 email is missing or ambiguous", async () => {
+  const missing = createFirstAdminFixture();
+  missing.auth0.usersByEmail.clear();
+  await assert.rejects(
+    () => missing.run(),
+    bootstrapErrorWithCode("FIRST_ADMIN_AUTH0_USER_NOT_FOUND"),
+  );
+
+  const ambiguous = createFirstAdminFixture();
+  ambiguous.auth0.usersByEmail.set("admin@gmail.com", [
+    { id: "auth0|admin-a", email: "admin@gmail.com" },
+    { id: "auth0|admin-b", email: "admin@gmail.com" },
+  ]);
+  await assert.rejects(
+    () => ambiguous.run(),
+    bootstrapErrorWithCode("FIRST_ADMIN_AUTH0_EMAIL_AMBIGUOUS"),
+  );
+});
+
+test("first-admin bootstrap creates ACTIVE LINKED user from Auth0", async () => {
+  const fixture = createFirstAdminFixture();
+
+  await fixture.run();
+
+  assert.equal(fixture.users.records.length, 1);
+  assert.equal(fixture.users.records[0]?.accountStatus, "ACTIVE");
+  assert.equal(fixture.users.records[0]?.actorKind, "ADMIN");
+  assert.deepEqual(fixture.users.records[0]?.authLinkage, {
+    provider: "auth0",
+    subject: "auth0|admin-user",
+    status: "LINKED",
+  });
+});
+
+test("first-admin bootstrap repairs same-subject user missing LINKED", async () => {
+  const fixture = createFirstAdminFixture();
+  fixture.users.records.push(
+    makeBootstrapUser({
+      id: "existing-user",
+      status: "UNLINKED",
+      accountStatus: "PENDING",
+    }),
+  );
+
+  const summary = await fixture.run();
+
+  assert.equal(summary.adminUser.action, "updated");
+  assert.equal(fixture.users.records.length, 1);
+  assert.equal(fixture.users.records[0]?.accountStatus, "ACTIVE");
+  assert.equal(fixture.users.records[0]?.authLinkage.status, "LINKED");
+});
+
+test("first-admin bootstrap fails closed on duplicate same-subject internal users before assignment writes", async () => {
+  const fixture = createFirstAdminFixture();
+  fixture.roles.addRuntimeRoles();
+  fixture.users.records.push(
+    makeBootstrapUser({ id: "duplicate-user-a" }),
+    makeBootstrapUser({
+      id: "duplicate-user-b",
+      email: "other-admin@gmail.com",
+    }),
+  );
+
+  await assert.rejects(
+    () => fixture.run(),
+    bootstrapErrorWithCode("FIRST_ADMIN_INTERNAL_SUBJECT_AMBIGUOUS"),
+  );
+  assert.equal(fixture.assignments.insertCalls, 0);
+  assert.equal(fixture.assignments.updateScopeGrantsCalls, 0);
+});
+
+test("first-admin bootstrap fails on same-email different-subject conflict", async () => {
+  const fixture = createFirstAdminFixture();
+  fixture.users.records.push(
+    makeBootstrapUser({
+      id: "conflict-user",
+      subject: "auth0|other",
+      email: "admin@gmail.com",
+    }),
+  );
+
+  await assert.rejects(
+    () => fixture.run(),
+    bootstrapErrorWithCode("FIRST_ADMIN_EMAIL_DIFFERENT_SUBJECT"),
+  );
+});
+
+test("first-admin bootstrap fails closed on duplicate active ADMIN_FULL assignments", async () => {
+  const fixture = createFirstAdminFixture();
+  fixture.roles.addRuntimeRoles();
+  fixture.users.records.push(makeBootstrapUser({ id: "existing-user" }));
+  const adminRole = fixture.roles.records.get("ADMIN_FULL");
+  assert.ok(adminRole);
+  fixture.assignments.records.push(
+    makeBootstrapAssignment({
+      assignmentId: "assignment-a",
+      roleId: adminRole.id,
+      userId: "existing-user",
+    }),
+    makeBootstrapAssignment({
+      assignmentId: "assignment-b",
+      roleId: adminRole.id,
+      userId: "existing-user",
+    }),
+  );
+
+  await assert.rejects(
+    () => fixture.run(),
+    bootstrapErrorWithCode("FIRST_ADMIN_ASSIGNMENT_AMBIGUOUS"),
+  );
+  assert.equal(fixture.assignments.insertCalls, 0);
+  assert.equal(fixture.assignments.updateScopeGrantsCalls, 0);
+});
+
+test("first-admin bootstrap assigns ADMIN_FULL and scope grants", async () => {
+  const fixture = createFirstAdminFixture();
+
+  await fixture.run();
+
+  const adminRole = fixture.roles.records.get("ADMIN_FULL");
+  assert.ok(adminRole);
+  assert.equal(fixture.assignments.records.length, 1);
+  assert.equal(fixture.assignments.records[0]?.roleId, adminRole.id);
+  assert.equal(
+    fixture.assignments.records[0]?.userId,
+    fixture.users.records[0]?.id,
+  );
+  assert.deepEqual(fixture.assignments.records[0]?.scopeGrants, {
+    workSchedule: ["global"],
+    eventAssignment: ["global"],
+    contractRegistry: ["global"],
+    talentKpi: ["global"],
+    kpi: ["global"],
+    revenueLedger: ["global"],
+    commission: ["global"],
+    dashboardLite: ["global"],
+  });
+});
+
+test("first-admin bootstrap repairs missing scopes and preserves existing scopes", async () => {
+  const fixture = createFirstAdminFixture();
+  fixture.roles.addRuntimeRoles();
+  fixture.users.records.push(makeBootstrapUser({ id: "existing-user" }));
+  const adminRole = fixture.roles.records.get("ADMIN_FULL");
+  assert.ok(adminRole);
+  fixture.assignments.records.push({
+    assignmentId: "existing-assignment",
+    roleId: adminRole.id,
+    userId: "existing-user",
+    scopeGrants: {
+      workSchedule: ["self"],
+      kpi: ["self"],
+    },
+    state: "ACTIVE",
+    effectiveAt: 1,
+    revokedAt: null,
+    reason: null,
+    createdAt: 1,
+    updatedAt: 1,
+  });
+
+  const summary = await fixture.run();
+
+  assert.equal(summary.assignment.action, "updated");
+  assert.deepEqual(fixture.assignments.records[0]?.scopeGrants, {
+    workSchedule: ["self", "global"],
+    eventAssignment: ["global"],
+    contractRegistry: ["global"],
+    talentKpi: ["global"],
+    kpi: ["global", "self"],
+    revenueLedger: ["global"],
+    commission: ["global"],
+    dashboardLite: ["global"],
+  });
+});
+
+test("first-admin bootstrap rerun is idempotent and creates no six-account set", async () => {
+  const fixture = createFirstAdminFixture();
+
+  await fixture.run();
+  const second = await fixture.run();
+
+  assert.equal(second.roles.created, 0);
+  assert.equal(second.roles.reused, 7);
+  assert.equal(second.adminUser.action, "reused");
+  assert.equal(second.assignment.action, "reused");
+  assert.equal(fixture.users.records.length, 1);
+  assert.equal(fixture.assignments.records.length, 1);
+  assert.equal(fixture.roles.records.size, 7);
+});
+
+test("first-admin bootstrap repairs safely missing runtime role provenance in write mode", async () => {
+  const fixture = createFirstAdminFixture();
+  fixture.roles.addRuntimeRoles();
+  const role = fixture.roles.records.get("VIEWER_AUDITOR");
+  assert.ok(role);
+  fixture.roles.records.set("VIEWER_AUDITOR", {
+    ...role,
+    templateCode: undefined,
+    templateVersion: undefined,
+    templateAppliedAt: undefined,
+  });
+
+  const summary = await fixture.run();
+
+  assert.equal(summary.roles.updated, 1);
+  assert.equal(
+    fixture.roles.records.get("VIEWER_AUDITOR")?.templateCode,
+    "VIEWER_AUDITOR",
+  );
+});
+
+test("first-admin bootstrap reports missing runtime role provenance in dry-run without writes", async () => {
+  const fixture = createFirstAdminFixture();
+  fixture.roles.addRuntimeRoles();
+  const role = fixture.roles.records.get("HR_OPERATIONS");
+  assert.ok(role);
+  fixture.roles.records.set("HR_OPERATIONS", {
+    ...role,
+    templateCode: undefined,
+    templateVersion: undefined,
+    templateAppliedAt: undefined,
+  });
+
+  const summary = await fixture.run("dry-run");
+
+  assert.equal(summary.roles.wouldUpdate, 1);
+  assert.equal(fixture.roles.templateMetadataUpdateCalls, 0);
+});
+
+test("first-admin bootstrap fails on conflicting runtime role provenance", async () => {
+  const fixture = createFirstAdminFixture();
+  fixture.roles.addRuntimeRoles();
+  const role = fixture.roles.records.get("HR_OPERATIONS");
+  assert.ok(role);
+  fixture.roles.records.set("HR_OPERATIONS", {
+    ...role,
+    templateCode: "ADMIN_FULL",
+  });
+
+  await assert.rejects(
+    () => fixture.run(),
+    bootstrapErrorWithCode("FIRST_ADMIN_ROLE_TEMPLATE_CONFLICT"),
+  );
+});
+
+test("first-admin bootstrap fails on unsafe non-admin delegation metadata", async () => {
+  const fixture = createFirstAdminFixture();
+  fixture.roles.addRuntimeRoles();
+  const role = fixture.roles.records.get("TEAM_MANAGER");
+  assert.ok(role);
+  fixture.roles.records.set("TEAM_MANAGER", {
+    ...role,
+    maxDelegatableBand: "PRIVILEGED",
+  });
+
+  await assert.rejects(
+    () => fixture.run(),
+    bootstrapErrorWithCode("FIRST_ADMIN_ROLE_DELEGATION_CONFLICT"),
+  );
+});
+
+test("first-admin bootstrap fails on runtime role permission mismatch", async () => {
+  const fixture = createFirstAdminFixture();
+  fixture.roles.addRuntimeRoles();
+  const role = fixture.roles.records.get("VIEWER_AUDITOR");
+  assert.ok(role);
+  fixture.roles.records.set("VIEWER_AUDITOR", {
+    ...role,
+    permissions: [],
+  });
+
+  await assert.rejects(
+    () => fixture.run(),
+    bootstrapErrorWithCode("FIRST_ADMIN_ROLE_PERMISSION_CONFLICT"),
+  );
+});
+
+test("first-admin bootstrap does not delete existing SMOKE_REAL_AUTH_ADMIN role", async () => {
+  const fixture = createFirstAdminFixture();
+  fixture.roles.records.set("SMOKE_REAL_AUTH_ADMIN", {
+    id: "legacy-smoke-role",
+    code: "SMOKE_REAL_AUTH_ADMIN",
+    name: "Smoke Real Auth Admin",
+    description: "legacy",
+    state: "ACTIVE",
+    permissions: [],
+    delegationBand: "LIMITED",
+    maxDelegatableBand: "NONE",
+    createdAt: 1,
+    updatedAt: 1,
+    activatedAt: 1,
+    archivedAt: null,
+  });
+
+  await fixture.run();
+
+  assert.ok(fixture.roles.records.get("SMOKE_REAL_AUTH_ADMIN"));
+  assert.equal(fixture.roles.records.size, 8);
+});
+
+test("first-admin bootstrap safe output omits subject and secret terms", async () => {
+  const fixture = createFirstAdminFixture();
+
+  const summary = await fixture.run();
+  const output = formatFirstAdminBootstrapSummary(summary);
+
+  assert.doesNotMatch(output, /auth0\|admin-user/u);
+  assert.doesNotMatch(output, /admin@gmail\.com/u);
+  assert.match(output, /a\*\*\*@g\*\*\*\.com/u);
+  assert.doesNotMatch(output, /secret|token|ticket/iu);
+});
+
+test("first-admin bootstrap CLI defaults to dry-run and confirm switches to write", () => {
+  assert.equal(parseCliArgs([]).mode, "dry-run");
+  assert.equal(parseCliArgs(["--dry-run"]).mode, "dry-run");
+  assert.equal(
+    parseCliArgs(["--confirm-bootstrap-first-admin"]).mode,
+    "write",
+  );
+  assert.throws(
+    () =>
+      parseCliArgs([
+        "--dry-run",
+        "--confirm-bootstrap-first-admin",
+      ]),
+    bootstrapErrorWithCode("FIRST_ADMIN_CLI_MODE_CONFLICT"),
+  );
+});
+
+test("first-admin bootstrap package script does not embed confirm flag", () => {
+  const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as {
+    readonly scripts?: Record<string, string>;
+  };
+
+  assert.equal(
+    packageJson.scripts?.["smoke:bootstrap:first-admin"],
+    "ts-node -r tsconfig-paths/register src/tools/smoke/first-admin-bootstrap.ts",
+  );
+  assert.doesNotMatch(
+    packageJson.scripts?.["smoke:bootstrap:first-admin"] ?? "",
+    /confirm-bootstrap-first-admin/u,
+  );
+});
+
+test("first-admin bootstrap dry-run does not call write repository methods", async () => {
+  const fixture = createFirstAdminFixture();
+
+  const summary = await fixture.run("dry-run");
+
+  assert.equal(summary.mode, "dry-run");
+  assert.equal(summary.roles.wouldCreate, 7);
+  assert.equal(fixture.roles.insertCalls, 0);
+  assert.equal(fixture.roles.templateMetadataUpdateCalls, 0);
+  assert.equal(fixture.users.insertCalls, 0);
+  assert.equal(fixture.users.updateProfileCalls, 0);
+  assert.equal(fixture.users.setAuthLinkageCalls, 0);
+  assert.equal(fixture.assignments.insertCalls, 0);
+  assert.equal(fixture.assignments.updateScopeGrantsCalls, 0);
+});
+
 function matchesFilter(
   document: Record<string, unknown>,
   filter: Record<string, unknown>,
@@ -577,4 +999,491 @@ function readPath(
 
       return (current as Record<string, unknown>)[part];
     }, document);
+}
+
+function createFirstAdminFixture() {
+  const auth0 = new BootstrapFakeAuth0();
+  const roles = new BootstrapFakeRoleRepository();
+  const users = new BootstrapFakeUserRepository();
+  const assignments = new BootstrapFakeAssignmentRepository();
+  let nextId = 1;
+  const service = new FirstAdminBootstrapService({
+    auth0Management: auth0,
+    roleRepository: roles,
+    userRepository: users,
+    assignmentRepository: assignments,
+    transactionRunner: new BootstrapFakeTransactionRunner(),
+    now: () => NOW,
+    idFactory: () => `first-admin-id-${nextId++}`,
+  });
+
+  return {
+    auth0,
+    roles,
+    users,
+    assignments,
+    run: (mode: "dry-run" | "write" = "write") =>
+      service.run({
+        email: "admin@gmail.com",
+        displayName: "Admin",
+        mode,
+        mongoDbName: "media-dev",
+        auth0ManagementConfigured: true,
+      }),
+  };
+}
+
+function bootstrapErrorWithCode(code: string) {
+  return (error: unknown): boolean => {
+    assert.ok(error instanceof FirstAdminBootstrapError);
+    assert.equal(error.code, code);
+    return true;
+  };
+}
+
+class BootstrapFakeAuth0 implements FirstAdminBootstrapAuth0Port {
+  readonly usersByEmail = new Map<
+    string,
+    Auth0ManagementUser | readonly Auth0ManagementUser[]
+  >([
+    [
+      "admin@gmail.com",
+      { id: "auth0|admin-user", email: "admin@gmail.com" },
+    ],
+  ]);
+
+  async findUserByEmail(
+    email: string,
+  ): Promise<Auth0ManagementUser | readonly Auth0ManagementUser[] | null> {
+    return this.usersByEmail.get(email.trim().toLowerCase()) ?? null;
+  }
+}
+
+class BootstrapFakeTransactionRunner
+  implements FirstAdminBootstrapTransactionRunner
+{
+  async run<T>(
+    operation: (session: ClientSession) => Promise<T>,
+  ): Promise<T> {
+    return operation({} as ClientSession);
+  }
+}
+
+class BootstrapFakeRoleRepository implements FirstAdminBootstrapRoleRepository {
+  readonly records = new Map<string, BootstrapRoleRecord>();
+  insertCalls = 0;
+  templateMetadataUpdateCalls = 0;
+
+  addRuntimeRoles(): void {
+    for (const code of ROLE_TEMPLATE_CODES) {
+      const template = getRoleTemplate(code);
+      assert.ok(template);
+      this.records.set(code, {
+        id: `role-${code}`,
+        code,
+        name: template.name,
+        description: template.description,
+        state: "ACTIVE",
+        permissions: [...template.permissions],
+        delegationBand: code === "ADMIN_FULL" ? "PRIVILEGED" : "LIMITED",
+        maxDelegatableBand: code === "ADMIN_FULL" ? "PRIVILEGED" : "NONE",
+        templateCode: template.code,
+        templateVersion: template.version,
+        templateAppliedAt: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        activatedAt: 1,
+        archivedAt: null,
+      });
+    }
+  }
+
+  async insert(role: BootstrapRoleRecord): Promise<BootstrapRoleRecord> {
+    this.insertCalls += 1;
+    this.records.set(role.code, role);
+    return role;
+  }
+
+  async findById(roleId: string): Promise<BootstrapRoleRecord | null> {
+    return (
+      [...this.records.values()].find((role) => role.id === roleId) ?? null
+    );
+  }
+
+  async findByCode(code: string): Promise<BootstrapRoleRecord | null> {
+    return this.records.get(code) ?? null;
+  }
+
+  async findRawByCode(code: string): Promise<BootstrapRoleRecord | null> {
+    return this.findByCode(code);
+  }
+
+  async findMaxGeneratedCodeSequence(): Promise<number> {
+    return 0;
+  }
+
+  async updateMetadata(
+    input: UpdateRoleMetadataInput,
+  ): Promise<BootstrapRoleRecord | null> {
+    const role = await this.findById(input.roleId);
+    if (!role) {
+      return null;
+    }
+
+    const updated = {
+      ...role,
+      updatedAt: input.updatedAt,
+      ...(input.name ? { name: input.name } : {}),
+      ...(input.description !== undefined
+        ? { description: input.description }
+        : {}),
+    };
+    this.records.set(updated.code, updated);
+    return updated;
+  }
+
+  async updateTemplateMetadata(input: {
+    readonly roleId: string;
+    readonly templateCode: BootstrapRoleRecord["templateCode"];
+    readonly templateVersion: string;
+    readonly templateAppliedAt: number;
+    readonly updatedAt: number;
+  }): Promise<BootstrapRoleRecord | null> {
+    this.templateMetadataUpdateCalls += 1;
+    const role = await this.findById(input.roleId);
+    if (!role || !input.templateCode) {
+      return null;
+    }
+
+    const updated = {
+      ...role,
+      templateCode: input.templateCode,
+      templateVersion: input.templateVersion,
+      templateAppliedAt: input.templateAppliedAt,
+      updatedAt: input.updatedAt,
+    };
+    this.records.set(updated.code, updated);
+    return updated;
+  }
+
+  async transitionState(
+    input: TransitionRoleStateInput,
+  ): Promise<BootstrapRoleRecord | null> {
+    const role = await this.findById(input.roleId);
+    if (!role || !input.fromStates.includes(role.state as BootstrapRoleState)) {
+      return null;
+    }
+
+    const updated = {
+      ...role,
+      state: input.toState,
+      updatedAt: input.changedAt,
+    };
+    this.records.set(updated.code, updated);
+    return updated;
+  }
+
+  async replacePermissions(
+    input: ReplaceRolePermissionsInput,
+  ): Promise<BootstrapRoleRecord | null> {
+    const role = await this.findById(input.roleId);
+    if (!role) {
+      return null;
+    }
+
+    const updated = {
+      ...role,
+      permissions: [...input.permissions],
+      updatedAt: input.updatedAt,
+    };
+    this.records.set(updated.code, updated);
+    return updated;
+  }
+}
+
+class BootstrapFakeUserRepository
+  implements FirstAdminBootstrapUserRepository
+{
+  readonly records: UserRecord[] = [];
+  insertCalls = 0;
+  updateProfileCalls = 0;
+  setAuthLinkageCalls = 0;
+
+  async insert(input: CreateUserInput): Promise<UserRecord> {
+    this.insertCalls += 1;
+    const user: UserRecord = {
+      id: input.id,
+      accountStatus: input.accountStatus,
+      actorKind: input.actorKind,
+      authLinkage: input.authLinkage,
+      profile: input.profile,
+      contextAccess: input.contextAccess,
+      preferences: input.preferences,
+      createdAt: input.createdAt,
+      updatedAt: input.updatedAt,
+      activatedAt: input.activatedAt,
+      disabledAt: input.disabledAt,
+      archivedAt: input.archivedAt,
+    };
+    this.records.push(user);
+    return user;
+  }
+
+  async findByAuthSubject(authSubject: string): Promise<UserRecord | null> {
+    return (
+      this.records.find(
+        (user) => user.authLinkage.subject === authSubject,
+      ) ?? null
+    );
+  }
+
+  async findManyByAuthSubject(
+    authSubject: string,
+  ): Promise<readonly UserRecord[]> {
+    return this.records.filter(
+      (user) =>
+        user.authLinkage.provider === "auth0" &&
+        user.authLinkage.subject === authSubject &&
+        user.accountStatus !== "ARCHIVED",
+    );
+  }
+
+  async findManyByEmail(email: string): Promise<readonly UserRecord[]> {
+    const normalized = email.trim().toLowerCase();
+    return this.records.filter(
+      (user) => user.profile.email?.trim().toLowerCase() === normalized,
+    );
+  }
+
+  async updateProfile(
+    input: UpdateUserProfileInput,
+  ): Promise<UserRecord | null> {
+    this.updateProfileCalls += 1;
+    const index = this.records.findIndex((user) => user.id === input.userId);
+    const current = this.records[index];
+    if (!current) {
+      return null;
+    }
+
+    const updated: UserRecord = {
+      ...current,
+      profile: {
+        ...current.profile,
+        ...(input.displayName !== undefined
+          ? { displayName: input.displayName }
+          : {}),
+        ...(input.email !== undefined ? { email: input.email } : {}),
+      },
+      preferences: {
+        ...current.preferences,
+        ...(input.locale !== undefined ? { locale: input.locale } : {}),
+        ...(input.timezone !== undefined
+          ? { timezone: input.timezone }
+          : {}),
+      },
+      updatedAt: input.updatedAt,
+    };
+    this.records[index] = updated;
+    return updated;
+  }
+
+  async transitionLifecycle(
+    input: TransitionUserLifecycleInput,
+  ): Promise<UserRecord | null> {
+    const index = this.records.findIndex((user) => user.id === input.userId);
+    const current = this.records[index];
+    if (!current || !input.fromStates.includes(current.accountStatus)) {
+      return null;
+    }
+
+    const updated = {
+      ...current,
+      accountStatus: input.toState,
+      updatedAt: input.changedAt,
+    };
+    this.records[index] = updated;
+    return updated;
+  }
+
+  async setAuthLinkage(
+    input: SetUserAuthLinkageInput,
+  ): Promise<UserRecord | null> {
+    this.setAuthLinkageCalls += 1;
+    const index = this.records.findIndex((user) => user.id === input.userId);
+    const current = this.records[index];
+    if (!current) {
+      return null;
+    }
+
+    const updated: UserRecord = {
+      ...current,
+      accountStatus: input.accountStatus ?? current.accountStatus,
+      authLinkage: {
+        provider: input.provider,
+        subject: input.subject,
+        status: input.status,
+      },
+      updatedAt: input.updatedAt,
+    };
+    this.records[index] = updated;
+    return updated;
+  }
+}
+
+class BootstrapFakeAssignmentRepository
+  implements FirstAdminBootstrapAssignmentRepository
+{
+  readonly records: BootstrapRoleAssignmentRecord[] = [];
+  insertCalls = 0;
+  updateScopeGrantsCalls = 0;
+
+  async insert(
+    assignment: BootstrapRoleAssignmentRecord,
+  ): Promise<BootstrapRoleAssignmentRecord> {
+    this.insertCalls += 1;
+    this.records.push(assignment);
+    return assignment;
+  }
+
+  async findById(
+    assignmentId: string,
+  ): Promise<BootstrapRoleAssignmentRecord | null> {
+    return (
+      this.records.find(
+        (assignment) => assignment.assignmentId === assignmentId,
+      ) ?? null
+    );
+  }
+
+  async findActiveByRoleAndUser(
+    roleId: string,
+    userId: string,
+  ): Promise<BootstrapRoleAssignmentRecord | null> {
+    return (
+      this.records.find(
+        (assignment) =>
+          assignment.roleId === roleId &&
+          assignment.userId === userId &&
+          assignment.state === "ACTIVE",
+      ) ?? null
+    );
+  }
+
+  async findActiveManyByRoleAndUser(
+    roleId: string,
+    userId: string,
+  ): Promise<readonly BootstrapRoleAssignmentRecord[]> {
+    return this.records.filter(
+      (assignment) =>
+        assignment.roleId === roleId &&
+        assignment.userId === userId &&
+        assignment.state === "ACTIVE",
+    );
+  }
+
+  async hasActiveAssignmentsForRole(roleId: string): Promise<boolean> {
+    return this.records.some(
+      (assignment) =>
+        assignment.roleId === roleId && assignment.state === "ACTIVE",
+    );
+  }
+
+  async revokeById(
+    assignmentId: string,
+    reason: string | null,
+    revokedAt: number,
+  ): Promise<BootstrapRoleAssignmentRecord | null> {
+    const index = this.records.findIndex(
+      (assignment) => assignment.assignmentId === assignmentId,
+    );
+    const current = this.records[index];
+    if (!current || current.state !== "ACTIVE") {
+      return null;
+    }
+
+    const updated: BootstrapRoleAssignmentRecord = {
+      ...current,
+      state: "REVOKED",
+      reason,
+      revokedAt,
+      updatedAt: revokedAt,
+    };
+    this.records[index] = updated;
+    return updated;
+  }
+
+  async updateScopeGrants(
+    assignmentId: string,
+    scopeGrants: ActorScopeGrants,
+    updatedAt: number,
+  ): Promise<BootstrapRoleAssignmentRecord | null> {
+    this.updateScopeGrantsCalls += 1;
+    const index = this.records.findIndex(
+      (assignment) => assignment.assignmentId === assignmentId,
+    );
+    const current = this.records[index];
+    if (!current || current.state !== "ACTIVE") {
+      return null;
+    }
+
+    const updated = {
+      ...current,
+      scopeGrants,
+      updatedAt,
+    };
+    this.records[index] = updated;
+    return updated;
+  }
+}
+
+function makeBootstrapUser(params: {
+  readonly id: string;
+  readonly subject?: string;
+  readonly email?: string;
+  readonly status?: "LINKED" | "UNLINKED";
+  readonly accountStatus?: "PENDING" | "ACTIVE" | "DISABLED" | "ARCHIVED";
+}): UserRecord {
+  return {
+    id: params.id,
+    accountStatus: params.accountStatus ?? "ACTIVE",
+    actorKind: "ADMIN",
+    authLinkage: {
+      provider: "auth0",
+      subject: params.subject ?? "auth0|admin-user",
+      status: params.status ?? "LINKED",
+    },
+    profile: {
+      displayName: "Admin",
+      email: params.email ?? "admin@gmail.com",
+    },
+    contextAccess: {
+      contexts: ["ADMIN"],
+    },
+    preferences: {},
+    createdAt: 1,
+    updatedAt: 1,
+    activatedAt: 1,
+    disabledAt: null,
+    archivedAt: null,
+  };
+}
+
+function makeBootstrapAssignment(params: {
+  readonly assignmentId: string;
+  readonly roleId: string;
+  readonly userId: string;
+  readonly scopeGrants?: ActorScopeGrants;
+}): BootstrapRoleAssignmentRecord {
+  return {
+    assignmentId: params.assignmentId,
+    roleId: params.roleId,
+    userId: params.userId,
+    ...(params.scopeGrants ? { scopeGrants: params.scopeGrants } : {}),
+    state: "ACTIVE",
+    effectiveAt: 1,
+    revokedAt: null,
+    reason: null,
+    createdAt: 1,
+    updatedAt: 1,
+  };
 }

@@ -44,6 +44,36 @@ test("local mock auth is disabled by default in env config", () => {
   );
   assert.deepEqual(parsed.LOCAL_MOCK_AUTH_PERMISSIONS, []);
   assert.deepEqual(parsed.LOCAL_MOCK_AUTH_SCOPE_GRANTS, {});
+  assert.equal(parsed.PASSWORD_SETUP_DELIVERY_MODE, undefined);
+});
+
+test("password setup delivery mode accepts only explicit supported modes", () => {
+  assert.equal(
+    parseEnvForTests(
+      baseEnv({
+        PASSWORD_SETUP_DELIVERY_MODE: "auth0_email",
+      }),
+    ).PASSWORD_SETUP_DELIVERY_MODE,
+    "auth0_email",
+  );
+  assert.equal(
+    parseEnvForTests(
+      baseEnv({
+        PASSWORD_SETUP_DELIVERY_MODE: "backend_ticket",
+      }),
+    ).PASSWORD_SETUP_DELIVERY_MODE,
+    "backend_ticket",
+  );
+
+  assert.throws(
+    () =>
+      parseEnvForTests(
+        baseEnv({
+          PASSWORD_SETUP_DELIVERY_MODE: "smtp",
+        }),
+      ),
+    /Invalid option/u,
+  );
 });
 
 test("enabled local mock auth parses configured actor, permissions, and scope grants", () => {

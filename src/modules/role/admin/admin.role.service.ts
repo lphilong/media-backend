@@ -57,6 +57,7 @@ import {
   RoleTemplateCode,
 } from "@modules/role/domain/role-template.catalog";
 import { RoleUserReadonlyAccess } from "@modules/role/domain/role-user-readonly-access";
+import { UserActorKind } from "@modules/user/domain/user.types";
 import { UserAdminCapabilityRepository } from "@modules/user/domain/user.admin-capability.repository";
 import {
   ROLE_ASSIGNMENT_RULE_STATES,
@@ -100,6 +101,10 @@ const GOVERNANCE_RECOVERY_PERMISSION_CODES: readonly string[] = [
   Permission.USER_DISABLE,
   Permission.USER_ARCHIVE,
   Permission.USER_AUTH_LINKAGE_SET,
+  Permission.USER_PROVISION_ACCOUNT,
+  Permission.USER_AUTH_LINKAGE_UNLINK,
+  Permission.USER_PASSWORD_SETUP_SEND,
+  Permission.USER_ACTOR_KIND_UPDATE,
   Permission.ROLE_CREATE,
   Permission.ROLE_UPDATE,
   Permission.ROLE_ACTIVATE,
@@ -118,6 +123,19 @@ type RoleFailureClassification =
   | "dependency_error"
   | "invariant"
   | "unknown";
+
+const ADMIN_CONSOLE_ROLE_CODES: readonly string[] = Object.freeze([
+  "ADMIN_FULL",
+  "HR_OPERATIONS",
+  "TEAM_MANAGER",
+  "PRODUCTION_OPS",
+  "COMMERCIAL_FINANCE",
+  "VIEWER_AUDITOR",
+]);
+
+const SELF_SERVICE_ROLE_CODES: readonly string[] = Object.freeze([
+  "TALENT_STAFF_SELF",
+]);
 
 export class RoleAdminService {
   constructor(
@@ -1106,16 +1124,19 @@ export class RoleAdminService {
               session,
             );
 
-            const targetExists = await this.userReadonlyAccess.isAssignableById(
-              userId,
-              session,
-            );
+            const targetUser =
+              await this.userReadonlyAccess.getAssignableById(
+                userId,
+                session,
+              );
 
-            if (!targetExists) {
+            if (!targetUser) {
               throw new RoleDependencyError(
                 `Assignment target user is not assignable: ${userId}`,
               );
             }
+
+            assertRoleActorKindCompatible(role, targetUser.actorKind);
 
             const existingActiveAssignment =
               await this.userRoleAssignmentRepository.findActiveByRoleAndUser(
@@ -1771,6 +1792,31 @@ function assertRoleStateAllowed(
   throw new RoleStateError(
     `Role in state ${state} cannot execute operation: ${actionLabel}`,
   );
+}
+
+function assertRoleActorKindCompatible(
+  role: RoleRecord,
+  actorKind: UserActorKind,
+): void {
+  const governingCode = role.templateCode ?? role.code;
+
+  if (
+    ADMIN_CONSOLE_ROLE_CODES.includes(governingCode) &&
+    actorKind !== "ADMIN"
+  ) {
+    throw new RoleValidationError(
+      `${governingCode} requires an admin console account.`,
+    );
+  }
+
+  if (
+    SELF_SERVICE_ROLE_CODES.includes(governingCode) &&
+    actorKind !== "STAFF"
+  ) {
+    throw new RoleValidationError(
+      `${governingCode} requires a self-service staff account.`,
+    );
+  }
 }
 
 function normalizeRoleCode(value: unknown): string {

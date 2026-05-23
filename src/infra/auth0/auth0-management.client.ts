@@ -6,13 +6,17 @@ import {
   Auth0ManagementPort,
   Auth0ManagementUser,
   Auth0PasswordChangeTicketInput,
+  Auth0PasswordResetEmailInput,
 } from "@modules/user/domain/auth0-management.port";
+import { PasswordSetupDeliveryMode } from "@modules/user/shared/user.contracts";
 
 export interface Auth0ManagementConfig {
   readonly domain: string;
   readonly clientId: string;
   readonly clientSecret: string;
   readonly databaseConnection: string;
+  readonly passwordResetClientId?: string;
+  readonly passwordSetupDeliveryMode: PasswordSetupDeliveryMode;
   readonly passwordSetupResultUrl?: string;
 }
 
@@ -39,6 +43,12 @@ export function resolveAuth0ManagementConfigFromEnv():
     clientId,
     clientSecret,
     databaseConnection,
+    passwordResetClientId: env.AUTH0_CLIENT_ID,
+    passwordSetupDeliveryMode:
+      env.PASSWORD_SETUP_DELIVERY_MODE ??
+      (env.NODE_ENV === "production"
+        ? "backend_ticket"
+        : "auth0_email"),
     passwordSetupResultUrl:
       env.AUTH0_PASSWORD_SETUP_RESULT_URL,
   });
@@ -62,6 +72,10 @@ export class DisabledAuth0ManagementClient
   async createPasswordChangeTicket(): Promise<{
     readonly ticketCreated: true;
   }> {
+    throw missingConfigError();
+  }
+
+  async sendPasswordResetEmail(): Promise<void> {
     throw missingConfigError();
   }
 }
@@ -103,6 +117,15 @@ export class Auth0ManagementHttpClient
     );
 
     const users = parseAuth0UserList(response.data);
+    if (users.length > 1) {
+      throw new InfrastructureError(
+        "AUTH0_MANAGEMENT_EMAIL_AMBIGUOUS",
+        "Auth0 email matched multiple users",
+        "Auth0 Management API response is ambiguous",
+        409,
+      );
+    }
+
     return users[0] ?? null;
   }
 
@@ -179,6 +202,40 @@ export class Auth0ManagementHttpClient
     return ticketUrl
       ? { ticketCreated: true, ticketUrl }
       : { ticketCreated: true };
+  }
+
+  async sendPasswordResetEmail(
+    input: Auth0PasswordResetEmailInput,
+  ): Promise<void> {
+    const clientId =
+      input.clientId ?? this.config.passwordResetClientId;
+
+    if (!clientId) {
+      throw new InfrastructureError(
+        "AUTH0_PASSWORD_RESET_CLIENT_ID_MISSING",
+        "Auth0 password reset client id is missing",
+        "Auth0 password reset email config is missing",
+        409,
+      );
+    }
+
+    await this.runHttpRequest(
+      "send Auth0 password reset email",
+      () =>
+        this.http.post<unknown>(
+          "/dbconnections/change_password",
+          {
+            client_id: clientId,
+            email: input.email,
+            connection: input.connection,
+          },
+          {
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        ),
+    );
   }
 
   private async getAccessToken(): Promise<string> {

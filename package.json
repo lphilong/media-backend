@@ -12,6 +12,8 @@
     "lint": "eslint \"src/modules/**/*.controller.ts\" --max-warnings=0",
     "test": "node tools/test/run-tests.mjs",
     "smoke:seed:first-admin": "ts-node -r tsconfig-paths/register src/tools/smoke/seed-real-auth-first-admin.ts",
+    "smoke:bootstrap:first-admin": "ts-node -r tsconfig-paths/register src/tools/smoke/first-admin-bootstrap.ts",
+    "role:sync-runtime": "ts-node -r tsconfig-paths/register src/tools/smoke/runtime-role-sync.ts",
     "smoke:seed:fixtures": "ts-node -r tsconfig-paths/register src/tools/smoke/seed-smoke-fixtures.ts",
     "docs:anchor-guard": "bash tools/ci/docs-anchor-guard.sh"
   },

@@ -45,6 +45,13 @@ interface RoleDocument {
   readonly archivedAt: number | null;
 }
 
+type RuntimeRoleRecordWithRawTemplateMetadata = Omit<
+  RoleRecord,
+  "templateCode"
+> & {
+  readonly templateCode?: string;
+};
+
 interface RoleAssignmentRuleDocument {
   readonly _id: string;
   readonly roleId: string;
@@ -110,6 +117,18 @@ export class NativeMongoRoleRepository
     return doc ? toRoleRecord(doc) : null;
   }
 
+  async findRawByCode(
+    code: string,
+    session?: ClientSession,
+  ): Promise<RuntimeRoleRecordWithRawTemplateMetadata | null> {
+    const doc = await this.collection.findOne(
+      { code },
+      this.withSession(session),
+    );
+
+    return doc ? toRoleRecordWithRawTemplateMetadata(doc) : null;
+  }
+
   async findMaxGeneratedCodeSequence(
     policy: Pick<BusinessCodePolicy, "prefix" | "width">,
     session: ClientSession,
@@ -173,6 +192,35 @@ export class NativeMongoRoleRepository
     );
 
     return updated ? toRoleRecord(updated) : null;
+  }
+
+  async updateTemplateMetadata(
+    input: {
+      readonly roleId: string;
+      readonly templateCode: string;
+      readonly templateVersion: string;
+      readonly templateAppliedAt: number;
+      readonly updatedAt: number;
+    },
+    session: ClientSession,
+  ): Promise<RuntimeRoleRecordWithRawTemplateMetadata | null> {
+    const updated = await this.collection.findOneAndUpdate(
+      { _id: input.roleId },
+      {
+        $set: {
+          templateCode: input.templateCode,
+          templateVersion: input.templateVersion,
+          templateAppliedAt: input.templateAppliedAt,
+          updatedAt: input.updatedAt,
+        },
+      },
+      {
+        ...this.withSession(session),
+        returnDocument: "after",
+      },
+    );
+
+    return updated ? toRoleRecordWithRawTemplateMetadata(updated) : null;
   }
 
   async transitionState(
@@ -324,6 +372,26 @@ export class NativeMongoUserRoleAssignmentRepository
     return doc ? toUserRoleAssignmentRecord(doc) : null;
   }
 
+  async findActiveManyByRoleAndUser(
+    roleId: string,
+    userId: string,
+    session?: ClientSession,
+  ): Promise<readonly UserRoleAssignmentRecord[]> {
+    const docs = await this.collection
+      .find(
+        {
+          roleId,
+          userId,
+          state: "ACTIVE",
+        },
+        this.withSession(session),
+      )
+      .sort({ _id: 1 })
+      .toArray();
+
+    return docs.map((doc) => toUserRoleAssignmentRecord(doc));
+  }
+
   async hasActiveAssignmentsForRole(
     roleId: string,
     session?: ClientSession,
@@ -359,6 +427,32 @@ export class NativeMongoUserRoleAssignmentRepository
           reason,
           revokedAt,
           updatedAt: revokedAt,
+        },
+      },
+      {
+        ...this.withSession(session),
+        returnDocument: "after",
+      },
+    );
+
+    return updated ? toUserRoleAssignmentRecord(updated) : null;
+  }
+
+  async updateScopeGrants(
+    assignmentId: string,
+    scopeGrants: ActorScopeGrants,
+    updatedAt: number,
+    session: ClientSession,
+  ): Promise<UserRoleAssignmentRecord | null> {
+    const updated = await this.collection.findOneAndUpdate(
+      {
+        _id: assignmentId,
+        state: "ACTIVE",
+      },
+      {
+        $set: {
+          scopeGrants,
+          updatedAt,
         },
       },
       {
@@ -407,6 +501,36 @@ function toRoleRecord(document: RoleDocument): RoleRecord {
     maxDelegatableBand: document.maxDelegatableBand ?? "NONE",
     ...(typeof document.templateCode === "string" &&
     isRoleTemplateCode(document.templateCode)
+      ? { templateCode: document.templateCode }
+      : {}),
+    ...(typeof document.templateVersion === "string"
+      ? { templateVersion: document.templateVersion }
+      : {}),
+    ...(typeof document.templateAppliedAt === "number"
+      ? {
+          templateAppliedAt: document.templateAppliedAt,
+        }
+      : {}),
+    createdAt: document.createdAt,
+    updatedAt: document.updatedAt,
+    activatedAt: document.activatedAt,
+    archivedAt: document.archivedAt,
+  };
+}
+
+function toRoleRecordWithRawTemplateMetadata(
+  document: RoleDocument,
+): RuntimeRoleRecordWithRawTemplateMetadata {
+  return {
+    id: document._id,
+    code: document.code,
+    name: document.name,
+    description: document.description,
+    state: document.state,
+    permissions: [...document.permissions],
+    delegationBand: document.delegationBand ?? "LIMITED",
+    maxDelegatableBand: document.maxDelegatableBand ?? "NONE",
+    ...(typeof document.templateCode === "string"
       ? { templateCode: document.templateCode }
       : {}),
     ...(typeof document.templateVersion === "string"
