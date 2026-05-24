@@ -1,6 +1,10 @@
-import { ClientSession, Db } from "mongodb";
+import { ClientSession, Collection, Db } from "mongodb";
 import { BaseRepository } from "@infra/database/repository";
-import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
+import {
+  RevokeTalentGroupManagerAssignmentInput,
+  TalentGroupManagerAssignmentRepository,
+  TalentGroupManagerEmploymentProfileCandidate,
+} from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import {
   TalentGroupManagerAssignment,
   TalentGroupManagerAssignmentStatus,
@@ -22,12 +26,38 @@ interface TalentGroupManagerAssignmentDocument {
   readonly updatedByActorId: string;
 }
 
+interface EmploymentProfileDocument {
+  readonly _id: string;
+  readonly employeeCode: string;
+  readonly legalName: string;
+  readonly displayName: string;
+  readonly employmentStatus: string;
+  readonly linkedUserId: string | null;
+}
+
+interface UserDocument {
+  readonly _id: string;
+  readonly actorKind: string;
+  readonly accountStatus: string;
+  readonly profile?: {
+    readonly displayName?: string;
+    readonly email?: string;
+  };
+}
+
 export class NativeMongoTalentGroupManagerAssignmentRepository
   extends BaseRepository<TalentGroupManagerAssignmentDocument>
   implements TalentGroupManagerAssignmentRepository
 {
+  private readonly employmentProfileCollection: Collection<EmploymentProfileDocument>;
+  private readonly userCollection: Collection<UserDocument>;
+
   constructor(db: Db) {
     super(db, "talent_group_manager_assignments");
+    this.employmentProfileCollection = db.collection<EmploymentProfileDocument>(
+      "employment_profiles",
+    );
+    this.userCollection = db.collection<UserDocument>("users");
   }
 
   async insertAssignment(
@@ -53,6 +83,17 @@ export class NativeMongoTalentGroupManagerAssignmentRepository
     return docs.map(toDomain);
   }
 
+  async findAssignmentById(
+    assignmentId: string,
+    session?: ClientSession,
+  ): Promise<TalentGroupManagerAssignment | null> {
+    const doc = await this.collection.findOne(
+      { _id: assignmentId },
+      this.withSession(session),
+    );
+    return doc ? toDomain(doc) : null;
+  }
+
   async listActiveAssignmentsByManagerEmploymentProfile(
     managerEmploymentProfileId: string,
     asOf: number,
@@ -67,6 +108,83 @@ export class NativeMongoTalentGroupManagerAssignmentRepository
       .toArray();
     return docs.map(toDomain);
   }
+
+  async revokeAssignment(
+    input: RevokeTalentGroupManagerAssignmentInput,
+    session?: ClientSession,
+  ): Promise<TalentGroupManagerAssignment | null> {
+    const updated = await this.collection.findOneAndUpdate(
+      {
+        _id: input.assignmentId,
+        status: "ACTIVE",
+        effectiveFrom: { $lte: input.effectiveTo },
+        $or: [
+          { effectiveTo: null },
+          { effectiveTo: { $gte: input.effectiveTo } },
+        ],
+      },
+      {
+        $set: {
+          status: "INACTIVE",
+          effectiveTo: input.effectiveTo,
+          updatedAt: input.updatedAt,
+          updatedByActorId: input.updatedByActorId,
+        },
+      },
+      {
+        ...this.withSession(session),
+        returnDocument: "after",
+      },
+    );
+    return updated ? toDomain(updated) : null;
+  }
+
+  async findManagerEmploymentProfileCandidate(
+    employmentProfileId: string,
+    session?: ClientSession,
+  ): Promise<TalentGroupManagerEmploymentProfileCandidate | null> {
+    const profile = await this.employmentProfileCollection.findOne(
+      { _id: employmentProfileId },
+      this.withSession(session),
+    );
+    if (!profile) {
+      return null;
+    }
+
+    const linkedUser = profile.linkedUserId
+      ? await this.userCollection.findOne(
+          { _id: profile.linkedUserId },
+          {
+            ...this.withSession(session),
+            projection: {
+              _id: 1,
+              actorKind: 1,
+              accountStatus: 1,
+              profile: 1,
+            },
+          },
+        )
+      : null;
+
+    return {
+      id: profile._id,
+      employeeCode: profile.employeeCode,
+      displayName: profile.displayName,
+      legalName: profile.legalName,
+      employmentStatus: profile.employmentStatus,
+      linkedUserId: profile.linkedUserId,
+      linkedUserRef: linkedUser
+        ? {
+            id: linkedUser._id,
+            displayName: linkedUser.profile?.displayName,
+            name: linkedUser.profile?.email,
+            status: linkedUser.accountStatus,
+          }
+        : null,
+      linkedUserActorKind: linkedUser?.actorKind ?? null,
+      linkedUserAccountStatus: linkedUser?.accountStatus ?? null,
+    };
+  }
 }
 
 function activeQuery(params: {
@@ -78,8 +196,7 @@ function activeQuery(params: {
     ...(params.groupId ? { groupId: params.groupId } : {}),
     ...(params.managerEmploymentProfileId
       ? {
-          managerEmploymentProfileId:
-            params.managerEmploymentProfileId,
+          managerEmploymentProfileId: params.managerEmploymentProfileId,
         }
       : {}),
     status: "ACTIVE",

@@ -5,8 +5,10 @@ import {
   TalentGroupMemberMutationView,
   TalentGroupMutationView,
 } from "@modules/talent-group/domain/talent-group.types";
+import { TalentGroupManagerAssignmentView } from "@modules/kpi/domain/kpi.types";
 import {
   GetTalentGroupDetailResult,
+  ListTalentGroupManagerAssignmentsResult,
   ListTalentGroupMembersResult,
   ListTalentGroupsByTalentResult,
   ListTalentGroupsResult,
@@ -17,6 +19,7 @@ import {
   TalentGroupAdminListExposure,
   TalentGroupAdminMutationExposure,
   TalentGroupByTalentExposure,
+  TalentGroupManagerAssignmentExposure,
   TalentGroupMemberExposure,
 } from "./talent-group.exposure";
 
@@ -31,9 +34,7 @@ export class TalentGroupAdminMutationPresenter extends Presenter<
     return {
       data: isTalentGroupMemberMutationView(input)
         ? TalentGroupMemberExposure.expose(input)
-        : TalentGroupAdminMutationExposure.expose(
-            input,
-          ),
+        : TalentGroupAdminMutationExposure.expose(input),
     };
   }
 }
@@ -47,9 +48,7 @@ export class TalentGroupAdminListPresenter extends Presenter<
     _context: ContextType,
   ): PresentationResult {
     const output: PresentationResult = {
-      data: TalentGroupAdminListExposure.exposeMany(
-        input.items,
-      ),
+      data: TalentGroupAdminListExposure.exposeMany(input.items),
     };
 
     if (input.nextCursor) {
@@ -71,9 +70,7 @@ export class TalentGroupAdminDetailPresenter extends Presenter<
     _context: ContextType,
   ): PresentationResult {
     return {
-      data: TalentGroupAdminDetailExposure.expose(
-        input,
-      ),
+      data: TalentGroupAdminDetailExposure.expose(input),
     };
   }
 }
@@ -87,9 +84,7 @@ export class TalentGroupAdminMemberListPresenter extends Presenter<
     _context: ContextType,
   ): PresentationResult {
     const output: PresentationResult = {
-      data: TalentGroupMemberExposure.exposeMany(
-        input.items,
-      ),
+      data: TalentGroupMemberExposure.exposeMany(input.items),
     };
 
     if (input.nextCursor) {
@@ -111,9 +106,7 @@ export class TalentGroupAdminByTalentListPresenter extends Presenter<
     _context: ContextType,
   ): PresentationResult {
     const output: PresentationResult = {
-      data: TalentGroupByTalentExposure.exposeMany(
-        input.items,
-      ),
+      data: TalentGroupByTalentExposure.exposeMany(input.items),
     };
 
     if (input.nextCursor) {
@@ -126,12 +119,34 @@ export class TalentGroupAdminByTalentListPresenter extends Presenter<
   }
 }
 
+export class TalentGroupAdminManagerAssignmentListPresenter extends Presenter<
+  ListTalentGroupManagerAssignmentsResult,
+  PresentationResult
+> {
+  present(
+    input: ListTalentGroupManagerAssignmentsResult,
+    _context: ContextType,
+  ): PresentationResult {
+    return {
+      data: TalentGroupManagerAssignmentExposure.exposeMany(input.items),
+    };
+  }
+}
+
 function isTalentGroupMemberMutationView(
   input: TalentGroupMutationResult,
 ): input is TalentGroupMemberMutationView {
   return (
+    typeof input === "object" && input !== null && "membershipStatus" in input
+  );
+}
+
+export function isTalentGroupManagerAssignmentView(
+  input: TalentGroupMutationResult,
+): input is TalentGroupManagerAssignmentView {
+  return (
     typeof input === "object" &&
     input !== null &&
-    "membershipStatus" in input
+    "managerEmploymentProfileId" in input
   );
 }
