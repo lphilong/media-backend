@@ -9,10 +9,7 @@ export const KPI_SUBJECT_TYPES = [
 
 export type KpiSubjectType = (typeof KPI_SUBJECT_TYPES)[number];
 
-export const KPI_EXECUTABLE_SUBJECT_TYPES = [
-  "TALENT",
-  "TALENT_GROUP",
-] as const;
+export const KPI_EXECUTABLE_SUBJECT_TYPES = ["TALENT", "TALENT_GROUP"] as const;
 
 export type KpiExecutableSubjectType =
   (typeof KPI_EXECUTABLE_SUBJECT_TYPES)[number];
@@ -59,12 +56,9 @@ export const KPI_ALLOCATION_STATUSES = [
   "CANCELLED",
 ] as const;
 
-export type KpiAllocationStatus =
-  (typeof KPI_ALLOCATION_STATUSES)[number];
+export type KpiAllocationStatus = (typeof KPI_ALLOCATION_STATUSES)[number];
 
-export const KPI_ACTUAL_CORRECTION_ALLOWED_UNTIL = [
-  "PLAN_FINALIZED",
-] as const;
+export const KPI_ACTUAL_CORRECTION_ALLOWED_UNTIL = ["PLAN_FINALIZED"] as const;
 
 export type KpiActualCorrectionAllowedUntil =
   (typeof KPI_ACTUAL_CORRECTION_ALLOWED_UNTIL)[number];
@@ -108,8 +102,7 @@ export type KpiSortField = (typeof KPI_SORT_FIELDS)[number];
 
 export const KPI_SORT_DIRECTIONS = ["ASC", "DESC"] as const;
 
-export type KpiSortDirection =
-  (typeof KPI_SORT_DIRECTIONS)[number];
+export type KpiSortDirection = (typeof KPI_SORT_DIRECTIONS)[number];
 
 export interface KpiPlan {
   readonly id: string;
@@ -187,6 +180,12 @@ export interface TalentGroupManagerAssignment {
   readonly createdByActorId: string;
   readonly updatedAt: number;
   readonly updatedByActorId: string;
+}
+
+export interface TalentGroupManagerAssignmentView extends TalentGroupManagerAssignment {
+  readonly groupRef: ReferenceSummary;
+  readonly managerRef: ReferenceSummary;
+  readonly managerHasLinkedAdminUser: boolean;
 }
 
 export interface KpiActorEmploymentProfileLookup {

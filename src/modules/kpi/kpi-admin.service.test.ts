@@ -80,6 +80,7 @@ function createManagerActor(): Actor {
     context: "ADMIN",
     roles: [],
     permissions: [
+      Permission.KPI_READ,
       Permission.KPI_ENTER_ACTUAL,
       Permission.KPI_CORRECT_ACTUAL,
       Permission.KPI_READ_PROGRESS,
@@ -98,6 +99,7 @@ function createManagerActorWithoutKpiScope(): Actor {
     context: "ADMIN",
     roles: [],
     permissions: [
+      Permission.KPI_READ,
       Permission.KPI_ENTER_ACTUAL,
       Permission.KPI_CORRECT_ACTUAL,
       Permission.KPI_READ_PROGRESS,
@@ -199,8 +201,15 @@ function groupPlanCommand() {
 
 async function createPublishedGroupPlan(
   service: KpiAdminService,
-): Promise<ReturnType<KpiAdminService["publishKpiPlan"]> extends Promise<infer T> ? T : never> {
-  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+): Promise<
+  ReturnType<KpiAdminService["publishKpiPlan"]> extends Promise<infer T>
+    ? T
+    : never
+> {
+  const created = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
   await service.replaceKpiAllocations(createActor(), {
     kpiPlanId: created.id,
     allocations: [
@@ -227,7 +236,11 @@ async function createPublishedGroupPlan(
 
 async function createPublishedFebruary2028GroupPlan(
   service: KpiAdminService,
-): Promise<ReturnType<KpiAdminService["publishKpiPlan"]> extends Promise<infer T> ? T : never> {
+): Promise<
+  ReturnType<KpiAdminService["publishKpiPlan"]> extends Promise<infer T>
+    ? T
+    : never
+> {
   const created = await service.createKpiPlan(createActor(), {
     ...groupPlanCommand(),
     title: "February 2028 group KPI",
@@ -278,7 +291,10 @@ function seedManagerAssignment(
 test("KPI V2 creates TALENT draft plan with valid target metrics", async () => {
   const { service } = createHarness();
 
-  const result = await service.createKpiPlan(createActor(), talentPlanCommand());
+  const result = await service.createKpiPlan(
+    createActor(),
+    talentPlanCommand(),
+  );
 
   assert.equal(result.status, "DRAFT");
   assert.equal(result.subjectType, "TALENT");
@@ -304,9 +320,7 @@ test("KPI V2 rejects metrics not allowed for subject type", async () => {
   await assert.rejects(
     service.createKpiPlan(createActor(), {
       ...talentPlanCommand(),
-      targetMetrics: [
-        { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
-      ],
+      targetMetrics: [{ metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 }],
     }),
     KpiValidationError,
   );
@@ -361,9 +375,7 @@ test("KPI V2 rejects decimal count plan target", async () => {
   await assert.rejects(
     service.createKpiPlan(createActor(), {
       ...talentPlanCommand(),
-      targetMetrics: [
-        { metricCode: "CONTENT_OUTPUT_COUNT", targetValue: 1.5 },
-      ],
+      targetMetrics: [{ metricCode: "CONTENT_OUTPUT_COUNT", targetValue: 1.5 }],
     }),
     /CONTENT_OUTPUT_COUNT requires an integer target value/,
   );
@@ -431,7 +443,10 @@ test("KPI V2 rejects invalid non-monthly period window", async () => {
 
 test("KPI V2 update draft core works only in DRAFT", async () => {
   const { service } = createHarness();
-  const created = await service.createKpiPlan(createActor(), talentPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    talentPlanCommand(),
+  );
 
   const updated = await service.updateKpiDraftCore(createActor(), {
     kpiPlanId: created.id,
@@ -451,7 +466,10 @@ test("KPI V2 update draft core works only in DRAFT", async () => {
 
 test("KPI V2 target replacement works only in DRAFT", async () => {
   const { service } = createHarness();
-  const created = await service.createKpiPlan(createActor(), talentPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    talentPlanCommand(),
+  );
 
   const replaced = await service.replaceKpiTargetMetrics(createActor(), {
     kpiPlanId: created.id,
@@ -474,7 +492,10 @@ test("KPI V2 target replacement works only in DRAFT", async () => {
 
 test("KPI V2 rejects decimal REVENUE_VND allocation target", async () => {
   const { service } = createHarness();
-  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
 
   await assert.rejects(
     service.replaceKpiAllocations(createActor(), {
@@ -483,9 +504,7 @@ test("KPI V2 rejects decimal REVENUE_VND allocation target", async () => {
         {
           memberTalentId: "talent-1",
           allocationStartDate: "2026-05-01",
-          targetMetrics: [
-            { metricCode: "REVENUE_VND", targetValue: 100.5 },
-          ],
+          targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 100.5 }],
         },
       ],
     }),
@@ -495,7 +514,10 @@ test("KPI V2 rejects decimal REVENUE_VND allocation target", async () => {
 
 test("KPI V2 rejects decimal count allocation target", async () => {
   const { service } = createHarness();
-  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
 
   await assert.rejects(
     service.replaceKpiAllocations(createActor(), {
@@ -538,7 +560,10 @@ test("KPI V2 rejects LIVE_HOURS allocation target with more than two decimals", 
 
 test("KPI V2 rejects duplicate member allocation rows in one plan", async () => {
   const { service } = createHarness();
-  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
 
   await assert.rejects(
     service.replaceKpiAllocations(createActor(), {
@@ -562,7 +587,10 @@ test("KPI V2 rejects duplicate member allocation rows in one plan", async () => 
 
 test("KPI V2 group allocations are allowed only for TALENT_GROUP plans", async () => {
   const { service } = createHarness();
-  const created = await service.createKpiPlan(createActor(), talentPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    talentPlanCommand(),
+  );
 
   await assert.rejects(
     service.replaceKpiAllocations(createActor(), {
@@ -581,7 +609,10 @@ test("KPI V2 group allocations are allowed only for TALENT_GROUP plans", async (
 
 test("KPI V2 publish TALENT plan freezes target and moves to PUBLISHED", async () => {
   const { service } = createHarness();
-  const created = await service.createKpiPlan(createActor(), talentPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    talentPlanCommand(),
+  );
 
   const published = await service.publishKpiPlan(createActor(), {
     kpiPlanId: created.id,
@@ -600,7 +631,10 @@ test("KPI V2 publish TALENT plan freezes target and moves to PUBLISHED", async (
 
 test("KPI V2 publish TALENT_GROUP rejects allocation totals that do not match", async () => {
   const { service } = createHarness();
-  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
   await service.replaceKpiAllocations(createActor(), {
     kpiPlanId: created.id,
     allocations: [
@@ -631,7 +665,10 @@ test("KPI V2 publish TALENT_GROUP rejects allocation totals that do not match", 
 
 test("KPI V2 publish TALENT_GROUP activates valid allocations without child plans", async () => {
   const { service, repository } = createHarness();
-  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
   await service.replaceKpiAllocations(createActor(), {
     kpiPlanId: created.id,
     allocations: [
@@ -672,7 +709,10 @@ test("KPI V2 publish TALENT_GROUP activates valid allocations without child plan
 
 test("KPI V2 published plan rejects draft-core, target, and allocation mutation", async () => {
   const { service } = createHarness();
-  const created = await service.createKpiPlan(createActor(), talentPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    talentPlanCommand(),
+  );
   await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
 
   await assert.rejects(
@@ -700,7 +740,10 @@ test("KPI V2 published plan rejects draft-core, target, and allocation mutation"
 
 test("KPI V2 archive sets archivedAt", async () => {
   const { service } = createHarness();
-  const created = await service.createKpiPlan(createActor(), talentPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    talentPlanCommand(),
+  );
 
   const archived = await service.archiveKpiPlan(createActor(), {
     kpiPlanId: created.id,
@@ -784,7 +827,10 @@ test("KPI V2 actual policy snapshot and actual lifecycle are enforced", async ()
     kpiPlanId: published.id,
   });
   assert.equal(finalized.status, "FINALIZED");
-  assert.equal((await repository.findPlanById(published.id))?.status, "FINALIZED");
+  assert.equal(
+    (await repository.findPlanById(published.id))?.status,
+    "FINALIZED",
+  );
   await assert.rejects(
     service.correctKpiActual(createActor(), {
       kpiPlanId: published.id,
@@ -1216,6 +1262,85 @@ test("KPI V2 manager cannot read progress for unmanaged talent group", async () 
   );
 });
 
+test("KPI V2 global list plans still works", async () => {
+  const { service } = createHarness();
+  await service.createKpiPlan(createActor(), talentPlanCommand());
+
+  const result = await service.listKpiPlans(createActor(), {});
+
+  assert.equal(result.items.length, 1);
+});
+
+test("KPI V2 managedGroup list returns only managed talent-group plans", async () => {
+  const { service, repository, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const managed = await createPublishedGroupPlan(service);
+  repository.plans.push({
+    ...managed,
+    id: "unmanaged-plan",
+    planCode: "KPI-202605-999999",
+    subjectId: "group-2",
+    createdAt: managed.createdAt + 1,
+    updatedAt: managed.updatedAt + 1,
+  });
+  seedManagerAssignment(managerRepository, "group-1");
+
+  const result = await service.listKpiPlans(createManagerActor(), {});
+
+  assert.deepEqual(
+    result.items.map((item) => item.id),
+    [managed.id],
+  );
+});
+
+test("KPI V2 managedGroup list returns empty without active manager assignment", async () => {
+  const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
+  await createPublishedGroupPlan(service);
+
+  const result = await service.listKpiPlans(createManagerActor(), {});
+
+  assert.deepEqual(result.items, []);
+});
+
+test("KPI V2 managedGroup detail allows managed plan", async () => {
+  const { service, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const managed = await createPublishedGroupPlan(service);
+  seedManagerAssignment(managerRepository, "group-1");
+
+  const detail = await service.getKpiPlanDetail(createManagerActor(), {
+    kpiPlanId: managed.id,
+  });
+
+  assert.equal(detail.id, managed.id);
+});
+
+test("KPI V2 managedGroup detail denies unmanaged plan", async () => {
+  const { service, repository, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const managed = await createPublishedGroupPlan(service);
+  const unmanagedPlan: KpiPlan = {
+    ...managed,
+    id: "unmanaged-plan",
+    planCode: "KPI-202605-999999",
+    subjectId: "group-2",
+    createdAt: managed.createdAt + 1,
+    updatedAt: managed.updatedAt + 1,
+  };
+  repository.plans.push(unmanagedPlan);
+  seedManagerAssignment(managerRepository, "group-1");
+
+  await assert.rejects(
+    service.getKpiPlanDetail(createManagerActor(), {
+      kpiPlanId: unmanagedPlan.id,
+    }),
+    KpiPermissionScopeError,
+  );
+});
+
 test("KPI V2 talent with self scope can read own progress but not full grid", async () => {
   const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
   const published = await createPublishedGroupPlan(service);
@@ -1404,7 +1529,10 @@ test("KPI V2 manager may enter actual for managed talent group", async () => {
 test("KPI V2 create plan mutation records audit proof", async () => {
   const { service, audit } = createHarness();
 
-  const created = await service.createKpiPlan(createActor(), talentPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    talentPlanCommand(),
+  );
 
   assertAuditRecord(audit, {
     operation: "kpi.create-plan",
@@ -1415,7 +1543,10 @@ test("KPI V2 create plan mutation records audit proof", async () => {
 
 test("KPI V2 update draft-core mutation records audit proof", async () => {
   const { service, audit } = createHarness();
-  const created = await service.createKpiPlan(createActor(), talentPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    talentPlanCommand(),
+  );
 
   await service.updateKpiDraftCore(createActor(), {
     kpiPlanId: created.id,
@@ -1431,7 +1562,10 @@ test("KPI V2 update draft-core mutation records audit proof", async () => {
 
 test("KPI V2 replace target metrics mutation records audit proof", async () => {
   const { service, audit } = createHarness();
-  const created = await service.createKpiPlan(createActor(), talentPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    talentPlanCommand(),
+  );
 
   await service.replaceKpiTargetMetrics(createActor(), {
     kpiPlanId: created.id,
@@ -1447,7 +1581,10 @@ test("KPI V2 replace target metrics mutation records audit proof", async () => {
 
 test("KPI V2 replace allocations mutation records audit proof", async () => {
   const { service, audit } = createHarness();
-  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
 
   await service.replaceKpiAllocations(createActor(), {
     kpiPlanId: created.id,
@@ -1472,7 +1609,10 @@ test("KPI V2 replace allocations mutation records audit proof", async () => {
 
 test("KPI V2 publish mutation records audit proof", async () => {
   const { service, audit } = createHarness();
-  const created = await service.createKpiPlan(createActor(), talentPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    talentPlanCommand(),
+  );
 
   await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
 
@@ -1485,7 +1625,10 @@ test("KPI V2 publish mutation records audit proof", async () => {
 
 test("KPI V2 archive mutation records audit proof", async () => {
   const { service, audit } = createHarness();
-  const created = await service.createKpiPlan(createActor(), talentPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    talentPlanCommand(),
+  );
 
   await service.archiveKpiPlan(createActor(), { kpiPlanId: created.id });
 
@@ -1517,7 +1660,10 @@ test("KPI V2 rejects unknown nested target metric keys", async () => {
 
 test("KPI V2 rejects unknown allocation row keys", async () => {
   const { service } = createHarness();
-  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
   const allocations = [
     {
       memberTalentId: "talent-1",
@@ -1540,7 +1686,10 @@ test("KPI V2 rejects unknown allocation row keys", async () => {
 
 test("KPI V2 rejects unknown allocation target metric keys", async () => {
   const { service } = createHarness();
-  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
   const allocations = [
     {
       memberTalentId: "talent-1",
@@ -1586,17 +1735,14 @@ test("KPI V2 controller rejects unknown create payload keys", async () => {
     handle(req: Request, actor: Actor, context: "ADMIN"): Promise<unknown>;
   };
 
-  await assert.rejects(
-    async () => {
-      const req = {
-        body: { ...talentPlanCommand(), unexpected: true },
-        params: {},
-      } as Request;
-      bindCommand(req, "KPI_PLAN_CREATE");
-      await controller.handle(req, createActor(), "ADMIN");
-    },
-    KpiValidationError,
-  );
+  await assert.rejects(async () => {
+    const req = {
+      body: { ...talentPlanCommand(), unexpected: true },
+      params: {},
+    } as Request;
+    bindCommand(req, "KPI_PLAN_CREATE");
+    await controller.handle(req, createActor(), "ADMIN");
+  }, KpiValidationError);
 });
 
 test("Talent group manager assignment supports multiple active managers and optional primary", async () => {
@@ -1717,9 +1863,7 @@ function buildFutureSubjectDraftPlan(subjectType: KpiSubjectType): KpiPlan {
   };
 }
 
-class InMemoryBusinessCodeSequenceRepository
-  implements BusinessCodeSequenceRepository
-{
+class InMemoryBusinessCodeSequenceRepository implements BusinessCodeSequenceRepository {
   private current = 0;
 
   async allocateNext(): Promise<number> {
@@ -1867,8 +2011,7 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
   }): Promise<KpiPlan | null> {
     const index = this.plans.findIndex(
       (plan) =>
-        plan.id === input.kpiPlanId &&
-        input.fromStatuses.includes(plan.status),
+        plan.id === input.kpiPlanId && input.fromStatuses.includes(plan.status),
     );
     if (index < 0) {
       return null;
@@ -1898,9 +2041,7 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
           ? current.finalizedByActorId
           : input.finalizedByActorId,
       archivedAt:
-        input.archivedAt === undefined
-          ? current.archivedAt
-          : input.archivedAt,
+        input.archivedAt === undefined ? current.archivedAt : input.archivedAt,
       archivedByActorId:
         input.archivedByActorId === undefined
           ? current.archivedByActorId
@@ -2142,7 +2283,8 @@ class InMemoryKpiActualRepository implements KpiActualRepository {
     actualDate: string,
   ): Promise<readonly KpiActualEntry[]> {
     return this.entries.filter(
-      (entry) => entry.kpiPlanId === kpiPlanId && entry.actualDate === actualDate,
+      (entry) =>
+        entry.kpiPlanId === kpiPlanId && entry.actualDate === actualDate,
     );
   }
 
@@ -2160,9 +2302,7 @@ class InMemoryKpiActualRepository implements KpiActualRepository {
   }
 }
 
-class InMemoryManagerAssignmentRepository
-  implements TalentGroupManagerAssignmentRepository
-{
+class InMemoryManagerAssignmentRepository implements TalentGroupManagerAssignmentRepository {
   readonly assignments: TalentGroupManagerAssignment[] = [];
 
   async insertAssignment(
@@ -2188,9 +2328,58 @@ class InMemoryManagerAssignmentRepository
   ): Promise<readonly TalentGroupManagerAssignment[]> {
     return this.assignments.filter(
       (assignment) =>
-        assignment.managerEmploymentProfileId ===
-          managerEmploymentProfileId && isActiveAt(assignment, asOf),
+        assignment.managerEmploymentProfileId === managerEmploymentProfileId &&
+        isActiveAt(assignment, asOf),
     );
+  }
+
+  async findAssignmentById(
+    assignmentId: string,
+  ): Promise<TalentGroupManagerAssignment | null> {
+    return (
+      this.assignments.find((assignment) => assignment.id === assignmentId) ??
+      null
+    );
+  }
+
+  async revokeAssignment(input: {
+    readonly assignmentId: string;
+    readonly effectiveTo: number;
+    readonly updatedAt: number;
+    readonly updatedByActorId: string;
+  }): Promise<TalentGroupManagerAssignment | null> {
+    const index = this.assignments.findIndex(
+      (assignment) =>
+        assignment.id === input.assignmentId &&
+        isActiveAt(assignment, input.effectiveTo),
+    );
+    if (index < 0) {
+      return null;
+    }
+    const current = this.assignments[index] as TalentGroupManagerAssignment;
+    const updated: TalentGroupManagerAssignment = {
+      ...current,
+      status: "INACTIVE",
+      effectiveTo: input.effectiveTo,
+      updatedAt: input.updatedAt,
+      updatedByActorId: input.updatedByActorId,
+    };
+    this.assignments[index] = updated;
+    return updated;
+  }
+
+  async findManagerEmploymentProfileCandidate(employmentProfileId: string) {
+    return {
+      id: employmentProfileId,
+      employeeCode: employmentProfileId,
+      displayName: employmentProfileId,
+      legalName: employmentProfileId,
+      employmentStatus: "ACTIVE",
+      linkedUserId: null,
+      linkedUserRef: null,
+      linkedUserActorKind: null,
+      linkedUserAccountStatus: null,
+    };
   }
 }
 
@@ -2209,10 +2398,7 @@ function fixedClock(): () => number {
   return () => 1_700_000_000_000;
 }
 
-function removeMatching<T>(
-  items: T[],
-  predicate: (item: T) => boolean,
-): void {
+function removeMatching<T>(items: T[], predicate: (item: T) => boolean): void {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     if (predicate(items[index] as T)) {
       items.splice(index, 1);

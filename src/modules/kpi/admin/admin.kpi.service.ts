@@ -17,6 +17,7 @@ import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import { KPI_PLAN_CODE_POLICY } from "@modules/kpi/domain/kpi-code-policy";
 import { getKpiMetricCatalogEntry } from "@modules/kpi/domain/kpi-metric-catalog";
+import { resolveManagedTalentGroupIds } from "@modules/kpi/domain/managed-group-scope";
 import {
   KpiConflictError,
   KpiInvalidAllocationError,
@@ -26,7 +27,10 @@ import {
   KpiStateError,
   KpiValidationError,
 } from "@modules/kpi/domain/kpi.errors";
-import { KpiPlanRepository } from "@modules/kpi/domain/kpi.repository";
+import {
+  KpiPlanRepository,
+  ListKpiPlansInput,
+} from "@modules/kpi/domain/kpi.repository";
 import { KpiActualRepository } from "@modules/kpi/domain/kpi-actual.repository";
 import { KpiSubjectReadonlyAccess } from "@modules/kpi/domain/kpi-subject-readonly-access";
 import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
@@ -47,6 +51,7 @@ import {
   KpiMetricCode,
   KpiPlan,
   KpiPlanDetailView,
+  KpiPlanListItemView,
   KpiPlanMutationView,
   KpiProgressView,
   KpiPlanStatus,
@@ -147,10 +152,7 @@ export class KpiAdminService {
     actor: Actor,
     command: CreateKpiPlanCommand,
   ): Promise<KpiPlanMutationView> {
-    const permission = this.assertPermission(
-      actor,
-      Permission.KPI_CREATE_PLAN,
-    );
+    const permission = this.assertPermission(actor, Permission.KPI_CREATE_PLAN);
     this.assertKpiGlobalScope(actor, "create KPI plan");
     const period = normalizePlanPeriod({
       periodMonth: command.periodMonth,
@@ -256,42 +258,51 @@ export class KpiAdminService {
     actor: Actor,
     query: ListKpiPlansQuery,
   ): Promise<ListKpiPlansResult> {
-    this.assertPermission(actor, Permission.KPI_READ);
-    this.assertKpiGlobalScope(actor, "list KPI plans");
+    this.assertContextPermission(actor, Permission.KPI_READ);
+    const input = this.toListPlansInput(query);
 
-    const items = await this.repository.listPlans({
-      subjectType: query.subjectType
-        ? normalizeSubjectType(query.subjectType)
-        : undefined,
-      subjectId: normalizeOptionalText(query.subjectId),
-      groupId: normalizeOptionalText(query.groupId),
-      periodMonth: query.periodMonth
-        ? normalizePeriodMonth(query.periodMonth)
-        : undefined,
-      status: query.status
-        ? normalizePlanStatus(query.status)
-        : undefined,
-      metricCode: query.metricCode
-        ? normalizeMetricCode(query.metricCode)
-        : undefined,
-      search: normalizeOptionalSearch(query.search),
-      limit: normalizeLimit(query.limit),
-      sortBy: query.sortBy ? normalizeSortBy(query.sortBy) : undefined,
-      sortDirection: query.sortDirection
-        ? normalizeSortDirection(query.sortDirection)
-        : undefined,
-    });
+    if (this.hasKpiGlobalScope(actor)) {
+      const items = await this.repository.listPlans(input);
+      return { items };
+    }
 
-    return { items };
+    if (!this.hasKpiManagedGroupScope(actor)) {
+      throw new KpiPermissionScopeError(
+        "Cannot list KPI plans: kpi.global or kpi.managedGroup scope is required",
+      );
+    }
+
+    return this.listManagedGroupKpiPlans(actor, input);
   }
 
   async getKpiPlanDetail(
     actor: Actor,
     query: GetKpiPlanDetailQuery,
   ): Promise<KpiPlanDetailView> {
-    this.assertPermission(actor, Permission.KPI_READ);
-    this.assertKpiGlobalScope(actor, "read KPI plan detail");
-    return this.loadPlanDetail(query.kpiPlanId);
+    this.assertContextPermission(actor, Permission.KPI_READ);
+    if (this.hasKpiGlobalScope(actor)) {
+      return this.loadPlanDetail(query.kpiPlanId);
+    }
+    if (!this.hasKpiManagedGroupScope(actor)) {
+      throw new KpiPermissionScopeError(
+        "Cannot read KPI plan detail: kpi.global or kpi.managedGroup scope is required",
+      );
+    }
+
+    const plan = await this.requirePlan(query.kpiPlanId);
+    if (plan.subjectType !== "TALENT_GROUP") {
+      throw new KpiPermissionScopeError(
+        "KPI manager-scoped detail is supported only for TALENT_GROUP plans",
+      );
+    }
+    const managedGroupIds = await this.resolveManagedTalentGroupIds(actor);
+    if (!managedGroupIds.includes(plan.subjectId)) {
+      throw new KpiPermissionScopeError(
+        `KPI actor is not an active manager for group ${plan.subjectId}`,
+      );
+    }
+
+    return this.loadPlanDetail(plan.id);
   }
 
   async updateKpiDraftCore(
@@ -332,8 +343,7 @@ export class KpiAdminService {
           command.timezone !== undefined
             ? normalizePlanPeriod({
                 periodMonth: command.periodMonth ?? current.periodMonth,
-                periodStartAt:
-                  command.periodStartAt ?? current.periodStartAt,
+                periodStartAt: command.periodStartAt ?? current.periodStartAt,
                 periodEndAt: command.periodEndAt ?? current.periodEndAt,
                 timezone: command.timezone ?? current.timezone,
               })
@@ -421,11 +431,7 @@ export class KpiAdminService {
           current.currencyCode,
         );
         const now = this.clock();
-        const records = buildTargetMetricRecords(
-          current.id,
-          normalized,
-          now,
-        );
+        const records = buildTargetMetricRecords(current.id, normalized, now);
         await this.repository.replaceTargetMetricsForDraftPlan(
           current.id,
           records,
@@ -476,11 +482,10 @@ export class KpiAdminService {
           );
         }
 
-        const targetMetrics =
-          await this.repository.listTargetMetricsByPlanId(
-            current.id,
-            session,
-          );
+        const targetMetrics = await this.repository.listTargetMetricsByPlanId(
+          current.id,
+          session,
+        );
         const normalized = normalizeAllocations(
           command.allocations,
           targetMetrics,
@@ -519,10 +524,7 @@ export class KpiAdminService {
     actor: Actor,
     command: PublishKpiPlanCommand,
   ): Promise<KpiPlanMutationView> {
-    const permission = this.assertPermission(
-      actor,
-      Permission.KPI_PUBLISH,
-    );
+    const permission = this.assertPermission(actor, Permission.KPI_PUBLISH);
     this.assertKpiGlobalScope(actor, "publish KPI plan");
     const operation: AuthoritativeAdminMutationIdentity = "kpi.publish";
 
@@ -535,28 +537,23 @@ export class KpiAdminService {
         const current = await this.requirePlan(command.kpiPlanId, session);
         assertExecutableSubjectType(current.subjectType);
         this.assertDraft(current, "publish");
-        const targetMetrics =
-          await this.repository.listTargetMetricsByPlanId(
-            current.id,
-            session,
-          );
+        const targetMetrics = await this.repository.listTargetMetricsByPlanId(
+          current.id,
+          session,
+        );
 
         if (targetMetrics.length === 0) {
           throw new KpiValidationError(
             "KPI publish requires at least one target metric",
           );
         }
-        validateTargetMetricValues(
-          targetMetrics,
-          "targetMetrics",
-        );
+        validateTargetMetricValues(targetMetrics, "targetMetrics");
 
         if (current.subjectType === "TALENT_GROUP") {
-          const allocations =
-            await this.repository.listAllocationsByPlanId(
-              current.id,
-              session,
-            );
+          const allocations = await this.repository.listAllocationsByPlanId(
+            current.id,
+            session,
+          );
           await this.validateGroupAllocationsForPublish(
             current,
             targetMetrics,
@@ -616,10 +613,7 @@ export class KpiAdminService {
     actor: Actor,
     command: ArchiveKpiPlanCommand,
   ): Promise<KpiPlanMutationView> {
-    const permission = this.assertPermission(
-      actor,
-      Permission.KPI_ARCHIVE,
-    );
+    const permission = this.assertPermission(actor, Permission.KPI_ARCHIVE);
     this.assertKpiGlobalScope(actor, "archive KPI plan");
     const operation: AuthoritativeAdminMutationIdentity = "kpi.archive";
 
@@ -631,9 +625,7 @@ export class KpiAdminService {
       async (session) => {
         const current = await this.requirePlan(command.kpiPlanId, session);
         if (current.status === "ARCHIVED") {
-          throw new KpiStateError(
-            `KPI plan ${current.id} is already ARCHIVED`,
-          );
+          throw new KpiStateError(`KPI plan ${current.id} is already ARCHIVED`);
         }
 
         const now = this.clock();
@@ -683,8 +675,7 @@ export class KpiAdminService {
       actor,
       Permission.KPI_ENTER_ACTUAL,
     );
-    const operation: AuthoritativeAdminMutationIdentity =
-      "kpi.enter-actual";
+    const operation: AuthoritativeAdminMutationIdentity = "kpi.enter-actual";
 
     return this.executeMutation(
       actor,
@@ -724,16 +715,15 @@ export class KpiAdminService {
           session,
         );
 
-        const existing =
-          await this.actualRepository.findEntryByIdentity(
-            {
-              kpiPlanId: plan.id,
-              allocationId: allocation.id,
-              metricCode,
-              actualDate,
-            },
-            session,
-          );
+        const existing = await this.actualRepository.findEntryByIdentity(
+          {
+            kpiPlanId: plan.id,
+            allocationId: allocation.id,
+            metricCode,
+            actualDate,
+          },
+          session,
+        );
 
         if (existing) {
           if (numbersEqual(existing.actualValue, actualValue)) {
@@ -767,10 +757,7 @@ export class KpiAdminService {
           lastEditedByActorId: null,
         };
 
-        const created = await this.actualRepository.insertEntry(
-          entry,
-          session,
-        );
+        const created = await this.actualRepository.insertEntry(entry, session);
         await this.recordAudit({
           actor,
           permission,
@@ -801,8 +788,7 @@ export class KpiAdminService {
       actor,
       Permission.KPI_ENTER_ACTUAL,
     );
-    const operation: AuthoritativeAdminMutationIdentity =
-      "kpi.update-actual";
+    const operation: AuthoritativeAdminMutationIdentity = "kpi.update-actual";
 
     return this.executeMutation(
       actor,
@@ -859,8 +845,7 @@ export class KpiAdminService {
       actor,
       Permission.KPI_CORRECT_ACTUAL,
     );
-    const operation: AuthoritativeAdminMutationIdentity =
-      "kpi.correct-actual";
+    const operation: AuthoritativeAdminMutationIdentity = "kpi.correct-actual";
 
     return this.executeMutation(
       actor,
@@ -1018,10 +1003,7 @@ export class KpiAdminService {
   ): Promise<KpiProgressView> {
     this.assertContextPermission(actor, Permission.KPI_READ_PROGRESS);
     const plan = await this.requirePlan(query.kpiPlanId);
-    const allowedTalentIds = await this.resolveProgressTalentScope(
-      actor,
-      plan,
-    );
+    const allowedTalentIds = await this.resolveProgressTalentScope(actor, plan);
     return this.buildProgressView(plan, allowedTalentIds);
   }
 
@@ -1051,10 +1033,7 @@ export class KpiAdminService {
   ): Promise<KpiActualDailyGridView> {
     this.assertContextPermission(actor, Permission.KPI_READ_PROGRESS);
     const plan = await this.requirePlan(query.kpiPlanId);
-    const actualDate = normalizeActualDateText(
-      query.actualDate,
-      "actualDate",
-    );
+    const actualDate = normalizeActualDateText(query.actualDate, "actualDate");
     assertActualDateWithinPlan(plan, actualDate);
     await this.assertActorCanReadActualGrid(actor, plan);
     return this.buildActualDailyGridView(plan, actualDate);
@@ -1066,15 +1045,11 @@ export class KpiAdminService {
   ): Promise<ListKpiActualCorrectionsResult> {
     this.assertContextPermission(actor, Permission.KPI_READ_PROGRESS);
     const plan = await this.requirePlan(query.kpiPlanId);
-    const entry = await this.requireActualEntry(
-      query.actualEntryId,
-      plan.id,
-    );
+    const entry = await this.requireActualEntry(query.actualEntryId, plan.id);
     await this.assertActorCanReadActualEntry(actor, plan, entry);
-    const items =
-      await this.actualRepository.listCorrectionsByActualEntryId(
-        entry.id,
-      );
+    const items = await this.actualRepository.listCorrectionsByActualEntryId(
+      entry.id,
+    );
     return { items };
   }
 
@@ -1241,17 +1216,13 @@ export class KpiAdminService {
     }
     if (actor.type !== "staff") {
       if (!hasSelfScope) {
-        throw new KpiPermissionScopeError(
-          "KPI progress read scope denied",
-        );
+        throw new KpiPermissionScopeError("KPI progress read scope denied");
       }
       const talentId = await this.resolveActorTalentId(actor);
       if (talentId) {
         return new Set([talentId]);
       }
-      throw new KpiPermissionScopeError(
-        "KPI progress read scope denied",
-      );
+      throw new KpiPermissionScopeError("KPI progress read scope denied");
     }
     const employmentProfile =
       await this.subjectReadonlyAccess.findActiveEmploymentProfileByLinkedUserId(
@@ -1272,14 +1243,14 @@ export class KpiAdminService {
           employmentProfile.employmentProfileId,
           this.clock(),
         );
-      if (assignments.some((assignment) => assignment.groupId === plan.subjectId)) {
+      if (
+        assignments.some((assignment) => assignment.groupId === plan.subjectId)
+      ) {
         return undefined;
       }
     }
     if (!hasSelfScope) {
-      throw new KpiPermissionScopeError(
-        "KPI progress read scope denied",
-      );
+      throw new KpiPermissionScopeError("KPI progress read scope denied");
     }
     const talent =
       await this.subjectReadonlyAccess.findNonArchivedTalentByLinkedEmploymentProfileId(
@@ -1288,9 +1259,7 @@ export class KpiAdminService {
     if (talent) {
       return new Set([talent.talentId]);
     }
-    throw new KpiPermissionScopeError(
-      "KPI progress read scope denied",
-    );
+    throw new KpiPermissionScopeError("KPI progress read scope denied");
   }
 
   private async resolveActorTalentId(actor: Actor): Promise<string | null> {
@@ -1344,7 +1313,9 @@ export class KpiAdminService {
         employmentProfile.employmentProfileId,
         this.clock(),
       );
-    if (assignments.some((assignment) => assignment.groupId === plan.subjectId)) {
+    if (
+      assignments.some((assignment) => assignment.groupId === plan.subjectId)
+    ) {
       return;
     }
     throw new KpiPermissionScopeError(
@@ -1376,7 +1347,9 @@ export class KpiAdminService {
       );
     }
     const allocations = await this.repository.listAllocationsByPlanId(plan.id);
-    const allocation = allocations.find((item) => item.id === entry.allocationId);
+    const allocation = allocations.find(
+      (item) => item.id === entry.allocationId,
+    );
     if (!allocation) {
       throw new KpiInvalidAllocationError(
         `KPI actual entry allocation is missing: ${entry.allocationId}`,
@@ -1398,7 +1371,8 @@ export class KpiAdminService {
       ),
     ]);
     const policy =
-      plan.actualPolicySnapshot ?? createDefaultActualPolicySnapshot(plan.createdAt);
+      plan.actualPolicySnapshot ??
+      createDefaultActualPolicySnapshot(plan.createdAt);
     const editability = resolveDailyGridEditability(
       plan,
       policy,
@@ -1482,8 +1456,9 @@ export class KpiAdminService {
           allowedTalentIds.has(allocation.memberTalentId),
         )
       : allocations;
-    const entryKey = (entry: Pick<KpiActualEntry, "allocationId" | "metricCode">) =>
-      `${entry.allocationId}:${entry.metricCode}`;
+    const entryKey = (
+      entry: Pick<KpiActualEntry, "allocationId" | "metricCode">,
+    ) => `${entry.allocationId}:${entry.metricCode}`;
     const actualByAllocationMetric = new Map<string, number>();
     const countByAllocationMetric = new Map<string, number>();
     for (const entry of entries) {
@@ -1550,10 +1525,7 @@ export class KpiAdminService {
         periodEndAt: plan.periodEndAt,
         timezone: plan.timezone,
       },
-      periodElapsedPercent: calculatePeriodElapsedPercent(
-        plan,
-        this.clock(),
-      ),
+      periodElapsedPercent: calculatePeriodElapsedPercent(plan, this.clock()),
       targetMetrics,
       groupTotals,
       memberProgress,
@@ -1646,10 +1618,97 @@ export class KpiAdminService {
     return PermissionGuard.hasKpiScopeGrant(actor, "self");
   }
 
-  private assertActualMutationPlanOpen(
-    plan: KpiPlan,
-    operation: string,
-  ): void {
+  private toListPlansInput(query: ListKpiPlansQuery): ListKpiPlansInput {
+    return {
+      subjectType: query.subjectType
+        ? normalizeSubjectType(query.subjectType)
+        : undefined,
+      subjectId: normalizeOptionalText(query.subjectId),
+      groupId: normalizeOptionalText(query.groupId),
+      periodMonth: query.periodMonth
+        ? normalizePeriodMonth(query.periodMonth)
+        : undefined,
+      status: query.status ? normalizePlanStatus(query.status) : undefined,
+      metricCode: query.metricCode
+        ? normalizeMetricCode(query.metricCode)
+        : undefined,
+      search: normalizeOptionalSearch(query.search),
+      limit: normalizeLimit(query.limit),
+      sortBy: query.sortBy ? normalizeSortBy(query.sortBy) : undefined,
+      sortDirection: query.sortDirection
+        ? normalizeSortDirection(query.sortDirection)
+        : undefined,
+    };
+  }
+
+  private async listManagedGroupKpiPlans(
+    actor: Actor,
+    input: ListKpiPlansInput,
+  ): Promise<ListKpiPlansResult> {
+    if (input.subjectType && input.subjectType !== "TALENT_GROUP") {
+      return { items: [] };
+    }
+
+    if (
+      input.groupId !== undefined &&
+      input.subjectId !== undefined &&
+      input.groupId !== input.subjectId
+    ) {
+      return { items: [] };
+    }
+
+    const managedGroupIds = await this.resolveManagedTalentGroupIds(actor);
+    if (managedGroupIds.length === 0) {
+      return { items: [] };
+    }
+
+    const requestedGroupId = input.groupId ?? input.subjectId;
+    const candidateGroupIds =
+      requestedGroupId === undefined ? managedGroupIds : [requestedGroupId];
+
+    if (
+      candidateGroupIds.some((groupId) => !managedGroupIds.includes(groupId))
+    ) {
+      return { items: [] };
+    }
+
+    const perGroupResults = await Promise.all(
+      candidateGroupIds.map((groupId) =>
+        this.repository.listPlans({
+          ...input,
+          subjectType: "TALENT_GROUP",
+          subjectId: undefined,
+          groupId,
+        }),
+      ),
+    );
+    const itemsById = new Map<string, KpiPlanListItemView>();
+    for (const item of perGroupResults.flat()) {
+      itemsById.set(item.id, item);
+    }
+
+    return {
+      items: Array.from(itemsById.values())
+        .sort((left, right) => compareKpiPlanListItems(left, right, input))
+        .slice(0, input.limit),
+    };
+  }
+
+  private async resolveManagedTalentGroupIds(
+    actor: Actor,
+  ): Promise<readonly string[]> {
+    const groupIds = await resolveManagedTalentGroupIds(
+      actor,
+      {
+        subjectReadonlyAccess: this.subjectReadonlyAccess,
+        managerAssignmentRepository: this.managerAssignmentRepository,
+      },
+      this.clock(),
+    );
+    return groupIds ?? [];
+  }
+
+  private assertActualMutationPlanOpen(plan: KpiPlan, operation: string): void {
     if (plan.status !== "PUBLISHED") {
       throw new KpiStateError(
         `KPI plan ${plan.id} is ${plan.status}; only PUBLISHED plans can ${operation}`,
@@ -1730,10 +1789,7 @@ export class KpiAdminService {
   ): Promise<void> {
     if (subjectType === "TALENT") {
       if (
-        !(await this.subjectReadonlyAccess.hasActiveTalent(
-          subjectId,
-          session,
-        ))
+        !(await this.subjectReadonlyAccess.hasActiveTalent(subjectId, session))
       ) {
         throw new KpiInvalidSubjectReferenceError(
           `KPI TALENT subject must reference an active Talent: ${subjectId}`,
@@ -1784,12 +1840,11 @@ export class KpiAdminService {
 
     const allocations: KpiAllocation[] = [];
     for (const input of inputs) {
-      const member =
-        await this.subjectReadonlyAccess.findActiveGroupMember(
-          plan.subjectId,
-          input.memberTalentId,
-          session,
-        );
+      const member = await this.subjectReadonlyAccess.findActiveGroupMember(
+        plan.subjectId,
+        input.memberTalentId,
+        session,
+      );
       if (!member) {
         throw new KpiInvalidAllocationError(
           `KPI allocation memberTalentId must be an active member of group ${plan.subjectId}: ${input.memberTalentId}`,
@@ -1858,12 +1913,11 @@ export class KpiAdminService {
           `KPI allocation ${allocation.id} must be DRAFT before publish`,
         );
       }
-      const member =
-        await this.subjectReadonlyAccess.findActiveGroupMember(
-          plan.subjectId,
-          allocation.memberTalentId,
-          session,
-        );
+      const member = await this.subjectReadonlyAccess.findActiveGroupMember(
+        plan.subjectId,
+        allocation.memberTalentId,
+        session,
+      );
       if (!member) {
         throw new KpiInvalidAllocationError(
           `KPI allocation memberTalentId must still be an active member at publish: ${allocation.memberTalentId}`,
@@ -1920,10 +1974,7 @@ function normalizeTargetMetrics(
   const currencyCode = normalizeCurrency(currencyCodeInput);
   const seen = new Set<KpiMetricCode>();
   return input.map((metric, index) => {
-    const metricRecord = requirePlainRecord(
-      metric,
-      `targetMetrics[${index}]`,
-    );
+    const metricRecord = requirePlainRecord(metric, `targetMetrics[${index}]`);
     assertOnlyFields(
       metricRecord,
       TARGET_METRIC_INPUT_FIELDS,
@@ -2152,9 +2203,7 @@ function expectedMonthWindow(periodMonth: string): {
 export function normalizePeriodMonth(value: unknown): string {
   const text = normalizeRequiredText(value, "periodMonth");
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(text)) {
-    throw new KpiValidationError(
-      "KPI periodMonth must use YYYY-MM format",
-    );
+    throw new KpiValidationError("KPI periodMonth must use YYYY-MM format");
   }
   return text;
 }
@@ -2187,6 +2236,27 @@ function assertExecutableSubjectType(subjectType: KpiSubjectType): void {
   );
 }
 
+function compareKpiPlanListItems(
+  left: KpiPlanListItemView,
+  right: KpiPlanListItemView,
+  input: Pick<ListKpiPlansInput, "sortBy" | "sortDirection">,
+): number {
+  const direction = input.sortDirection === "ASC" ? 1 : -1;
+  const sortBy = input.sortBy ?? "periodMonth";
+  if (sortBy === "createdAt") {
+    const createdDiff = (left.createdAt - right.createdAt) * direction;
+    return createdDiff || left.id.localeCompare(right.id);
+  }
+  const leftValue = sortBy === "planCode" ? left.planCode : left.periodMonth;
+  const rightValue = sortBy === "planCode" ? right.planCode : right.periodMonth;
+  const fieldDiff = leftValue.localeCompare(rightValue) * direction;
+  return (
+    fieldDiff ||
+    left.planCode.localeCompare(right.planCode) ||
+    left.id.localeCompare(right.id)
+  );
+}
+
 function normalizePlanStatus(value: unknown): KpiPlanStatus {
   const text = normalizeRequiredText(value, "status");
   if (!KPI_PLAN_STATUSES.includes(text as KpiPlanStatus)) {
@@ -2195,7 +2265,9 @@ function normalizePlanStatus(value: unknown): KpiPlanStatus {
   return text as KpiPlanStatus;
 }
 
-function normalizeSortBy(value: unknown): "periodMonth" | "planCode" | "createdAt" {
+function normalizeSortBy(
+  value: unknown,
+): "periodMonth" | "planCode" | "createdAt" {
   const text = normalizeRequiredText(value, "sortBy");
   if (!KPI_SORT_FIELDS.includes(text as never)) {
     throw new KpiValidationError(`KPI sortBy is unsupported: ${text}`);
@@ -2206,9 +2278,7 @@ function normalizeSortBy(value: unknown): "periodMonth" | "planCode" | "createdA
 function normalizeSortDirection(value: unknown): "ASC" | "DESC" {
   const text = normalizeRequiredText(value, "sortDirection").toUpperCase();
   if (!KPI_SORT_DIRECTIONS.includes(text as never)) {
-    throw new KpiValidationError(
-      `KPI sortDirection is unsupported: ${text}`,
-    );
+    throw new KpiValidationError(`KPI sortDirection is unsupported: ${text}`);
   }
   return text as "ASC" | "DESC";
 }
@@ -2281,9 +2351,7 @@ function createDefaultActualPolicySnapshot(
   };
 }
 
-function requireActualPolicySnapshot(
-  plan: KpiPlan,
-): KpiActualPolicySnapshot {
+function requireActualPolicySnapshot(plan: KpiPlan): KpiActualPolicySnapshot {
   if (!plan.actualPolicySnapshot) {
     throw new KpiStateError(
       `KPI plan ${plan.id} has no actual policy snapshot`,
@@ -2324,10 +2392,7 @@ function isDirectEditWindowOpen(
     actualDate,
     policy.entryOpenLocalTime,
   );
-  const windowEnd = localDateTimeToUtcMs(
-    actualDate,
-    policy.entryLockLocalTime,
-  );
+  const windowEnd = localDateTimeToUtcMs(actualDate, policy.entryLockLocalTime);
   return now >= windowStart && now <= windowEnd;
 }
 
@@ -2374,10 +2439,7 @@ function assertFinalizeEligible(
     );
   }
   const lastDate = lastLocalDateOfPeriod(plan.periodMonth);
-  const lastLockAt = localDateTimeToUtcMs(
-    lastDate,
-    policy.entryLockLocalTime,
-  );
+  const lastLockAt = localDateTimeToUtcMs(lastDate, policy.entryLockLocalTime);
   if (now <= lastLockAt) {
     throw new KpiStateError(
       `KPI plan ${plan.id} cannot finalize while a daily edit window remains open`,
@@ -2430,7 +2492,9 @@ function calculatePeriodElapsedPercent(plan: KpiPlan, now: number): number {
   if (now >= plan.periodEndAt) {
     return 100;
   }
-  return ((now - plan.periodStartAt) / (plan.periodEndAt - plan.periodStartAt)) * 100;
+  return (
+    ((now - plan.periodStartAt) / (plan.periodEndAt - plan.periodStartAt)) * 100
+  );
 }
 
 function hasAtMostDecimalPlaces(value: number, decimalPlaces: number): boolean {
@@ -2499,9 +2563,7 @@ function normalizeNullableText(value: unknown): string | null {
 }
 
 function normalizeSearchToken(value: unknown): string {
-  return normalizeRequiredText(value, "searchToken").toLocaleLowerCase(
-    "en-US",
-  );
+  return normalizeRequiredText(value, "searchToken").toLocaleLowerCase("en-US");
 }
 
 function normalizeDateText(value: unknown, field: string): string {
@@ -2565,11 +2627,7 @@ function requirePlainRecord(
   value: unknown,
   field: string,
 ): Record<string, unknown> {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value)
-  ) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new KpiValidationError(`KPI ${field} must be a plain object`);
   }
   return value as Record<string, unknown>;
