@@ -8,7 +8,8 @@ export type WorkScheduleActorScopeGrant =
   | "department"
   | "global";
 export type EventAssignmentActorScopeGrant =
-  | "global";
+  | "global"
+  | "managedGroup";
 export type ContractRegistryActorScopeGrant =
   | "global";
 export type TalentKpiActorScopeGrant =
@@ -48,7 +49,7 @@ const WORK_SCHEDULE_SCOPE_GRANT_SET = new Set<
 >(WORK_SCHEDULE_SCOPE_GRANTS_ORDER);
 
 const EVENT_ASSIGNMENT_SCOPE_GRANTS_ORDER: readonly EventAssignmentActorScopeGrant[] =
-  Object.freeze(["global"]);
+  Object.freeze(["global", "managedGroup"]);
 
 const EVENT_ASSIGNMENT_SCOPE_GRANT_SET = new Set<
   EventAssignmentActorScopeGrant

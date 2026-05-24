@@ -3,13 +3,33 @@ import { test } from "node:test";
 import { Actor } from "@core/actor/actor";
 import { Permission } from "@core/permission/permission.enum";
 import { EventAssignmentAdminQueryService } from "@modules/event-assignment/admin/admin.event-assignment.query-service";
-import { EventAssignmentValidationError } from "@modules/event-assignment/domain/event-assignment.errors";
+import {
+  EventAssignmentPermissionScopeError,
+  EventAssignmentValidationError,
+} from "@modules/event-assignment/domain/event-assignment.errors";
 import type { EventAssignmentReadRepository } from "@modules/event-assignment/read/event-assignment.read-repository";
 import {
   EventAssignmentAdminAssignmentListExposure,
   EventAssignmentAdminDetailExposure,
 } from "@modules/event-assignment/shared/event-assignment.exposure";
 import { NativeMongoEventAssignmentReadRepository } from "@infra/mongo/event-assignment/event-assignment.read-repository";
+
+function managedAssignment(groupId: string) {
+  return {
+    id: `manager-assignment-${groupId}`,
+    groupId,
+    managerEmploymentProfileId: "ep-manager",
+    role: "MANAGER" as const,
+    effectiveFrom: 1,
+    effectiveTo: null,
+    status: "ACTIVE" as const,
+    isPrimary: true,
+    createdAt: 1,
+    createdByActorId: "actor",
+    updatedAt: 1,
+    updatedByActorId: "actor",
+  };
+}
 
 function createActor(): Actor {
   return new Actor({
@@ -20,6 +40,20 @@ function createActor(): Actor {
     permissions: [Permission.EVENT_READ],
     scopeGrants: {
       eventAssignment: ["global"],
+    },
+    isActive: true,
+  });
+}
+
+function createManagedGroupActor(): Actor {
+  return new Actor({
+    id: "manager-user-1",
+    type: "admin",
+    context: "ADMIN",
+    roles: [],
+    permissions: [Permission.EVENT_READ],
+    scopeGrants: {
+      eventAssignment: ["managedGroup"],
     },
     isActive: true,
   });
@@ -51,6 +85,9 @@ function createServiceCapture(): {
     },
     async getEventDetail() {
       return null;
+    },
+    async eventHasManagedGroupAssignment() {
+      return false;
     },
   };
 
@@ -97,6 +134,7 @@ test("Event Assignment target filters parse statusGroup and timestamp ranges wit
     search: undefined,
     sortField: undefined,
     sortDirection: undefined,
+    managedTalentGroupIds: undefined,
   });
 });
 
@@ -127,6 +165,198 @@ test("Event Assignment statusGroup rejects unsupported and conflicting status co
       status: "COMPLETED",
     }),
     EventAssignmentValidationError,
+  );
+});
+
+test("TEAM_MANAGER managedGroup scope narrows Event list to active managed talent groups", async () => {
+  const capture: { capturedInput: unknown } = {
+    capturedInput: undefined,
+  };
+  const repository: EventAssignmentReadRepository = {
+    async listEvents(input) {
+      capture.capturedInput = input;
+      return { items: [] };
+    },
+    async listEventsByAssignment() {
+      return { items: [] };
+    },
+    async listEventsByResource() {
+      return { items: [] };
+    },
+    async listEventsByPlatform() {
+      return { items: [] };
+    },
+    async listActiveAssignmentsForEvent() {
+      return [];
+    },
+    async getEventDetail() {
+      return null;
+    },
+    async eventHasManagedGroupAssignment() {
+      return false;
+    },
+  };
+  const service = new EventAssignmentAdminQueryService(repository, {
+    subjectReadonlyAccess: {
+      async findActiveEmploymentProfileByLinkedUserId(linkedUserId) {
+        assert.equal(linkedUserId, "manager-user-1");
+        return {
+          employmentProfileId: "ep-manager",
+        };
+      },
+    },
+    managerAssignmentRepository: {
+      async listActiveAssignmentsByManagerEmploymentProfile(
+        managerEmploymentProfileId,
+      ) {
+        assert.equal(managerEmploymentProfileId, "ep-manager");
+        return [
+          managedAssignment("group-managed-1"),
+          managedAssignment("group-managed-1"),
+          managedAssignment("group-managed-2"),
+        ];
+      },
+    },
+  });
+
+  await service.listEvents(createManagedGroupActor(), {});
+
+  assert.deepEqual(
+    (
+      capture.capturedInput as {
+        managedTalentGroupIds?: readonly string[];
+      }
+    ).managedTalentGroupIds,
+    ["group-managed-1", "group-managed-2"],
+  );
+});
+
+test("TEAM_MANAGER managedGroup scope with no linked employment profile returns empty Event list", async () => {
+  const service = new EventAssignmentAdminQueryService(
+    {
+      async listEvents(input) {
+        return {
+          items:
+            input.managedTalentGroupIds?.length === 0
+              ? []
+              : [
+                  {
+                    id: "leak",
+                    eventCode: "EVT-LEAK",
+                    title: "Leak",
+                    status: "SCHEDULED",
+                    eventStartAt: 1,
+                    eventEndAt: 2,
+                    createdAt: 1,
+                  },
+                ],
+        };
+      },
+      async listEventsByAssignment() {
+        return { items: [] };
+      },
+      async listEventsByResource() {
+        return { items: [] };
+      },
+      async listEventsByPlatform() {
+        return { items: [] };
+      },
+      async listActiveAssignmentsForEvent() {
+        return [];
+      },
+      async getEventDetail() {
+        return null;
+      },
+      async eventHasManagedGroupAssignment() {
+        return false;
+      },
+    },
+    {
+      subjectReadonlyAccess: {
+        async findActiveEmploymentProfileByLinkedUserId() {
+          return null;
+        },
+      },
+      managerAssignmentRepository: {
+        async listActiveAssignmentsByManagerEmploymentProfile() {
+          return [];
+        },
+      },
+    },
+  );
+
+  const result = await service.listEvents(createManagedGroupActor(), {});
+
+  assert.deepEqual(result.items, []);
+});
+
+test("TEAM_MANAGER managedGroup scope denies unmanaged Event detail and assignments", async () => {
+  const repository: EventAssignmentReadRepository = {
+    async listEvents() {
+      return { items: [] };
+    },
+    async listEventsByAssignment() {
+      return { items: [] };
+    },
+    async listEventsByResource() {
+      return { items: [] };
+    },
+    async listEventsByPlatform() {
+      return { items: [] };
+    },
+    async listActiveAssignmentsForEvent() {
+      return [];
+    },
+    async getEventDetail(eventId) {
+      return {
+        id: eventId,
+        eventCode: "EVT-UNMANAGED",
+        title: "Unmanaged",
+        studioResourceIds: [],
+        platformAccountIds: [],
+        status: "SCHEDULED",
+        eventStartAt: 1,
+        eventEndAt: 2,
+        description: null,
+        externalRef: null,
+        createdAt: 1,
+        updatedAt: 1,
+      };
+    },
+    async eventHasManagedGroupAssignment() {
+      return false;
+    },
+  };
+  const service = new EventAssignmentAdminQueryService(repository, {
+    subjectReadonlyAccess: {
+      async findActiveEmploymentProfileByLinkedUserId() {
+        return {
+          employmentProfileId: "ep-manager",
+        };
+      },
+    },
+    managerAssignmentRepository: {
+      async listActiveAssignmentsByManagerEmploymentProfile() {
+        return [
+          managedAssignment("group-managed"),
+        ];
+      },
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      service.getEventDetail(createManagedGroupActor(), {
+        eventId: "event-unmanaged",
+      }),
+    EventAssignmentPermissionScopeError,
+  );
+  await assert.rejects(
+    () =>
+      service.listEventAssignments(createManagedGroupActor(), {
+        eventId: "event-unmanaged",
+      }),
+    EventAssignmentPermissionScopeError,
   );
 });
 

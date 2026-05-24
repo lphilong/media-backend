@@ -43,7 +43,7 @@ const WORK_SCHEDULE_ACTION_PERMISSIONS = new Set<
 ]);
 
 const EVENT_ASSIGNMENT_SCOPE_GRANTS_ORDER: readonly EventAssignmentActorScopeGrant[] =
-  Object.freeze(["global"]);
+  Object.freeze(["global", "managedGroup"]);
 
 const EVENT_ASSIGNMENT_SCOPE_GRANT_SET = new Set<
   EventAssignmentActorScopeGrant

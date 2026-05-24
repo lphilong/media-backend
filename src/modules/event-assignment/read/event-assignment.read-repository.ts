@@ -31,6 +31,7 @@ export interface EventListReadInput {
   readonly search?: string;
   readonly sortField?: EventSortField;
   readonly sortDirection?: EventSortDirection;
+  readonly managedTalentGroupIds?: readonly string[];
 }
 
 export interface EventByAssignmentListReadInput {
@@ -45,6 +46,7 @@ export interface EventByAssignmentListReadInput {
   readonly cursor?: string;
   readonly sortField?: EventSortField;
   readonly sortDirection?: EventSortDirection;
+  readonly managedTalentGroupIds?: readonly string[];
 }
 
 export interface EventByResourceListReadInput {
@@ -56,6 +58,7 @@ export interface EventByResourceListReadInput {
   readonly cursor?: string;
   readonly sortField?: EventSortField;
   readonly sortDirection?: EventSortDirection;
+  readonly managedTalentGroupIds?: readonly string[];
 }
 
 export interface EventByPlatformListReadInput {
@@ -67,6 +70,7 @@ export interface EventByPlatformListReadInput {
   readonly cursor?: string;
   readonly sortField?: EventSortField;
   readonly sortDirection?: EventSortDirection;
+  readonly managedTalentGroupIds?: readonly string[];
 }
 
 export interface EventListReadResult {
@@ -108,9 +112,15 @@ export interface EventAssignmentReadRepository {
 
   listActiveAssignmentsForEvent(
     eventId: string,
+    managedTalentGroupIds?: readonly string[],
   ): Promise<readonly EventAssignmentListItemView[]>;
 
   getEventDetail(
     eventId: string,
   ): Promise<EventDetailView | null>;
+
+  eventHasManagedGroupAssignment(
+    eventId: string,
+    managedTalentGroupIds: readonly string[],
+  ): Promise<boolean>;
 }

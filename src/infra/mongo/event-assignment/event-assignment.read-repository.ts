@@ -54,6 +54,13 @@ interface EventAssignmentReadDocument {
   readonly createdAt: number;
 }
 
+interface TalentGroupMemberReadDocument {
+  readonly _id: string;
+  readonly groupId: string;
+  readonly talentId: string;
+  readonly membershipStatus: string;
+}
+
 interface EmploymentProfileReferenceReadDocument {
   readonly _id: string;
   readonly employeeCode: string;
@@ -140,6 +147,7 @@ export class NativeMongoEventAssignmentReadRepository
   implements EventAssignmentReadRepository
 {
   private readonly assignmentCollection: Collection<EventAssignmentReadDocument>;
+  private readonly talentGroupMemberCollection: Collection<TalentGroupMemberReadDocument>;
   private readonly employmentProfileCollection: Collection<EmploymentProfileReferenceReadDocument>;
   private readonly talentCollection: Collection<TalentReferenceReadDocument>;
   private readonly talentGroupCollection: Collection<TalentGroupReferenceReadDocument>;
@@ -150,6 +158,8 @@ export class NativeMongoEventAssignmentReadRepository
     super(db, "events");
     this.assignmentCollection =
       db.collection<EventAssignmentReadDocument>("event_assignments");
+    this.talentGroupMemberCollection =
+      db.collection<TalentGroupMemberReadDocument>("talent_group_members");
     this.employmentProfileCollection =
       db.collection<EmploymentProfileReferenceReadDocument>(
         "employment_profiles",
@@ -167,6 +177,12 @@ export class NativeMongoEventAssignmentReadRepository
   async listEvents(input: EventListReadInput): Promise<EventListReadResult> {
     const page = await this.listDocuments("list", input, async (filters) => {
       applyStatusFilter(filters, input);
+      await applyManagedGroupAssignmentFilter(
+        filters,
+        input.managedTalentGroupIds,
+        this.assignmentCollection,
+        this.talentGroupMemberCollection,
+      );
       await applyAssignmentFilter(filters, input, this.assignmentCollection);
       applyContainsResourceFilter(filters, input.containsStudioResourceId);
       applyContainsPlatformFilter(filters, input.containsPlatformAccountId);
@@ -192,6 +208,12 @@ export class NativeMongoEventAssignmentReadRepository
         applyStatusFilter(filters, {
           status: input.status,
         });
+        await applyManagedGroupAssignmentFilter(
+          filters,
+          input.managedTalentGroupIds,
+          this.assignmentCollection,
+          this.talentGroupMemberCollection,
+        );
 
         await applyAssignmentFilter(
           filters,
@@ -225,6 +247,12 @@ export class NativeMongoEventAssignmentReadRepository
         applyStatusFilter(filters, {
           status: input.status,
         });
+        await applyManagedGroupAssignmentFilter(
+          filters,
+          input.managedTalentGroupIds,
+          this.assignmentCollection,
+          this.talentGroupMemberCollection,
+        );
         applyContainsResourceFilter(filters, input.studioResourceId);
         applyWindowFilter(filters, input);
       },
@@ -246,6 +274,12 @@ export class NativeMongoEventAssignmentReadRepository
         applyStatusFilter(filters, {
           status: input.status,
         });
+        await applyManagedGroupAssignmentFilter(
+          filters,
+          input.managedTalentGroupIds,
+          this.assignmentCollection,
+          this.talentGroupMemberCollection,
+        );
         applyContainsPlatformFilter(filters, input.platformAccountId);
         applyWindowFilter(filters, input);
       },
@@ -259,11 +293,21 @@ export class NativeMongoEventAssignmentReadRepository
 
   async listActiveAssignmentsForEvent(
     eventId: string,
+    managedTalentGroupIds?: readonly string[],
   ): Promise<readonly EventAssignmentListItemView[]> {
+    const managedAssignmentFilter = await buildManagedGroupAssignmentQuery(
+      managedTalentGroupIds,
+      this.talentGroupMemberCollection,
+    );
+    if (managedAssignmentFilter === false) {
+      return [];
+    }
+
     const docs = await this.assignmentCollection
       .find({
         eventId,
         assignmentStatus: "ACTIVE",
+        ...(managedAssignmentFilter ? { $or: managedAssignmentFilter } : {}),
       })
       .toArray();
 
@@ -303,6 +347,35 @@ export class NativeMongoEventAssignmentReadRepository
     );
 
     return detail ?? null;
+  }
+
+  async eventHasManagedGroupAssignment(
+    eventId: string,
+    managedTalentGroupIds: readonly string[],
+  ): Promise<boolean> {
+    const managedAssignmentFilter = await buildManagedGroupAssignmentQuery(
+      managedTalentGroupIds,
+      this.talentGroupMemberCollection,
+    );
+
+    if (managedAssignmentFilter === false) {
+      return false;
+    }
+
+    const doc = await this.assignmentCollection.findOne(
+      {
+        eventId,
+        assignmentStatus: "ACTIVE",
+        $or: managedAssignmentFilter,
+      },
+      {
+        projection: {
+          _id: 1,
+        },
+      },
+    );
+
+    return doc !== null;
   }
 
   private async listDocuments<
@@ -877,6 +950,81 @@ async function applyAssignmentFilter(
   });
 }
 
+async function applyManagedGroupAssignmentFilter(
+  filters: Array<Record<string, unknown>>,
+  managedTalentGroupIds: readonly string[] | undefined,
+  assignmentCollection: Collection<EventAssignmentReadDocument>,
+  memberCollection: Collection<TalentGroupMemberReadDocument>,
+): Promise<void> {
+  const assignmentQuery = await buildManagedGroupAssignmentQuery(
+    managedTalentGroupIds,
+    memberCollection,
+  );
+
+  if (assignmentQuery === undefined) {
+    return;
+  }
+
+  if (assignmentQuery === false) {
+    filters.push({
+      _id: {
+        $in: [],
+      },
+    });
+    return;
+  }
+
+  const eventIds = await assignmentCollection.distinct("eventId", {
+    assignmentStatus: "ACTIVE",
+    $or: assignmentQuery,
+  });
+
+  filters.push({
+    _id: {
+      $in: [...eventIds],
+    },
+  });
+}
+
+async function buildManagedGroupAssignmentQuery(
+  managedTalentGroupIds: readonly string[] | undefined,
+  memberCollection: Collection<TalentGroupMemberReadDocument>,
+): Promise<Record<string, unknown>[] | false | undefined> {
+  if (managedTalentGroupIds === undefined) {
+    return undefined;
+  }
+
+  const groupIds = [...new Set(managedTalentGroupIds)];
+  if (groupIds.length === 0) {
+    return false;
+  }
+
+  const talentIds = await memberCollection.distinct("talentId", {
+    groupId: {
+      $in: groupIds,
+    },
+    membershipStatus: "ACTIVE",
+  });
+
+  const clauses: Record<string, unknown>[] = [
+    {
+      assignmentTalentGroupId: {
+        $in: groupIds,
+      },
+    },
+  ];
+
+  if (talentIds.length > 0) {
+    clauses.push({
+      assignmentTalentId: {
+        $in: [...talentIds],
+      },
+    });
+  }
+
+  return clauses;
+}
+
 function applyContainsResourceFilter(
   filters: Array<Record<string, unknown>>,
   studioResourceId: string | undefined,
@@ -1286,6 +1434,9 @@ function buildCursorQueryShapeSignature(
         eventOverlapEndAt: typed.eventOverlapEndAt ?? null,
         eventStartFromAt: typed.eventStartFromAt ?? null,
         eventStartToAt: typed.eventStartToAt ?? null,
+        managedTalentGroupIds: typed.managedTalentGroupIds
+          ? [...typed.managedTalentGroupIds].sort()
+          : null,
         search: typed.search ?? null,
         sortSpec,
       });
@@ -1303,6 +1454,9 @@ function buildCursorQueryShapeSignature(
         status: typed.status ?? null,
         windowStartAt: typed.windowStartAt ?? null,
         windowEndAt: typed.windowEndAt ?? null,
+        managedTalentGroupIds: typed.managedTalentGroupIds
+          ? [...typed.managedTalentGroupIds].sort()
+          : null,
         sortSpec,
       });
     }
@@ -1316,6 +1470,9 @@ function buildCursorQueryShapeSignature(
         status: typed.status ?? null,
         windowStartAt: typed.windowStartAt ?? null,
         windowEndAt: typed.windowEndAt ?? null,
+        managedTalentGroupIds: typed.managedTalentGroupIds
+          ? [...typed.managedTalentGroupIds].sort()
+          : null,
         sortSpec,
       });
     }
@@ -1329,6 +1486,9 @@ function buildCursorQueryShapeSignature(
         status: typed.status ?? null,
         windowStartAt: typed.windowStartAt ?? null,
         windowEndAt: typed.windowEndAt ?? null,
+        managedTalentGroupIds: typed.managedTalentGroupIds
+          ? [...typed.managedTalentGroupIds].sort()
+          : null,
         sortSpec,
       });
     }

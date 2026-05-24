@@ -710,6 +710,10 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   );
   const eventAssignmentQueryService = new EventAssignmentAdminQueryService(
     eventAssignmentReadRepository,
+    {
+      subjectReadonlyAccess: kpiSubjectReadonlyAccess,
+      managerAssignmentRepository: talentGroupManagerAssignmentRepository,
+    },
   );
   const eventAssignmentController = new EventAssignmentAdminController(
     eventAssignmentService,

@@ -51,7 +51,7 @@ const WORK_SCHEDULE_SCOPE_GRANT_SET = new Set<
 
 const EVENT_ASSIGNMENT_SCOPE_GRANT_SET = new Set<
   EventAssignmentActorScopeGrant
->(["global"]);
+>(["global", "managedGroup"]);
 
 const CONTRACT_REGISTRY_SCOPE_GRANT_SET = new Set<
   ContractRegistryActorScopeGrant

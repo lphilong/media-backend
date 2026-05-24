@@ -34,7 +34,7 @@ export const EVENT_SORT_DIRECTIONS = ["ASC", "DESC"] as const;
 
 export type EventSortDirection = (typeof EVENT_SORT_DIRECTIONS)[number];
 
-export const EVENT_SCOPES = ["global"] as const;
+export const EVENT_SCOPES = ["global", "managedGroup"] as const;
 
 export type EventScope = (typeof EVENT_SCOPES)[number];
 
