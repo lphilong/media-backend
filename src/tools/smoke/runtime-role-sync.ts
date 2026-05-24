@@ -7,6 +7,7 @@ import {
   getRoleTemplate,
   isRoleTemplateCode,
   normalizeRoleTemplateCode,
+  ROLE_TEMPLATE_CODES,
   RoleTemplateCode,
 } from "@modules/role/domain/role-template.catalog";
 
@@ -45,6 +46,7 @@ interface RuntimeRoleSyncRepository
   findByCode(code: string): Promise<RoleRecord | null>;
   replacePermissions(input: {
     readonly roleId: string;
+    readonly roleCode: RoleTemplateCode;
     readonly permissions: readonly string[];
     readonly updatedAt: number;
   }): Promise<RoleRecord | null>;
@@ -54,8 +56,6 @@ interface RuntimeRoleSyncDependencies {
   readonly roleRepository: RuntimeRoleSyncRepository;
   readonly now?: () => number;
 }
-
-const TARGET_ROLE_CODE: RoleTemplateCode = "ADMIN_FULL";
 
 export class RuntimeRoleSyncService {
   constructor(private readonly deps: RuntimeRoleSyncDependencies) {}
@@ -109,6 +109,7 @@ export class RuntimeRoleSyncService {
     );
     const updated = await this.deps.roleRepository.replacePermissions({
       roleId: role.id,
+      roleCode,
       permissions,
       updatedAt: this.now(),
     });
@@ -176,11 +177,12 @@ class MongoRuntimeRoleSyncRepository implements RuntimeRoleSyncRepository {
 
   async replacePermissions(input: {
     readonly roleId: string;
+    readonly roleCode: RoleTemplateCode;
     readonly permissions: readonly string[];
     readonly updatedAt: number;
   }): Promise<RoleRecord | null> {
     const doc = await this.roles.findOneAndUpdate(
-      { _id: input.roleId, code: TARGET_ROLE_CODE, state: "ACTIVE" },
+      { _id: input.roleId, code: input.roleCode, state: "ACTIVE" },
       {
         $set: {
           permissions: [...input.permissions],
@@ -272,14 +274,14 @@ export function formatRuntimeRoleSyncSummary(
 
 function normalizeTargetRoleCode(value: string): RoleTemplateCode {
   const normalized = normalizeRoleTemplateCode(value);
-  if (normalized !== TARGET_ROLE_CODE) {
+  if (!isRoleTemplateCode(normalized)) {
     throw new RuntimeRoleSyncError(
       "RUNTIME_ROLE_SYNC_UNSUPPORTED_ROLE",
-      "Runtime role sync currently supports ADMIN_FULL only",
+      `Unsupported runtime role sync target: ${value}`,
     );
   }
 
-  return TARGET_ROLE_CODE;
+  return normalized;
 }
 
 function assertSafeRuntimeRole(
@@ -322,14 +324,14 @@ function formatList(values: readonly string[]): string {
 
 interface CliOptions {
   readonly envFile?: string;
-  readonly roleCode: string;
+  readonly roleCodes: readonly RoleTemplateCode[];
   readonly mode: RuntimeRoleSyncMode;
   readonly help: boolean;
 }
 
 export function parseCliArgs(argv: readonly string[]): CliOptions {
   let envFile: string | undefined;
-  let roleCode: string = TARGET_ROLE_CODE;
+  let roleCodes: readonly RoleTemplateCode[] = [];
   let confirm = false;
   let dryRun = false;
   let help = false;
@@ -351,7 +353,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
       continue;
     }
 
-    if (arg === "--env-file" || arg === "--role") {
+    if (arg === "--env-file" || arg === "--roles") {
       const value = argv[index + 1];
       if (!value || value.startsWith("--")) {
         throw new RuntimeRoleSyncError(
@@ -363,7 +365,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
       if (arg === "--env-file") {
         envFile = value;
       } else {
-        roleCode = value;
+        roleCodes = parseRoleCodes(value);
       }
       index += 1;
       continue;
@@ -396,11 +398,25 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
     );
   }
 
-  normalizeTargetRoleCode(roleCode);
+  if (help) {
+    return {
+      ...(envFile ? { envFile } : {}),
+      roleCodes,
+      mode: confirm ? "write" : "dry-run",
+      help,
+    };
+  }
+
+  if (roleCodes.length === 0) {
+    throw new RuntimeRoleSyncError(
+      "RUNTIME_ROLE_SYNC_ROLES_REQUIRED",
+      "Runtime role sync requires explicit --roles",
+    );
+  }
 
   return {
     ...(envFile ? { envFile } : {}),
-    roleCode: normalizeTargetRoleCode(roleCode),
+    roleCodes,
     mode: confirm ? "write" : "dry-run",
     help,
   };
@@ -411,15 +427,32 @@ function helpText(): string {
     "Runtime role sync",
     "",
     "Dry run:",
-    "  npm run role:sync-runtime -- --env-file .env.dev --role ADMIN_FULL --dry-run",
+    "  npm run role:sync-runtime -- --env-file .env.dev --roles COMMERCIAL_FINANCE,PRODUCTION_OPS,HR_OPERATIONS --dry-run",
     "",
     "Write mode:",
-    "  npm run role:sync-runtime -- --env-file .env.dev --role ADMIN_FULL --confirm-runtime-role-sync",
+    "  npm run role:sync-runtime -- --env-file .env.dev --roles COMMERCIAL_FINANCE,PRODUCTION_OPS,HR_OPERATIONS --confirm-runtime-role-sync",
     "",
     "Notes:",
-    "  Only ADMIN_FULL is supported.",
+    `  Supported role template codes: ${ROLE_TEMPLATE_CODES.join(", ")}.`,
+    "  --roles is always required outside --help.",
     "  Write mode union-adds missing template permissions and never creates roles.",
   ].join("\n");
+}
+
+function parseRoleCodes(value: string): readonly RoleTemplateCode[] {
+  const values = value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  if (values.length === 0) {
+    throw new RuntimeRoleSyncError(
+      "RUNTIME_ROLE_SYNC_ROLES_REQUIRED",
+      "Runtime role sync requires explicit --roles",
+    );
+  }
+
+  return [...new Set(values.map((entry) => normalizeTargetRoleCode(entry)))];
 }
 
 function isDevEnvFile(value: string | undefined): boolean {
@@ -466,12 +499,17 @@ async function runCli(): Promise<void> {
       mongoClient: client,
       mongoDbName: env.MONGO_DB_NAME,
     });
-    const summary = await service.run({
-      roleCode: options.roleCode,
-      mode: options.mode,
-      mongoDbName: env.MONGO_DB_NAME,
-    });
-    console.log(formatRuntimeRoleSyncSummary(summary));
+    const summaries: RuntimeRoleSyncSummary[] = [];
+    for (const roleCode of options.roleCodes) {
+      summaries.push(
+        await service.run({
+          roleCode,
+          mode: options.mode,
+          mongoDbName: env.MONGO_DB_NAME,
+        }),
+      );
+    }
+    console.log(summaries.map(formatRuntimeRoleSyncSummary).join("\n\n"));
   } finally {
     await client.close();
   }
