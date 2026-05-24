@@ -369,6 +369,7 @@ test("Monthly Roster preview decorates rows and eligible profiles with refs afte
       findById: async () => null,
       findByLinkedUserId: async () => null,
       listIdsByManagerEmploymentProfileId: async () => [],
+      listIdsByActiveTalentGroupIds: async () => [],
       listIdsByOrgUnitId: async () => [],
     } as never,
     {

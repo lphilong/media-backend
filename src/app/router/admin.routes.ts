@@ -597,6 +597,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   const workScheduleQueryService = new WorkScheduleAdminQueryService(
     workShiftReadRepository,
     workScheduleEmploymentProfileReadonlyAccess,
+    talentGroupManagerAssignmentRepository,
   );
   const workScheduleController = new WorkScheduleAdminController(
     workScheduleService,

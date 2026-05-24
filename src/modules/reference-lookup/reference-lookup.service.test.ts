@@ -49,6 +49,7 @@ test("reference lookup permission retrieves minimal selectable DTOs", async () =
   assert.deepEqual(repository.lastInput, {
     domain: "talents",
     search: "Mina",
+    ids: undefined,
     limit: 50,
   });
   assert.deepEqual(result, {
@@ -62,6 +63,44 @@ test("reference lookup permission retrieves minimal selectable DTOs", async () =
     ],
   });
   assert.equal("secret" in result.items[0], false);
+});
+
+test("studio resource lookup permission can retrieve selected references by id without read", async () => {
+  const repository = new CapturingReferenceLookupRepository([
+    {
+      id: "studio-1",
+      label: "Main Studio",
+      code: "SR-000001",
+      status: "ACTIVE",
+      type: "ROOM",
+    },
+  ]);
+  const service = new ReferenceLookupAdminService(repository);
+
+  const result = await service.listReferenceOptions(
+    createActor([Permission.STUDIO_RESOURCE_LOOKUP]),
+    {
+      domain: "studioResources",
+      ids: " studio-1,studio-1 ",
+      limit: "20",
+    },
+  );
+
+  assert.deepEqual(repository.lastInput, {
+    domain: "studioResources",
+    ids: ["studio-1"],
+    search: undefined,
+    limit: 20,
+  });
+  assert.deepEqual(result.items, [
+    {
+      id: "studio-1",
+      label: "Main Studio",
+      code: "SR-000001",
+      status: "ACTIVE",
+      type: "ROOM",
+    },
+  ]);
 });
 
 test("full module read permission also satisfies reference lookup", async () => {
@@ -98,14 +137,10 @@ function createActor(permissions: readonly string[]): Actor {
   });
 }
 
-class CapturingReferenceLookupRepository
-  implements ReferenceLookupReadRepository
-{
+class CapturingReferenceLookupRepository implements ReferenceLookupReadRepository {
   lastInput?: ListReferenceLookupInput;
 
-  constructor(
-    private readonly items: readonly ReferenceLookupItem[] = [],
-  ) {}
+  constructor(private readonly items: readonly ReferenceLookupItem[] = []) {}
 
   async listReferenceOptions(
     input: ListReferenceLookupInput,

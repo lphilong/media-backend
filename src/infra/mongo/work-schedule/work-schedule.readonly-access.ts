@@ -39,6 +39,19 @@ interface EmploymentProfileReferenceDocument {
   readonly linkedUserId: string | null;
 }
 
+interface WorkScheduleTalentReferenceDocument {
+  readonly _id: string;
+  readonly operationalStatus: string;
+  readonly linkedEmploymentProfileId: string | null;
+}
+
+interface WorkScheduleTalentGroupMemberReferenceDocument {
+  readonly _id: string;
+  readonly groupId: string;
+  readonly talentId: string;
+  readonly membershipStatus: string;
+}
+
 interface OrgUnitReferenceDocument {
   readonly _id: string;
   readonly type: WorkScheduleReferencedOrgUnit["type"];
@@ -78,11 +91,21 @@ export class NativeMongoWorkScheduleEmploymentProfileReadonlyAccess
   implements WorkScheduleEmploymentProfileReadonlyAccess
 {
   private readonly collection: Collection<EmploymentProfileReferenceDocument>;
+  private readonly talentCollection: Collection<WorkScheduleTalentReferenceDocument>;
+  private readonly talentGroupMemberCollection: Collection<WorkScheduleTalentGroupMemberReferenceDocument>;
 
   constructor(db: Db) {
     this.collection =
       db.collection<EmploymentProfileReferenceDocument>(
         "employment_profiles",
+      );
+    this.talentCollection =
+      db.collection<WorkScheduleTalentReferenceDocument>(
+        "talents",
+      );
+    this.talentGroupMemberCollection =
+      db.collection<WorkScheduleTalentGroupMemberReferenceDocument>(
+        "talent_group_members",
       );
   }
 
@@ -169,6 +192,80 @@ export class NativeMongoWorkScheduleEmploymentProfileReadonlyAccess
       .find(
         {
           managerEmploymentProfileId,
+        },
+        {
+          projection: {
+            _id: 1,
+          },
+          ...(session ? { session } : {}),
+        },
+      )
+      .sort({
+        _id: 1,
+      })
+      .toArray();
+
+    return docs.map((doc) => doc._id);
+  }
+
+  async listIdsByActiveTalentGroupIds(
+    groupIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly string[]> {
+    const normalizedGroupIds = [...new Set(groupIds)].sort();
+    const options = session ? { session } : {};
+
+    if (normalizedGroupIds.length === 0) {
+      return [];
+    }
+
+    const talentIds =
+      await this.talentGroupMemberCollection.distinct(
+        "talentId",
+        {
+          groupId: {
+            $in: normalizedGroupIds,
+          },
+          membershipStatus: "ACTIVE",
+        },
+        options,
+      );
+
+    if (talentIds.length === 0) {
+      return [];
+    }
+
+    const employmentProfileIds =
+      await this.talentCollection.distinct(
+        "linkedEmploymentProfileId",
+        {
+          _id: {
+            $in: talentIds,
+          },
+          operationalStatus: {
+            $ne: "ARCHIVED",
+          },
+          linkedEmploymentProfileId: {
+            $type: "string",
+          },
+        },
+        options,
+      );
+
+    const ids = employmentProfileIds.filter(
+      (id): id is string => typeof id === "string" && id.length > 0,
+    );
+
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const docs = await this.collection
+      .find(
+        {
+          _id: {
+            $in: ids,
+          },
         },
         {
           projection: {

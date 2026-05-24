@@ -17,6 +17,7 @@ import { WorkScheduleAdminService } from "@modules/work-schedule/admin/admin.wor
 import type { WorkShiftCodeSequenceRepository } from "@modules/work-schedule/domain/work-schedule-code-sequence.repository";
 import {
   WorkScheduleConflictError,
+  WorkSchedulePermissionScopeError,
   WorkScheduleValidationError,
 } from "@modules/work-schedule/domain/work-schedule.errors";
 import type {
@@ -271,6 +272,57 @@ function createAdminActor(): Actor {
   });
 }
 
+function createGlobalDispatcherActor(): Actor {
+  return new Actor({
+    id: "production-ops-user-1",
+    type: "admin",
+    context: "ADMIN",
+    roles: ["PRODUCTION_OPS"],
+    permissions: [
+      Permission.WORK_SCHEDULE_CREATE,
+      Permission.WORK_SCHEDULE_UPDATE,
+      Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+    ],
+    scopeGrants: {
+      workSchedule: ["global"],
+    },
+    isActive: true,
+  });
+}
+
+function createStaleTeamManagerActor(): Actor {
+  return new Actor({
+    id: "team-manager-user-1",
+    type: "admin",
+    context: "ADMIN",
+    roles: ["TEAM_MANAGER"],
+    permissions: [
+      Permission.WORK_SCHEDULE_READ,
+      Permission.WORK_SCHEDULE_CREATE,
+      Permission.WORK_SCHEDULE_UPDATE,
+      Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+    ],
+    scopeGrants: {
+      workSchedule: ["self", "team", "department"],
+    },
+    isActive: true,
+  });
+}
+
+function createHrReadActor(): Actor {
+  return new Actor({
+    id: "hr-user-1",
+    type: "admin",
+    context: "ADMIN",
+    roles: ["HR_OPERATIONS"],
+    permissions: [Permission.WORK_SCHEDULE_READ],
+    scopeGrants: {
+      workSchedule: ["department"],
+    },
+    isActive: true,
+  });
+}
+
 function createReadActor(): Actor {
   return new Actor({
     id: "admin-user-1",
@@ -307,6 +359,9 @@ function createService(params?: {
         return null;
       },
       async listIdsByManagerEmploymentProfileId() {
+        return [];
+      },
+      async listIdsByActiveTalentGroupIds() {
         return [];
       },
       async listIdsByOrgUnitId() {
@@ -405,6 +460,157 @@ function seedRecord(shiftCode: string): WorkShiftRecord {
     updatedAt: 1,
   };
 }
+
+test("Work Schedule official mutations require global dispatcher scope even with stale mutation grants", async (t) => {
+  const actor = createStaleTeamManagerActor();
+
+  async function assertBlocked(
+    operation: () => Promise<unknown>,
+  ): Promise<void> {
+    await assert.rejects(
+      operation(),
+      WorkSchedulePermissionScopeError,
+    );
+  }
+
+  await t.test("create is blocked", async () => {
+    await assertBlocked(() =>
+      createService().createWorkShift(
+        actor,
+        createPayload({ shiftCode: undefined }),
+      ),
+    );
+  });
+
+  await t.test("update core is blocked", async () => {
+    await assertBlocked(() =>
+      createService({
+        repository: new MemoryWorkShiftRepository([
+          seedRecord("STALEUPDATE001"),
+        ]),
+      }).updateWorkShiftCore(actor, {
+        workShiftId: "seed-STALEUPDATE001",
+        title: "Blocked",
+      }),
+    );
+  });
+
+  await t.test("reschedule is blocked", async () => {
+    await assertBlocked(() =>
+      createService({
+        repository: new MemoryWorkShiftRepository([
+          seedRecord("STALERESCHEDULE001"),
+        ]),
+      }).rescheduleWorkShift(actor, {
+        workShiftId: "seed-STALERESCHEDULE001",
+        newShiftStartAt: Date.UTC(2026, 4, 4, 3),
+        newShiftEndAt: Date.UTC(2026, 4, 4, 4),
+      }),
+    );
+  });
+
+  await t.test("reassign subject is blocked", async () => {
+    await assertBlocked(() =>
+      createService({
+        repository: new MemoryWorkShiftRepository([
+          seedRecord("STALEREASSIGN001"),
+        ]),
+      }).reassignWorkShiftSubject(actor, {
+        workShiftId: "seed-STALEREASSIGN001",
+        newSubjectKind: "EMPLOYMENT_PROFILE",
+        newSubjectEmploymentProfileId: "ep-2",
+      }),
+    );
+  });
+
+  await t.test("update resources is blocked", async () => {
+    await assertBlocked(() =>
+      createService({
+        repository: new MemoryWorkShiftRepository([
+          seedRecord("STALERESOURCE001"),
+        ]),
+      }).updateWorkShiftResources(actor, {
+        workShiftId: "seed-STALERESOURCE001",
+        newStudioResourceIds: ["studio-2"],
+      }),
+    );
+  });
+
+  await t.test("cancel is blocked", async () => {
+    await assertBlocked(() =>
+      createService({
+        repository: new MemoryWorkShiftRepository([
+          seedRecord("STALECANCEL001"),
+        ]),
+      }).cancelWorkShift(actor, {
+        workShiftId: "seed-STALECANCEL001",
+      }),
+    );
+  });
+
+  await t.test("archive is blocked", async () => {
+    await assertBlocked(() =>
+      createService({
+        repository: new MemoryWorkShiftRepository([
+          {
+            ...seedRecord("STALEARCHIVE001"),
+            status: "CANCELLED",
+          },
+        ]),
+      }).archiveWorkShift(actor, {
+        workShiftId: "seed-STALEARCHIVE001",
+      }),
+    );
+  });
+});
+
+test("Work Schedule official mutations allow global dispatcher authority", async () => {
+  const repository = new MemoryWorkShiftRepository([
+    seedRecord("GLOBALUPDATE001"),
+    seedRecord("GLOBALCANCEL001"),
+    {
+      ...seedRecord("GLOBALARCHIVE001"),
+      status: "CANCELLED",
+    },
+  ]);
+  const service = createService({ repository });
+  const actor = createGlobalDispatcherActor();
+
+  await bindTraceId("trace-work-shift-global-authority", async () => {
+    const created = await service.createWorkShift(
+      actor,
+      createPayload({
+        shiftCode: undefined,
+        subjectEmploymentProfileId: "ep-global-create",
+      }),
+    );
+    const updated = await service.updateWorkShiftCore(actor, {
+      workShiftId: "seed-GLOBALUPDATE001",
+      title: "Updated by ops",
+    });
+    const cancelled = await service.cancelWorkShift(actor, {
+      workShiftId: "seed-GLOBALCANCEL001",
+    });
+    const archived = await service.archiveWorkShift(actor, {
+      workShiftId: "seed-GLOBALARCHIVE001",
+    });
+
+    assert.equal(created.shiftCode, "WS-20260504-0001");
+    assert.equal(updated.title, "Updated by ops");
+    assert.equal(cancelled.status, "CANCELLED");
+    assert.equal(archived.status, "ARCHIVED");
+  });
+});
+
+test("Work Schedule HR read-only department actor cannot official-mutate", async () => {
+  await assert.rejects(
+    createService().createWorkShift(
+      createHrReadActor(),
+      createPayload({ shiftCode: undefined }),
+    ),
+    /Missing permission workSchedule\.create/u,
+  );
+});
 
 test("Work Schedule create generates shiftCode when omitted", async () => {
   const service = createService();
@@ -864,6 +1070,9 @@ test("Work Schedule list source filters are parsed and passed to read repository
       async listIdsByManagerEmploymentProfileId() {
         return [];
       },
+      async listIdsByActiveTalentGroupIds() {
+        return [];
+      },
       async listIdsByOrgUnitId() {
         return [];
       },
@@ -887,6 +1096,85 @@ test("Work Schedule list source filters are parsed and passed to read repository
     "org-1",
   );
   assert.equal(captured?.sourceRosterMonth, "2026-05");
+});
+
+test("Work Schedule team read scope resolves active managed group memberships", async () => {
+  let capturedScopeIds: readonly string[] | undefined;
+  let capturedGroupIds: readonly string[] | undefined;
+  const service = new WorkScheduleAdminQueryService(
+    {
+      listWorkShifts: async (input: {
+        readonly scopeEmploymentProfileIds?: readonly string[];
+      }) => {
+        capturedScopeIds = input.scopeEmploymentProfileIds;
+        return { items: [] };
+      },
+    } as never,
+    {
+      async findById() {
+        return null;
+      },
+      async findByLinkedUserId(linkedUserId: string) {
+        return linkedUserId === "team-manager-user-1"
+          ? {
+              id: "manager-profile-1",
+              employmentStatus: "ACTIVE",
+              orgUnitId: "org-1",
+              managerEmploymentProfileId: null,
+              linkedUserId,
+            }
+          : null;
+      },
+      async listIdsByManagerEmploymentProfileId() {
+        throw new Error(
+          "managerEmploymentProfileId must not authorize team schedules",
+        );
+      },
+      async listIdsByActiveTalentGroupIds(groupIds: readonly string[]) {
+        capturedGroupIds = groupIds;
+        return ["ep-managed-1", "ep-managed-2"];
+      },
+      async listIdsByOrgUnitId() {
+        return [];
+      },
+      async listByOrgUnitId() {
+        return [];
+      },
+    },
+    {
+      async listActiveAssignmentsByManagerEmploymentProfile(
+        managerEmploymentProfileId: string,
+      ) {
+        assert.equal(managerEmploymentProfileId, "manager-profile-1");
+        return [
+          {
+            id: "assignment-1",
+            groupId: "group-managed",
+            managerEmploymentProfileId,
+            role: "MANAGER",
+            effectiveFrom: 1,
+            effectiveTo: null,
+            status: "ACTIVE",
+            isPrimary: true,
+            createdAt: 1,
+            createdByActorId: "admin-user-1",
+            updatedAt: 1,
+            updatedByActorId: "admin-user-1",
+          },
+        ];
+      },
+    },
+  );
+
+  await service.listWorkShifts(createStaleTeamManagerActor(), {
+    scope: "team",
+  });
+
+  assert.deepEqual(capturedGroupIds, ["group-managed"]);
+  assert.deepEqual(capturedScopeIds, [
+    "ep-managed-1",
+    "ep-managed-2",
+  ]);
 });
 
 test("Work Schedule read repository applies source metadata filters", async () => {

@@ -546,6 +546,7 @@ export class MonthlyRosterAdminService {
       actor,
       Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
     );
+    this.assertOfficialWorkShiftPublishAuthority(actor);
     const input =
       normalizePublishMonthlyRosterCommand(command);
 
@@ -1129,6 +1130,23 @@ export class MonthlyRosterAdminService {
     PermissionGuard.assert(actor, permission);
 
     return permission;
+  }
+
+  private assertOfficialWorkShiftPublishAuthority(
+    actor: Actor,
+  ): void {
+    if (
+      PermissionGuard.hasWorkScheduleScopeGrant(
+        actor,
+        "global",
+      )
+    ) {
+      return;
+    }
+
+    throw new WorkSchedulePermissionScopeError(
+      "Monthly Roster publish creates official WorkShifts and requires workSchedule.global scope",
+    );
   }
 
   private async requireMonthlyRoster(

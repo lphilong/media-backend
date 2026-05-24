@@ -65,9 +65,7 @@ const PERMISSION_BY_DOMAIN: Readonly<
 });
 
 export class ReferenceLookupAdminService {
-  constructor(
-    private readonly readRepository: ReferenceLookupReadRepository,
-  ) {}
+  constructor(private readonly readRepository: ReferenceLookupReadRepository) {}
 
   async listReferenceOptions(
     actor: Actor,
@@ -76,15 +74,42 @@ export class ReferenceLookupAdminService {
     PermissionGuard.assertAdminActor(actor);
     assertLookupOrReadPermission(actor, query.domain);
 
-    const items =
-      await this.readRepository.listReferenceOptions({
-        domain: query.domain,
-        search: parseOptionalSearch(query.search),
-        limit: parseLimit(query.limit),
-      });
+    const items = await this.readRepository.listReferenceOptions({
+      domain: query.domain,
+      search: parseOptionalSearch(query.search),
+      ids: parseOptionalIds(query.ids),
+      limit: parseLimit(query.limit),
+    });
 
     return { items };
   }
+}
+
+function parseOptionalIds(
+  value: readonly string[] | string | undefined,
+): readonly string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const rawValues = (typeof value === "string" ? [value] : [...value]).flatMap(
+    (item: string) => item.split(","),
+  );
+  const ids = rawValues
+    .map((item) => item.normalize("NFKC").trim())
+    .filter((item) => item.length > 0);
+
+  if (ids.length === 0) {
+    return undefined;
+  }
+
+  if (ids.length > MAX_LIMIT) {
+    throw new ReferenceLookupValidationError(
+      `ids supports at most ${MAX_LIMIT} values`,
+    );
+  }
+
+  return Object.freeze([...new Set(ids)]);
 }
 
 function assertLookupOrReadPermission(
@@ -92,19 +117,14 @@ function assertLookupOrReadPermission(
   domain: ReferenceLookupDomain,
 ): void {
   const permission = PERMISSION_BY_DOMAIN[domain];
-  const hasLookup = actor.permissions.includes(
-    permission.lookup,
-  );
+  const hasLookup = actor.permissions.includes(permission.lookup);
   const hasRead = actor.permissions.includes(permission.read);
 
   if (hasLookup || hasRead) {
     return;
   }
 
-  PermissionGuard.assert(
-    actor,
-    PermissionResolver.resolve(permission.lookup),
-  );
+  PermissionGuard.assert(actor, PermissionResolver.resolve(permission.lookup));
 }
 
 function parseLimit(value: unknown): number {
@@ -134,15 +154,10 @@ function parseOptionalSearch(value: unknown): string | undefined {
   }
 
   if (typeof value !== "string") {
-    throw new ReferenceLookupValidationError(
-      "search must be a string",
-    );
+    throw new ReferenceLookupValidationError("search must be a string");
   }
 
-  const normalized = value
-    .normalize("NFKC")
-    .trim()
-    .replace(/\s+/gu, " ");
+  const normalized = value.normalize("NFKC").trim().replace(/\s+/gu, " ");
 
   return normalized.length > 0 ? normalized : undefined;
 }

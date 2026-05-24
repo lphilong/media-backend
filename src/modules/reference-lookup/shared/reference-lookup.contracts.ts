@@ -11,12 +11,12 @@ export const REFERENCE_LOOKUP_DOMAINS = [
   "commissionRules",
 ] as const;
 
-export type ReferenceLookupDomain =
-  (typeof REFERENCE_LOOKUP_DOMAINS)[number];
+export type ReferenceLookupDomain = (typeof REFERENCE_LOOKUP_DOMAINS)[number];
 
 export interface ReferenceLookupQuery {
   readonly domain: ReferenceLookupDomain;
   readonly search?: string;
+  readonly ids?: readonly string[] | string;
   readonly limit?: string | number;
 }
 

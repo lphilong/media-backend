@@ -146,6 +146,7 @@ export class WorkScheduleAdminService {
       actor,
       Permission.WORK_SCHEDULE_CREATE,
     );
+    this.assertOfficialWorkShiftMutationAuthority(actor);
     const input = normalizeCreateCommand(command);
 
     return this.executeMutation(
@@ -326,6 +327,7 @@ export class WorkScheduleAdminService {
       actor,
       Permission.WORK_SCHEDULE_UPDATE,
     );
+    this.assertOfficialWorkShiftMutationAuthority(actor);
     const input =
       normalizeUpdateCoreCommand(command);
 
@@ -417,6 +419,7 @@ export class WorkScheduleAdminService {
       actor,
       Permission.WORK_SCHEDULE_UPDATE,
     );
+    this.assertOfficialWorkShiftMutationAuthority(actor);
     const input =
       normalizeRescheduleCommand(command);
 
@@ -529,6 +532,7 @@ export class WorkScheduleAdminService {
       actor,
       Permission.WORK_SCHEDULE_UPDATE,
     );
+    this.assertOfficialWorkShiftMutationAuthority(actor);
     const input =
       normalizeReassignSubjectCommand(command);
 
@@ -663,6 +667,7 @@ export class WorkScheduleAdminService {
       actor,
       Permission.WORK_SCHEDULE_UPDATE,
     );
+    this.assertOfficialWorkShiftMutationAuthority(actor);
     const input =
       normalizeUpdateResourcesCommand(command);
 
@@ -776,6 +781,7 @@ export class WorkScheduleAdminService {
       actor,
       Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
     );
+    this.assertOfficialWorkShiftMutationAuthority(actor);
     const input =
       normalizeLifecycleCommand(command);
 
@@ -864,6 +870,7 @@ export class WorkScheduleAdminService {
       actor,
       Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
     );
+    this.assertOfficialWorkShiftMutationAuthority(actor);
     const input =
       normalizeLifecycleCommand(command);
 
@@ -1036,6 +1043,23 @@ export class WorkScheduleAdminService {
     PermissionGuard.assert(actor, permission);
 
     return permission;
+  }
+
+  private assertOfficialWorkShiftMutationAuthority(
+    actor: Actor,
+  ): void {
+    if (
+      PermissionGuard.hasWorkScheduleScopeGrant(
+        actor,
+        "global",
+      )
+    ) {
+      return;
+    }
+
+    throw new WorkSchedulePermissionScopeError(
+      "Official WorkShift mutations require workSchedule.global scope",
+    );
   }
 
   private async requireWorkShift(

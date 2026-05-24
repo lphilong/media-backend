@@ -58,9 +58,7 @@ test("role template catalog contains exactly the seven core templates with valid
   );
 
   for (const template of ROLE_TEMPLATE_CATALOG) {
-    const permissions = template.permissions.map(
-      (permission) => permission,
-    );
+    const permissions = template.permissions.map((permission) => permission);
     assert.equal(
       new Set(permissions).size,
       permissions.length,
@@ -92,10 +90,7 @@ test("seven role templates align KPI V2 permissions with runtime scope recommend
   const auditor = getRoleTemplate("VIEWER_AUDITOR");
 
   assert.deepEqual(admin?.recommendedScopeGrants.kpi, ["global"]);
-  assert.equal(
-    admin?.permissions.includes(Permission.KPI_FINALIZE),
-    true,
-  );
+  assert.equal(admin?.permissions.includes(Permission.KPI_FINALIZE), true);
 
   assert.equal(
     hr?.permissions.includes(Permission.USER_PROVISION_ACCOUNT),
@@ -115,7 +110,35 @@ test("seven role templates align KPI V2 permissions with runtime scope recommend
   assert.deepEqual(hr?.recommendedScopeGrants.kpi, ["global"]);
   assert.equal(hr?.permissions.includes(Permission.KPI_READ), true);
   assert.equal(hr?.permissions.includes(Permission.KPI_ENTER_ACTUAL), false);
+  assert.equal(
+    hr?.permissions.includes(Permission.STUDIO_RESOURCE_LOOKUP),
+    true,
+  );
+  assert.equal(
+    hr?.permissions.includes(Permission.STUDIO_RESOURCE_READ),
+    false,
+  );
 
+  assert.deepEqual(manager?.recommendedScopeGrants.workSchedule, [
+    "self",
+    "team",
+  ]);
+  assert.equal(
+    manager?.permissions.includes(Permission.WORK_SCHEDULE_READ),
+    true,
+  );
+  assert.equal(
+    manager?.permissions.includes(Permission.WORK_SCHEDULE_CREATE),
+    false,
+  );
+  assert.equal(
+    manager?.permissions.includes(Permission.WORK_SCHEDULE_UPDATE),
+    false,
+  );
+  assert.equal(
+    manager?.permissions.includes(Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE),
+    false,
+  );
   assert.deepEqual(manager?.recommendedScopeGrants.kpi, ["managedGroup"]);
   assert.deepEqual(manager?.recommendedScopeGrants.eventAssignment, [
     "managedGroup",
@@ -140,6 +163,7 @@ test("seven role templates align KPI V2 permissions with runtime scope recommend
   assert.equal(manager?.permissions.includes(Permission.KPI_PUBLISH), false);
 
   assert.equal(production?.recommendedScopeGrants.kpi, undefined);
+  assert.deepEqual(production?.recommendedScopeGrants.workSchedule, ["global"]);
   assert.deepEqual(production?.recommendedScopeGrants.eventAssignment, [
     "global",
   ]);
@@ -175,14 +199,8 @@ test("seven role templates align KPI V2 permissions with runtime scope recommend
     false,
   );
   assert.equal(finance?.permissions.includes(Permission.KPI_FINALIZE), false);
-  assert.equal(
-    finance?.permissions.includes(Permission.TALENT_LOOKUP),
-    true,
-  );
-  assert.equal(
-    finance?.permissions.includes(Permission.TALENT_READ),
-    false,
-  );
+  assert.equal(finance?.permissions.includes(Permission.TALENT_LOOKUP), true);
+  assert.equal(finance?.permissions.includes(Permission.TALENT_READ), false);
   assert.equal(
     finance?.permissions.includes(Permission.PLATFORM_ACCOUNT_LOOKUP),
     true,
@@ -194,16 +212,11 @@ test("seven role templates align KPI V2 permissions with runtime scope recommend
 
   assert.deepEqual(self?.recommendedScopeGrants.kpi, ["self"]);
   assert.equal(self?.recommendedScopeGrants.eventAssignment, undefined);
-  assert.equal(
-    self?.permissions.includes(Permission.KPI_READ_PROGRESS),
-    true,
-  );
+  assert.equal(self?.permissions.includes(Permission.KPI_READ_PROGRESS), true);
   assert.equal(self?.permissions.includes(Permission.KPI_READ), false);
 
   assert.deepEqual(auditor?.recommendedScopeGrants.kpi, ["global"]);
-  assert.deepEqual(auditor?.recommendedScopeGrants.eventAssignment, [
-    "global",
-  ]);
+  assert.deepEqual(auditor?.recommendedScopeGrants.eventAssignment, ["global"]);
   assert.equal(auditor?.permissions.includes(Permission.KPI_READ), true);
   assert.equal(
     auditor?.permissions.includes(Permission.KPI_READ_PROGRESS),
@@ -219,10 +232,7 @@ test("seven role templates align KPI V2 permissions with runtime scope recommend
 
 test("role template list and preview service are permission-gated and preview-only", () => {
   const service = new RoleTemplateAdminService();
-  const actor = createActor([
-    Permission.ROLE_LIST,
-    Permission.ROLE_VIEW,
-  ]);
+  const actor = createActor([Permission.ROLE_LIST, Permission.ROLE_VIEW]);
 
   const listed = service.listRoleTemplates(actor);
   assert.equal(listed.items.length, 7);
@@ -236,22 +246,14 @@ test("role template list and preview service are permission-gated and preview-on
     templateCode: "commercial_finance",
   });
 
+  assert.equal(preview.template.code, "COMMERCIAL_FINANCE");
   assert.equal(
-    preview.template.code,
-    "COMMERCIAL_FINANCE",
-  );
-  assert.equal(
-    preview.permissions.includes(
-      Permission.REVENUE_LEDGER_RECONCILE,
-    ),
+    preview.permissions.includes(Permission.REVENUE_LEDGER_RECONCILE),
     true,
   );
   assert.equal(preview.scopePlan.length > 0, true);
   assert.equal(preview.warnings.length > 0, true);
-  assert.equal(
-    preview.unsupportedScopeNotes.length > 0,
-    true,
-  );
+  assert.equal(preview.unsupportedScopeNotes.length > 0, true);
   assert.equal(beforeStoreSize, 0);
 
   assert.throws(
@@ -274,13 +276,7 @@ test("role template endpoints return catalog and preview without mutating roles"
 
   app.use(contextMiddleware("ADMIN"));
   app.use((req, _res, next) => {
-    bindActor(
-      req,
-      createActor([
-        Permission.ROLE_LIST,
-        Permission.ROLE_VIEW,
-      ]),
-    );
+    bindActor(req, createActor([Permission.ROLE_LIST, Permission.ROLE_VIEW]));
     next();
   });
 
@@ -289,12 +285,7 @@ test("role template endpoints return catalog and preview without mutating roles"
   );
   app.use("/admin/role-templates", adminRoleTemplateRoutes(controller));
   app.use(
-    (
-      error: unknown,
-      _req: Request,
-      res: Response,
-      _next: NextFunction,
-    ) => {
+    (error: unknown, _req: Request, res: Response, _next: NextFunction) => {
       const mapped = mapToHttpError(error);
       res.status(mapped.status).json({
         error: {
@@ -308,16 +299,11 @@ test("role template endpoints return catalog and preview without mutating roles"
   const server = await listen(app);
   try {
     const baseUrl = toBaseUrl(server);
-    const listResponse = await fetch(
-      `${baseUrl}/admin/role-templates`,
-    );
+    const listResponse = await fetch(`${baseUrl}/admin/role-templates`);
     assert.equal(listResponse.status, 200);
     const listBody = await listResponse.json();
     assert.equal(listBody.data.length, 7);
-    assert.equal(
-      listBody.data[0].warnings.length > 0,
-      true,
-    );
+    assert.equal(listBody.data[0].warnings.length > 0, true);
 
     const previewResponse = await fetch(
       `${baseUrl}/admin/role-templates/ADMIN_FULL/preview`,
@@ -331,18 +317,14 @@ test("role template endpoints return catalog and preview without mutating roles"
     );
     assert.equal(previewResponse.status, 200);
     const previewBody = await previewResponse.json();
-    assert.equal(
-      previewBody.data.template.code,
-      "ADMIN_FULL",
-    );
+    assert.equal(previewBody.data.template.code, "ADMIN_FULL");
     assert.equal(
       previewBody.data.permissions.length,
       ALL_PERMISSION_CODES.length,
     );
     assert.equal(
       previewBody.data.scopePlan.some(
-        (entry: { module: string }) =>
-          entry.module === "Work Schedule",
+        (entry: { module: string }) => entry.module === "Work Schedule",
       ),
       true,
     );
@@ -387,8 +369,7 @@ test("role assignment validates role code against target user actorKind", async 
       roleCode: "TALENT_STAFF_SELF",
       actorKind: "ADMIN",
       allowed: false,
-      errorPattern:
-        /TALENT_STAFF_SELF requires a self-service staff account/u,
+      errorPattern: /TALENT_STAFF_SELF requires a self-service staff account/u,
     },
     {
       roleCode: "TALENT_STAFF_SELF",
@@ -405,8 +386,7 @@ test("role assignment validates role code against target user actorKind", async 
 
   for (const testCase of cases) {
     const roleRepository = new InMemoryRoleRepository();
-    const assignmentRepository =
-      new InMemoryUserRoleAssignmentRepository();
+    const assignmentRepository = new InMemoryUserRoleAssignmentRepository();
     const service = new RoleAdminService(
       roleRepository,
       assignmentRepository,
@@ -464,8 +444,7 @@ test("role assignment validates role code against target user actorKind", async 
 
 test("role assignment success returns assignment DTO with scopes and audit", async () => {
   const roleRepository = new InMemoryRoleRepository();
-  const assignmentRepository =
-    new InMemoryUserRoleAssignmentRepository();
+  const assignmentRepository = new InMemoryUserRoleAssignmentRepository();
   const auditEvents: unknown[] = [];
   const service = new RoleAdminService(
     roleRepository,
@@ -502,24 +481,22 @@ test("role assignment success returns assignment DTO with scopes and audit", asy
     {} as ClientSession,
   );
 
-  const result = await bindTraceId(
-    "trace-role-assignment-dto",
-    async () =>
-      runWithDomainEventCollector(() =>
-        service.assignRoleToUser(
-          createActor(ALL_PERMISSION_CODES, {
+  const result = await bindTraceId("trace-role-assignment-dto", async () =>
+    runWithDomainEventCollector(() =>
+      service.assignRoleToUser(
+        createActor(ALL_PERMISSION_CODES, {
+          eventAssignment: ["global"],
+        }),
+        {
+          roleId: "role-hr",
+          userId: "target-user",
+          reason: "Assignment DTO test",
+          scopeGrants: {
             eventAssignment: ["global"],
-          }),
-          {
-            roleId: "role-hr",
-            userId: "target-user",
-            reason: "Assignment DTO test",
-            scopeGrants: {
-              eventAssignment: ["global"],
-            },
           },
-        ),
+        },
       ),
+    ),
   );
 
   assert.equal(result.roleId, "role-hr");
@@ -544,8 +521,7 @@ test("role assignment success returns assignment DTO with scopes and audit", asy
 
 test("TALENT_STAFF_SELF assignment to ADMIN rejects", async () => {
   const roleRepository = new InMemoryRoleRepository();
-  const assignmentRepository =
-    new InMemoryUserRoleAssignmentRepository();
+  const assignmentRepository = new InMemoryUserRoleAssignmentRepository();
   const service = new RoleAdminService(
     roleRepository,
     assignmentRepository,
@@ -579,16 +555,14 @@ test("TALENT_STAFF_SELF assignment to ADMIN rejects", async () => {
 
   await assert.rejects(
     () =>
-      bindTraceId(
-        "trace-role-assignment-staff-self-admin-reject",
-        async () =>
-          runWithDomainEventCollector(() =>
-            service.assignRoleToUser(createActor(ALL_PERMISSION_CODES), {
-              roleId: "role-self",
-              userId: "target-user",
-              reason: "ActorKind mismatch",
-            }),
-          ),
+      bindTraceId("trace-role-assignment-staff-self-admin-reject", async () =>
+        runWithDomainEventCollector(() =>
+          service.assignRoleToUser(createActor(ALL_PERMISSION_CODES), {
+            roleId: "role-self",
+            userId: "target-user",
+            reason: "ActorKind mismatch",
+          }),
+        ),
       ),
     /TALENT_STAFF_SELF requires a self-service staff account/u,
   );
@@ -647,10 +621,8 @@ test("role assignment mutation presenter exposes assignment DTO", () => {
 
 test("create role from template persists explicit permissions and provenance only", async () => {
   const roleRepository = new InMemoryRoleRepository();
-  const assignmentRepository =
-    new InMemoryUserRoleAssignmentRepository();
-  const assignmentRuleRepository =
-    new InMemoryRoleAssignmentRuleRepository();
+  const assignmentRepository = new InMemoryUserRoleAssignmentRepository();
+  const assignmentRuleRepository = new InMemoryRoleAssignmentRuleRepository();
   const bridge = new InlineMutationBridge();
 
   const service = new RoleAdminService(
@@ -668,48 +640,28 @@ test("create role from template persists explicit permissions and provenance onl
 
   const actor = createActor(ALL_PERMISSION_CODES);
 
-  const result = await bindTraceId(
-    "trace-role-template-create",
-    async () =>
-      runWithDomainEventCollector(() =>
-        service.createRoleFromTemplate(actor, {
-          templateCode: "TALENT_STAFF_SELF",
-          code: "talent_staff_self_custom",
-          name: "Talent Staff Self Custom",
-          description: "Self-service baseline",
-        }),
-      ),
+  const result = await bindTraceId("trace-role-template-create", async () =>
+    runWithDomainEventCollector(() =>
+      service.createRoleFromTemplate(actor, {
+        templateCode: "TALENT_STAFF_SELF",
+        code: "talent_staff_self_custom",
+        name: "Talent Staff Self Custom",
+        description: "Self-service baseline",
+      }),
+    ),
   );
 
   const template = getRoleTemplate("TALENT_STAFF_SELF");
   assert.notEqual(template, null);
   assert.equal(result.code, "TALENT_STAFF_SELF_CUSTOM");
-  assert.deepEqual(
-    result.permissions,
-    template?.permissions,
-  );
+  assert.deepEqual(result.permissions, template?.permissions);
   assert.equal(result.templateCode, "TALENT_STAFF_SELF");
-  assert.equal(
-    result.templateVersion,
-    template?.version,
-  );
-  assert.equal(
-    typeof result.templateAppliedAt,
-    "number",
-  );
+  assert.equal(result.templateVersion, template?.version);
+  assert.equal(typeof result.templateAppliedAt, "number");
   assert.equal(assignmentRepository.insertCount, 0);
-  assert.equal(
-    "scopePlan" in roleRepository.inserted[0],
-    false,
-  );
-  assert.equal(
-    "scopeGrants" in roleRepository.inserted[0],
-    false,
-  );
-  assert.equal(
-    bridge.mutationIdentities.includes("role.create"),
-    true,
-  );
+  assert.equal("scopePlan" in roleRepository.inserted[0], false);
+  assert.equal("scopeGrants" in roleRepository.inserted[0], false);
+  assert.equal(bridge.mutationIdentities.includes("role.create"), true);
 });
 
 test("create role from template respects existing permission authoring constraints", async () => {
@@ -733,16 +685,14 @@ test("create role from template respects existing permission authoring constrain
 
   await assert.rejects(
     () =>
-      bindTraceId(
-        "trace-role-template-denied",
-        async () =>
-          runWithDomainEventCollector(() =>
-            service.createRoleFromTemplate(actor, {
-              templateCode: "ADMIN_FULL",
-              code: "admin_full_copy",
-              name: "Admin Full Copy",
-            }),
-          ),
+      bindTraceId("trace-role-template-denied", async () =>
+        runWithDomainEventCollector(() =>
+          service.createRoleFromTemplate(actor, {
+            templateCode: "ADMIN_FULL",
+            code: "admin_full_copy",
+            name: "Admin Full Copy",
+          }),
+        ),
       ),
     /initialPermissions contains unauthorized permission code/,
   );
@@ -925,8 +875,7 @@ test("create role fails after bounded generated duplicate-key collisions are exh
       ),
     (error: unknown) =>
       error instanceof RoleConflictError &&
-      error.message ===
-        "Generated role code conflict detected on create",
+      error.message === "Generated role code conflict detected on create",
   );
 
   assert.equal(roleRepository.insertAttempts, 5);
@@ -952,9 +901,7 @@ function createActor(
 function listen(app: express.Express): Promise<Server> {
   return new Promise((resolve) => {
     const server = createServer(app);
-    server.listen(0, "127.0.0.1", () =>
-      resolve(server),
-    );
+    server.listen(0, "127.0.0.1", () => resolve(server));
   });
 }
 
@@ -982,10 +929,7 @@ function toBaseUrl(server: Server): string {
 class InMemoryRoleRepository implements RoleRepository {
   readonly inserted: RoleRecord[] = [];
 
-  async insert(
-    role: RoleRecord,
-    _session: ClientSession,
-  ): Promise<RoleRecord> {
+  async insert(role: RoleRecord, _session: ClientSession): Promise<RoleRecord> {
     if (this.inserted.some((record) => record.code === role.code)) {
       throw duplicateKeyError();
     }
@@ -994,31 +938,19 @@ class InMemoryRoleRepository implements RoleRepository {
     return role;
   }
 
-  async findById(
-    roleId: string,
-  ): Promise<RoleRecord | null> {
-    return (
-      this.inserted.find((role) => role.id === roleId) ??
-      null
-    );
+  async findById(roleId: string): Promise<RoleRecord | null> {
+    return this.inserted.find((role) => role.id === roleId) ?? null;
   }
 
-  async findByCode(
-    code: string,
-  ): Promise<RoleRecord | null> {
-    return (
-      this.inserted.find((role) => role.code === code) ??
-      null
-    );
+  async findByCode(code: string): Promise<RoleRecord | null> {
+    return this.inserted.find((role) => role.code === code) ?? null;
   }
 
-  async findMaxGeneratedCodeSequence(
-    policy: { readonly prefix: string; readonly width: number },
-  ): Promise<number> {
-    const regex = new RegExp(
-      `^${policy.prefix}-(\\d{${policy.width}})$`,
-      "u",
-    );
+  async findMaxGeneratedCodeSequence(policy: {
+    readonly prefix: string;
+    readonly width: number;
+  }): Promise<number> {
+    const regex = new RegExp(`^${policy.prefix}-(\\d{${policy.width}})$`, "u");
 
     return this.inserted.reduce((max, role) => {
       const match = regex.exec(role.code);
@@ -1027,9 +959,7 @@ class InMemoryRoleRepository implements RoleRepository {
       }
 
       const sequence = Number(match[1]);
-      return Number.isSafeInteger(sequence) && sequence > max
-        ? sequence
-        : max;
+      return Number.isSafeInteger(sequence) && sequence > max ? sequence : max;
     }, 0);
   }
 
@@ -1084,9 +1014,7 @@ class CollisionRoleRepository extends InMemoryRoleRepository {
   private readonly duplicateGeneratedCodes: Set<string>;
   insertAttempts = 0;
 
-  constructor(params: {
-    readonly duplicateGeneratedCodes: readonly string[];
-  }) {
+  constructor(params: { readonly duplicateGeneratedCodes: readonly string[] }) {
     super();
     this.duplicateGeneratedCodes = new Set(params.duplicateGeneratedCodes);
   }
@@ -1106,16 +1034,11 @@ class CollisionRoleRepository extends InMemoryRoleRepository {
   }
 }
 
-class InMemoryBusinessCodeSequenceRepository
-  implements BusinessCodeSequenceRepository
-{
+class InMemoryBusinessCodeSequenceRepository implements BusinessCodeSequenceRepository {
   private values = new Map<string, number>();
   allocateCount = 0;
 
-  async allocateNext(
-    moduleKey: string,
-    bucket: string,
-  ): Promise<number> {
+  async allocateNext(moduleKey: string, bucket: string): Promise<number> {
     this.allocateCount += 1;
     const key = `${moduleKey}:${bucket}`;
     const next = (this.values.get(key) ?? 0) + 1;
@@ -1143,9 +1066,7 @@ function duplicateKeyError(): MongoServerError {
   });
 }
 
-class InMemoryRoleAssignmentRuleRepository
-  implements RoleAssignmentRuleRepository
-{
+class InMemoryRoleAssignmentRuleRepository implements RoleAssignmentRuleRepository {
   private rules: readonly RoleAssignmentRuleRecord[] = [];
 
   async replaceForRole(
@@ -1167,9 +1088,7 @@ class InMemoryRoleAssignmentRuleRepository
   }
 }
 
-class InMemoryUserRoleAssignmentRepository
-  implements UserRoleAssignmentRepository
-{
+class InMemoryUserRoleAssignmentRepository implements UserRoleAssignmentRepository {
   insertCount = 0;
 
   async insert(
@@ -1197,9 +1116,7 @@ class InMemoryUserRoleAssignmentRepository
   }
 }
 
-class AlwaysAssignableUserAccess
-  implements RoleUserReadonlyAccess
-{
+class AlwaysAssignableUserAccess implements RoleUserReadonlyAccess {
   constructor(private readonly actorKind: "ADMIN" | "STAFF" = "ADMIN") {}
 
   async isAssignableById(): Promise<boolean> {
@@ -1225,18 +1142,13 @@ class AlwaysAssignableUserAccess
   }
 }
 
-class PermissiveAdminCapabilityRepository
-  implements UserAdminCapabilityRepository
-{
+class PermissiveAdminCapabilityRepository implements UserAdminCapabilityRepository {
   async listActiveUserIdsByPermission(
     permissionCodes: readonly string[],
     _session: ClientSession,
   ): Promise<Readonly<Record<string, readonly string[]>>> {
     return Object.fromEntries(
-      permissionCodes.map((permission) => [
-        permission,
-        ["admin-user-1"],
-      ]),
+      permissionCodes.map((permission) => [permission, ["admin-user-1"]]),
     );
   }
 
@@ -1261,18 +1173,14 @@ class PermissiveAdminCapabilityRepository
   }
 }
 
-class InlineMutationBridge
-  implements AuthoritativeAdminMutationBridge
-{
+class InlineMutationBridge implements AuthoritativeAdminMutationBridge {
   readonly mutationIdentities: string[] = [];
 
   async execute<T>(
     params: Parameters<AuthoritativeAdminMutationBridge["execute"]>[0],
     mutate: Parameters<AuthoritativeAdminMutationBridge["execute"]>[1],
   ): Promise<T> {
-    this.mutationIdentities.push(
-      params.mutationIdentity,
-    );
+    this.mutationIdentities.push(params.mutationIdentity);
     return mutate({} as ClientSession, {
       markAuthSecurityTruthChanged() {},
       markExplicitNoOpSuccess() {},

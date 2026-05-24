@@ -27,6 +27,11 @@ export interface WorkScheduleEmploymentProfileReadonlyAccess {
     session?: ClientSession,
   ): Promise<readonly string[]>;
 
+  listIdsByActiveTalentGroupIds(
+    groupIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly string[]>;
+
   listIdsByOrgUnitId(
     orgUnitId: string,
     session?: ClientSession,

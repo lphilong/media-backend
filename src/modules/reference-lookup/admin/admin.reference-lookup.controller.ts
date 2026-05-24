@@ -24,33 +24,25 @@ type ReferenceLookupCommand =
   | "REFERENCE_LOOKUP_REVENUE_ENTRIES"
   | "REFERENCE_LOOKUP_COMMISSION_RULES";
 
-const QUERY_FIELDS = Object.freeze(["search", "limit"]);
+const QUERY_FIELDS = Object.freeze(["search", "ids", "limit"]);
 
 const DOMAIN_BY_COMMAND: Readonly<
   Record<ReferenceLookupCommand, ReferenceLookupDomain>
 > = Object.freeze({
   REFERENCE_LOOKUP_ORG_UNITS: "orgUnits",
-  REFERENCE_LOOKUP_EMPLOYMENT_PROFILES:
-    "employmentProfiles",
+  REFERENCE_LOOKUP_EMPLOYMENT_PROFILES: "employmentProfiles",
   REFERENCE_LOOKUP_TALENTS: "talents",
   REFERENCE_LOOKUP_TALENT_GROUPS: "talentGroups",
-  REFERENCE_LOOKUP_PLATFORM_ACCOUNTS:
-    "platformAccounts",
-  REFERENCE_LOOKUP_STUDIO_RESOURCES:
-    "studioResources",
+  REFERENCE_LOOKUP_PLATFORM_ACCOUNTS: "platformAccounts",
+  REFERENCE_LOOKUP_STUDIO_RESOURCES: "studioResources",
   REFERENCE_LOOKUP_EVENTS: "events",
-  REFERENCE_LOOKUP_CONTRACT_RECORDS:
-    "contractRecords",
-  REFERENCE_LOOKUP_REVENUE_ENTRIES:
-    "revenueEntries",
-  REFERENCE_LOOKUP_COMMISSION_RULES:
-    "commissionRules",
+  REFERENCE_LOOKUP_CONTRACT_RECORDS: "contractRecords",
+  REFERENCE_LOOKUP_REVENUE_ENTRIES: "revenueEntries",
+  REFERENCE_LOOKUP_COMMISSION_RULES: "commissionRules",
 });
 
 export class ReferenceLookupAdminController extends SecureController {
-  constructor(
-    private readonly service: ReferenceLookupAdminService,
-  ) {
+  constructor(private readonly service: ReferenceLookupAdminService) {
     super();
   }
 
@@ -67,13 +59,12 @@ export class ReferenceLookupAdminController extends SecureController {
       );
     }
 
-    assertNoUnexpectedQueryFields(
-      req.query as Record<string, unknown>,
-    );
+    assertNoUnexpectedQueryFields(req.query as Record<string, unknown>);
 
     return this.service.listReferenceOptions(actor, {
       domain: DOMAIN_BY_COMMAND[command],
       search: req.query.search as string | undefined,
+      ids: req.query.ids as string | string[] | undefined,
       limit: req.query.limit as string | undefined,
     });
   }
@@ -94,9 +85,7 @@ export class ReferenceLookupAdminController extends SecureController {
   }
 }
 
-function assertNoUnexpectedQueryFields(
-  query: Record<string, unknown>,
-): void {
+function assertNoUnexpectedQueryFields(query: Record<string, unknown>): void {
   const unexpectedFields = Object.keys(query).filter(
     (field) => !QUERY_FIELDS.includes(field),
   );

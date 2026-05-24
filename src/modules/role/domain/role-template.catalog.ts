@@ -11,8 +11,7 @@ export const ROLE_TEMPLATE_CODES = [
   "VIEWER_AUDITOR",
 ] as const;
 
-export type RoleTemplateCode =
-  (typeof ROLE_TEMPLATE_CODES)[number];
+export type RoleTemplateCode = (typeof ROLE_TEMPLATE_CODES)[number];
 
 export type RoleTemplateStatus =
   | "READY"
@@ -49,9 +48,7 @@ export type RoleTemplateListItem = Omit<
 
 const TEMPLATE_VERSION = "2026-05-20";
 
-const ALL_PERMISSIONS = Object.freeze([
-  ...Object.values(Permission),
-]);
+const ALL_PERMISSIONS = Object.freeze([...Object.values(Permission)]);
 
 const GLOBAL_PREVIEW_SCOPE_PLAN: readonly RoleTemplateScopePlanEntry[] =
   Object.freeze([
@@ -59,7 +56,12 @@ const GLOBAL_PREVIEW_SCOPE_PLAN: readonly RoleTemplateScopePlanEntry[] =
     scopePlan("Event Assignment", ["global"], "PREVIEW_ONLY"),
     scopePlan("Contract Registry", ["global"], "PREVIEW_ONLY"),
     scopePlan("Talent KPI", ["global"], "PREVIEW_ONLY"),
-    scopePlan("KPI", ["global"], "READY", "Runtime grant: scopeGrants.kpi = [\"global\"]."),
+    scopePlan(
+      "KPI",
+      ["global"],
+      "READY",
+      'Runtime grant: scopeGrants.kpi = ["global"].',
+    ),
     scopePlan("Revenue Ledger", ["global"], "PREVIEW_ONLY"),
     scopePlan("Commission", ["global"], "PREVIEW_ONLY"),
     scopePlan("Dashboard Lite", ["global"], "PREVIEW_ONLY"),
@@ -131,6 +133,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         Permission.TALENT_GROUP_UPDATE,
         Permission.TALENT_GROUP_MANAGE_LIFECYCLE,
         Permission.TALENT_GROUP_MANAGE_MEMBERSHIP,
+        Permission.STUDIO_RESOURCE_LOOKUP,
         Permission.USER_VIEW,
         Permission.USER_CREATE,
         Permission.USER_PROVISION_ACCOUNT,
@@ -155,7 +158,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
           "KPI",
           ["global"],
           "READY",
-          "Runtime grant: scopeGrants.kpi = [\"global\"] for read/progress visibility only; this template does not include KPI mutation permissions.",
+          'Runtime grant: scopeGrants.kpi = ["global"] for read/progress visibility only; this template does not include KPI mutation permissions.',
         ),
         scopePlan(
           "Work Schedule",
@@ -182,9 +185,6 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       category: "MANAGEMENT",
       permissions: Object.freeze([
         Permission.WORK_SCHEDULE_READ,
-        Permission.WORK_SCHEDULE_CREATE,
-        Permission.WORK_SCHEDULE_UPDATE,
-        Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
         Permission.EVENT_READ,
         Permission.EVENT_UPDATE,
         Permission.EVENT_MANAGE_ASSIGNMENTS,
@@ -201,28 +201,28 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         Permission.KPI_CORRECT_ACTUAL,
       ]),
       recommendedScopeGrants: scopeGrants({
-        workSchedule: Object.freeze(["self", "team", "department"]),
+        workSchedule: Object.freeze(["self", "team"]),
         eventAssignment: Object.freeze(["managedGroup"]),
         kpi: Object.freeze(["managedGroup"]),
       }),
       scopePlan: Object.freeze([
         scopePlan(
           "Work Schedule",
-          ["self", "team", "department"],
+          ["self", "team"],
           "PREVIEW_ONLY",
-          "Current scope support exists primarily for work schedule routes.",
+          "Team Managers may view managed team schedules. Official WorkShift mutation remains with global Production Ops dispatchers.",
         ),
         scopePlan(
           "KPI",
           ["managedGroup"],
           "READY",
-          "Runtime grant: scopeGrants.kpi = [\"managedGroup\"]; access still requires active manager assignment.",
+          'Runtime grant: scopeGrants.kpi = ["managedGroup"]; access still requires active manager assignment.',
         ),
         scopePlan(
           "Event Assignment",
           ["managedGroup"],
           "READY",
-          "Runtime grant: scopeGrants.eventAssignment = [\"managedGroup\"]; access is limited to events assigned to managed groups or active talents in those groups.",
+          'Runtime grant: scopeGrants.eventAssignment = ["managedGroup"]; access is limited to events assigned to managed groups or active talents in those groups.',
         ),
       ]),
       warnings: Object.freeze([
@@ -231,7 +231,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         "User, role, finance finalize, and reconcile permissions are intentionally excluded.",
       ]),
       implementationNotes: Object.freeze([
-        "Includes work-schedule lifecycle permissions because current team and department scope support is work-schedule-centered.",
+        "Includes work-schedule read permission only; official WorkShift mutation permissions are intentionally excluded.",
       ]),
       status: "REQUIRES_FUTURE_SCOPE",
     },
@@ -267,7 +267,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         Permission.PLATFORM_ACCOUNT_READ,
       ]),
       recommendedScopeGrants: scopeGrants({
-        workSchedule: Object.freeze(["department"]),
+        workSchedule: Object.freeze(["global"]),
         eventAssignment: Object.freeze(["global"]),
       }),
       scopePlan: Object.freeze([
@@ -275,13 +275,13 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
           "Production Operations",
           ["event", "global", "studio", "department"],
           "READY",
-          "Runtime grant: scopeGrants.eventAssignment = [\"global\"] because Production Ops is the current central event dispatcher.",
+          'Runtime grant: scopeGrants.eventAssignment = ["global"] because Production Ops is the current central event dispatcher.',
         ),
         scopePlan(
           "Work Schedule",
-          ["department"],
-          "PREVIEW_ONLY",
-          "Work Schedule has current department scope vocabulary but this batch does not persist assignment grants.",
+          ["global"],
+          "READY",
+          'Runtime grant: scopeGrants.workSchedule = ["global"] because Production Ops is the central Work Schedule dispatcher.',
         ),
       ]),
       warnings: Object.freeze([
@@ -344,7 +344,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
           "KPI",
           ["global"],
           "READY",
-          "Runtime grant: scopeGrants.kpi = [\"global\"] for read/progress reporting only; actual entry, correction, and finalization are excluded.",
+          'Runtime grant: scopeGrants.kpi = ["global"] for read/progress reporting only; actual entry, correction, and finalization are excluded.',
         ),
       ]),
       warnings: Object.freeze([
@@ -380,7 +380,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
           "KPI",
           ["self"],
           "READY",
-          "Runtime grant: scopeGrants.kpi = [\"self\"] for own progress only.",
+          'Runtime grant: scopeGrants.kpi = ["self"] for own progress only.',
         ),
         scopePlan(
           "Self Service",
@@ -444,7 +444,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
           "KPI",
           ["global"],
           "READY",
-          "Runtime grant: scopeGrants.kpi = [\"global\"] for read/progress audit only; no KPI mutations are included.",
+          'Runtime grant: scopeGrants.kpi = ["global"] for read/progress audit only; no KPI mutations are included.',
         ),
       ]),
       warnings: Object.freeze([
@@ -459,10 +459,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
   ]);
 
 const CATALOG_BY_CODE = new Map<RoleTemplateCode, RoleTemplateDefinition>(
-  ROLE_TEMPLATE_CATALOG.map((template) => [
-    template.code,
-    template,
-  ]),
+  ROLE_TEMPLATE_CATALOG.map((template) => [template.code, template]),
 );
 
 validateRoleTemplateCatalog();
@@ -483,9 +480,7 @@ export function listRoleTemplates(): readonly RoleTemplateListItem[] {
   }));
 }
 
-export function getRoleTemplate(
-  code: string,
-): RoleTemplateDefinition | null {
+export function getRoleTemplate(code: string): RoleTemplateDefinition | null {
   const normalized = normalizeRoleTemplateCode(code);
   if (!isRoleTemplateCode(normalized)) {
     return null;
@@ -494,12 +489,8 @@ export function getRoleTemplate(
   return CATALOG_BY_CODE.get(normalized) ?? null;
 }
 
-export function isRoleTemplateCode(
-  code: string,
-): code is RoleTemplateCode {
-  return ROLE_TEMPLATE_CODES.includes(
-    code as RoleTemplateCode,
-  );
+export function isRoleTemplateCode(code: string): code is RoleTemplateCode {
+  return ROLE_TEMPLATE_CODES.includes(code as RoleTemplateCode);
 }
 
 export function normalizeRoleTemplateCode(code: string): string {
@@ -507,16 +498,12 @@ export function normalizeRoleTemplateCode(code: string): string {
 }
 
 export function validateRoleTemplateCatalog(): void {
-  const knownPermissionCodes = new Set<string>(
-    Object.values(Permission),
-  );
+  const knownPermissionCodes = new Set<string>(Object.values(Permission));
   const seenCodes = new Set<string>();
 
   for (const template of ROLE_TEMPLATE_CATALOG) {
     if (seenCodes.has(template.code)) {
-      throw new Error(
-        `Duplicate role template code: ${template.code}`,
-      );
+      throw new Error(`Duplicate role template code: ${template.code}`);
     }
     seenCodes.add(template.code);
 
@@ -543,9 +530,7 @@ export function validateRoleTemplateCatalog(): void {
 
   if (
     expectedCodes.length !== actualCodes.length ||
-    expectedCodes.some(
-      (code, index) => code !== actualCodes[index],
-    )
+    expectedCodes.some((code, index) => code !== actualCodes[index])
   ) {
     throw new Error(
       `Role template catalog must contain exactly: ${expectedCodes.join(", ")}`,
@@ -567,8 +552,6 @@ function scopePlan(
   });
 }
 
-function scopeGrants(
-  grants: ActorScopeGrants,
-): Readonly<ActorScopeGrants> {
+function scopeGrants(grants: ActorScopeGrants): Readonly<ActorScopeGrants> {
   return Object.freeze(grants);
 }

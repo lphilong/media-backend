@@ -79,12 +79,7 @@ const LOOKUP_CONFIG_BY_DOMAIN: Readonly<
       displayShortName: 1,
       operationalStatus: 1,
     },
-    searchFields: [
-      "talentCode",
-      "stageName",
-      "legalName",
-      "displayShortName",
-    ],
+    searchFields: ["talentCode", "stageName", "legalName", "displayShortName"],
     sort: { talentCode: 1, _id: 1 },
     archivedField: "operationalStatus",
     map: (document) =>
@@ -251,9 +246,7 @@ const LOOKUP_CONFIG_BY_DOMAIN: Readonly<
   },
 });
 
-export class NativeMongoReferenceLookupReadRepository
-  implements ReferenceLookupReadRepository
-{
+export class NativeMongoReferenceLookupReadRepository implements ReferenceLookupReadRepository {
   constructor(private readonly db: Db) {}
 
   async listReferenceOptions(
@@ -264,7 +257,7 @@ export class NativeMongoReferenceLookupReadRepository
       this.db.collection<LookupDocument>(config.collection);
 
     const documents = await collection
-      .find(buildQuery(config, input.search), {
+      .find(buildQuery(config, input.search, input.ids), {
         projection: config.projection,
       })
       .sort(config.sort)
@@ -275,15 +268,14 @@ export class NativeMongoReferenceLookupReadRepository
   }
 }
 
-export function escapeReferenceLookupRegex(
-  value: string,
-): string {
+export function escapeReferenceLookupRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function buildQuery(
   config: LookupConfig,
   search: string | undefined,
+  ids: readonly string[] | undefined,
 ): Record<string, unknown> {
   const filters: Array<Record<string, unknown>> = [
     {
@@ -292,6 +284,14 @@ function buildQuery(
       },
     },
   ];
+
+  if (ids && ids.length > 0) {
+    filters.push({
+      _id: {
+        $in: [...ids],
+      },
+    });
+  }
 
   if (search) {
     const escaped = escapeReferenceLookupRegex(search);
@@ -305,7 +305,7 @@ function buildQuery(
     });
   }
 
-  return filters.length === 1 ? filters[0] ?? {} : { $and: filters };
+  return filters.length === 1 ? (filters[0] ?? {}) : { $and: filters };
 }
 
 function item(
@@ -318,10 +318,7 @@ function item(
   });
 }
 
-function readRequiredString(
-  document: LookupDocument,
-  field: string,
-): string {
+function readRequiredString(document: LookupDocument, field: string): string {
   return readString(document, field) ?? "";
 }
 
@@ -338,12 +335,8 @@ function readString(
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function omitUndefined(
-  item: ReferenceLookupItem,
-): ReferenceLookupItem {
+function omitUndefined(item: ReferenceLookupItem): ReferenceLookupItem {
   return Object.fromEntries(
-    Object.entries(item).filter(
-      ([, value]) => value !== undefined,
-    ),
+    Object.entries(item).filter(([, value]) => value !== undefined),
   ) as ReferenceLookupItem;
 }

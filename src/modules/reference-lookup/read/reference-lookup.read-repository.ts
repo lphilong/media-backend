@@ -6,6 +6,7 @@ import {
 export interface ListReferenceLookupInput {
   readonly domain: ReferenceLookupDomain;
   readonly search?: string;
+  readonly ids?: readonly string[];
   readonly limit: number;
 }
 

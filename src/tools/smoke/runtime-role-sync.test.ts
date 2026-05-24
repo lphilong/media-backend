@@ -98,12 +98,55 @@ test("dry-run reports missing lookup permission for PRODUCTION_OPS", async () =>
     mongoDbName: "media-dev",
   });
 
+  assert.deepEqual(summary.missingPermissions, [Permission.ORG_UNIT_LOOKUP]);
+  assert.equal(summary.updateNeeded, true);
+  assert.equal(summary.updated, false);
+  assert.equal(fixture.roles.replacePermissionsCalls, 0);
+});
+
+test("dry-run reports missing lookup permission for HR_OPERATIONS", async () => {
+  const fixture = createRuntimeRoleSyncFixture({
+    roles: [
+      makeTemplateRoleWithoutPermissions({
+        code: "HR_OPERATIONS",
+        missingPermissions: [Permission.STUDIO_RESOURCE_LOOKUP],
+      }),
+    ],
+  });
+
+  const summary = await fixture.service.run({
+    roleCode: "HR_OPERATIONS",
+    mode: "dry-run",
+    mongoDbName: "media-dev",
+  });
+
   assert.deepEqual(summary.missingPermissions, [
-    Permission.ORG_UNIT_LOOKUP,
+    Permission.STUDIO_RESOURCE_LOOKUP,
   ]);
   assert.equal(summary.updateNeeded, true);
   assert.equal(summary.updated, false);
   assert.equal(fixture.roles.replacePermissionsCalls, 0);
+});
+
+test("source TEAM_MANAGER template does not include official WorkSchedule mutation permissions", () => {
+  const manager = getRoleTemplate("TEAM_MANAGER");
+  assert.ok(manager);
+  assert.equal(
+    manager.permissions.includes(Permission.WORK_SCHEDULE_READ),
+    true,
+  );
+  assert.equal(
+    manager.permissions.includes(Permission.WORK_SCHEDULE_CREATE),
+    false,
+  );
+  assert.equal(
+    manager.permissions.includes(Permission.WORK_SCHEDULE_UPDATE),
+    false,
+  );
+  assert.equal(
+    manager.permissions.includes(Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE),
+    false,
+  );
 });
 
 test("write adds only missing source-template permissions", async () => {
@@ -135,10 +178,7 @@ test("write adds only missing source-template permissions", async () => {
     finance.permissions.includes(Permission.COMMISSION_RULE_LOOKUP),
     true,
   );
-  assert.equal(
-    finance.permissions.includes("legacy.custom.permission"),
-    true,
-  );
+  assert.equal(finance.permissions.includes("legacy.custom.permission"), true);
   assert.equal(
     finance.permissions.includes(Permission.CONTRACT_REGISTRY_CREATE),
     false,
@@ -179,10 +219,7 @@ test("write leaves non-target roles untouched", async () => {
     admin.permissions.includes(Permission.USER_ACTOR_KIND_UPDATE),
     true,
   );
-  assert.equal(
-    admin.permissions.includes("legacy.custom.permission"),
-    true,
-  );
+  assert.equal(admin.permissions.includes("legacy.custom.permission"), true);
   assert.equal(
     fixture.roles.records
       .get("VIEWER_AUDITOR")
@@ -261,10 +298,7 @@ test("CLI write mode requires explicit confirm flag and env file", () => {
     () => parseCliArgs([]),
     runtimeSyncErrorWithCode("RUNTIME_ROLE_SYNC_ROLES_REQUIRED"),
   );
-  assert.equal(
-    parseCliArgs(["--roles", "COMMERCIAL_FINANCE"]).mode,
-    "dry-run",
-  );
+  assert.equal(parseCliArgs(["--roles", "COMMERCIAL_FINANCE"]).mode, "dry-run");
   assert.deepEqual(
     parseCliArgs([
       "--env-file",
@@ -287,9 +321,7 @@ test("CLI write mode requires explicit confirm flag and env file", () => {
   );
   assert.throws(
     () => parseCliArgs(["--confirm-runtime-role-sync"]),
-    runtimeSyncErrorWithCode(
-      "RUNTIME_ROLE_SYNC_ENV_FILE_REQUIRED_FOR_WRITE",
-    ),
+    runtimeSyncErrorWithCode("RUNTIME_ROLE_SYNC_ENV_FILE_REQUIRED_FOR_WRITE"),
   );
   assert.throws(
     () =>
@@ -382,9 +414,11 @@ test("runtime role sync package script does not embed confirm flag", () => {
   );
 });
 
-function createRuntimeRoleSyncFixture(params: {
-  readonly roles?: readonly RoleRecord[];
-} = {}) {
+function createRuntimeRoleSyncFixture(
+  params: {
+    readonly roles?: readonly RoleRecord[];
+  } = {},
+) {
   const roles = new FakeRuntimeRoleRepository(params.roles ?? []);
   const service = new RuntimeRoleSyncService({
     roleRepository: roles,
@@ -410,14 +444,12 @@ class FakeRuntimeRoleRepository {
     return this.records.get(code) ?? null;
   }
 
-  async replacePermissions(
-    input: {
-      readonly roleId: string;
-      readonly roleCode: RoleTemplateCode;
-      readonly permissions: readonly string[];
-      readonly updatedAt: number;
-    },
-  ): Promise<RoleRecord | null> {
+  async replacePermissions(input: {
+    readonly roleId: string;
+    readonly roleCode: RoleTemplateCode;
+    readonly permissions: readonly string[];
+    readonly updatedAt: number;
+  }): Promise<RoleRecord | null> {
     this.replacePermissionsCalls += 1;
     const role = [...this.records.values()].find(
       (candidate) =>
@@ -484,10 +516,8 @@ function makeRole(params: {
     description: template?.description ?? null,
     state: "ACTIVE",
     permissions: [...params.permissions],
-    delegationBand:
-      params.code === "ADMIN_FULL" ? "PRIVILEGED" : "LIMITED",
-    maxDelegatableBand:
-      params.code === "ADMIN_FULL" ? "PRIVILEGED" : "NONE",
+    delegationBand: params.code === "ADMIN_FULL" ? "PRIVILEGED" : "LIMITED",
+    maxDelegatableBand: params.code === "ADMIN_FULL" ? "PRIVILEGED" : "NONE",
     ...(template ? { templateCode: template.code } : {}),
     ...(template ? { templateVersion: template.version } : {}),
     templateAppliedAt: 1,
