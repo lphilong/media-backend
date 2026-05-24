@@ -61,6 +61,7 @@ tools/
 !src/tools/smoke/seed-real-auth-first-admin.ts
 !src/tools/smoke/seed-real-auth-first-admin.test.ts
 !src/tools/smoke/runtime-role-sync.test.ts
+!src/tools/smoke/runtime-role-cleanup.test.ts
 !src/tools/smoke/access-repair.test.ts
 !src/tools/smoke/seed-smoke-fixtures.ts
 !src/tools/smoke/seed-smoke-fixtures.test.ts
