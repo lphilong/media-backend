@@ -136,6 +136,7 @@ export interface RoleAssignmentView {
   readonly assignmentId: string;
   readonly roleId: string;
   readonly userId: string;
+  readonly roleRef?: ReferenceSummary | null;
   readonly userRef?: ReferenceSummary | null;
   readonly scopeGrants?: ActorScopeGrants;
   readonly state: RoleAssignmentState;

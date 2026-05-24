@@ -29,6 +29,7 @@ import { RoleTemplateAdminService } from "@modules/role/admin/admin.role-templat
 import { AdminRoleTemplateController } from "@modules/role/admin/admin.role-template.controller";
 import { adminRoleTemplateRoutes } from "@modules/role/admin/admin.role-template.routes";
 import { registerPresenters } from "@modules/role/shared/role.presenter.register";
+import { RoleAdminMutationPresenter } from "@modules/role/shared/role.presenter";
 import {
   ReplaceRolePermissionsInput,
   RoleRepository,
@@ -400,6 +401,189 @@ test("role assignment validates role code against target user actorKind", async 
   }
 });
 
+test("role assignment success returns assignment DTO with scopes and audit", async () => {
+  const roleRepository = new InMemoryRoleRepository();
+  const assignmentRepository =
+    new InMemoryUserRoleAssignmentRepository();
+  const auditEvents: unknown[] = [];
+  const service = new RoleAdminService(
+    roleRepository,
+    assignmentRepository,
+    new InMemoryRoleAssignmentRuleRepository(),
+    new InMemoryBusinessCodeSequenceRepository(),
+    new AlwaysAssignableUserAccess("ADMIN"),
+    new PermissiveAdminCapabilityRepository(),
+    {
+      async record(...args: unknown[]) {
+        auditEvents.push(args);
+      },
+    } as unknown as AuditGuard,
+    new InlineMutationBridge(),
+    createActorSnapshotCacheInvalidator(),
+    noOpLogger,
+  );
+  const now = Date.now();
+  await roleRepository.insert(
+    {
+      id: "role-hr",
+      code: "HR_OPERATIONS",
+      name: "HR Operations",
+      description: null,
+      state: "ACTIVE",
+      permissions: [Permission.USER_VIEW],
+      delegationBand: "LIMITED",
+      maxDelegatableBand: "NONE",
+      createdAt: now,
+      updatedAt: now,
+      activatedAt: now,
+      archivedAt: null,
+    },
+    {} as ClientSession,
+  );
+
+  const result = await bindTraceId(
+    "trace-role-assignment-dto",
+    async () =>
+      runWithDomainEventCollector(() =>
+        service.assignRoleToUser(
+          createActor(ALL_PERMISSION_CODES, {
+            eventAssignment: ["global"],
+          }),
+          {
+            roleId: "role-hr",
+            userId: "target-user",
+            reason: "Assignment DTO test",
+            scopeGrants: {
+              eventAssignment: ["global"],
+            },
+          },
+        ),
+      ),
+  );
+
+  assert.equal(result.roleId, "role-hr");
+  assert.equal(result.userId, "target-user");
+  assert.equal(result.state, "ACTIVE");
+  assert.equal(typeof result.assignmentId, "string");
+  assert.equal(typeof result.effectiveAt, "number");
+  assert.deepEqual(result.scopeGrants, {
+    eventAssignment: ["global"],
+  });
+  assert.deepEqual(result.roleRef, {
+    id: "role-hr",
+    code: "HR_OPERATIONS",
+    name: "HR Operations",
+  });
+  assert.equal(result.userRef?.displayName, "Target User");
+  assert.equal("permissions" in result, false);
+  assert.equal("assignmentRules" in result, false);
+  assert.equal(assignmentRepository.insertCount, 1);
+  assert.equal(auditEvents.length, 1);
+});
+
+test("TALENT_STAFF_SELF assignment to ADMIN rejects", async () => {
+  const roleRepository = new InMemoryRoleRepository();
+  const assignmentRepository =
+    new InMemoryUserRoleAssignmentRepository();
+  const service = new RoleAdminService(
+    roleRepository,
+    assignmentRepository,
+    new InMemoryRoleAssignmentRuleRepository(),
+    new InMemoryBusinessCodeSequenceRepository(),
+    new AlwaysAssignableUserAccess("ADMIN"),
+    new PermissiveAdminCapabilityRepository(),
+    createAuditGuard(),
+    new InlineMutationBridge(),
+    createActorSnapshotCacheInvalidator(),
+    noOpLogger,
+  );
+  const now = Date.now();
+  await roleRepository.insert(
+    {
+      id: "role-self",
+      code: "TALENT_STAFF_SELF",
+      name: "Talent Staff Self",
+      description: null,
+      state: "ACTIVE",
+      permissions: [Permission.USER_VIEW],
+      delegationBand: "LIMITED",
+      maxDelegatableBand: "NONE",
+      createdAt: now,
+      updatedAt: now,
+      activatedAt: now,
+      archivedAt: null,
+    },
+    {} as ClientSession,
+  );
+
+  await assert.rejects(
+    () =>
+      bindTraceId(
+        "trace-role-assignment-staff-self-admin-reject",
+        async () =>
+          runWithDomainEventCollector(() =>
+            service.assignRoleToUser(createActor(ALL_PERMISSION_CODES), {
+              roleId: "role-self",
+              userId: "target-user",
+              reason: "ActorKind mismatch",
+            }),
+          ),
+      ),
+    /TALENT_STAFF_SELF requires a self-service staff account/u,
+  );
+  assert.equal(assignmentRepository.insertCount, 0);
+});
+
+test("role assignment mutation presenter exposes assignment DTO", () => {
+  const presenter = new RoleAdminMutationPresenter();
+  const output = presenter.present(
+    {
+      assignmentId: "assignment-1",
+      roleId: "role-hr",
+      userId: "target-user",
+      roleRef: {
+        id: "role-hr",
+        code: "HR_OPERATIONS",
+        name: "HR Operations",
+      },
+      userRef: {
+        id: "target-user",
+        displayName: "Target User",
+      },
+      scopeGrants: {
+        eventAssignment: ["global"],
+      },
+      state: "ACTIVE",
+      effectiveAt: 1,
+      revokedAt: null,
+      reason: null,
+    },
+    "ADMIN",
+  );
+
+  assert.deepEqual(output.data, {
+    assignmentId: "assignment-1",
+    roleId: "role-hr",
+    userId: "target-user",
+    roleRef: {
+      id: "role-hr",
+      code: "HR_OPERATIONS",
+      name: "HR Operations",
+    },
+    userRef: {
+      id: "target-user",
+      displayName: "Target User",
+    },
+    scopeGrants: {
+      eventAssignment: ["global"],
+    },
+    state: "ACTIVE",
+    effectiveAt: 1,
+    revokedAt: null,
+    reason: null,
+  });
+});
+
 test("create role from template persists explicit permissions and provenance only", async () => {
   const roleRepository = new InMemoryRoleRepository();
   const assignmentRepository =
@@ -691,6 +875,7 @@ test("create role fails after bounded generated duplicate-key collisions are exh
 
 function createActor(
   permissions: readonly string[],
+  scopeGrants: ConstructorParameters<typeof Actor>[0]["scopeGrants"] = {},
 ): Actor {
   return new Actor({
     id: "admin-user-1",
@@ -698,7 +883,7 @@ function createActor(
     context: "ADMIN",
     roles: [],
     permissions,
-    scopeGrants: {},
+    scopeGrants,
     isActive: true,
   });
 }
@@ -963,10 +1148,18 @@ class AlwaysAssignableUserAccess
   async getAssignableById(): Promise<{
     readonly id: string;
     readonly actorKind: "ADMIN" | "STAFF";
+    readonly ref: {
+      readonly id: string;
+      readonly displayName: string;
+    };
   } | null> {
     return {
       id: "target-user",
       actorKind: this.actorKind,
+      ref: {
+        id: "target-user",
+        displayName: "Target User",
+      },
     };
   }
 }

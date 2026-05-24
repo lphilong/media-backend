@@ -6,6 +6,7 @@ import {
   GetRolePermissionMatrixResult,
   ListRoleAssignmentsResult,
   ListRoleTemplatesResult,
+  RoleAssignmentMutationResult,
   ListRolesResult,
   RoleMutationResult,
   RoleTemplatePreviewResult,
@@ -21,17 +22,25 @@ import {
 } from "./role.exposure";
 
 export class RoleAdminMutationPresenter extends Presenter<
-  RoleMutationResult,
+  RoleMutationResult | RoleAssignmentMutationResult,
   PresentationResult
 > {
   present(
-    input: RoleMutationResult,
+    input: RoleMutationResult | RoleAssignmentMutationResult,
     _context: ContextType,
   ): PresentationResult {
     return {
-      data: RoleAdminMutationExposure.expose(input),
+      data: isRoleAssignmentMutationResult(input)
+        ? RoleAdminAssignmentExposure.expose(input)
+        : RoleAdminMutationExposure.expose(input),
     };
   }
+}
+
+function isRoleAssignmentMutationResult(
+  input: RoleMutationResult | RoleAssignmentMutationResult,
+): input is RoleAssignmentMutationResult {
+  return "assignmentId" in input;
 }
 
 export class RoleAdminListPresenter extends Presenter<

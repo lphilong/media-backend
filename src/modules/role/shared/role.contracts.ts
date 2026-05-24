@@ -129,6 +129,8 @@ export interface ListRoleAssignmentsResult {
   readonly nextCursor?: string;
 }
 
+export type RoleAssignmentMutationResult = RoleAssignmentView;
+
 export type GetRolePermissionMatrixResult = RolePermissionMatrixView;
 
 export interface PreviewRoleTemplateCommand {

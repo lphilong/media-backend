@@ -68,9 +68,11 @@ import {
   RoleAssignmentRuleRecord,
   RoleAssignmentRuleState,
   RoleAssignmentRuleView,
+  RoleAssignmentView,
   RoleMutationView,
   RoleRecord,
   RoleState,
+  UserRoleAssignmentRecord,
 } from "@modules/role/domain/role.types";
 import { UserRoleAssignmentRepository } from "@modules/role/domain/user-role-assignment.repository";
 import {
@@ -81,6 +83,7 @@ import {
   CreateRoleCommand,
   DeactivateRoleCommand,
   RevokeRoleFromUserCommand,
+  RoleAssignmentMutationResult,
   RoleAssignmentRuleInput,
   RoleMutationResult,
   SetRoleAssignmentRulesCommand,
@@ -1070,7 +1073,7 @@ export class RoleAdminService {
   async assignRoleToUser(
     actor: Actor,
     command: AssignRoleToUserCommand,
-  ): Promise<RoleMutationResult> {
+  ): Promise<RoleAssignmentMutationResult> {
     const mutationType = "role.assign-to-user";
     return this.runLoggedMutation(
       actor,
@@ -1242,7 +1245,7 @@ export class RoleAdminService {
               session,
             });
 
-            return toRoleMutationView(refreshedRole, rules);
+            return toRoleAssignmentView(assignment, refreshedRole, targetUser.ref);
           },
           {
             invalidateActorSnapshots: true,
@@ -1250,8 +1253,9 @@ export class RoleAdminService {
         );
       },
       (result) => ({
-        roleId: result.id,
-        roleCode: result.code,
+        roleId: result.roleId,
+        assignmentId: result.assignmentId,
+        userId: result.userId,
       }),
     );
   }
@@ -1259,7 +1263,7 @@ export class RoleAdminService {
   async revokeRoleFromUser(
     actor: Actor,
     command: RevokeRoleFromUserCommand,
-  ): Promise<RoleMutationResult> {
+  ): Promise<RoleAssignmentMutationResult> {
     const mutationType = "role.revoke-from-user";
     return this.runLoggedMutation(
       actor,
@@ -1413,7 +1417,7 @@ export class RoleAdminService {
               session,
             });
 
-            return toRoleMutationView(refreshedRole, rules);
+            return toRoleAssignmentView(revoked, refreshedRole);
           },
           {
             invalidateActorSnapshots: true,
@@ -1421,8 +1425,9 @@ export class RoleAdminService {
         );
       },
       (result) => ({
-        roleId: result.id,
-        roleCode: result.code,
+        roleId: result.roleId,
+        assignmentId: result.assignmentId,
+        userId: result.userId,
       }),
     );
   }
@@ -1777,6 +1782,29 @@ function toRuleView(rule: RoleAssignmentRuleRecord): RoleAssignmentRuleView {
     description: rule.description,
     state: rule.state,
     conditions: rule.conditions,
+  };
+}
+
+function toRoleAssignmentView(
+  assignment: UserRoleAssignmentRecord,
+  role: RoleRecord,
+  userRef?: RoleAssignmentView["userRef"],
+): RoleAssignmentView {
+  return {
+    assignmentId: assignment.assignmentId,
+    roleId: assignment.roleId,
+    userId: assignment.userId,
+    roleRef: {
+      id: role.id,
+      code: role.code,
+      name: role.name,
+    },
+    userRef: userRef ?? null,
+    ...(assignment.scopeGrants ? { scopeGrants: assignment.scopeGrants } : {}),
+    state: assignment.state,
+    effectiveAt: assignment.effectiveAt,
+    revokedAt: assignment.revokedAt,
+    reason: assignment.reason,
   };
 }
 

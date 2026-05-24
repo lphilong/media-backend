@@ -346,13 +346,22 @@ export class NativeMongoRoleUserReadonlyAccess implements RoleUserReadonlyAccess
         archivedAt: null,
       },
       {
-        projection: { _id: 1, actorKind: 1 },
+        projection: {
+          _id: 1,
+          actorKind: 1,
+          profile: 1,
+          accountStatus: 1,
+        },
         ...(session ? { session } : {}),
       },
     );
 
     return user
-      ? { id: user._id, actorKind: user.actorKind }
+      ? {
+          id: user._id,
+          actorKind: user.actorKind,
+          ref: toUserReferenceSummary(user),
+        }
       : null;
   }
 }
