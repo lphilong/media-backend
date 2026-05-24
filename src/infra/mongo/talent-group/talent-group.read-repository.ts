@@ -1,8 +1,4 @@
-import {
-  ClientSession,
-  Collection,
-  Db,
-} from "mongodb";
+import { ClientSession, Collection, Db } from "mongodb";
 import { BaseRepository } from "@infra/database/repository";
 import { TalentTalentGroupReadonlyAccess } from "@modules/talent/domain/talent-talent-group-readonly-access";
 import { TalentGroupValidationError } from "@modules/talent-group/domain/talent-group.errors";
@@ -116,54 +112,56 @@ export class NativeMongoTalentGroupReadRepository
 
   constructor(db: Db) {
     super(db, "talent_groups");
-    this.memberCollection =
-      db.collection<TalentGroupMemberReadDocument>(
-        "talent_group_members",
-      );
-    this.talentCollection =
-      db.collection<TalentReferenceDocument>("talents");
+    this.memberCollection = db.collection<TalentGroupMemberReadDocument>(
+      "talent_group_members",
+    );
+    this.talentCollection = db.collection<TalentReferenceDocument>("talents");
   }
 
   async listTalentGroups(
     input: ListTalentGroupReadInput,
   ): Promise<ListTalentGroupReadResult> {
     const sortSpec = toSortSpec(input);
-    const queryKey = buildListTalentGroupsCursorKey(
-      input,
-      sortSpec,
-    );
+    const queryKey = buildListTalentGroupsCursorKey(input, sortSpec);
     const cursor =
       input.cursor === undefined
         ? undefined
-        : decodeCursor(
-            input.cursor,
-            queryKey,
-            sortSpec,
-          );
-    const queryFilters: Array<Record<string, unknown>> =
-      [
-        input.status
-          ? {
-              status: input.status,
-            }
-          : {
-              status: {
-                $ne: "ARCHIVED",
-              },
-            },
-      ];
-
-    if (input.containsTalentId) {
-      const groupIds =
-        await this.memberCollection.distinct(
-          "groupId",
-          {
-            talentId: input.containsTalentId,
-            membershipStatus: {
-              $ne: "REMOVED",
+        : decodeCursor(input.cursor, queryKey, sortSpec);
+    const queryFilters: Array<Record<string, unknown>> = [
+      input.status
+        ? {
+            status: input.status,
+          }
+        : {
+            status: {
+              $ne: "ARCHIVED",
             },
           },
-        );
+    ];
+
+    if (input.groupIds) {
+      const groupIds = [...new Set(input.groupIds)];
+
+      if (groupIds.length === 0) {
+        return {
+          items: [],
+        };
+      }
+
+      queryFilters.push({
+        _id: {
+          $in: groupIds,
+        },
+      });
+    }
+
+    if (input.containsTalentId) {
+      const groupIds = await this.memberCollection.distinct("groupId", {
+        talentId: input.containsTalentId,
+        membershipStatus: {
+          $ne: "REMOVED",
+        },
+      });
 
       if (groupIds.length === 0) {
         return {
@@ -179,15 +177,11 @@ export class NativeMongoTalentGroupReadRepository
     }
 
     if (input.search) {
-      queryFilters.push(
-        buildSearchFilter(input.search),
-      );
+      queryFilters.push(buildSearchFilter(input.search));
     }
 
     if (cursor) {
-      queryFilters.push(
-        buildPageAfterFilter(sortSpec, cursor),
-      );
+      queryFilters.push(buildPageAfterFilter(sortSpec, cursor));
     }
 
     const docs = await this.collection
@@ -197,22 +191,15 @@ export class NativeMongoTalentGroupReadRepository
       .toArray();
 
     const hasNext = docs.length > input.limit;
-    const page = hasNext
-      ? docs.slice(0, input.limit)
-      : docs;
+    const page = hasNext ? docs.slice(0, input.limit) : docs;
 
     return {
-      items: page.map((doc) =>
-        toTalentGroupListItemView(doc),
-      ),
+      items: page.map((doc) => toTalentGroupListItemView(doc)),
       nextCursor:
         hasNext && page.length > 0
           ? encodeCursor(
               queryKey,
-              buildCursorFromDocument(
-                sortSpec,
-                page[page.length - 1],
-              ),
+              buildCursorFromDocument(sortSpec, page[page.length - 1]),
             )
           : undefined,
     };
@@ -231,15 +218,11 @@ export class NativeMongoTalentGroupReadRepository
   async listTalentGroupMembers(
     input: ListTalentGroupMembersReadInput,
   ): Promise<ListTalentGroupMembersReadResult> {
-    const queryKey =
-      buildListTalentGroupMembersCursorKey(input);
+    const queryKey = buildListTalentGroupMembersCursorKey(input);
     const cursor =
       input.cursor === undefined
         ? undefined
-        : decodeMemberCursor(
-            input.cursor,
-            queryKey,
-          );
+        : decodeMemberCursor(input.cursor, queryKey);
     const filters: Array<Record<string, unknown>> = [
       {
         groupId: input.groupId,
@@ -252,9 +235,7 @@ export class NativeMongoTalentGroupReadRepository
     ];
 
     if (cursor) {
-      filters.push(
-        buildMemberPageAfterFilter(cursor),
-      );
+      filters.push(buildMemberPageAfterFilter(cursor));
     }
 
     const docs = await this.memberCollection
@@ -267,17 +248,12 @@ export class NativeMongoTalentGroupReadRepository
       .toArray();
 
     const hasNext = docs.length > input.limit;
-    const page = hasNext
-      ? docs.slice(0, input.limit)
-      : docs;
+    const page = hasNext ? docs.slice(0, input.limit) : docs;
 
-    const items =
-      await enrichTalentGroupMemberReferenceSummaries(
-        page.map((doc) =>
-          toTalentGroupMemberListItemView(doc),
-        ),
-        this.talentCollection,
-      );
+    const items = await enrichTalentGroupMemberReferenceSummaries(
+      page.map((doc) => toTalentGroupMemberListItemView(doc)),
+      this.talentCollection,
+    );
 
     return {
       items,
@@ -286,12 +262,8 @@ export class NativeMongoTalentGroupReadRepository
           ? encodeMemberCursor({
               queryKey,
               position: {
-                lineupOrder:
-                  page[page.length - 1]
-                    ?.lineupOrder ?? 0,
-                id:
-                  page[page.length - 1]?._id ??
-                  "",
+                lineupOrder: page[page.length - 1]?.lineupOrder ?? 0,
+                id: page[page.length - 1]?._id ?? "",
               },
             })
           : undefined,
@@ -301,15 +273,14 @@ export class NativeMongoTalentGroupReadRepository
   async listTalentGroupsByTalent(
     input: ListTalentGroupsByTalentReadInput,
   ): Promise<ListTalentGroupsByTalentReadResult> {
-    const memberships =
-      await this.memberCollection
-        .find({
-          talentId: input.talentId,
-          membershipStatus: {
-            $in: ["ACTIVE", "INACTIVE"],
-          },
-        })
-        .toArray();
+    const memberships = await this.memberCollection
+      .find({
+        talentId: input.talentId,
+        membershipStatus: {
+          $in: ["ACTIVE", "INACTIVE"],
+        },
+      })
+      .toArray();
 
     if (memberships.length === 0) {
       return {
@@ -317,44 +288,47 @@ export class NativeMongoTalentGroupReadRepository
       };
     }
 
-    const membershipByGroupId = new Map<
-      string,
-      TalentGroupMembershipSummary
-    >();
+    const membershipByGroupId = new Map<string, TalentGroupMembershipSummary>();
 
     for (const membership of memberships) {
       membershipByGroupId.set(membership.groupId, {
         membershipId: membership._id,
         talentId: membership.talentId,
-        membershipStatus:
-          membership.membershipStatus,
+        membershipStatus: membership.membershipStatus,
         lineupOrder: membership.lineupOrder,
         joinedAt: membership.joinedAt,
       });
     }
 
     const sortSpec = toSortSpec(input);
-    const queryKey =
-      buildListTalentGroupsByTalentCursorKey(
-        input,
-        sortSpec,
-      );
+    const queryKey = buildListTalentGroupsByTalentCursorKey(input, sortSpec);
     const cursor =
       input.cursor === undefined
         ? undefined
-        : decodeCursor(
-            input.cursor,
-            queryKey,
-            sortSpec,
-          );
-    const queryFilters: Array<Record<string, unknown>> =
-      [
-        {
-          _id: {
-            $in: [...membershipByGroupId.keys()],
-          },
+        : decodeCursor(input.cursor, queryKey, sortSpec);
+    const queryFilters: Array<Record<string, unknown>> = [
+      {
+        _id: {
+          $in: [...membershipByGroupId.keys()],
         },
-      ];
+      },
+    ];
+
+    if (input.groupIds) {
+      const groupIds = [...new Set(input.groupIds)];
+
+      if (groupIds.length === 0) {
+        return {
+          items: [],
+        };
+      }
+
+      queryFilters.push({
+        _id: {
+          $in: groupIds,
+        },
+      });
+    }
 
     if (input.status) {
       queryFilters.push({
@@ -363,9 +337,7 @@ export class NativeMongoTalentGroupReadRepository
     }
 
     if (cursor) {
-      queryFilters.push(
-        buildPageAfterFilter(sortSpec, cursor),
-      );
+      queryFilters.push(buildPageAfterFilter(sortSpec, cursor));
     }
 
     const docs = await this.collection
@@ -375,20 +347,17 @@ export class NativeMongoTalentGroupReadRepository
       .toArray();
 
     const hasNext = docs.length > input.limit;
-    const page = hasNext
-      ? docs.slice(0, input.limit)
-      : docs;
+    const page = hasNext ? docs.slice(0, input.limit) : docs;
 
-    const items =
-      await enrichTalentGroupMemberReferenceSummaries(
-        page.map((doc) =>
-          toTalentGroupByTalentListItemView(
-            doc,
-            membershipByGroupId.get(doc._id),
-          ),
+    const items = await enrichTalentGroupMemberReferenceSummaries(
+      page.map((doc) =>
+        toTalentGroupByTalentListItemView(
+          doc,
+          membershipByGroupId.get(doc._id),
         ),
-        this.talentCollection,
-      );
+      ),
+      this.talentCollection,
+    );
 
     return {
       items,
@@ -396,10 +365,7 @@ export class NativeMongoTalentGroupReadRepository
         hasNext && page.length > 0
           ? encodeCursor(
               queryKey,
-              buildCursorFromDocument(
-                sortSpec,
-                page[page.length - 1],
-              ),
+              buildCursorFromDocument(sortSpec, page[page.length - 1]),
             )
           : undefined,
     };
@@ -493,33 +459,29 @@ function addRequiredReferenceId(ids: Set<string>, value: string): void {
   }
 }
 
-export class NativeMongoTalentTalentGroupReadonlyAccess
-  implements TalentTalentGroupReadonlyAccess
-{
+export class NativeMongoTalentTalentGroupReadonlyAccess implements TalentTalentGroupReadonlyAccess {
   private readonly memberCollection: Collection<TalentGroupMemberReadDocument>;
 
   constructor(db: Db) {
-    this.memberCollection =
-      db.collection<TalentGroupMemberReadDocument>(
-        "talent_group_members",
-      );
+    this.memberCollection = db.collection<TalentGroupMemberReadDocument>(
+      "talent_group_members",
+    );
   }
 
   async hasActiveMembershipsForTalent(
     talentId: string,
     session?: ClientSession,
   ): Promise<boolean> {
-    const doc =
-      await this.memberCollection.findOne(
-        {
-          talentId,
-          membershipStatus: "ACTIVE",
-        },
-        {
-          projection: { _id: 1 },
-          ...(session ? { session } : {}),
-        },
-      );
+    const doc = await this.memberCollection.findOne(
+      {
+        talentId,
+        membershipStatus: "ACTIVE",
+      },
+      {
+        projection: { _id: 1 },
+        ...(session ? { session } : {}),
+      },
+    );
 
     return doc !== null;
   }
@@ -528,19 +490,18 @@ export class NativeMongoTalentTalentGroupReadonlyAccess
     talentId: string,
     session?: ClientSession,
   ): Promise<boolean> {
-    const doc =
-      await this.memberCollection.findOne(
-        {
-          talentId,
-          membershipStatus: {
-            $ne: "REMOVED",
-          },
+    const doc = await this.memberCollection.findOne(
+      {
+        talentId,
+        membershipStatus: {
+          $ne: "REMOVED",
         },
-        {
-          projection: { _id: 1 },
-          ...(session ? { session } : {}),
-        },
-      );
+      },
+      {
+        projection: { _id: 1 },
+        ...(session ? { session } : {}),
+      },
+    );
 
     return doc !== null;
   }
@@ -589,9 +550,7 @@ function toTalentGroupMemberListItemView(
 
 function toTalentGroupByTalentListItemView(
   doc: TalentGroupReadDocument,
-  membership:
-    | TalentGroupMembershipSummary
-    | undefined,
+  membership: TalentGroupMembershipSummary | undefined,
 ): TalentGroupByTalentListItemView {
   if (!membership) {
     throw new TalentGroupValidationError(
@@ -609,8 +568,7 @@ function toTalentGroupByTalentListItemView(
     displayOrder: doc.displayOrder,
     membershipId: membership.membershipId,
     talentId: membership.talentId,
-    membershipStatus:
-      membership.membershipStatus,
+    membershipStatus: membership.membershipStatus,
     lineupOrder: membership.lineupOrder,
     joinedAt: membership.joinedAt,
     createdAt: doc.createdAt,
@@ -619,10 +577,7 @@ function toTalentGroupByTalentListItemView(
 }
 
 function toSortSpec(
-  input: Pick<
-    ListTalentGroupReadInput,
-    "sortField" | "sortDirection"
-  >,
+  input: Pick<ListTalentGroupReadInput, "sortField" | "sortDirection">,
 ): SortSpec {
   if (!input.sortField) {
     return {
@@ -637,9 +592,7 @@ function toSortSpec(
   };
 }
 
-function toSortDocument(
-  spec: SortSpec,
-): Record<string, 1 | -1> {
+function toSortDocument(spec: SortSpec): Record<string, 1 | -1> {
   if (spec.kind === "default") {
     return {
       displayOrder: 1,
@@ -648,9 +601,7 @@ function toSortDocument(
     };
   }
 
-  const direction = toDirectionValue(
-    spec.direction,
-  );
+  const direction = toDirectionValue(spec.direction);
 
   return {
     [spec.field]: direction,
@@ -686,9 +637,9 @@ function buildListTalentGroupsCursorKey(
 ): string {
   return JSON.stringify({
     surface: "listTalentGroups",
+    groupIds: input.groupIds ? [...input.groupIds].sort() : null,
     status: input.status ?? null,
-    containsTalentId:
-      input.containsTalentId ?? null,
+    containsTalentId: input.containsTalentId ?? null,
     search: input.search ?? null,
     sort: toCursorSortShape(sortSpec),
   });
@@ -701,6 +652,7 @@ function buildListTalentGroupsByTalentCursorKey(
   return JSON.stringify({
     surface: "listTalentGroupsByTalent",
     talentId: input.talentId,
+    groupIds: input.groupIds ? [...input.groupIds].sort() : null,
     status: input.status ?? null,
     sort: toCursorSortShape(sortSpec),
   });
@@ -731,28 +683,15 @@ function buildQuery(
   };
 }
 
-function buildSearchFilter(
-  search: string,
-): Record<string, unknown> {
-  const normalizedNamePrefix =
-    normalizeNamePrefix(search);
-  const groupCodePrefix =
-    normalizeGroupCodePrefix(search);
+function buildSearchFilter(search: string): Record<string, unknown> {
+  const normalizedNamePrefix = normalizeNamePrefix(search);
+  const groupCodePrefix = normalizeGroupCodePrefix(search);
 
   return {
     $or: [
-      buildPrefixRange(
-        "groupCode",
-        groupCodePrefix,
-      ),
-      buildPrefixRange(
-        "normalizedName",
-        normalizedNamePrefix,
-      ),
-      buildPrefixRange(
-        "normalizedShortName",
-        normalizedNamePrefix,
-      ),
+      buildPrefixRange("groupCode", groupCodePrefix),
+      buildPrefixRange("normalizedName", normalizedNamePrefix),
+      buildPrefixRange("normalizedShortName", normalizedNamePrefix),
     ],
   };
 }
@@ -810,17 +749,13 @@ function buildPageAfterFilter(
     throw invalidCursorError();
   }
 
-  const comparisonOperator =
-    spec.direction === "ASC"
-      ? "$gt"
-      : "$lt";
+  const comparisonOperator = spec.direction === "ASC" ? "$gt" : "$lt";
 
   return {
     $or: [
       {
         [spec.field]: {
-          [comparisonOperator]:
-            cursor.value,
+          [comparisonOperator]: cursor.value,
         },
       },
       {
@@ -833,10 +768,7 @@ function buildPageAfterFilter(
   };
 }
 
-function encodeCursor(
-  queryKey: string,
-  cursor: EncodedCursor,
-): string {
+function encodeCursor(queryKey: string, cursor: EncodedCursor): string {
   return Buffer.from(
     JSON.stringify({
       queryKey,
@@ -860,10 +792,7 @@ function decodeCursor(
   const position = candidate.position;
 
   if (expectedSpec.kind === "default") {
-    if (
-      !isRecord(position) ||
-      position.kind !== "default"
-    ) {
+    if (!isRecord(position) || position.kind !== "default") {
       throw invalidCursorError();
     }
 
@@ -908,17 +837,11 @@ function decodeCursor(
 
   const value = position.value;
 
-  if (
-    expectedSpec.field === "groupCode" ||
-    expectedSpec.field === "name"
-  ) {
+  if (expectedSpec.field === "groupCode" || expectedSpec.field === "name") {
     if (typeof value !== "string") {
       throw invalidCursorError();
     }
-  } else if (
-    typeof value !== "number" ||
-    !Number.isInteger(value)
-  ) {
+  } else if (typeof value !== "number" || !Number.isInteger(value)) {
     throw invalidCursorError();
   }
 
@@ -951,13 +874,8 @@ function buildMemberPageAfterFilter(
   };
 }
 
-function encodeMemberCursor(
-  cursor: CursorEnvelope<MemberCursor>,
-): string {
-  return Buffer.from(
-    JSON.stringify(cursor),
-    "utf8",
-  ).toString("base64url");
+function encodeMemberCursor(cursor: CursorEnvelope<MemberCursor>): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
 
 function decodeMemberCursor(
@@ -1015,15 +933,11 @@ function readSortFieldValue(
   }
 }
 
-function toDirectionValue(
-  direction: TalentGroupSortDirection,
-): 1 | -1 {
+function toDirectionValue(direction: TalentGroupSortDirection): 1 | -1 {
   return direction === "ASC" ? 1 : -1;
 }
 
-function toCursorSortShape(
-  spec: SortSpec,
-): Record<string, unknown> {
+function toCursorSortShape(spec: SortSpec): Record<string, unknown> {
   if (spec.kind === "default") {
     return {
       kind: "default",
@@ -1037,9 +951,7 @@ function toCursorSortShape(
   };
 }
 
-function decodeCursorEnvelope(
-  cursor: string,
-): CursorEnvelope<unknown> {
+function decodeCursorEnvelope(cursor: string): CursorEnvelope<unknown> {
   const normalized = cursor.trim();
 
   if (!normalized) {
@@ -1049,10 +961,7 @@ function decodeCursorEnvelope(
   let decodedText: string;
 
   try {
-    decodedText = Buffer.from(
-      normalized,
-      "base64url",
-    ).toString("utf8");
+    decodedText = Buffer.from(normalized, "base64url").toString("utf8");
   } catch {
     throw invalidCursorError();
   }
@@ -1083,34 +992,18 @@ function decodeCursorEnvelope(
   };
 }
 
-function isRecord(
-  value: unknown,
-): value is Record<string, unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value)
-  );
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function normalizeNamePrefix(
-  value: string,
-): string {
-  return value
-    .normalize("NFKC")
-    .trim()
-    .replace(/\s+/gu, " ")
-    .toLowerCase();
+function normalizeNamePrefix(value: string): string {
+  return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 }
 
-function normalizeGroupCodePrefix(
-  value: string,
-): string {
+function normalizeGroupCodePrefix(value: string): string {
   return value.trim();
 }
 
 function invalidCursorError(): TalentGroupValidationError {
-  return new TalentGroupValidationError(
-    "cursor is invalid",
-  );
+  return new TalentGroupValidationError("cursor is invalid");
 }

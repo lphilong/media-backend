@@ -9,6 +9,7 @@ import {
 } from "@modules/talent/domain/talent.types";
 
 export interface ListTalentReadInput {
+  readonly activeMemberOfGroupIds?: readonly string[];
   readonly operationalStatus?: TalentOperationalStatus;
   readonly talentOrigin?: TalentOrigin;
   readonly managerEmploymentProfileId?: string;
@@ -29,11 +30,12 @@ export interface ListTalentReadResult {
 }
 
 export interface TalentReadRepository {
-  listTalents(
-    input: ListTalentReadInput,
-  ): Promise<ListTalentReadResult>;
+  listTalents(input: ListTalentReadInput): Promise<ListTalentReadResult>;
 
-  getTalentDetail(
+  getTalentDetail(talentId: string): Promise<TalentDetailView | null>;
+
+  hasActiveMembershipInGroups(
     talentId: string,
-  ): Promise<TalentDetailView | null>;
+    groupIds: readonly string[],
+  ): Promise<boolean>;
 }

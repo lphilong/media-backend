@@ -2,6 +2,11 @@ import { Actor } from "@core/actor/actor";
 import { Permission } from "@core/permission/permission.enum";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
+import { SystemInvariantError } from "@core/error/system-error";
+import {
+  ManagedGroupScopeDependencies,
+  resolveManagedTalentGroupIds,
+} from "@modules/kpi/domain/managed-group-scope";
 import {
   TalentNotFoundError,
   TalentValidationError,
@@ -32,57 +37,48 @@ const MAX_LIMIT = 100;
 export class TalentAdminQueryService {
   constructor(
     private readonly readRepository: TalentReadRepository,
+    private readonly managedGroupScopeDependencies?: ManagedGroupScopeDependencies,
   ) {}
 
   async listTalents(
     actor: Actor,
     query: ListTalentsQuery,
   ): Promise<ListTalentsResult> {
-    const permission = PermissionResolver.resolve(
-      Permission.TALENT_READ,
-    );
+    const permission = PermissionResolver.resolve(Permission.TALENT_READ);
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(actor, permission);
+    const managedGroupIds = await resolveManagedTalentGroupIds(
+      actor,
+      this.managedGroupScopeDependencies,
+    );
 
     return this.readRepository.listTalents({
-      operationalStatus:
-        parseOptionalOperationalStatus(
-          query.operationalStatus,
-        ),
-      talentOrigin: parseOptionalTalentOrigin(
-        query.talentOrigin,
+      activeMemberOfGroupIds: managedGroupIds ?? undefined,
+      operationalStatus: parseOptionalOperationalStatus(
+        query.operationalStatus,
       ),
-      managerEmploymentProfileId:
-        parseOptionalId(
-          query.managerEmploymentProfileId,
-          "managerEmploymentProfileId",
-        ),
-      hasLinkedEmploymentProfile:
-        parseOptionalBoolean(
-          query.hasLinkedEmploymentProfile,
-          "hasLinkedEmploymentProfile",
-        ),
-      commercialParticipationStatus:
-        parseOptionalCommercialParticipationStatus(
-          query.commercialParticipationStatus,
-        ),
+      talentOrigin: parseOptionalTalentOrigin(query.talentOrigin),
+      managerEmploymentProfileId: parseOptionalId(
+        query.managerEmploymentProfileId,
+        "managerEmploymentProfileId",
+      ),
+      hasLinkedEmploymentProfile: parseOptionalBoolean(
+        query.hasLinkedEmploymentProfile,
+        "hasLinkedEmploymentProfile",
+      ),
+      commercialParticipationStatus: parseOptionalCommercialParticipationStatus(
+        query.commercialParticipationStatus,
+      ),
       livestreamEligible: parseOptionalBoolean(
         query.livestreamEligible,
         "livestreamEligible",
       ),
-      eventEligible: parseOptionalBoolean(
-        query.eventEligible,
-        "eventEligible",
-      ),
+      eventEligible: parseOptionalBoolean(query.eventEligible, "eventEligible"),
       limit: parseLimit(query.limit),
       cursor: parseOptionalCursor(query.cursor),
       search: parseOptionalSearch(query.search),
-      sortField: parseOptionalSortField(
-        query.sortBy,
-      ),
-      sortDirection: parseOptionalSortDirection(
-        query.sortDirection,
-      ),
+      sortField: parseOptionalSortField(query.sortBy),
+      sortDirection: parseOptionalSortDirection(query.sortDirection),
     });
   }
 
@@ -90,20 +86,32 @@ export class TalentAdminQueryService {
     actor: Actor,
     query: GetTalentDetailQuery,
   ): Promise<GetTalentDetailResult> {
-    const permission = PermissionResolver.resolve(
-      Permission.TALENT_READ,
-    );
+    const permission = PermissionResolver.resolve(Permission.TALENT_READ);
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(actor, permission);
 
-    const talentId = normalizeRequiredText(
-      query.talentId,
-      "talentId",
+    const talentId = normalizeRequiredText(query.talentId, "talentId");
+    const managedGroupIds = await resolveManagedTalentGroupIds(
+      actor,
+      this.managedGroupScopeDependencies,
     );
-    const detail =
-      await this.readRepository.getTalentDetail(
-        talentId,
-      );
+
+    if (managedGroupIds !== null) {
+      const isManagedMember =
+        await this.readRepository.hasActiveMembershipInGroups(
+          talentId,
+          managedGroupIds,
+        );
+
+      if (!isManagedMember) {
+        throw new SystemInvariantError(
+          "PERMISSION_DENIED",
+          `Actor is not an active manager for talent ${talentId}`,
+        );
+      }
+    }
+
+    const detail = await this.readRepository.getTalentDetail(talentId);
 
     if (!detail) {
       throw new TalentNotFoundError(talentId);
@@ -113,45 +121,31 @@ export class TalentAdminQueryService {
   }
 }
 
-function normalizeRequiredText(
-  value: unknown,
-  field: string,
-): string {
+function normalizeRequiredText(value: unknown, field: string): string {
   if (typeof value !== "string") {
-    throw new TalentValidationError(
-      `${field} must be a string`,
-    );
+    throw new TalentValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
 
   if (!normalized) {
-    throw new TalentValidationError(
-      `${field} is required`,
-    );
+    throw new TalentValidationError(`${field} is required`);
   }
 
   return normalized;
 }
 
-function parseOptionalId(
-  value: unknown,
-  field: string,
-): string | undefined {
+function parseOptionalId(value: unknown, field: string): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   if (typeof value !== "string") {
-    throw new TalentValidationError(
-      `${field} must be a string`,
-    );
+    throw new TalentValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
-  return normalized.length > 0
-    ? normalized
-    : undefined;
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function parseOptionalOperationalStatus(
@@ -170,9 +164,7 @@ function parseOptionalOperationalStatus(
   const normalized = value.trim().toUpperCase();
 
   if (
-    TALENT_OPERATIONAL_STATUSES.includes(
-      normalized as TalentOperationalStatus,
-    )
+    TALENT_OPERATIONAL_STATUSES.includes(normalized as TalentOperationalStatus)
   ) {
     return normalized as TalentOperationalStatus;
   }
@@ -182,9 +174,7 @@ function parseOptionalOperationalStatus(
   );
 }
 
-function parseOptionalTalentOrigin(
-  value: unknown,
-): TalentOrigin | undefined {
+function parseOptionalTalentOrigin(value: unknown): TalentOrigin | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -197,11 +187,7 @@ function parseOptionalTalentOrigin(
 
   const normalized = value.trim().toUpperCase();
 
-  if (
-    TALENT_ORIGINS.includes(
-      normalized as TalentOrigin,
-    )
-  ) {
+  if (TALENT_ORIGINS.includes(normalized as TalentOrigin)) {
     return normalized as TalentOrigin;
   }
 
@@ -251,9 +237,7 @@ function parseOptionalBoolean(
   }
 
   if (typeof value !== "string") {
-    throw new TalentValidationError(
-      `${field} must be a boolean`,
-    );
+    throw new TalentValidationError(`${field} must be a boolean`);
   }
 
   const normalized = value.trim().toLowerCase();
@@ -266,9 +250,7 @@ function parseOptionalBoolean(
     return false;
   }
 
-  throw new TalentValidationError(
-    `${field} must be a boolean`,
-  );
+  throw new TalentValidationError(`${field} must be a boolean`);
 }
 
 function parseLimit(value: unknown): number {
@@ -283,9 +265,7 @@ function parseLimit(value: unknown): number {
   }
 
   if (numeric <= 0) {
-    throw new TalentValidationError(
-      "limit must be a positive integer",
-    );
+    throw new TalentValidationError("limit must be a positive integer");
   }
 
   return Math.min(numeric, MAX_LIMIT);
@@ -310,60 +290,43 @@ function parseOptionalInteger(
 
     numeric = Number(value);
   } else {
-    throw new TalentValidationError(
-      `${field} must be an integer`,
-    );
+    throw new TalentValidationError(`${field} must be an integer`);
   }
 
   if (!Number.isInteger(numeric)) {
-    throw new TalentValidationError(
-      `${field} must be an integer`,
-    );
+    throw new TalentValidationError(`${field} must be an integer`);
   }
 
   return numeric;
 }
 
-function parseOptionalCursor(
-  value: unknown,
-): string | undefined {
+function parseOptionalCursor(value: unknown): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   if (typeof value !== "string") {
-    throw new TalentValidationError(
-      "cursor must be a string",
-    );
+    throw new TalentValidationError("cursor must be a string");
   }
 
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function parseOptionalSearch(
-  value: unknown,
-): string | undefined {
+function parseOptionalSearch(value: unknown): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   if (typeof value !== "string") {
-    throw new TalentValidationError(
-      "search must be a string",
-    );
+    throw new TalentValidationError("search must be a string");
   }
 
-  const normalized = value
-    .normalize("NFKC")
-    .trim()
-    .replace(/\s+/gu, " ");
+  const normalized = value.normalize("NFKC").trim().replace(/\s+/gu, " ");
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function parseOptionalSortField(
-  value: unknown,
-): TalentSortField | undefined {
+function parseOptionalSortField(value: unknown): TalentSortField | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
@@ -376,11 +339,7 @@ function parseOptionalSortField(
 
   const normalized = value.trim();
 
-  if (
-    TALENT_SORT_FIELDS.includes(
-      normalized as TalentSortField,
-    )
-  ) {
+  if (TALENT_SORT_FIELDS.includes(normalized as TalentSortField)) {
     return normalized as TalentSortField;
   }
 
@@ -404,11 +363,7 @@ function parseOptionalSortDirection(
 
   const normalized = value.trim().toUpperCase();
 
-  if (
-    TALENT_SORT_DIRECTIONS.includes(
-      normalized as TalentSortDirection,
-    )
-  ) {
+  if (TALENT_SORT_DIRECTIONS.includes(normalized as TalentSortDirection)) {
     return normalized as TalentSortDirection;
   }
 

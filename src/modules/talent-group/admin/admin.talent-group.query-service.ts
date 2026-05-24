@@ -3,6 +3,11 @@ import { Permission } from "@core/permission/permission.enum";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import {
+  assertManagedScopeIncludesGroup,
+  ManagedGroupScopeDependencies,
+  resolveManagedTalentGroupIds,
+} from "@modules/kpi/domain/managed-group-scope";
+import {
   TalentGroupNotFoundError,
   TalentGroupValidationError,
 } from "@modules/talent-group/domain/talent-group.errors";
@@ -33,19 +38,23 @@ const MAX_SEARCH_LENGTH = 64;
 export class TalentGroupAdminQueryService {
   constructor(
     private readonly readRepository: TalentGroupReadRepository,
+    private readonly managedGroupScopeDependencies?: ManagedGroupScopeDependencies,
   ) {}
 
   async listTalentGroups(
     actor: Actor,
     query: ListTalentGroupsQuery,
   ): Promise<ListTalentGroupsResult> {
-    const permission = PermissionResolver.resolve(
-      Permission.TALENT_GROUP_READ,
-    );
+    const permission = PermissionResolver.resolve(Permission.TALENT_GROUP_READ);
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(actor, permission);
+    const managedGroupIds = await resolveManagedTalentGroupIds(
+      actor,
+      this.managedGroupScopeDependencies,
+    );
 
     return this.readRepository.listTalentGroups({
+      groupIds: managedGroupIds ?? undefined,
       status: parseOptionalStatus(query.status),
       containsTalentId: parseOptionalId(
         query.containsTalentId,
@@ -54,12 +63,8 @@ export class TalentGroupAdminQueryService {
       limit: parseLimit(query.limit),
       cursor: parseOptionalCursor(query.cursor),
       search: parseOptionalSearch(query.search),
-      sortField: parseOptionalSortField(
-        query.sortBy,
-      ),
-      sortDirection: parseOptionalSortDirection(
-        query.sortDirection,
-      ),
+      sortField: parseOptionalSortField(query.sortBy),
+      sortDirection: parseOptionalSortDirection(query.sortDirection),
     });
   }
 
@@ -67,20 +72,18 @@ export class TalentGroupAdminQueryService {
     actor: Actor,
     query: GetTalentGroupDetailQuery,
   ): Promise<GetTalentGroupDetailResult> {
-    const permission = PermissionResolver.resolve(
-      Permission.TALENT_GROUP_READ,
-    );
+    const permission = PermissionResolver.resolve(Permission.TALENT_GROUP_READ);
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(actor, permission);
 
-    const groupId = normalizeRequiredText(
-      query.groupId,
-      "groupId",
+    const groupId = normalizeRequiredText(query.groupId, "groupId");
+    const managedGroupIds = await resolveManagedTalentGroupIds(
+      actor,
+      this.managedGroupScopeDependencies,
     );
-    const detail =
-      await this.readRepository.getTalentGroupDetail(
-        groupId,
-      );
+    assertManagedScopeIncludesGroup(managedGroupIds, groupId);
+
+    const detail = await this.readRepository.getTalentGroupDetail(groupId);
 
     if (!detail) {
       throw new TalentGroupNotFoundError(groupId);
@@ -93,20 +96,18 @@ export class TalentGroupAdminQueryService {
     actor: Actor,
     query: ListTalentGroupMembersQuery,
   ): Promise<ListTalentGroupMembersResult> {
-    const permission = PermissionResolver.resolve(
-      Permission.TALENT_GROUP_READ,
-    );
+    const permission = PermissionResolver.resolve(Permission.TALENT_GROUP_READ);
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(actor, permission);
 
-    const groupId = normalizeRequiredText(
-      query.groupId,
-      "groupId",
+    const groupId = normalizeRequiredText(query.groupId, "groupId");
+    const managedGroupIds = await resolveManagedTalentGroupIds(
+      actor,
+      this.managedGroupScopeDependencies,
     );
-    const group =
-      await this.readRepository.getTalentGroupDetail(
-        groupId,
-      );
+    assertManagedScopeIncludesGroup(managedGroupIds, groupId);
+
+    const group = await this.readRepository.getTalentGroupDetail(groupId);
 
     if (!group) {
       throw new TalentGroupNotFoundError(groupId);
@@ -123,79 +124,59 @@ export class TalentGroupAdminQueryService {
     actor: Actor,
     query: ListTalentGroupsByTalentQuery,
   ): Promise<ListTalentGroupsByTalentResult> {
-    const permission = PermissionResolver.resolve(
-      Permission.TALENT_GROUP_READ,
-    );
+    const permission = PermissionResolver.resolve(Permission.TALENT_GROUP_READ);
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(actor, permission);
+    const managedGroupIds = await resolveManagedTalentGroupIds(
+      actor,
+      this.managedGroupScopeDependencies,
+    );
 
     return this.readRepository.listTalentGroupsByTalent({
-      talentId: normalizeRequiredText(
-        query.talentId,
-        "talentId",
-      ),
+      talentId: normalizeRequiredText(query.talentId, "talentId"),
       status: parseOptionalStatus(query.status),
       limit: parseLimit(query.limit),
       cursor: parseOptionalCursor(query.cursor),
-      sortField: parseOptionalSortField(
-        query.sortBy,
-      ),
-      sortDirection: parseOptionalSortDirection(
-        query.sortDirection,
-      ),
+      sortField: parseOptionalSortField(query.sortBy),
+      sortDirection: parseOptionalSortDirection(query.sortDirection),
+      groupIds: managedGroupIds ?? undefined,
     });
   }
 }
 
-function normalizeRequiredText(
-  value: unknown,
-  field: string,
-): string {
+function normalizeRequiredText(value: unknown, field: string): string {
   if (typeof value !== "string") {
-    throw new TalentGroupValidationError(
-      `${field} must be a string`,
-    );
+    throw new TalentGroupValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
 
   if (!normalized) {
-    throw new TalentGroupValidationError(
-      `${field} is required`,
-    );
+    throw new TalentGroupValidationError(`${field} is required`);
   }
 
   return normalized;
 }
 
-function parseOptionalId(
-  value: unknown,
-  field: string,
-): string | undefined {
+function parseOptionalId(value: unknown, field: string): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   if (typeof value !== "string") {
-    throw new TalentGroupValidationError(
-      `${field} must be a string`,
-    );
+    throw new TalentGroupValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
 
   if (normalized.length === 0) {
-    throw new TalentGroupValidationError(
-      `${field} must not be empty`,
-    );
+    throw new TalentGroupValidationError(`${field} must not be empty`);
   }
 
   return normalized;
 }
 
-function parseOptionalStatus(
-  value: unknown,
-): TalentGroupStatus | undefined {
+function parseOptionalStatus(value: unknown): TalentGroupStatus | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -208,11 +189,7 @@ function parseOptionalStatus(
 
   const normalized = value.trim().toUpperCase();
 
-  if (
-    TALENT_GROUP_STATUSES.includes(
-      normalized as TalentGroupStatus,
-    )
-  ) {
+  if (TALENT_GROUP_STATUSES.includes(normalized as TalentGroupStatus)) {
     return normalized as TalentGroupStatus;
   }
 
@@ -233,49 +210,37 @@ function parseLimit(value: unknown): number {
   }
 
   if (numeric <= 0) {
-    throw new TalentGroupValidationError(
-      "limit must be a positive integer",
-    );
+    throw new TalentGroupValidationError("limit must be a positive integer");
   }
 
   return Math.min(numeric, MAX_LIMIT);
 }
 
-function parseOptionalCursor(
-  value: unknown,
-): string | undefined {
+function parseOptionalCursor(value: unknown): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   if (typeof value !== "string") {
-    throw new TalentGroupValidationError(
-      "cursor must be a string",
-    );
+    throw new TalentGroupValidationError("cursor must be a string");
   }
 
   const normalized = value.trim();
 
   if (normalized.length === 0) {
-    throw new TalentGroupValidationError(
-      "cursor must not be empty",
-    );
+    throw new TalentGroupValidationError("cursor must not be empty");
   }
 
   return normalized;
 }
 
-function parseOptionalSearch(
-  value: unknown,
-): string | undefined {
+function parseOptionalSearch(value: unknown): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   if (typeof value !== "string") {
-    throw new TalentGroupValidationError(
-      "search must be a string",
-    );
+    throw new TalentGroupValidationError("search must be a string");
   }
 
   const normalized = value.trim();
@@ -308,11 +273,7 @@ function parseOptionalSortField(
 
   const normalized = value.trim();
 
-  if (
-    TALENT_GROUP_SORT_FIELDS.includes(
-      normalized as TalentGroupSortField,
-    )
-  ) {
+  if (TALENT_GROUP_SORT_FIELDS.includes(normalized as TalentGroupSortField)) {
     return normalized as TalentGroupSortField;
   }
 
@@ -359,18 +320,14 @@ function parseOptionalInteger(
 
   if (typeof value === "number") {
     if (!Number.isInteger(value)) {
-      throw new TalentGroupValidationError(
-        `${field} must be an integer`,
-      );
+      throw new TalentGroupValidationError(`${field} must be an integer`);
     }
 
     return value;
   }
 
   if (typeof value !== "string") {
-    throw new TalentGroupValidationError(
-      `${field} must be an integer`,
-    );
+    throw new TalentGroupValidationError(`${field} must be an integer`);
   }
 
   const normalized = value.trim();
@@ -380,9 +337,7 @@ function parseOptionalInteger(
   }
 
   if (!/^-?\d+$/u.test(normalized)) {
-    throw new TalentGroupValidationError(
-      `${field} must be an integer`,
-    );
+    throw new TalentGroupValidationError(`${field} must be an integer`);
   }
 
   return Number.parseInt(normalized, 10);

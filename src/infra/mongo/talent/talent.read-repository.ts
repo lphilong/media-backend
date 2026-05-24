@@ -1,8 +1,4 @@
-import {
-  ClientSession,
-  Collection,
-  Db,
-} from "mongodb";
+import { ClientSession, Collection, Db } from "mongodb";
 import { BaseRepository } from "@infra/database/repository";
 import { EmploymentStatus } from "@modules/employment-profile/domain/employment-profile.types";
 import { EmploymentProfileTalentReadonlyAccess } from "@modules/employment-profile/domain/employment-profile-talent-readonly-access";
@@ -92,33 +88,54 @@ export class NativeMongoTalentReadRepository
   implements TalentReadRepository
 {
   private readonly employmentProfileCollection: Collection<EmploymentProfileReferenceDocument>;
+  private readonly memberCollection: Collection<TalentGroupMemberReadDocument>;
 
   constructor(db: Db) {
     super(db, "talents");
     this.employmentProfileCollection =
-      db.collection<EmploymentProfileReferenceDocument>(
-        "employment_profiles",
-      );
+      db.collection<EmploymentProfileReferenceDocument>("employment_profiles");
+    this.memberCollection = db.collection<TalentGroupMemberReadDocument>(
+      "talent_group_members",
+    );
   }
 
-  async listTalents(
-    input: ListTalentReadInput,
-  ): Promise<ListTalentReadResult> {
+  async listTalents(input: ListTalentReadInput): Promise<ListTalentReadResult> {
     const sortSpec = toSortSpec(input);
-    const querySignature = buildCursorQuerySignature(
-      input,
-      sortSpec,
-    );
+    const querySignature = buildCursorQuerySignature(input, sortSpec);
     const cursor =
       input.cursor === undefined
         ? undefined
-        : decodeCursor(
-            input.cursor,
-            sortSpec,
-            querySignature,
-          );
-    const queryFilters: Array<Record<string, unknown>> =
-      [];
+        : decodeCursor(input.cursor, sortSpec, querySignature);
+    const queryFilters: Array<Record<string, unknown>> = [];
+
+    if (input.activeMemberOfGroupIds) {
+      const groupIds = [...new Set(input.activeMemberOfGroupIds)];
+
+      if (groupIds.length === 0) {
+        return {
+          items: [],
+        };
+      }
+
+      const talentIds = await this.memberCollection.distinct("talentId", {
+        groupId: {
+          $in: groupIds,
+        },
+        membershipStatus: "ACTIVE",
+      });
+
+      if (talentIds.length === 0) {
+        return {
+          items: [],
+        };
+      }
+
+      queryFilters.push({
+        _id: {
+          $in: talentIds,
+        },
+      });
+    }
 
     if (!input.operationalStatus) {
       queryFilters.push({
@@ -130,8 +147,7 @@ export class NativeMongoTalentReadRepository
 
     if (input.operationalStatus) {
       queryFilters.push({
-        operationalStatus:
-          input.operationalStatus,
+        operationalStatus: input.operationalStatus,
       });
     }
 
@@ -143,8 +159,7 @@ export class NativeMongoTalentReadRepository
 
     if (input.managerEmploymentProfileId) {
       queryFilters.push({
-        managerEmploymentProfileId:
-          input.managerEmploymentProfileId,
+        managerEmploymentProfileId: input.managerEmploymentProfileId,
       });
     }
 
@@ -154,9 +169,7 @@ export class NativeMongoTalentReadRepository
           $type: "string",
         },
       });
-    } else if (
-      input.hasLinkedEmploymentProfile === false
-    ) {
+    } else if (input.hasLinkedEmploymentProfile === false) {
       queryFilters.push({
         linkedEmploymentProfileId: null,
       });
@@ -164,15 +177,13 @@ export class NativeMongoTalentReadRepository
 
     if (input.commercialParticipationStatus) {
       queryFilters.push({
-        commercialParticipationStatus:
-          input.commercialParticipationStatus,
+        commercialParticipationStatus: input.commercialParticipationStatus,
       });
     }
 
     if (input.livestreamEligible !== undefined) {
       queryFilters.push({
-        livestreamEligible:
-          input.livestreamEligible,
+        livestreamEligible: input.livestreamEligible,
       });
     }
 
@@ -183,15 +194,11 @@ export class NativeMongoTalentReadRepository
     }
 
     if (input.search) {
-      queryFilters.push(
-        buildSearchFilter(input.search),
-      );
+      queryFilters.push(buildSearchFilter(input.search));
     }
 
     if (cursor) {
-      queryFilters.push(
-        buildPageAfterFilter(sortSpec, cursor),
-      );
+      queryFilters.push(buildPageAfterFilter(sortSpec, cursor));
     }
 
     const docs = await this.collection
@@ -201,15 +208,12 @@ export class NativeMongoTalentReadRepository
       .toArray();
 
     const hasNext = docs.length > input.limit;
-    const page = hasNext
-      ? docs.slice(0, input.limit)
-      : docs;
+    const page = hasNext ? docs.slice(0, input.limit) : docs;
 
-    const items =
-      await enrichTalentEmploymentProfileReferenceSummaries(
-        page.map((doc) => toTalentListItemView(doc)),
-        this.employmentProfileCollection,
-      );
+    const items = await enrichTalentEmploymentProfileReferenceSummaries(
+      page.map((doc) => toTalentListItemView(doc)),
+      this.employmentProfileCollection,
+    );
 
     return {
       items,
@@ -226,9 +230,7 @@ export class NativeMongoTalentReadRepository
     };
   }
 
-  async getTalentDetail(
-    talentId: string,
-  ): Promise<TalentDetailView | null> {
+  async getTalentDetail(talentId: string): Promise<TalentDetailView | null> {
     const doc = await this.collection.findOne({
       _id: talentId,
     });
@@ -237,14 +239,46 @@ export class NativeMongoTalentReadRepository
       return null;
     }
 
-    const [detail] =
-      await enrichTalentEmploymentProfileReferenceSummaries(
-        [toTalentDetailView(doc)],
-        this.employmentProfileCollection,
-      );
+    const [detail] = await enrichTalentEmploymentProfileReferenceSummaries(
+      [toTalentDetailView(doc)],
+      this.employmentProfileCollection,
+    );
 
     return detail ?? null;
   }
+
+  async hasActiveMembershipInGroups(
+    talentId: string,
+    groupIds: readonly string[],
+  ): Promise<boolean> {
+    if (groupIds.length === 0) {
+      return false;
+    }
+
+    const membership = await this.memberCollection.findOne(
+      {
+        talentId,
+        groupId: {
+          $in: [...new Set(groupIds)],
+        },
+        membershipStatus: "ACTIVE",
+      },
+      {
+        projection: {
+          _id: 1,
+        },
+      },
+    );
+
+    return membership !== null;
+  }
+}
+
+interface TalentGroupMemberReadDocument {
+  readonly _id: string;
+  readonly groupId: string;
+  readonly talentId: string;
+  readonly membershipStatus: string;
 }
 
 async function enrichTalentEmploymentProfileReferenceSummaries<
@@ -282,19 +316,18 @@ async function enrichTalentEmploymentProfileReferenceSummaries<
     );
   }
 
-  const employmentProfileRefMap =
-    await loadEmploymentProfileReferenceSummaries(
-      employmentProfileIds,
-      collection,
-    );
+  const employmentProfileRefMap = await loadEmploymentProfileReferenceSummaries(
+    employmentProfileIds,
+    collection,
+  );
 
   return items.map((item) => ({
     ...item,
     managerEmploymentProfileRef: item.managerEmploymentProfileId
-      ? employmentProfileRefMap.get(item.managerEmploymentProfileId) ?? null
+      ? (employmentProfileRefMap.get(item.managerEmploymentProfileId) ?? null)
       : null,
     linkedEmploymentProfileRef: item.linkedEmploymentProfileId
-      ? employmentProfileRefMap.get(item.linkedEmploymentProfileId) ?? null
+      ? (employmentProfileRefMap.get(item.linkedEmploymentProfileId) ?? null)
       : null,
   }));
 }
@@ -346,10 +379,7 @@ function toEmploymentProfileReferenceSummary(
   };
 }
 
-function addOptionalReferenceId(
-  ids: Set<string>,
-  value: string | null,
-): void {
+function addOptionalReferenceId(ids: Set<string>, value: string | null): void {
   const normalized = value?.trim();
 
   if (normalized) {
@@ -357,33 +387,28 @@ function addOptionalReferenceId(
   }
 }
 
-export class NativeMongoTalentEmploymentProfileReadonlyAccess
-  implements TalentEmploymentProfileReadonlyAccess
-{
+export class NativeMongoTalentEmploymentProfileReadonlyAccess implements TalentEmploymentProfileReadonlyAccess {
   private readonly employmentProfileCollection: Collection<EmploymentProfileReferenceDocument>;
 
   constructor(db: Db) {
     this.employmentProfileCollection =
-      db.collection<EmploymentProfileReferenceDocument>(
-        "employment_profiles",
-      );
+      db.collection<EmploymentProfileReferenceDocument>("employment_profiles");
   }
 
   async findById(
     employmentProfileId: string,
     session?: ClientSession,
   ): Promise<TalentReferencedEmploymentProfile | null> {
-    const doc =
-      await this.employmentProfileCollection.findOne(
-        { _id: employmentProfileId },
-        {
-          projection: {
-            _id: 1,
-            employmentStatus: 1,
-          },
-          ...(session ? { session } : {}),
+    const doc = await this.employmentProfileCollection.findOne(
+      { _id: employmentProfileId },
+      {
+        projection: {
+          _id: 1,
+          employmentStatus: 1,
         },
-      );
+        ...(session ? { session } : {}),
+      },
+    );
 
     return doc
       ? {
@@ -394,14 +419,11 @@ export class NativeMongoTalentEmploymentProfileReadonlyAccess
   }
 }
 
-export class NativeMongoTalentGroupTalentReadonlyAccess
-  implements TalentGroupTalentReadonlyAccess
-{
+export class NativeMongoTalentGroupTalentReadonlyAccess implements TalentGroupTalentReadonlyAccess {
   private readonly talentCollection: Collection<TalentReadDocument>;
 
   constructor(db: Db) {
-    this.talentCollection =
-      db.collection<TalentReadDocument>("talents");
+    this.talentCollection = db.collection<TalentReadDocument>("talents");
   }
 
   async findById(
@@ -422,21 +444,17 @@ export class NativeMongoTalentGroupTalentReadonlyAccess
     return doc
       ? {
           id: doc._id,
-          operationalStatus:
-            doc.operationalStatus,
+          operationalStatus: doc.operationalStatus,
         }
       : null;
   }
 }
 
-export class NativeMongoEmploymentProfileTalentReadonlyAccess
-  implements EmploymentProfileTalentReadonlyAccess
-{
+export class NativeMongoEmploymentProfileTalentReadonlyAccess implements EmploymentProfileTalentReadonlyAccess {
   private readonly talentCollection: Collection<TalentReadDocument>;
 
   constructor(db: Db) {
-    this.talentCollection =
-      db.collection<TalentReadDocument>("talents");
+    this.talentCollection = db.collection<TalentReadDocument>("talents");
   }
 
   async hasNonArchivedTalentsManagedByEmploymentProfile(
@@ -445,8 +463,7 @@ export class NativeMongoEmploymentProfileTalentReadonlyAccess
   ): Promise<boolean> {
     const doc = await this.talentCollection.findOne(
       {
-        managerEmploymentProfileId:
-          employmentProfileId,
+        managerEmploymentProfileId: employmentProfileId,
         operationalStatus: {
           $ne: "ARCHIVED",
         },
@@ -466,8 +483,7 @@ export class NativeMongoEmploymentProfileTalentReadonlyAccess
   ): Promise<boolean> {
     const doc = await this.talentCollection.findOne(
       {
-        linkedEmploymentProfileId:
-          employmentProfileId,
+        linkedEmploymentProfileId: employmentProfileId,
         talentOrigin: "INTERNAL",
         operationalStatus: {
           $ne: "ARCHIVED",
@@ -491,28 +507,20 @@ function toTalentListItemView(
     talentCode: document.talentCode,
     stageName: document.stageName,
     legalName: document.legalName,
-    displayShortName:
-      document.displayShortName,
+    displayShortName: document.displayShortName,
     talentOrigin: document.talentOrigin,
-    operationalStatus:
-      document.operationalStatus,
-    managerEmploymentProfileId:
-      document.managerEmploymentProfileId,
-    linkedEmploymentProfileId:
-      document.linkedEmploymentProfileId,
-    commercialParticipationStatus:
-      document.commercialParticipationStatus,
-    livestreamEligible:
-      document.livestreamEligible,
+    operationalStatus: document.operationalStatus,
+    managerEmploymentProfileId: document.managerEmploymentProfileId,
+    linkedEmploymentProfileId: document.linkedEmploymentProfileId,
+    commercialParticipationStatus: document.commercialParticipationStatus,
+    livestreamEligible: document.livestreamEligible,
     eventEligible: document.eventEligible,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
   };
 }
 
-function toTalentDetailView(
-  document: TalentReadDocument,
-): TalentDetailView {
+function toTalentDetailView(document: TalentReadDocument): TalentDetailView {
   return {
     ...toTalentListItemView(document),
     externalRef: document.externalRef,
@@ -521,10 +529,7 @@ function toTalentDetailView(
 }
 
 function toSortSpec(
-  input: Pick<
-    ListTalentReadInput,
-    "sortField" | "sortDirection"
-  >,
+  input: Pick<ListTalentReadInput, "sortField" | "sortDirection">,
 ): SortSpec {
   if (!input.sortField) {
     return {
@@ -539,9 +544,7 @@ function toSortSpec(
   };
 }
 
-function toSortDocument(
-  spec: SortSpec,
-): Record<string, 1 | -1> {
+function toSortDocument(spec: SortSpec): Record<string, 1 | -1> {
   if (spec.kind === "default") {
     return {
       talentCode: 1,
@@ -549,9 +552,7 @@ function toSortDocument(
     };
   }
 
-  const direction = toDirectionValue(
-    spec.direction,
-  );
+  const direction = toDirectionValue(spec.direction);
 
   return {
     [spec.field]: direction,
@@ -578,10 +579,7 @@ function buildCursorFromDocument(
     querySignature,
     field: spec.field,
     direction: spec.direction,
-    value: readSortFieldValue(
-      document,
-      spec.field,
-    ),
+    value: readSortFieldValue(document, spec.field),
     id: document._id,
   };
 }
@@ -600,32 +598,16 @@ function buildQuery(
   return { $and: [...filters] };
 }
 
-function buildSearchFilter(
-  search: string,
-): Record<string, unknown> {
-  const normalizedNamePrefix =
-    normalizeNamePrefix(search);
-  const talentCodePrefix =
-    normalizeTalentCodePrefix(search);
+function buildSearchFilter(search: string): Record<string, unknown> {
+  const normalizedNamePrefix = normalizeNamePrefix(search);
+  const talentCodePrefix = normalizeTalentCodePrefix(search);
 
   return {
     $or: [
-      buildPrefixRange(
-        "talentCode",
-        talentCodePrefix,
-      ),
-      buildPrefixRange(
-        "normalizedStageName",
-        normalizedNamePrefix,
-      ),
-      buildPrefixRange(
-        "normalizedLegalName",
-        normalizedNamePrefix,
-      ),
-      buildPrefixRange(
-        "normalizedDisplayShortName",
-        normalizedNamePrefix,
-      ),
+      buildPrefixRange("talentCode", talentCodePrefix),
+      buildPrefixRange("normalizedStageName", normalizedNamePrefix),
+      buildPrefixRange("normalizedLegalName", normalizedNamePrefix),
+      buildPrefixRange("normalizedDisplayShortName", normalizedNamePrefix),
     ],
   };
 }
@@ -676,17 +658,13 @@ function buildPageAfterFilter(
     throw invalidCursorError();
   }
 
-  const comparisonOperator =
-    spec.direction === "ASC"
-      ? "$gt"
-      : "$lt";
+  const comparisonOperator = spec.direction === "ASC" ? "$gt" : "$lt";
 
   return {
     $or: [
       {
         [spec.field]: {
-          [comparisonOperator]:
-            cursor.value,
+          [comparisonOperator]: cursor.value,
         },
       },
       {
@@ -699,13 +677,8 @@ function buildPageAfterFilter(
   };
 }
 
-function encodeCursor(
-  cursor: EncodedCursor,
-): string {
-  return Buffer.from(
-    JSON.stringify(cursor),
-    "utf8",
-  ).toString("base64url");
+function encodeCursor(cursor: EncodedCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
 
 function decodeCursor(
@@ -722,10 +695,7 @@ function decodeCursor(
   let decodedText: string;
 
   try {
-    decodedText = Buffer.from(
-      normalized,
-      "base64url",
-    ).toString("utf8");
+    decodedText = Buffer.from(normalized, "base64url").toString("utf8");
   } catch {
     throw invalidCursorError();
   }
@@ -746,15 +716,11 @@ function decodeCursor(
     throw invalidCursorError();
   }
 
-  const candidate = payload as Record<
-    string,
-    unknown
-  >;
+  const candidate = payload as Record<string, unknown>;
 
   if (
     typeof candidate.querySignature !== "string" ||
-    candidate.querySignature !==
-      expectedQuerySignature
+    candidate.querySignature !== expectedQuerySignature
   ) {
     throw invalidCursorError();
   }
@@ -779,8 +745,7 @@ function decodeCursor(
 
     return {
       kind: "default",
-      querySignature:
-        candidate.querySignature,
+      querySignature: candidate.querySignature,
       talentCode: candidate.talentCode,
       id,
     };
@@ -811,10 +776,7 @@ function decodeCursor(
     if (typeof value !== "string") {
       throw invalidCursorError();
     }
-  } else if (
-    typeof value !== "number" ||
-    !Number.isInteger(value)
-  ) {
+  } else if (typeof value !== "number" || !Number.isInteger(value)) {
     throw invalidCursorError();
   }
 
@@ -833,17 +795,15 @@ function buildCursorQuerySignature(
   sortSpec: SortSpec,
 ): string {
   return JSON.stringify({
-    operationalStatus:
-      input.operationalStatus ?? null,
+    operationalStatus: input.operationalStatus ?? null,
+    activeMemberOfGroupIds: input.activeMemberOfGroupIds
+      ? [...input.activeMemberOfGroupIds].sort()
+      : null,
     talentOrigin: input.talentOrigin ?? null,
-    managerEmploymentProfileId:
-      input.managerEmploymentProfileId ?? null,
-    hasLinkedEmploymentProfile:
-      input.hasLinkedEmploymentProfile ?? null,
-    commercialParticipationStatus:
-      input.commercialParticipationStatus ?? null,
-    livestreamEligible:
-      input.livestreamEligible ?? null,
+    managerEmploymentProfileId: input.managerEmploymentProfileId ?? null,
+    hasLinkedEmploymentProfile: input.hasLinkedEmploymentProfile ?? null,
+    commercialParticipationStatus: input.commercialParticipationStatus ?? null,
+    livestreamEligible: input.livestreamEligible ?? null,
     eventEligible: input.eventEligible ?? null,
     search: input.search ?? null,
     limit: input.limit,
@@ -879,30 +839,18 @@ function readSortFieldValue(
   }
 }
 
-function toDirectionValue(
-  direction: TalentSortDirection,
-): 1 | -1 {
+function toDirectionValue(direction: TalentSortDirection): 1 | -1 {
   return direction === "ASC" ? 1 : -1;
 }
 
-function normalizeNamePrefix(
-  value: string,
-): string {
-  return value
-    .normalize("NFKC")
-    .trim()
-    .replace(/\s+/gu, " ")
-    .toLowerCase();
+function normalizeNamePrefix(value: string): string {
+  return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 }
 
-function normalizeTalentCodePrefix(
-  value: string,
-): string {
+function normalizeTalentCodePrefix(value: string): string {
   return value.trim();
 }
 
 function invalidCursorError(): TalentValidationError {
-  return new TalentValidationError(
-    "cursor is invalid",
-  );
+  return new TalentValidationError("cursor is invalid");
 }

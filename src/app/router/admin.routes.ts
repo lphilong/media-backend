@@ -469,7 +469,10 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     adminMutationBridge,
   );
 
-  const talentQueryService = new TalentAdminQueryService(talentReadRepository);
+  const talentQueryService = new TalentAdminQueryService(talentReadRepository, {
+    subjectReadonlyAccess: kpiSubjectReadonlyAccess,
+    managerAssignmentRepository: talentGroupManagerAssignmentRepository,
+  });
 
   const talentController = new TalentAdminController(talentService);
   const talentQueryController = new TalentAdminQueryController(
@@ -492,6 +495,10 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
 
   const talentGroupQueryService = new TalentGroupAdminQueryService(
     talentGroupReadRepository,
+    {
+      subjectReadonlyAccess: kpiSubjectReadonlyAccess,
+      managerAssignmentRepository: talentGroupManagerAssignmentRepository,
+    },
   );
   const talentGroupManagerAssignmentService =
     new TalentGroupManagerAssignmentAdminService(

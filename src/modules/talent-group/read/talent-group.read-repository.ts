@@ -9,6 +9,7 @@ import {
 } from "@modules/talent-group/domain/talent-group.types";
 
 export interface ListTalentGroupReadInput {
+  readonly groupIds?: readonly string[];
   readonly status?: TalentGroupStatus;
   readonly containsTalentId?: string;
   readonly limit: number;
@@ -36,6 +37,7 @@ export interface ListTalentGroupMembersReadResult {
 
 export interface ListTalentGroupsByTalentReadInput {
   readonly talentId: string;
+  readonly groupIds?: readonly string[];
   readonly status?: TalentGroupStatus;
   readonly limit: number;
   readonly cursor?: string;
@@ -53,9 +55,7 @@ export interface TalentGroupReadRepository {
     input: ListTalentGroupReadInput,
   ): Promise<ListTalentGroupReadResult>;
 
-  getTalentGroupDetail(
-    groupId: string,
-  ): Promise<TalentGroupDetailView | null>;
+  getTalentGroupDetail(groupId: string): Promise<TalentGroupDetailView | null>;
 
   listTalentGroupMembers(
     input: ListTalentGroupMembersReadInput,
