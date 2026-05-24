@@ -57,6 +57,8 @@ export const AUTHORITATIVE_ADMIN_MUTATION_IDENTITIES = [
   "talent-group.deactivate",
   "talent-group.archive",
   "talent-group.add-member",
+  "talent-group.assign-manager",
+  "talent-group.revoke-manager",
   "talent-group.update-member-lineup",
   "talent-group.deactivate-member",
   "talent-group.reactivate-member",
@@ -256,6 +258,8 @@ const ADMIN_MUTATION_PERMISSION_BY_IDENTITY: Readonly<
     Permission.TALENT_GROUP_MANAGE_LIFECYCLE,
   "talent-group.add-member":
     Permission.TALENT_GROUP_MANAGE_MEMBERSHIP,
+  "talent-group.assign-manager": Permission.TALENT_GROUP_UPDATE,
+  "talent-group.revoke-manager": Permission.TALENT_GROUP_UPDATE,
   "talent-group.update-member-lineup":
     Permission.TALENT_GROUP_MANAGE_MEMBERSHIP,
   "talent-group.deactivate-member":
