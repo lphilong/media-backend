@@ -101,12 +101,29 @@ test("seven role templates align KPI V2 permissions with runtime scope recommend
     hr?.permissions.includes(Permission.USER_PROVISION_ACCOUNT),
     true,
   );
+  assert.equal(
+    hr?.permissions.includes(Permission.USER_PASSWORD_SETUP_SEND),
+    true,
+  );
+  assert.equal(
+    hr?.permissions.includes(Permission.USER_AUTH_LINKAGE_UNLINK),
+    false,
+  );
+  assert.equal(hr?.permissions.includes(Permission.USER_DISABLE), false);
+  assert.equal(hr?.permissions.includes(Permission.USER_ARCHIVE), false);
   assert.equal(hr?.permissions.includes(Permission.ROLE_ASSIGN_TO_USER), false);
   assert.deepEqual(hr?.recommendedScopeGrants.kpi, ["global"]);
   assert.equal(hr?.permissions.includes(Permission.KPI_READ), true);
   assert.equal(hr?.permissions.includes(Permission.KPI_ENTER_ACTUAL), false);
 
   assert.deepEqual(manager?.recommendedScopeGrants.kpi, ["managedGroup"]);
+  assert.deepEqual(manager?.recommendedScopeGrants.eventAssignment, [
+    "managedGroup",
+  ]);
+  assert.equal(
+    manager?.recommendedScopeGrants.eventAssignment?.includes("global"),
+    false,
+  );
   assert.equal(manager?.permissions.includes(Permission.KPI_READ), true);
   assert.equal(
     manager?.permissions.includes(Permission.KPI_READ_PROGRESS),
@@ -123,9 +140,31 @@ test("seven role templates align KPI V2 permissions with runtime scope recommend
   assert.equal(manager?.permissions.includes(Permission.KPI_PUBLISH), false);
 
   assert.equal(production?.recommendedScopeGrants.kpi, undefined);
+  assert.deepEqual(production?.recommendedScopeGrants.eventAssignment, [
+    "global",
+  ]);
   assert.equal(production?.permissions.includes(Permission.KPI_READ), false);
+  assert.equal(
+    production?.permissions.includes(Permission.ORG_UNIT_LOOKUP),
+    true,
+  );
+  assert.equal(
+    production?.permissions.includes(Permission.ORG_UNIT_READ),
+    false,
+  );
+  assert.equal(
+    production?.permissions.includes(Permission.TALENT_LOOKUP),
+    true,
+  );
+  assert.equal(
+    production?.permissions.includes(Permission.EMPLOYMENT_PROFILE_READ),
+    false,
+  );
 
   assert.deepEqual(finance?.recommendedScopeGrants.kpi, ["global"]);
+  assert.equal(finance?.recommendedScopeGrants.eventAssignment, undefined);
+  assert.equal(finance?.permissions.includes(Permission.EVENT_LOOKUP), true);
+  assert.equal(finance?.permissions.includes(Permission.EVENT_READ), false);
   assert.equal(finance?.permissions.includes(Permission.KPI_READ), true);
   assert.equal(
     finance?.permissions.includes(Permission.KPI_READ_PROGRESS),
@@ -136,8 +175,25 @@ test("seven role templates align KPI V2 permissions with runtime scope recommend
     false,
   );
   assert.equal(finance?.permissions.includes(Permission.KPI_FINALIZE), false);
+  assert.equal(
+    finance?.permissions.includes(Permission.TALENT_LOOKUP),
+    true,
+  );
+  assert.equal(
+    finance?.permissions.includes(Permission.TALENT_READ),
+    false,
+  );
+  assert.equal(
+    finance?.permissions.includes(Permission.PLATFORM_ACCOUNT_LOOKUP),
+    true,
+  );
+  assert.equal(
+    finance?.permissions.includes(Permission.PLATFORM_ACCOUNT_READ),
+    false,
+  );
 
   assert.deepEqual(self?.recommendedScopeGrants.kpi, ["self"]);
+  assert.equal(self?.recommendedScopeGrants.eventAssignment, undefined);
   assert.equal(
     self?.permissions.includes(Permission.KPI_READ_PROGRESS),
     true,
@@ -145,6 +201,9 @@ test("seven role templates align KPI V2 permissions with runtime scope recommend
   assert.equal(self?.permissions.includes(Permission.KPI_READ), false);
 
   assert.deepEqual(auditor?.recommendedScopeGrants.kpi, ["global"]);
+  assert.deepEqual(auditor?.recommendedScopeGrants.eventAssignment, [
+    "global",
+  ]);
   assert.equal(auditor?.permissions.includes(Permission.KPI_READ), true);
   assert.equal(
     auditor?.permissions.includes(Permission.KPI_READ_PROGRESS),
@@ -154,6 +213,8 @@ test("seven role templates align KPI V2 permissions with runtime scope recommend
     auditor?.permissions.includes(Permission.KPI_CORRECT_ACTUAL),
     false,
   );
+  assert.equal(auditor?.permissions.includes(Permission.EVENT_READ), true);
+  assert.equal(auditor?.permissions.includes(Permission.EVENT_UPDATE), false);
 });
 
 test("role template list and preview service are permission-gated and preview-only", () => {

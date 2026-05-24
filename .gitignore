@@ -30,6 +30,7 @@ tools/
 !src/app/base/presentation-result.assert.test.ts
 !src/app/http/http-error.map.test.ts
 !src/app/router/admin-auth-boundary.test.ts
+!src/app/router/current-actor-capabilities.test.ts
 !src/app/auth/local-mock-auth.middleware.test.ts
 !src/config/local-mock-auth.env.test.ts
 !src/modules/dashboard-lite/domain/dashboard-lite.time.test.ts
@@ -41,6 +42,9 @@ tools/
 !src/modules/contract-registry/contract-registry-target-filters.test.ts
 !src/modules/talent-kpi/talent-kpi-target-filters.test.ts
 !src/modules/kpi/kpi-admin.service.test.ts
+!src/modules/reference-lookup/reference-lookup.service.test.ts
+!src/modules/talent-group/talent-group-manager-assignment.service.test.ts
+!src/modules/talent-manager-scope.query-service.test.ts
 !src/modules/revenue-ledger/revenue-ledger-target-filters.test.ts
 !src/modules/commission/commission-settlement-target-filters.test.ts
 !src/modules/work-schedule/work-schedule-reference-summaries.test.ts
@@ -57,6 +61,7 @@ tools/
 !src/tools/smoke/seed-real-auth-first-admin.ts
 !src/tools/smoke/seed-real-auth-first-admin.test.ts
 !src/tools/smoke/runtime-role-sync.test.ts
+!src/tools/smoke/access-repair.test.ts
 !src/tools/smoke/seed-smoke-fixtures.ts
 !src/tools/smoke/seed-smoke-fixtures.test.ts
 !src/tools/smoke/seed-smoke-fixtures.adapter.test.ts

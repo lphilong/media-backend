@@ -132,7 +132,7 @@ const LOCAL_MOCK_AUTH_SCOPE_GRANT_VALUES: Readonly<
     "department",
     "global",
   ]),
-  eventAssignment: new Set(["global"]),
+  eventAssignment: new Set(["global", "managedGroup"]),
   contractRegistry: new Set(["global"]),
   talentKpi: new Set(["global"]),
   kpi: new Set(["global", "managedGroup", "self"]),

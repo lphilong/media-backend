@@ -216,15 +216,11 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     actorSnapshotCacheInvalidator,
     auth0ManagementClient,
     {
-      databaseConnection:
-        auth0ManagementConfig?.databaseConnection ?? "",
-      passwordResetClientId:
-        auth0ManagementConfig?.passwordResetClientId,
+      databaseConnection: auth0ManagementConfig?.databaseConnection ?? "",
+      passwordResetClientId: auth0ManagementConfig?.passwordResetClientId,
       passwordSetupDeliveryMode:
-        auth0ManagementConfig?.passwordSetupDeliveryMode ??
-        "auth0_email",
-      passwordSetupResultUrl:
-        auth0ManagementConfig?.passwordSetupResultUrl,
+        auth0ManagementConfig?.passwordSetupDeliveryMode ?? "auth0_email",
+      passwordSetupResultUrl: auth0ManagementConfig?.passwordSetupResultUrl,
     },
   );
 

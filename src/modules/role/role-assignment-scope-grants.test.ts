@@ -52,13 +52,13 @@ test("assignment scope grants accept valid modules and de-duplicate in determini
         "self",
         "team",
       ],
-      eventAssignment: ["global", "global"],
+      eventAssignment: ["managedGroup", "global", "global"],
       kpi: ["self", "managedGroup", "self"],
       dashboardLite: ["global"],
     }),
     {
       workSchedule: ["self", "team", "global"],
-      eventAssignment: ["global"],
+      eventAssignment: ["global", "managedGroup"],
       kpi: ["managedGroup", "self"],
       dashboardLite: ["global"],
     },
@@ -99,14 +99,14 @@ test("assignment scope grants reject unsupported modules, values, and shapes", (
 test("scope grant authoring requires an actor to already hold the requested grant", () => {
   const requested = normalizeAssignmentScopeGrants({
     workSchedule: ["department"],
-    eventAssignment: ["global"],
+    eventAssignment: ["managedGroup"],
   });
 
   assertActorCanGrantAssignmentScopeGrants(
     createActor({
       scopeGrants: {
         workSchedule: ["global"],
-        eventAssignment: ["global"],
+        eventAssignment: ["managedGroup"],
       },
     }),
     requested,
@@ -303,7 +303,7 @@ test("auth materialization unions user-level and assignment-level scope grants d
                       "team",
                     ],
                     kpi: ["managedGroup"],
-                    eventAssignment: ["global"],
+                    eventAssignment: ["managedGroup", "global"],
                   },
                   null,
                   {
@@ -332,11 +332,49 @@ test("auth materialization unions user-level and assignment-level scope grants d
   ]);
   assert.deepEqual(candidates[0]?.scopeGrants, {
     workSchedule: ["self", "team", "global"],
-    eventAssignment: ["global"],
+    eventAssignment: ["global", "managedGroup"],
     kpi: ["managedGroup", "self"],
     commission: ["global"],
     dashboardLite: ["global"],
   });
+});
+
+test("auth materialization rejects unsupported event assignment scopes", async () => {
+  const repository = new MongoUserAuthRepository({
+    collection(name: string) {
+      if (name === "users") {
+        return {
+          aggregate: () => ({
+            toArray: async () => [
+              {
+                _id: "user-1",
+                actorKind: "ADMIN",
+                accountStatus: "ACTIVE",
+                assignmentRoleIds: ["role-a"],
+                resolvedRoleIds: ["role-a"],
+                rolePermissions: [[Permission.EVENT_READ]],
+                roleMaxDelegatableBands: ["LIMITED"],
+                assignmentScopeGrants: [
+                  {
+                    eventAssignment: ["team"],
+                  },
+                ],
+              },
+            ],
+          }),
+        };
+      }
+
+      return {
+        findOne: async () => null,
+      };
+    },
+  } as never);
+
+  await assert.rejects(
+    () => repository.findByAuthSubject("auth0|user-1"),
+    /Invalid actor eventAssignment scope grant value/u,
+  );
 });
 
 test("auth materialization preserves missing or inactive role integrity semantics", async () => {

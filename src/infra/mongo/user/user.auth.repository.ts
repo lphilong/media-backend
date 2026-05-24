@@ -28,7 +28,7 @@ const AUTH_SECURITY_VERSION_DOCUMENT_ID = "admin.auth-security-version";
 const WORK_SCHEDULE_SCOPE_GRANTS_ORDER: readonly WorkScheduleActorScopeGrant[] =
   Object.freeze(["self", "team", "department", "global"]);
 const EVENT_ASSIGNMENT_SCOPE_GRANTS_ORDER: readonly EventAssignmentActorScopeGrant[] =
-  Object.freeze(["global"]);
+  Object.freeze(["global", "managedGroup"]);
 const CONTRACT_REGISTRY_SCOPE_GRANTS_ORDER: readonly ContractRegistryActorScopeGrant[] =
   Object.freeze(["global"]);
 const TALENT_KPI_SCOPE_GRANTS_ORDER: readonly TalentKpiActorScopeGrant[] =
@@ -1082,14 +1082,14 @@ function normalizeRuntimeActorScopeGrantsPayload(
       new Set<EventAssignmentActorScopeGrant>();
 
     for (const scope of rawEventAssignment) {
-      if (scope !== "global") {
+      if (scope !== "global" && scope !== "managedGroup") {
         throw new InfrastructureError(
           "USER_AUTH_SCOPE_GRANTS_INVALID_VALUE",
           `Invalid actor eventAssignment scope grant value for user ${userId}`,
         );
       }
 
-      uniqueEventAssignmentScopes.add("global");
+      uniqueEventAssignmentScopes.add(scope as EventAssignmentActorScopeGrant);
     }
 
     normalized.eventAssignment = Object.freeze(

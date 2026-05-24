@@ -30,6 +30,8 @@ const ASSIGNMENT_SCOPE_MODULE_SET = new Set<string>(ASSIGNMENT_SCOPE_MODULES);
 const WORK_SCHEDULE_SCOPE_ORDER: readonly WorkScheduleActorScopeGrant[] =
   Object.freeze(["self", "team", "department", "global"]);
 const GLOBAL_SCOPE_ORDER = Object.freeze(["global"]);
+const EVENT_ASSIGNMENT_SCOPE_ORDER: readonly EventAssignmentActorScopeGrant[] =
+  Object.freeze(["global", "managedGroup"]);
 const KPI_SCOPE_ORDER: readonly KpiActorScopeGrant[] = Object.freeze([
   "global",
   "managedGroup",
@@ -82,9 +84,9 @@ export function normalizeAssignmentScopeGrants(
 
   const eventAssignment = normalizeScopeArray(
     raw.eventAssignment,
-    GLOBAL_SCOPE_ORDER,
+    EVENT_ASSIGNMENT_SCOPE_ORDER,
     `${field}.eventAssignment`,
-  ) as readonly EventAssignmentActorScopeGrant[];
+  );
   if (eventAssignment.length > 0) {
     normalized.eventAssignment = eventAssignment;
   }
@@ -165,12 +167,15 @@ export function assertActorCanGrantAssignmentScopeGrants(
     );
   }
 
-  assertActorCanGrantGlobalModuleScope(
-    actor,
-    requestedScopeGrants.eventAssignment,
-    "eventAssignment",
-    field,
-  );
+  for (const scope of requestedScopeGrants.eventAssignment ?? []) {
+    if (actorCanGrantEventAssignmentScope(actor, scope)) {
+      continue;
+    }
+
+    throw new RoleValidationError(
+      `${field}.eventAssignment contains unauthorized scope grant: ${scope}`,
+    );
+  }
   assertActorCanGrantGlobalModuleScope(
     actor,
     requestedScopeGrants.contractRegistry,
@@ -261,6 +266,15 @@ function actorCanGrantKpiScope(
   scope: KpiActorScopeGrant,
 ): boolean {
   const actorScopes = actor.scopeGrants.kpi ?? [];
+
+  return actorScopes.includes(scope) || actorScopes.includes("global");
+}
+
+function actorCanGrantEventAssignmentScope(
+  actor: Actor,
+  scope: EventAssignmentActorScopeGrant,
+): boolean {
+  const actorScopes = actor.scopeGrants.eventAssignment ?? [];
 
   return actorScopes.includes(scope) || actorScopes.includes("global");
 }
