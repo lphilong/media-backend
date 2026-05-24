@@ -17,6 +17,7 @@ import { createKpiInfra } from "@infra/providers/kpi.infra";
 import { createCommissionRevenueShareInfra } from "@infra/providers/commission.infra";
 import { createRevenueLedgerInfra } from "@infra/providers/revenue-ledger.infra";
 import { createDashboardLiteInfra } from "@infra/providers/dashboard-lite.infra";
+import { NativeMongoReferenceLookupReadRepository } from "@infra/mongo/reference-lookup/reference-lookup.read-repository";
 import { auditScopeMiddleware } from "@core/audit/audit.scope.middleware";
 import { MongoAuthoritativeAdminMutationBridge } from "@core/application/mongo-authoritative-admin-mutation.bridge";
 import { AuditGuard } from "@core/audit/audit.guard";
@@ -30,6 +31,9 @@ import {
   resolveAuth0ManagementConfigFromEnv,
 } from "@infra/auth0/auth0-management.client";
 import { CurrentActorCapabilitiesController } from "./current-actor-capabilities.controller";
+import { adminReferenceLookupRoutes } from "@modules/reference-lookup/admin/admin.reference-lookup.routes";
+import { ReferenceLookupAdminController } from "@modules/reference-lookup/admin/admin.reference-lookup.controller";
+import { ReferenceLookupAdminService } from "@modules/reference-lookup/admin/admin.reference-lookup.service";
 
 /* USER */
 import { userAdminRoutes } from "@modules/user/admin/admin.user.routes";
@@ -170,6 +174,14 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     withCommand("CURRENT_ACTOR_CAPABILITIES"),
     currentActorCapabilitiesController.execute,
   );
+
+  const referenceLookupController = new ReferenceLookupAdminController(
+    new ReferenceLookupAdminService(
+      new NativeMongoReferenceLookupReadRepository(infra.primaryDb),
+    ),
+  );
+
+  r.use("/reference", adminReferenceLookupRoutes(referenceLookupController));
 
   const adminMutationBridge = new MongoAuthoritativeAdminMutationBridge(
     infra.mongoClient,

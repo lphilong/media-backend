@@ -211,6 +211,13 @@ export const PermissionContracts: PermissionContractRegistry =
     auditAction: "org-unit.read",
     riskLevel: "LOW",
   },
+  [Permission.ORG_UNIT_LOOKUP]: {
+    code: Permission.ORG_UNIT_LOOKUP,
+    context: "ADMIN",
+    resource: "ORG_UNIT",
+    auditAction: "org-unit.lookup",
+    riskLevel: "LOW",
+  },
   [Permission.ORG_UNIT_CREATE]: {
     code: Permission.ORG_UNIT_CREATE,
     context: "ADMIN",
@@ -248,6 +255,13 @@ export const PermissionContracts: PermissionContractRegistry =
     context: "ADMIN",
     resource: "EMPLOYMENT_PROFILE",
     auditAction: "employment-profile.read",
+    riskLevel: "LOW",
+  },
+  [Permission.EMPLOYMENT_PROFILE_LOOKUP]: {
+    code: Permission.EMPLOYMENT_PROFILE_LOOKUP,
+    context: "ADMIN",
+    resource: "EMPLOYMENT_PROFILE",
+    auditAction: "employment-profile.lookup",
     riskLevel: "LOW",
   },
   [Permission.EMPLOYMENT_PROFILE_CREATE]: {
@@ -303,6 +317,13 @@ export const PermissionContracts: PermissionContractRegistry =
     auditAction: "talent.read",
     riskLevel: "LOW",
   },
+  [Permission.TALENT_LOOKUP]: {
+    code: Permission.TALENT_LOOKUP,
+    context: "ADMIN",
+    resource: "TALENT",
+    auditAction: "talent.lookup",
+    riskLevel: "LOW",
+  },
   [Permission.TALENT_CREATE]: {
     code: Permission.TALENT_CREATE,
     context: "ADMIN",
@@ -356,6 +377,13 @@ export const PermissionContracts: PermissionContractRegistry =
     auditAction: "talent-group.read",
     riskLevel: "LOW",
   },
+  [Permission.TALENT_GROUP_LOOKUP]: {
+    code: Permission.TALENT_GROUP_LOOKUP,
+    context: "ADMIN",
+    resource: "TALENT_GROUP",
+    auditAction: "talent-group.lookup",
+    riskLevel: "LOW",
+  },
   [Permission.TALENT_GROUP_CREATE]: {
     code: Permission.TALENT_GROUP_CREATE,
     context: "ADMIN",
@@ -393,6 +421,13 @@ export const PermissionContracts: PermissionContractRegistry =
     context: "ADMIN",
     resource: "PLATFORM_ACCOUNT",
     auditAction: "platform-account.read",
+    riskLevel: "LOW",
+  },
+  [Permission.PLATFORM_ACCOUNT_LOOKUP]: {
+    code: Permission.PLATFORM_ACCOUNT_LOOKUP,
+    context: "ADMIN",
+    resource: "PLATFORM_ACCOUNT",
+    auditAction: "platform-account.lookup",
     riskLevel: "LOW",
   },
   [Permission.PLATFORM_ACCOUNT_CREATE]: {
@@ -441,6 +476,13 @@ export const PermissionContracts: PermissionContractRegistry =
     auditAction: "studio-resource.read",
     riskLevel: "LOW",
   },
+  [Permission.STUDIO_RESOURCE_LOOKUP]: {
+    code: Permission.STUDIO_RESOURCE_LOOKUP,
+    context: "ADMIN",
+    resource: "STUDIO_RESOURCE",
+    auditAction: "studio-resource.lookup",
+    riskLevel: "LOW",
+  },
   [Permission.STUDIO_RESOURCE_CREATE]: {
     code: Permission.STUDIO_RESOURCE_CREATE,
     context: "ADMIN",
@@ -478,6 +520,13 @@ export const PermissionContracts: PermissionContractRegistry =
     context: "ADMIN",
     resource: "EVENT_ASSIGNMENT",
     auditAction: "event-assignment.read",
+    riskLevel: "LOW",
+  },
+  [Permission.EVENT_LOOKUP]: {
+    code: Permission.EVENT_LOOKUP,
+    context: "ADMIN",
+    resource: "EVENT_ASSIGNMENT",
+    auditAction: "event-assignment.lookup",
     riskLevel: "LOW",
   },
   [Permission.EVENT_CREATE]: {
@@ -549,6 +598,13 @@ export const PermissionContracts: PermissionContractRegistry =
     context: "ADMIN",
     resource: "CONTRACT_REGISTRY",
     auditAction: "contract-registry.read",
+    riskLevel: "LOW",
+  },
+  [Permission.CONTRACT_REGISTRY_LOOKUP]: {
+    code: Permission.CONTRACT_REGISTRY_LOOKUP,
+    context: "ADMIN",
+    resource: "CONTRACT_REGISTRY",
+    auditAction: "contract-registry.lookup",
     riskLevel: "LOW",
   },
   [Permission.CONTRACT_REGISTRY_CREATE]: {
@@ -710,6 +766,13 @@ export const PermissionContracts: PermissionContractRegistry =
     auditAction: "commission-rule.read",
     riskLevel: "LOW",
   },
+  [Permission.COMMISSION_RULE_LOOKUP]: {
+    code: Permission.COMMISSION_RULE_LOOKUP,
+    context: "ADMIN",
+    resource: "COMMISSION_RULE",
+    auditAction: "commission-rule.lookup",
+    riskLevel: "LOW",
+  },
   [Permission.COMMISSION_RULE_CREATE]: {
     code: Permission.COMMISSION_RULE_CREATE,
     context: "ADMIN",
@@ -768,6 +831,13 @@ export const PermissionContracts: PermissionContractRegistry =
     context: "ADMIN",
     resource: "REVENUE_LEDGER",
     auditAction: "revenue-ledger.read",
+    riskLevel: "LOW",
+  },
+  [Permission.REVENUE_LEDGER_LOOKUP]: {
+    code: Permission.REVENUE_LEDGER_LOOKUP,
+    context: "ADMIN",
+    resource: "REVENUE_LEDGER",
+    auditAction: "revenue-ledger.lookup",
     riskLevel: "LOW",
   },
   [Permission.REVENUE_LEDGER_CREATE]: {

@@ -35,6 +35,7 @@ export enum Permission {
      ORG UNIT
   ========================= */
   ORG_UNIT_READ = "orgUnit.read",
+  ORG_UNIT_LOOKUP = "orgUnit.lookup",
   ORG_UNIT_CREATE = "orgUnit.create",
   ORG_UNIT_UPDATE = "orgUnit.update",
   ORG_UNIT_MANAGE_HIERARCHY = "orgUnit.manageHierarchy",
@@ -44,6 +45,7 @@ export enum Permission {
      EMPLOYMENT PROFILE
   ========================= */
   EMPLOYMENT_PROFILE_READ = "employmentProfile.read",
+  EMPLOYMENT_PROFILE_LOOKUP = "employmentProfile.lookup",
   EMPLOYMENT_PROFILE_CREATE = "employmentProfile.create",
   EMPLOYMENT_PROFILE_UPDATE = "employmentProfile.update",
   EMPLOYMENT_PROFILE_MANAGE_ORG_ASSIGNMENT = "employmentProfile.manageOrgAssignment",
@@ -55,6 +57,7 @@ export enum Permission {
      TALENT
   ========================= */
   TALENT_READ = "talent.read",
+  TALENT_LOOKUP = "talent.lookup",
   TALENT_CREATE = "talent.create",
   TALENT_UPDATE = "talent.update",
   TALENT_MANAGE_MANAGER = "talent.manageManager",
@@ -66,6 +69,7 @@ export enum Permission {
      TALENT GROUP
   ========================= */
   TALENT_GROUP_READ = "talentGroup.read",
+  TALENT_GROUP_LOOKUP = "talentGroup.lookup",
   TALENT_GROUP_CREATE = "talentGroup.create",
   TALENT_GROUP_UPDATE = "talentGroup.update",
   TALENT_GROUP_MANAGE_LIFECYCLE = "talentGroup.manageLifecycle",
@@ -75,6 +79,7 @@ export enum Permission {
      PLATFORM ACCOUNT
   ========================= */
   PLATFORM_ACCOUNT_READ = "platformAccount.read",
+  PLATFORM_ACCOUNT_LOOKUP = "platformAccount.lookup",
   PLATFORM_ACCOUNT_CREATE = "platformAccount.create",
   PLATFORM_ACCOUNT_UPDATE = "platformAccount.update",
   PLATFORM_ACCOUNT_MANAGE_OWNERSHIP = "platformAccount.manageOwnership",
@@ -85,6 +90,7 @@ export enum Permission {
      STUDIO RESOURCE
   ========================= */
   STUDIO_RESOURCE_READ = "studioResource.read",
+  STUDIO_RESOURCE_LOOKUP = "studioResource.lookup",
   STUDIO_RESOURCE_CREATE = "studioResource.create",
   STUDIO_RESOURCE_UPDATE = "studioResource.update",
   STUDIO_RESOURCE_MANAGE_AVAILABILITY = "studioResource.manageAvailability",
@@ -94,6 +100,7 @@ export enum Permission {
      EVENT ASSIGNMENT
   ========================= */
   EVENT_READ = "event.read",
+  EVENT_LOOKUP = "event.lookup",
   EVENT_CREATE = "event.create",
   EVENT_UPDATE = "event.update",
   EVENT_MANAGE_ASSIGNMENTS = "event.manageAssignments",
@@ -111,6 +118,7 @@ export enum Permission {
      CONTRACT REGISTRY
   ========================= */
   CONTRACT_REGISTRY_READ = "contractRegistry.read",
+  CONTRACT_REGISTRY_LOOKUP = "contractRegistry.lookup",
   CONTRACT_REGISTRY_CREATE = "contractRegistry.create",
   CONTRACT_REGISTRY_UPDATE = "contractRegistry.update",
   CONTRACT_REGISTRY_MANAGE_OWNER = "contractRegistry.manageOwner",
@@ -144,6 +152,7 @@ export enum Permission {
      COMMISSION
   ========================= */
   COMMISSION_RULE_READ = "commissionRule.read",
+  COMMISSION_RULE_LOOKUP = "commissionRule.lookup",
   COMMISSION_RULE_CREATE = "commissionRule.create",
   COMMISSION_RULE_UPDATE = "commissionRule.update",
   COMMISSION_RULE_MANAGE_LIFECYCLE = "commissionRule.manageLifecycle",
@@ -156,6 +165,7 @@ export enum Permission {
      REVENUE LEDGER
   ========================= */
   REVENUE_LEDGER_READ = "revenueLedger.read",
+  REVENUE_LEDGER_LOOKUP = "revenueLedger.lookup",
   REVENUE_LEDGER_CREATE = "revenueLedger.create",
   REVENUE_LEDGER_UPDATE = "revenueLedger.update",
   REVENUE_LEDGER_MANAGE_LIFECYCLE = "revenueLedger.manageLifecycle",
