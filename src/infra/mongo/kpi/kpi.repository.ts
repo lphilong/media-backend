@@ -366,12 +366,20 @@ export class NativeMongoKpiPlanRepository
     readonly status?: KpiAllocationStatus;
     readonly kpiPlanId?: string;
     readonly groupId?: string;
+    readonly memberTalentId?: string;
+    readonly memberEmploymentProfileId?: string;
     readonly limit: number;
   }): Promise<readonly KpiAllocation[]> {
     const query: Record<string, unknown> = {};
     assignIfDefined(query, "allocationStatus", input.status);
     assignIfDefined(query, "kpiPlanId", input.kpiPlanId);
     assignIfDefined(query, "groupId", input.groupId);
+    assignIfDefined(query, "memberTalentId", input.memberTalentId);
+    assignIfDefined(
+      query,
+      "memberEmploymentProfileId",
+      input.memberEmploymentProfileId,
+    );
     const docs = await this.allocationCollection
       .find(query)
       .sort({ updatedAt: -1, _id: 1 })

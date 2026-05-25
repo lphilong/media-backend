@@ -2,12 +2,14 @@ import { Router } from "express";
 import { withCommand } from "@app/base/command.middleware";
 import { SelfServiceCurrentPersonController } from "./self-service.current-person.controller";
 import { SelfServiceEventsController } from "./self-service.events.controller";
+import { SelfServiceKpiController } from "./self-service.kpi.controller";
 import { SelfServiceWorkShiftsController } from "./self-service.work-shifts.controller";
 
 export function selfServiceRoutes(
   currentPersonController: SelfServiceCurrentPersonController,
   workShiftsController: SelfServiceWorkShiftsController,
   eventsController: SelfServiceEventsController,
+  kpiController?: SelfServiceKpiController,
 ): Router {
   const router = Router();
 
@@ -28,6 +30,14 @@ export function selfServiceRoutes(
     withCommand("SELF_SERVICE_EVENTS_LIST"),
     eventsController.execute,
   );
+
+  if (kpiController) {
+    router.get(
+      "/kpi",
+      withCommand("SELF_SERVICE_KPI_LIST"),
+      kpiController.execute,
+    );
+  }
 
   return router;
 }

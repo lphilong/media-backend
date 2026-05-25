@@ -150,6 +150,8 @@ export interface KpiPlanRepository {
     readonly status?: KpiAllocationStatus;
     readonly kpiPlanId?: string;
     readonly groupId?: string;
+    readonly memberTalentId?: string;
+    readonly memberEmploymentProfileId?: string;
     readonly limit: number;
   }): Promise<readonly KpiAllocation[]>;
 

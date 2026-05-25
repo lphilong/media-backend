@@ -6,6 +6,10 @@ import {
 } from "@modules/event-assignment/domain/event-assignment.types";
 import { UserAccountStatus } from "@modules/user/domain/user.types";
 import {
+  KpiMetricCode,
+  KpiMetricUnit,
+} from "@modules/kpi/domain/kpi.types";
+import {
   WorkShiftSourceType,
   WorkShiftStatus,
 } from "@modules/work-schedule/domain/work-schedule.types";
@@ -75,4 +79,27 @@ export interface SelfServiceEventListQuery {
 
 export interface SelfServiceEventListView {
   readonly items: readonly SelfServiceEventView[];
+}
+
+export interface SelfServiceKpiMetricView {
+  readonly metricCode: KpiMetricCode;
+  readonly unit: KpiMetricUnit;
+  readonly targetValue: number;
+  readonly actualValue: number;
+  readonly progressPercent: number | null;
+}
+
+export interface SelfServiceKpiItemView {
+  readonly kpiPlanId: string;
+  readonly title: string;
+  readonly periodMonth: string;
+  readonly periodStartAt: number;
+  readonly periodEndAt: number;
+  readonly officialStatus: "OFFICIAL_PUBLISHED";
+  readonly lastUpdatedAt: number;
+  readonly metrics: readonly SelfServiceKpiMetricView[];
+}
+
+export interface SelfServiceKpiListView {
+  readonly items: readonly SelfServiceKpiItemView[];
 }

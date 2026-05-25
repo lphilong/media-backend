@@ -7,6 +7,9 @@ import {
   SelfServiceCurrentPersonView,
   SelfServiceEventListView,
   SelfServiceEventView,
+  SelfServiceKpiItemView,
+  SelfServiceKpiListView,
+  SelfServiceKpiMetricView,
   SelfServiceWorkShiftListView,
   SelfServiceWorkShiftView,
 } from "@modules/self-service/domain/self-service.types";
@@ -49,6 +52,25 @@ const SELF_SERVICE_EVENT_FIELDS = [
   "endsAt",
   "ownAssignmentKind",
   "ownAssignmentStatus",
+] as const;
+
+const SELF_SERVICE_KPI_METRIC_FIELDS = [
+  "metricCode",
+  "unit",
+  "targetValue",
+  "actualValue",
+  "progressPercent",
+] as const;
+
+const SELF_SERVICE_KPI_ITEM_FIELDS = [
+  "kpiPlanId",
+  "title",
+  "periodMonth",
+  "periodStartAt",
+  "periodEndAt",
+  "officialStatus",
+  "lastUpdatedAt",
+  "metrics",
 ] as const;
 
 export const SelfServiceCurrentPersonExposure = Object.freeze({
@@ -158,6 +180,58 @@ export const SelfServiceEventExposure = Object.freeze({
   } {
     return {
       data: this.exposeMany(input.items),
+    };
+  },
+});
+
+export const SelfServiceKpiExposure = Object.freeze({
+  exposeMetric(input: SelfServiceKpiMetricView): PlainObject {
+    return toPlainObject(
+      ExposurePolicy.expose(
+        {
+          metricCode: input.metricCode,
+          unit: input.unit,
+          targetValue: input.targetValue,
+          actualValue: input.actualValue,
+          progressPercent: input.progressPercent,
+        },
+        SELF_SERVICE_KPI_METRIC_FIELDS,
+      ),
+      "SelfServiceKpiMetric exposure",
+    );
+  },
+
+  expose(input: SelfServiceKpiItemView): PlainObject {
+    return toPlainObject(
+      ExposurePolicy.expose(
+        {
+          kpiPlanId: input.kpiPlanId,
+          title: input.title,
+          periodMonth: input.periodMonth,
+          periodStartAt: input.periodStartAt,
+          periodEndAt: input.periodEndAt,
+          officialStatus: input.officialStatus,
+          lastUpdatedAt: input.lastUpdatedAt,
+          metrics: input.metrics.map((metric) => this.exposeMetric(metric)),
+        },
+        SELF_SERVICE_KPI_ITEM_FIELDS,
+      ),
+      "SelfServiceKpi exposure",
+    );
+  },
+
+  exposeMany(items: readonly SelfServiceKpiItemView[]): readonly PlainObject[] {
+    return items.map((item) => this.expose(item));
+  },
+
+  exposeList(input: SelfServiceKpiListView): {
+    readonly data: PlainObject;
+  } {
+    return {
+      data: toPlainObject(
+        { items: this.exposeMany(input.items) },
+        "SelfServiceKpiList exposure",
+      ),
     };
   },
 });

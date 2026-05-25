@@ -58,6 +58,7 @@ tools/
 !src/modules/user/account-provisioning.service.test.ts
 !src/modules/self-service/self-service.current-person.test.ts
 !src/modules/self-service/self-service.events.test.ts
+!src/modules/self-service/self-service.kpi.test.ts
 !src/bootstrap/db-index.bootstrap.test.ts
 !src/bootstrap/startup-timing.test.ts
 !src/config/db-index-bootstrap.env.test.ts
