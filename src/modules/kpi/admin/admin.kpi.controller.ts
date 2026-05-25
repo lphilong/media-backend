@@ -9,13 +9,18 @@ import { SystemInvariantError } from "@core/error/system-error";
 import { KpiValidationError } from "@modules/kpi/domain/kpi.errors";
 import {
   ArchiveKpiPlanCommand,
+  ApproveKpiAllocationCommand,
   CorrectKpiActualCommand,
   CreateKpiPlanCommand,
   CreateKpiActualCommand,
+  PublishKpiAllocationCommand,
+  RejectKpiAllocationCommand,
   ReplaceKpiAllocationsCommand,
   ReplaceKpiTargetMetricsCommand,
+  SubmitKpiAllocationDraftCommand,
   UpdateKpiActualCommand,
   UpdateKpiDraftCoreCommand,
+  UpsertKpiAllocationDraftCommand,
 } from "@modules/kpi/shared/kpi.contracts";
 import { KPI_ADMIN_MUTATION_PRESENTER_KEY } from "@modules/kpi/shared/kpi.presenter-keys";
 import { KpiAdminService } from "./admin.kpi.service";
@@ -25,6 +30,11 @@ type KpiMutationCommand =
   | "KPI_PLAN_UPDATE_DRAFT_CORE"
   | "KPI_PLAN_REPLACE_TARGET_METRICS"
   | "KPI_PLAN_REPLACE_ALLOCATIONS"
+  | "KPI_ALLOCATION_DRAFT_UPSERT"
+  | "KPI_ALLOCATION_SUBMIT"
+  | "KPI_ALLOCATION_APPROVE"
+  | "KPI_ALLOCATION_REJECT"
+  | "KPI_ALLOCATION_PUBLISH"
   | "KPI_PLAN_PUBLISH"
   | "KPI_PLAN_ARCHIVE"
   | "KPI_ACTUAL_CREATE"
@@ -63,6 +73,9 @@ const REPLACE_KPI_TARGET_METRICS_BODY_FIELDS = [
 ] as const;
 
 const REPLACE_KPI_ALLOCATIONS_BODY_FIELDS = ["allocations"] as const;
+const UPSERT_KPI_ALLOCATION_DRAFT_BODY_FIELDS = ["allocations"] as const;
+const APPROVE_KPI_ALLOCATION_BODY_FIELDS = ["approvalNote"] as const;
+const REJECT_KPI_ALLOCATION_BODY_FIELDS = ["rejectionReason"] as const;
 const CREATE_KPI_ACTUAL_BODY_FIELDS = [
   "allocationId",
   "metricCode",
@@ -111,6 +124,39 @@ export class KpiAdminController extends SecureController {
           actor,
           parseReplaceKpiAllocationsCommand(req),
         );
+      case "KPI_ALLOCATION_DRAFT_UPSERT":
+        return this.service.upsertKpiAllocationDraft(
+          actor,
+          parseUpsertKpiAllocationDraftCommand(req),
+        );
+      case "KPI_ALLOCATION_SUBMIT":
+        assertNoUnexpectedFields(
+          requireRecord(req.body),
+          [],
+          "submitKpiAllocationDraft",
+        );
+        return this.service.submitKpiAllocationDraft(actor, {
+          kpiPlanId: req.params.kpiPlanId,
+        } satisfies SubmitKpiAllocationDraftCommand);
+      case "KPI_ALLOCATION_APPROVE":
+        return this.service.approveKpiAllocation(
+          actor,
+          parseApproveKpiAllocationCommand(req),
+        );
+      case "KPI_ALLOCATION_REJECT":
+        return this.service.rejectKpiAllocation(
+          actor,
+          parseRejectKpiAllocationCommand(req),
+        );
+      case "KPI_ALLOCATION_PUBLISH":
+        assertNoUnexpectedFields(
+          requireRecord(req.body),
+          [],
+          "publishKpiAllocation",
+        );
+        return this.service.publishKpiAllocation(actor, {
+          kpiPlanId: req.params.kpiPlanId,
+        } satisfies PublishKpiAllocationCommand);
       case "KPI_PLAN_PUBLISH":
         assertNoUnexpectedFields(requireRecord(req.body), [], "publishKpiPlan");
         return this.service.publishKpiPlan(actor, {
@@ -233,6 +279,52 @@ function parseReplaceKpiAllocationsCommand(
     kpiPlanId: req.params.kpiPlanId,
     allocations:
       body.allocations as ReplaceKpiAllocationsCommand["allocations"],
+  };
+}
+
+function parseUpsertKpiAllocationDraftCommand(
+  req: Request,
+): UpsertKpiAllocationDraftCommand {
+  const body = requireRecord(req.body);
+  assertNoUnexpectedFields(
+    body,
+    UPSERT_KPI_ALLOCATION_DRAFT_BODY_FIELDS,
+    "upsertKpiAllocationDraft",
+  );
+  return {
+    kpiPlanId: req.params.kpiPlanId,
+    allocations:
+      body.allocations as UpsertKpiAllocationDraftCommand["allocations"],
+  };
+}
+
+function parseApproveKpiAllocationCommand(
+  req: Request,
+): ApproveKpiAllocationCommand {
+  const body = requireRecord(req.body);
+  assertNoUnexpectedFields(
+    body,
+    APPROVE_KPI_ALLOCATION_BODY_FIELDS,
+    "approveKpiAllocation",
+  );
+  return {
+    kpiPlanId: req.params.kpiPlanId,
+    approvalNote: body.approvalNote as string | null | undefined,
+  };
+}
+
+function parseRejectKpiAllocationCommand(
+  req: Request,
+): RejectKpiAllocationCommand {
+  const body = requireRecord(req.body);
+  assertNoUnexpectedFields(
+    body,
+    REJECT_KPI_ALLOCATION_BODY_FIELDS,
+    "rejectKpiAllocation",
+  );
+  return {
+    kpiPlanId: req.params.kpiPlanId,
+    rejectionReason: body.rejectionReason as string,
   };
 }
 

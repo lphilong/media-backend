@@ -1,5 +1,6 @@
 import {
   KpiAllocation,
+  KpiAllocationStatus,
   KpiActualCorrection,
   KpiActualDailyGridView,
   KpiActualEntry,
@@ -32,6 +33,14 @@ export interface KpiAllocationInput {
   readonly allocationEndDate?: string | null;
   readonly targetMetrics: readonly KpiAllocationTargetMetricInput[];
   readonly snapshotMemberDisplayName?: string | null;
+}
+
+export interface KpiAllocationDraftMemberInput {
+  readonly employmentProfileId: string;
+  readonly allocationStartDate: string;
+  readonly allocationEndDate?: string | null;
+  readonly targetMetrics: readonly KpiAllocationTargetMetricInput[];
+  readonly note?: string | null;
 }
 
 export interface CreateKpiPlanCommand {
@@ -69,6 +78,36 @@ export interface ReplaceKpiTargetMetricsCommand {
 export interface ReplaceKpiAllocationsCommand {
   readonly kpiPlanId: string;
   readonly allocations: readonly KpiAllocationInput[];
+}
+
+export interface UpsertKpiAllocationDraftCommand {
+  readonly kpiPlanId: string;
+  readonly allocations: readonly KpiAllocationDraftMemberInput[];
+}
+
+export interface SubmitKpiAllocationDraftCommand {
+  readonly kpiPlanId: string;
+}
+
+export interface ApproveKpiAllocationCommand {
+  readonly kpiPlanId: string;
+  readonly approvalNote?: string | null;
+}
+
+export interface RejectKpiAllocationCommand {
+  readonly kpiPlanId: string;
+  readonly rejectionReason: string;
+}
+
+export interface PublishKpiAllocationCommand {
+  readonly kpiPlanId: string;
+}
+
+export interface ListKpiAllocationsQuery {
+  readonly status?: KpiAllocationStatus | string;
+  readonly kpiPlanId?: string;
+  readonly groupId?: string;
+  readonly limit?: number | string;
 }
 
 export interface PublishKpiPlanCommand {
@@ -162,6 +201,10 @@ export interface ListKpiActualCorrectionsResult {
 
 export interface ListKpiPlansResult {
   readonly items: readonly KpiPlanListItemView[];
+}
+
+export interface ListKpiAllocationsResult {
+  readonly items: readonly KpiAllocation[];
 }
 
 export interface ReplaceKpiAllocationsResult {

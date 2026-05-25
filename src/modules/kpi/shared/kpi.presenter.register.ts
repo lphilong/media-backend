@@ -1,6 +1,7 @@
 import { PresenterRegistryWriter } from "@app/presenter/presenter.runtime-access";
 import {
   KPI_ADMIN_ACTUAL_GRID_PRESENTER_KEY,
+  KPI_ADMIN_ALLOCATION_LIST_PRESENTER_KEY,
   KPI_ADMIN_CORRECTION_LIST_PRESENTER_KEY,
   KPI_ADMIN_DETAIL_PRESENTER_KEY,
   KPI_ADMIN_LIST_PRESENTER_KEY,
@@ -9,6 +10,7 @@ import {
 } from "./kpi.presenter-keys";
 import {
   KpiAdminActualGridPresenter,
+  KpiAdminAllocationListPresenter,
   KpiAdminCorrectionListPresenter,
   KpiAdminDetailPresenter,
   KpiAdminListPresenter,
@@ -42,5 +44,9 @@ export function registerPresenters(
   registry.register(
     KPI_ADMIN_CORRECTION_LIST_PRESENTER_KEY,
     new KpiAdminCorrectionListPresenter(),
+  );
+  registry.register(
+    KPI_ADMIN_ALLOCATION_LIST_PRESENTER_KEY,
+    new KpiAdminAllocationListPresenter(),
   );
 }

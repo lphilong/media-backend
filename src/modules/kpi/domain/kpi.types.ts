@@ -51,6 +51,10 @@ export type KpiPlanCurrency = (typeof KPI_PLAN_CURRENCIES)[number];
 
 export const KPI_ALLOCATION_STATUSES = [
   "DRAFT",
+  "PENDING_APPROVAL",
+  "APPROVED",
+  "PUBLISHED",
+  "REJECTED",
   "ACTIVE",
   "CLOSED",
   "CANCELLED",
@@ -154,6 +158,7 @@ export interface KpiAllocation {
   readonly id: string;
   readonly kpiPlanId: string;
   readonly groupId: string;
+  readonly memberEmploymentProfileId: string | null;
   readonly memberTalentId: string;
   readonly membershipId: string | null;
   readonly allocationStatus: KpiAllocationStatus;
@@ -161,9 +166,21 @@ export interface KpiAllocation {
   readonly allocationEndDate: string | null;
   readonly targetMetrics: readonly KpiAllocationTargetMetric[];
   readonly snapshotMemberDisplayName: string | null;
+  readonly note: string | null;
   readonly createdAt: number;
+  readonly createdByActorId: string | null;
   readonly updatedAt: number;
+  readonly updatedByActorId: string | null;
+  readonly submittedAt: number | null;
+  readonly submittedByActorId: string | null;
+  readonly approvedAt: number | null;
+  readonly approvedByActorId: string | null;
+  readonly approvalNote: string | null;
+  readonly rejectedAt: number | null;
+  readonly rejectedByActorId: string | null;
+  readonly rejectionReason: string | null;
   readonly publishedAt: number | null;
+  readonly publishedByActorId: string | null;
   readonly closedAt: number | null;
 }
 

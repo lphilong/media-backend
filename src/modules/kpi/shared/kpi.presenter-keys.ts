@@ -12,3 +12,5 @@ export const KPI_ADMIN_ACTUAL_GRID_PRESENTER_KEY =
 
 export const KPI_ADMIN_CORRECTION_LIST_PRESENTER_KEY =
   "kpi.admin.correction-list";
+export const KPI_ADMIN_ALLOCATION_LIST_PRESENTER_KEY =
+  "kpi.admin.allocation-list";

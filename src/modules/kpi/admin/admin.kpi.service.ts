@@ -43,6 +43,8 @@ import {
   KPI_SORT_FIELDS,
   KPI_SUBJECT_TYPES,
   KpiAllocation,
+  KPI_ALLOCATION_STATUSES,
+  KpiAllocationStatus,
   KpiActualDailyGridView,
   KpiAllocationTargetMetric,
   KpiActualCorrection,
@@ -72,6 +74,13 @@ import {
   KpiActualCorrectionResult,
   KpiActualMutationResult,
   KpiAllocationInput,
+  ListKpiAllocationsQuery,
+  ListKpiAllocationsResult,
+  UpsertKpiAllocationDraftCommand,
+  SubmitKpiAllocationDraftCommand,
+  ApproveKpiAllocationCommand,
+  RejectKpiAllocationCommand,
+  PublishKpiAllocationCommand,
   KpiTargetMetricInput,
   ListKpiPlansQuery,
   ListKpiPlansResult,
@@ -99,6 +108,13 @@ const ALLOCATION_INPUT_FIELDS = [
   "allocationEndDate",
   "targetMetrics",
   "snapshotMemberDisplayName",
+] as const;
+const ALLOCATION_DRAFT_INPUT_FIELDS = [
+  "employmentProfileId",
+  "allocationStartDate",
+  "allocationEndDate",
+  "targetMetrics",
+  "note",
 ] as const;
 const INTEGER_TARGET_METRIC_CODES = new Set<KpiMetricCode>([
   "REVENUE_VND",
@@ -134,6 +150,14 @@ interface NormalizedAllocationInput {
   readonly allocationEndDate: string | null;
   readonly targetMetrics: readonly KpiAllocationTargetMetric[];
   readonly snapshotMemberDisplayName: string | null;
+}
+
+interface NormalizedEmploymentAllocationInput {
+  readonly employmentProfileId: string;
+  readonly allocationStartDate: string;
+  readonly allocationEndDate: string | null;
+  readonly targetMetrics: readonly KpiAllocationTargetMetric[];
+  readonly note: string | null;
 }
 
 export class KpiAdminService {
@@ -520,6 +544,280 @@ export class KpiAdminService {
     );
   }
 
+  async listKpiAllocations(
+    actor: Actor,
+    query: ListKpiAllocationsQuery,
+  ): Promise<ListKpiAllocationsResult> {
+    this.assertContextPermission(actor, Permission.KPI_READ);
+    const status =
+      query.status === undefined ? undefined : normalizeAllocationStatus(query.status);
+    const kpiPlanId = normalizeOptionalText(query.kpiPlanId);
+    const groupId = normalizeOptionalText(query.groupId);
+    const limit = normalizeLimit(query.limit);
+
+    if (this.hasKpiGlobalScope(actor)) {
+      return {
+        items: await this.repository.listAllocations({
+          status,
+          kpiPlanId,
+          groupId,
+          limit,
+        }),
+      };
+    }
+
+    if (!this.hasKpiManagedGroupScope(actor)) {
+      throw new KpiPermissionScopeError(
+        "Cannot list KPI allocations: kpi.global or kpi.managedGroup scope is required",
+      );
+    }
+
+    const managedGroupIds = await this.resolveManagedTalentGroupIds(actor);
+    const requestedGroups = groupId ? [groupId] : managedGroupIds;
+    if (requestedGroups.some((id) => !managedGroupIds.includes(id))) {
+      return { items: [] };
+    }
+    const results = await Promise.all(
+      requestedGroups.map((managedGroupId) =>
+        this.repository.listAllocations({
+          status,
+          kpiPlanId,
+          groupId: managedGroupId,
+          limit,
+        }),
+      ),
+    );
+    return { items: results.flat().slice(0, limit) };
+  }
+
+  async upsertKpiAllocationDraft(
+    actor: Actor,
+    command: UpsertKpiAllocationDraftCommand,
+  ): Promise<KpiPlanMutationView> {
+    const permission = this.assertContextPermission(
+      actor,
+      Permission.KPI_ENTER_ACTUAL,
+    );
+    const operation: AuthoritativeAdminMutationIdentity =
+      "kpi.allocation-draft.upsert";
+
+    return this.executeMutation(
+      actor,
+      permission,
+      operation,
+      `kpi-plan:${command.kpiPlanId}`,
+      async (session) => {
+        const plan = await this.requirePlan(command.kpiPlanId, session);
+        await this.assertActorCanDraftAllocation(actor, plan, session);
+        const targetMetrics = await this.repository.listTargetMetricsByPlanId(
+          plan.id,
+          session,
+        );
+        const normalized = normalizeEmploymentAllocations(
+          command.allocations,
+          targetMetrics,
+        );
+        const existing = await this.repository.listAllocationsByPlanId(
+          plan.id,
+          session,
+        );
+        if (
+          existing.some(
+            (allocation) => allocation.allocationStatus !== "DRAFT",
+          )
+        ) {
+          throw new KpiStateError(
+            "KPI allocation draft can be edited only while all rows are DRAFT",
+          );
+        }
+        const now = this.clock();
+        const records = await this.buildEmploymentAllocationRecords(
+          actor,
+          plan,
+          normalized,
+          targetMetrics,
+          now,
+          session,
+        );
+        await this.repository.replaceAllocationsForPlan(
+          {
+            kpiPlanId: plan.id,
+            allowedCurrentStatuses: ["DRAFT"],
+            allocations: records,
+            updatedAt: now,
+            updatedByActorId: actor.id,
+          },
+          session,
+        );
+        await this.recordAudit({
+          actor,
+          permission,
+          kpiPlanId: plan.id,
+          mutationType: operation,
+          metadata: {
+            status: "DRAFT",
+            allocationCount: records.length,
+          },
+          session,
+        });
+        return this.loadPlanDetail(plan.id, session);
+      },
+    );
+  }
+
+  async submitKpiAllocationDraft(
+    actor: Actor,
+    command: SubmitKpiAllocationDraftCommand,
+  ): Promise<KpiPlanMutationView> {
+    const permission = this.assertContextPermission(
+      actor,
+      Permission.KPI_ENTER_ACTUAL,
+    );
+    const operation: AuthoritativeAdminMutationIdentity =
+      "kpi.allocation.submit";
+
+    return this.executeMutation(
+      actor,
+      permission,
+      operation,
+      `kpi-plan:${command.kpiPlanId}`,
+      async (session) => {
+        const plan = await this.requirePlan(command.kpiPlanId, session);
+        await this.assertActorCanDraftAllocation(actor, plan, session);
+        const allocations = await this.repository.listAllocationsByPlanId(
+          plan.id,
+          session,
+        );
+        if (
+          allocations.length === 0 ||
+          allocations.some(
+            (allocation) => allocation.allocationStatus !== "DRAFT",
+          )
+        ) {
+          throw new KpiStateError(
+            "KPI allocation draft requires DRAFT rows before submit",
+          );
+        }
+        const now = this.clock();
+        const modified = await this.repository.transitionAllocationsForPlan(
+          {
+            kpiPlanId: plan.id,
+            fromStatus: "DRAFT",
+            toStatus: "PENDING_APPROVAL",
+            updatedAt: now,
+            updatedByActorId: actor.id,
+            submittedAt: now,
+            submittedByActorId: actor.id,
+          },
+          session,
+        );
+        if (modified === 0) {
+          throw new KpiStateError("KPI allocation draft is not submittable");
+        }
+        await this.recordAudit({
+          actor,
+          permission,
+          kpiPlanId: plan.id,
+          mutationType: operation,
+          metadata: { nextStatus: "PENDING_APPROVAL", allocationCount: modified },
+          session,
+        });
+        return this.loadPlanDetail(plan.id, session);
+      },
+    );
+  }
+
+  async approveKpiAllocation(
+    actor: Actor,
+    command: ApproveKpiAllocationCommand,
+  ): Promise<KpiPlanMutationView> {
+    return this.transitionAdminAllocationApproval(actor, command.kpiPlanId, {
+      operation: "kpi.allocation.approve",
+      permissionCode: Permission.KPI_MANAGE_ALLOCATION,
+      fromStatus: "PENDING_APPROVAL",
+      toStatus: "APPROVED",
+      approvalNote:
+        normalizeNullableText(command.approvalNote) ?? null,
+    });
+  }
+
+  async rejectKpiAllocation(
+    actor: Actor,
+    command: RejectKpiAllocationCommand,
+  ): Promise<KpiPlanMutationView> {
+    return this.transitionAdminAllocationApproval(actor, command.kpiPlanId, {
+      operation: "kpi.allocation.reject",
+      permissionCode: Permission.KPI_MANAGE_ALLOCATION,
+      fromStatus: "PENDING_APPROVAL",
+      toStatus: "REJECTED",
+      rejectionReason: normalizeRequiredText(
+        command.rejectionReason,
+        "rejectionReason",
+      ),
+    });
+  }
+
+  async publishKpiAllocation(
+    actor: Actor,
+    command: PublishKpiAllocationCommand,
+  ): Promise<KpiPlanMutationView> {
+    const permission = this.assertPermission(actor, Permission.KPI_PUBLISH);
+    this.assertKpiGlobalScope(actor, "publish KPI allocation");
+    const operation: AuthoritativeAdminMutationIdentity =
+      "kpi.allocation.publish";
+
+    return this.executeMutation(
+      actor,
+      permission,
+      operation,
+      `kpi-plan:${command.kpiPlanId}`,
+      async (session) => {
+        const plan = await this.requirePlan(command.kpiPlanId, session);
+        if (plan.status !== "PUBLISHED") {
+          throw new KpiStateError(
+            "KPI allocation can be published only after the KPI plan is PUBLISHED",
+          );
+        }
+        const [targetMetrics, allocations] = await Promise.all([
+          this.repository.listTargetMetricsByPlanId(plan.id, session),
+          this.repository.listAllocationsByPlanId(plan.id, session),
+        ]);
+        await this.validateGroupAllocationsForTransition(
+          plan,
+          targetMetrics,
+          allocations,
+          "APPROVED",
+          session,
+        );
+        const now = this.clock();
+        const modified = await this.repository.transitionAllocationsForPlan(
+          {
+            kpiPlanId: plan.id,
+            fromStatus: "APPROVED",
+            toStatus: "PUBLISHED",
+            updatedAt: now,
+            updatedByActorId: actor.id,
+            publishedAt: now,
+            publishedByActorId: actor.id,
+          },
+          session,
+        );
+        if (modified === 0) {
+          throw new KpiStateError("KPI allocation is not publishable");
+        }
+        await this.recordAudit({
+          actor,
+          permission,
+          kpiPlanId: plan.id,
+          mutationType: operation,
+          metadata: { nextStatus: "PUBLISHED", allocationCount: modified },
+          session,
+        });
+        return this.loadPlanDetail(plan.id, session);
+      },
+    );
+  }
+
   async publishKpiPlan(
     actor: Actor,
     command: PublishKpiPlanCommand,
@@ -549,19 +847,6 @@ export class KpiAdminService {
         }
         validateTargetMetricValues(targetMetrics, "targetMetrics");
 
-        if (current.subjectType === "TALENT_GROUP") {
-          const allocations = await this.repository.listAllocationsByPlanId(
-            current.id,
-            session,
-          );
-          await this.validateGroupAllocationsForPublish(
-            current,
-            targetMetrics,
-            allocations,
-            session,
-          );
-        }
-
         const now = this.clock();
         const actualPolicySnapshot = createDefaultActualPolicySnapshot(now);
         const published = await this.repository.transitionStatus(
@@ -584,11 +869,6 @@ export class KpiAdminService {
           );
         }
 
-        await this.repository.activateAllocationsForPlan(
-          current.id,
-          now,
-          session,
-        );
         await this.recordAudit({
           actor,
           permission,
@@ -1131,9 +1411,9 @@ export class KpiAdminService {
       session,
     );
     const allocation = allocations.find((item) => item.id === allocationId);
-    if (!allocation || allocation.allocationStatus !== "ACTIVE") {
+    if (!allocation || allocation.allocationStatus !== "PUBLISHED") {
       throw new KpiInvalidAllocationError(
-        `KPI allocation must exist and be ACTIVE: ${allocationId}`,
+        `KPI allocation must exist and be PUBLISHED: ${allocationId}`,
       );
     }
     if (
@@ -1406,7 +1686,7 @@ export class KpiAdminService {
         targetValue: metric.targetValue,
         unit: metric.unit,
       })),
-      rows: allocations.map((allocation) => ({
+      rows: allocations.filter(isOfficialKpiAllocation).map((allocation) => ({
         allocationId: allocation.id,
         memberTalentId: allocation.memberTalentId,
         memberDisplayName: allocation.snapshotMemberDisplayName,
@@ -1451,11 +1731,15 @@ export class KpiAdminService {
       this.repository.listAllocationsByPlanId(plan.id),
       this.actualRepository.listEntriesByPlanId(plan.id),
     ]);
+    const officialAllocations = allocations.filter(isOfficialKpiAllocation);
+    const officialAllocationIds = new Set(
+      officialAllocations.map((allocation) => allocation.id),
+    );
     const relevantAllocations = allowedTalentIds
-      ? allocations.filter((allocation) =>
+      ? officialAllocations.filter((allocation) =>
           allowedTalentIds.has(allocation.memberTalentId),
         )
-      : allocations;
+      : officialAllocations;
     const entryKey = (
       entry: Pick<KpiActualEntry, "allocationId" | "metricCode">,
     ) => `${entry.allocationId}:${entry.metricCode}`;
@@ -1463,6 +1747,7 @@ export class KpiAdminService {
     const countByAllocationMetric = new Map<string, number>();
     for (const entry of entries) {
       if (
+        !officialAllocationIds.has(entry.allocationId) ||
         allowedTalentIds !== undefined &&
         !allowedTalentIds.has(entry.memberTalentId)
       ) {
@@ -1872,6 +2157,7 @@ export class KpiAdminService {
         id: crypto.randomUUID(),
         kpiPlanId: plan.id,
         groupId: plan.subjectId,
+        memberEmploymentProfileId: member.employmentProfileId,
         memberTalentId: input.memberTalentId,
         membershipId: member.membershipId,
         allocationStatus: "DRAFT",
@@ -1880,9 +2166,21 @@ export class KpiAdminService {
         targetMetrics: input.targetMetrics,
         snapshotMemberDisplayName:
           input.snapshotMemberDisplayName ?? member.displayName,
+        note: null,
         createdAt: now,
+        createdByActorId: null,
         updatedAt: now,
+        updatedByActorId: null,
+        submittedAt: null,
+        submittedByActorId: null,
+        approvedAt: null,
+        approvedByActorId: null,
+        approvalNote: null,
+        rejectedAt: null,
+        rejectedByActorId: null,
+        rejectionReason: null,
         publishedAt: null,
+        publishedByActorId: null,
         closedAt: null,
       });
     }
@@ -1890,11 +2188,241 @@ export class KpiAdminService {
     return allocations;
   }
 
+  private async buildEmploymentAllocationRecords(
+    actor: Actor,
+    plan: KpiPlan,
+    inputs: readonly NormalizedEmploymentAllocationInput[],
+    targetMetrics: readonly KpiTargetMetric[],
+    now: number,
+    session: ClientSession,
+  ): Promise<readonly KpiAllocation[]> {
+    if (inputs.length === 0) {
+      throw new KpiInvalidAllocationError(
+        "KPI allocation draft requires at least one member",
+      );
+    }
+    if (plan.subjectType !== "TALENT_GROUP") {
+      throw new KpiInvalidAllocationError(
+        "KPI allocation drafts are allowed only for TALENT_GROUP plans",
+      );
+    }
+    const planMetricCodes = new Set(
+      targetMetrics.map((metric) => metric.metricCode),
+    );
+    const allocations: KpiAllocation[] = [];
+    for (const input of inputs) {
+      const member =
+        await this.subjectReadonlyAccess.findActiveGroupMemberByEmploymentProfile(
+          plan.subjectId,
+          input.employmentProfileId,
+          session,
+        );
+      if (!member) {
+        throw new KpiInvalidAllocationError(
+          `KPI allocation target must be an active internal EmploymentProfile member of group ${plan.subjectId}: ${input.employmentProfileId}`,
+        );
+      }
+      for (const target of input.targetMetrics) {
+        if (!planMetricCodes.has(target.metricCode)) {
+          throw new KpiInvalidAllocationError(
+            `KPI allocation metricCode ${target.metricCode} is not in plan target metrics`,
+          );
+        }
+      }
+      allocations.push({
+        id: crypto.randomUUID(),
+        kpiPlanId: plan.id,
+        groupId: plan.subjectId,
+        memberEmploymentProfileId: input.employmentProfileId,
+        memberTalentId: member.talentId,
+        membershipId: member.membershipId,
+        allocationStatus: "DRAFT",
+        allocationStartDate: input.allocationStartDate,
+        allocationEndDate: input.allocationEndDate,
+        targetMetrics: input.targetMetrics,
+        snapshotMemberDisplayName: member.displayName,
+        note: input.note,
+        createdAt: now,
+        createdByActorId: actor.id,
+        updatedAt: now,
+        updatedByActorId: actor.id,
+        submittedAt: null,
+        submittedByActorId: null,
+        approvedAt: null,
+        approvedByActorId: null,
+        approvalNote: null,
+        rejectedAt: null,
+        rejectedByActorId: null,
+        rejectionReason: null,
+        publishedAt: null,
+        publishedByActorId: null,
+        closedAt: null,
+      });
+    }
+    return allocations;
+  }
+
+  private async assertActorCanDraftAllocation(
+    actor: Actor,
+    plan: KpiPlan,
+    session: ClientSession,
+  ): Promise<void> {
+    if (actor.type !== "staff") {
+      throw new KpiPermissionScopeError(
+        "KPI allocation draft requires assigned team-manager staff authority",
+      );
+    }
+    if (!this.hasKpiManagedGroupScope(actor)) {
+      throw new KpiPermissionScopeError(
+        "KPI allocation draft requires kpi.managedGroup scope",
+      );
+    }
+    if (plan.subjectType !== "TALENT_GROUP") {
+      throw new KpiInvalidAllocationError(
+        "KPI allocation draft is supported only for TALENT_GROUP plans",
+      );
+    }
+    if (plan.status !== "PUBLISHED") {
+      throw new KpiStateError(
+        "KPI allocation draft requires a PUBLISHED group KPI plan",
+      );
+    }
+    const employmentProfile =
+      await this.subjectReadonlyAccess.findActiveEmploymentProfileByLinkedUserId(
+        actor.id,
+        session,
+      );
+    if (!employmentProfile) {
+      throw new KpiPermissionScopeError(
+        "KPI allocation draft requires actor-to-employment-profile mapping",
+      );
+    }
+    const assignments =
+      await this.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
+        employmentProfile.employmentProfileId,
+        this.clock(),
+        session,
+      );
+    if (assignments.some((assignment) => assignment.groupId === plan.subjectId)) {
+      return;
+    }
+    throw new KpiPermissionScopeError(
+      `KPI actor is not an active manager for group ${plan.subjectId}`,
+    );
+  }
+
+  private async transitionAdminAllocationApproval(
+    actor: Actor,
+    kpiPlanId: string,
+    input: {
+      readonly operation: AuthoritativeAdminMutationIdentity;
+      readonly permissionCode: Permission;
+      readonly fromStatus: KpiAllocationStatus;
+      readonly toStatus: KpiAllocationStatus;
+      readonly approvalNote?: string | null;
+      readonly rejectionReason?: string | null;
+    },
+  ): Promise<KpiPlanMutationView> {
+    const permission = this.assertPermission(actor, input.permissionCode);
+    this.assertKpiGlobalScope(actor, "approve KPI allocation");
+    return this.executeMutation(
+      actor,
+      permission,
+      input.operation,
+      `kpi-plan:${kpiPlanId}`,
+      async (session) => {
+        const plan = await this.requirePlan(kpiPlanId, session);
+        const allocations = await this.repository.listAllocationsByPlanId(
+          plan.id,
+          session,
+        );
+        if (
+          allocations.length === 0 ||
+          allocations.some(
+            (allocation) => allocation.allocationStatus !== input.fromStatus,
+          )
+        ) {
+          throw new KpiStateError(
+            `KPI allocation requires status ${input.fromStatus}`,
+          );
+        }
+        const now = this.clock();
+        const modified = await this.repository.transitionAllocationsForPlan(
+          {
+            kpiPlanId: plan.id,
+            fromStatus: input.fromStatus,
+            toStatus: input.toStatus,
+            updatedAt: now,
+            updatedByActorId: actor.id,
+            approvedAt: input.toStatus === "APPROVED" ? now : undefined,
+            approvedByActorId:
+              input.toStatus === "APPROVED" ? actor.id : undefined,
+            approvalNote: input.approvalNote,
+            rejectedAt: input.toStatus === "REJECTED" ? now : undefined,
+            rejectedByActorId:
+              input.toStatus === "REJECTED" ? actor.id : undefined,
+            rejectionReason: input.rejectionReason,
+          },
+          session,
+        );
+        if (modified === 0) {
+          throw new KpiStateError("KPI allocation transition failed");
+        }
+        await this.recordAudit({
+          actor,
+          permission,
+          kpiPlanId: plan.id,
+          mutationType: input.operation,
+          metadata: {
+            previousStatus: input.fromStatus,
+            nextStatus: input.toStatus,
+            allocationCount: modified,
+            approvalNote: input.approvalNote,
+            rejectionReason: input.rejectionReason,
+          },
+          session,
+        });
+        return this.loadPlanDetail(plan.id, session);
+      },
+    );
+  }
+
+  private async validateGroupAllocationsForTransition(
+    plan: KpiPlan,
+    targetMetrics: readonly KpiTargetMetric[],
+    allocations: readonly KpiAllocation[],
+    expectedStatus: KpiAllocationStatus,
+    session: ClientSession,
+  ): Promise<void> {
+    if (allocations.length === 0) {
+      throw new KpiInvalidAllocationError(
+        "KPI allocation publish requires allocation rows",
+      );
+    }
+    if (
+      allocations.some(
+        (allocation) => allocation.allocationStatus !== expectedStatus,
+      )
+    ) {
+      throw new KpiStateError(
+        `KPI allocation rows must all be ${expectedStatus}`,
+      );
+    }
+    await this.validateGroupAllocationsForPublish(
+      plan,
+      targetMetrics,
+      allocations,
+      session,
+      expectedStatus,
+    );
+  }
+
   private async validateGroupAllocationsForPublish(
     plan: KpiPlan,
     targetMetrics: readonly KpiTargetMetric[],
     allocations: readonly KpiAllocation[],
     session: ClientSession,
+    expectedStatus: KpiAllocationStatus = "DRAFT",
   ): Promise<void> {
     if (allocations.length === 0) {
       throw new KpiInvalidAllocationError(
@@ -1908,9 +2436,9 @@ export class KpiAdminService {
     }
 
     for (const allocation of allocations) {
-      if (allocation.allocationStatus !== "DRAFT") {
+      if (allocation.allocationStatus !== expectedStatus) {
         throw new KpiInvalidAllocationError(
-          `KPI allocation ${allocation.id} must be DRAFT before publish`,
+          `KPI allocation ${allocation.id} must be ${expectedStatus} before publish`,
         );
       }
       const member = await this.subjectReadonlyAccess.findActiveGroupMember(
@@ -2128,6 +2656,100 @@ function normalizeAllocations(
   });
 }
 
+function normalizeEmploymentAllocations(
+  input: readonly unknown[],
+  targetMetrics: readonly Pick<KpiTargetMetric, "metricCode">[],
+): readonly NormalizedEmploymentAllocationInput[] {
+  if (!Array.isArray(input)) {
+    throw new KpiValidationError("KPI allocations must be an array");
+  }
+  if (input.length === 0) {
+    throw new KpiInvalidAllocationError(
+      "KPI allocation draft requires at least one member",
+    );
+  }
+  const planMetricCodes = new Set(
+    targetMetrics.map((metric) => metric.metricCode),
+  );
+  const seenProfiles = new Set<string>();
+
+  return input.map((allocation, allocationIndex) => {
+    const allocationRecord = requirePlainRecord(
+      allocation,
+      `allocations[${allocationIndex}]`,
+    );
+    assertOnlyFields(
+      allocationRecord,
+      ALLOCATION_DRAFT_INPUT_FIELDS,
+      `allocations[${allocationIndex}]`,
+    );
+    const employmentProfileId = normalizeRequiredText(
+      allocationRecord.employmentProfileId,
+      `allocations[${allocationIndex}].employmentProfileId`,
+    );
+    if (seenProfiles.has(employmentProfileId)) {
+      throw new KpiValidationError(
+        `KPI allocations duplicate employmentProfileId ${employmentProfileId}`,
+      );
+    }
+    seenProfiles.add(employmentProfileId);
+
+    if (!Array.isArray(allocationRecord.targetMetrics)) {
+      throw new KpiValidationError(
+        `KPI allocations[${allocationIndex}].targetMetrics must be an array`,
+      );
+    }
+    const seenMetricCodes = new Set<KpiMetricCode>();
+    const normalizedTargets = allocationRecord.targetMetrics.map(
+      (target, targetIndex: number) => {
+        const targetRecord = requirePlainRecord(
+          target,
+          `allocations[${allocationIndex}].targetMetrics[${targetIndex}]`,
+        );
+        assertOnlyFields(
+          targetRecord,
+          TARGET_METRIC_INPUT_FIELDS,
+          `allocations[${allocationIndex}].targetMetrics[${targetIndex}]`,
+        );
+        const metricCode = normalizeMetricCode(targetRecord.metricCode);
+        if (!planMetricCodes.has(metricCode)) {
+          throw new KpiInvalidAllocationError(
+            `KPI allocation metricCode ${metricCode} is not in plan target metrics`,
+          );
+        }
+        if (seenMetricCodes.has(metricCode)) {
+          throw new KpiValidationError(
+            `KPI allocations[${allocationIndex}].targetMetrics duplicates metricCode ${metricCode}`,
+          );
+        }
+        seenMetricCodes.add(metricCode);
+        return {
+          metricCode,
+          targetValue: normalizeTargetValue(
+            targetRecord.targetValue,
+            metricCode,
+            `allocations[${allocationIndex}].targetMetrics[${targetIndex}].targetValue`,
+          ),
+        };
+      },
+    );
+
+    return {
+      employmentProfileId,
+      allocationStartDate: normalizeDateText(
+        allocationRecord.allocationStartDate,
+        `allocations[${allocationIndex}].allocationStartDate`,
+      ),
+      allocationEndDate: normalizeNullableDateText(
+        allocationRecord.allocationEndDate,
+        `allocations[${allocationIndex}].allocationEndDate`,
+      ),
+      targetMetrics: normalizedTargets,
+      note: normalizeNullableText(allocationRecord.note),
+    };
+  });
+}
+
 export function normalizePlanPeriod(input: {
   readonly periodMonth: unknown;
   readonly periodStartAt: unknown;
@@ -2263,6 +2885,20 @@ function normalizePlanStatus(value: unknown): KpiPlanStatus {
     throw new KpiValidationError(`KPI status is unsupported: ${text}`);
   }
   return text as KpiPlanStatus;
+}
+
+function normalizeAllocationStatus(value: unknown): KpiAllocationStatus {
+  const text = normalizeRequiredText(value, "allocationStatus");
+  if (!KPI_ALLOCATION_STATUSES.includes(text as KpiAllocationStatus)) {
+    throw new KpiValidationError(
+      `KPI allocationStatus is unsupported: ${text}`,
+    );
+  }
+  return text as KpiAllocationStatus;
+}
+
+function isOfficialKpiAllocation(allocation: KpiAllocation): boolean {
+  return allocation.allocationStatus === "PUBLISHED";
 }
 
 function normalizeSortBy(

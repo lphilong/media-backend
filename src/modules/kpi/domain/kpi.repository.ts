@@ -2,6 +2,7 @@ import { ClientSession } from "mongodb";
 import { BusinessCodePolicy } from "@core/business-code/business-code-sequence.repository";
 import {
   KpiAllocation,
+  KpiAllocationStatus,
   KpiActualPolicySnapshot,
   KpiMetricCode,
   KpiPlan,
@@ -51,6 +52,32 @@ export interface ListKpiPlansInput {
   readonly limit: number;
   readonly sortBy?: "periodMonth" | "planCode" | "createdAt";
   readonly sortDirection?: "ASC" | "DESC";
+}
+
+export interface ReplaceKpiAllocationsForPlanInput {
+  readonly kpiPlanId: string;
+  readonly allowedCurrentStatuses: readonly KpiAllocationStatus[];
+  readonly allocations: readonly KpiAllocation[];
+  readonly updatedAt: number;
+  readonly updatedByActorId: string;
+}
+
+export interface TransitionKpiAllocationsForPlanInput {
+  readonly kpiPlanId: string;
+  readonly fromStatus: KpiAllocationStatus;
+  readonly toStatus: KpiAllocationStatus;
+  readonly updatedAt: number;
+  readonly updatedByActorId: string;
+  readonly submittedAt?: number | null;
+  readonly submittedByActorId?: string | null;
+  readonly approvedAt?: number | null;
+  readonly approvedByActorId?: string | null;
+  readonly approvalNote?: string | null;
+  readonly rejectedAt?: number | null;
+  readonly rejectedByActorId?: string | null;
+  readonly rejectionReason?: string | null;
+  readonly publishedAt?: number | null;
+  readonly publishedByActorId?: string | null;
 }
 
 export interface KpiPlanRepository {
@@ -118,6 +145,23 @@ export interface KpiPlanRepository {
     kpiPlanId: string,
     session?: ClientSession,
   ): Promise<readonly KpiAllocation[]>;
+
+  listAllocations(input: {
+    readonly status?: KpiAllocationStatus;
+    readonly kpiPlanId?: string;
+    readonly groupId?: string;
+    readonly limit: number;
+  }): Promise<readonly KpiAllocation[]>;
+
+  replaceAllocationsForPlan(
+    input: ReplaceKpiAllocationsForPlanInput,
+    session: ClientSession,
+  ): Promise<void>;
+
+  transitionAllocationsForPlan(
+    input: TransitionKpiAllocationsForPlanInput,
+    session: ClientSession,
+  ): Promise<number>;
 
   activateAllocationsForPlan(
     kpiPlanId: string,

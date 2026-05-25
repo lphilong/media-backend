@@ -136,6 +136,40 @@ function createKpiReadOnlyActor(): Actor {
   });
 }
 
+function createActorWithPermissions(
+  id: string,
+  permissions: readonly Permission[],
+): Actor {
+  return new Actor({
+    id,
+    type: "admin",
+    context: "ADMIN",
+    roles: [],
+    permissions,
+    scopeGrants: {
+      kpi: ["global"],
+    },
+    isActive: true,
+  });
+}
+
+function createScopedActor(params: {
+  readonly id: string;
+  readonly type?: "admin" | "staff";
+  readonly permissions: readonly Permission[];
+  readonly kpiScopes?: readonly ("global" | "managedGroup" | "self")[];
+}): Actor {
+  return new Actor({
+    id: params.id,
+    type: params.type ?? "admin",
+    context: "ADMIN",
+    roles: [],
+    permissions: params.permissions,
+    scopeGrants: params.kpiScopes ? { kpi: params.kpiScopes } : {},
+    isActive: true,
+  });
+}
+
 function createHarness(clock: () => number = fixedClock()): {
   readonly service: KpiAdminService;
   readonly repository: InMemoryKpiPlanRepository;
@@ -210,28 +244,41 @@ async function createPublishedGroupPlan(
     createActor(),
     groupPlanCommand(),
   );
-  await service.replaceKpiAllocations(createActor(), {
+  const publishedPlan = await service.publishKpiPlan(createActor(), {
     kpiPlanId: created.id,
-    allocations: [
-      {
-        memberTalentId: "talent-1",
-        allocationStartDate: "2026-05-01",
-        targetMetrics: [
-          { metricCode: "REVENUE_VND", targetValue: 100 },
-          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
-        ],
-      },
-      {
-        memberTalentId: "talent-2",
-        allocationStartDate: "2026-05-01",
-        targetMetrics: [
-          { metricCode: "REVENUE_VND", targetValue: 200 },
-          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 2 },
-        ],
-      },
-    ],
   });
-  return service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
+  await withEphemeralManagerAssignment(service, "group-1", async () => {
+    await service.upsertKpiAllocationDraft(createManagerActor(), {
+      kpiPlanId: created.id,
+      allocations: [
+        {
+          employmentProfileId: "talent-profile-1",
+          allocationStartDate: "2026-05-01",
+          targetMetrics: [
+            { metricCode: "REVENUE_VND", targetValue: 100 },
+            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
+          ],
+        },
+        {
+          employmentProfileId: "talent-profile-2",
+          allocationStartDate: "2026-05-01",
+          targetMetrics: [
+            { metricCode: "REVENUE_VND", targetValue: 200 },
+            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 2 },
+          ],
+        },
+      ],
+    });
+    await service.submitKpiAllocationDraft(createManagerActor(), {
+      kpiPlanId: created.id,
+    });
+  });
+  await service.approveKpiAllocation(createActor(), {
+    kpiPlanId: created.id,
+  });
+  return service.publishKpiAllocation(createActor(), {
+    kpiPlanId: publishedPlan.id,
+  });
 }
 
 async function createPublishedFebruary2028GroupPlan(
@@ -252,20 +299,70 @@ async function createPublishedFebruary2028GroupPlan(
       { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
     ],
   });
-  await service.replaceKpiAllocations(createActor(), {
+  const publishedPlan = await service.publishKpiPlan(createActor(), {
     kpiPlanId: created.id,
-    allocations: [
-      {
-        memberTalentId: "talent-1",
-        allocationStartDate: "2028-02-01",
-        targetMetrics: [
-          { metricCode: "REVENUE_VND", targetValue: 100 },
-          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
-        ],
-      },
-    ],
   });
-  return service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
+  await withEphemeralManagerAssignment(service, "group-1", async () => {
+    await service.upsertKpiAllocationDraft(createManagerActor(), {
+      kpiPlanId: created.id,
+      allocations: [
+        {
+          employmentProfileId: "talent-profile-1",
+          allocationStartDate: "2028-02-01",
+          targetMetrics: [
+            { metricCode: "REVENUE_VND", targetValue: 100 },
+            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
+          ],
+        },
+      ],
+    });
+    await service.submitKpiAllocationDraft(createManagerActor(), {
+      kpiPlanId: created.id,
+    });
+  });
+  await service.approveKpiAllocation(createActor(), {
+    kpiPlanId: created.id,
+  });
+  return service.publishKpiAllocation(createActor(), {
+    kpiPlanId: publishedPlan.id,
+  });
+}
+
+async function withEphemeralManagerAssignment<T>(
+  service: KpiAdminService,
+  groupId: string,
+  action: () => Promise<T>,
+): Promise<T> {
+  const managerRepository = (
+    service as unknown as {
+      readonly managerAssignmentRepository: InMemoryManagerAssignmentRepository;
+    }
+  ).managerAssignmentRepository;
+  const assignment: TalentGroupManagerAssignment = {
+    id: `helper-assignment-${groupId}`,
+    groupId,
+    managerEmploymentProfileId: "manager-profile-1",
+    role: "MANAGER",
+    effectiveFrom: 0,
+    effectiveTo: null,
+    status: "ACTIVE",
+    isPrimary: true,
+    createdAt: 0,
+    createdByActorId: "seed",
+    updatedAt: 0,
+    updatedByActorId: "seed",
+  };
+  managerRepository.assignments.push(assignment);
+  try {
+    return await action();
+  } finally {
+    const index = managerRepository.assignments.findIndex(
+      (item) => item.id === assignment.id,
+    );
+    if (index >= 0) {
+      managerRepository.assignments.splice(index, 1);
+    }
+  }
 }
 
 function seedManagerAssignment(
@@ -629,76 +726,94 @@ test("KPI V2 publish TALENT plan freezes target and moves to PUBLISHED", async (
   );
 });
 
-test("KPI V2 publish TALENT_GROUP rejects allocation totals that do not match", async () => {
+test("KPI V2 allocation publish rejects allocation totals that do not match", async () => {
   const { service } = createHarness();
   const created = await service.createKpiPlan(
     createActor(),
     groupPlanCommand(),
   );
-  await service.replaceKpiAllocations(createActor(), {
+  await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
+  await withEphemeralManagerAssignment(service, "group-1", async () => {
+    await service.upsertKpiAllocationDraft(createManagerActor(), {
+      kpiPlanId: created.id,
+      allocations: [
+        {
+          employmentProfileId: "talent-profile-1",
+          allocationStartDate: "2026-05-01",
+          targetMetrics: [
+            { metricCode: "REVENUE_VND", targetValue: 100 },
+            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
+          ],
+        },
+        {
+          employmentProfileId: "talent-profile-2",
+          allocationStartDate: "2026-05-01",
+          targetMetrics: [
+            { metricCode: "REVENUE_VND", targetValue: 100 },
+            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
+          ],
+        },
+      ],
+    });
+    await service.submitKpiAllocationDraft(createManagerActor(), {
+      kpiPlanId: created.id,
+    });
+  });
+  await service.approveKpiAllocation(createActor(), {
     kpiPlanId: created.id,
-    allocations: [
-      {
-        memberTalentId: "talent-1",
-        allocationStartDate: "2026-05-01",
-        targetMetrics: [
-          { metricCode: "REVENUE_VND", targetValue: 100 },
-          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
-        ],
-      },
-      {
-        memberTalentId: "talent-2",
-        allocationStartDate: "2026-05-01",
-        targetMetrics: [
-          { metricCode: "REVENUE_VND", targetValue: 100 },
-          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
-        ],
-      },
-    ],
   });
 
   await assert.rejects(
-    service.publishKpiPlan(createActor(), { kpiPlanId: created.id }),
+    service.publishKpiAllocation(createActor(), { kpiPlanId: created.id }),
     KpiInvalidAllocationError,
   );
 });
 
-test("KPI V2 publish TALENT_GROUP activates valid allocations without child plans", async () => {
+test("KPI V2 allocation publish makes valid allocations official without child plans", async () => {
   const { service, repository } = createHarness();
   const created = await service.createKpiPlan(
     createActor(),
     groupPlanCommand(),
   );
-  await service.replaceKpiAllocations(createActor(), {
+  await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
+  await withEphemeralManagerAssignment(service, "group-1", async () => {
+    await service.upsertKpiAllocationDraft(createManagerActor(), {
+      kpiPlanId: created.id,
+      allocations: [
+        {
+          employmentProfileId: "talent-profile-1",
+          allocationStartDate: "2026-05-01",
+          targetMetrics: [
+            { metricCode: "REVENUE_VND", targetValue: 100 },
+            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
+          ],
+        },
+        {
+          employmentProfileId: "talent-profile-2",
+          allocationStartDate: "2026-05-01",
+          targetMetrics: [
+            { metricCode: "REVENUE_VND", targetValue: 200 },
+            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 2 },
+          ],
+        },
+      ],
+    });
+    await service.submitKpiAllocationDraft(createManagerActor(), {
+      kpiPlanId: created.id,
+    });
+  });
+  await service.approveKpiAllocation(createActor(), {
     kpiPlanId: created.id,
-    allocations: [
-      {
-        memberTalentId: "talent-1",
-        allocationStartDate: "2026-05-01",
-        targetMetrics: [
-          { metricCode: "REVENUE_VND", targetValue: 100 },
-          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
-        ],
-      },
-      {
-        memberTalentId: "talent-2",
-        allocationStartDate: "2026-05-01",
-        targetMetrics: [
-          { metricCode: "REVENUE_VND", targetValue: 200 },
-          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 2 },
-        ],
-      },
-    ],
   });
 
-  const published = await service.publishKpiPlan(createActor(), {
+  const published = await service.publishKpiAllocation(createActor(), {
     kpiPlanId: created.id,
   });
 
   assert.equal(published.status, "PUBLISHED");
   assert.deepEqual(
     published.allocations.map((allocation) => allocation.allocationStatus),
-    ["ACTIVE", "ACTIVE"],
+    ["PUBLISHED", "PUBLISHED"],
   );
   assert.equal(repository.plans.length, 1);
   assert.equal(
@@ -1526,6 +1641,300 @@ test("KPI V2 manager may enter actual for managed talent group", async () => {
   assert.equal(result.actualEntry.memberTalentId, allocation.memberTalentId);
 });
 
+test("KPI allocation approval foundation supports manager draft submit and admin approve publish", async () => {
+  const { service, managerRepository, audit } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
+  seedManagerAssignment(managerRepository);
+
+  const draft = await service.upsertKpiAllocationDraft(createManagerActor(), {
+    kpiPlanId: created.id,
+    allocations: [
+      {
+        employmentProfileId: "talent-profile-1",
+        allocationStartDate: "2026-05-01",
+        targetMetrics: [
+          { metricCode: "REVENUE_VND", targetValue: 100 },
+          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
+        ],
+        note: "Primary host",
+      },
+      {
+        employmentProfileId: "talent-profile-2",
+        allocationStartDate: "2026-05-01",
+        targetMetrics: [
+          { metricCode: "REVENUE_VND", targetValue: 200 },
+          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 2 },
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(
+    draft.allocations.map((allocation) => allocation.allocationStatus),
+    ["DRAFT", "DRAFT"],
+  );
+  assert.equal(draft.allocations[0]?.memberEmploymentProfileId, "talent-profile-1");
+  assert.equal(draft.allocations[0]?.createdByActorId, "manager-user");
+
+  const editedDraft = await service.upsertKpiAllocationDraft(createManagerActor(), {
+    kpiPlanId: created.id,
+    allocations: [
+      {
+        employmentProfileId: "talent-profile-1",
+        allocationStartDate: "2026-05-01",
+        targetMetrics: [
+          { metricCode: "REVENUE_VND", targetValue: 120 },
+          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
+        ],
+        note: "Edited primary host",
+      },
+      {
+        employmentProfileId: "talent-profile-2",
+        allocationStartDate: "2026-05-01",
+        targetMetrics: [
+          { metricCode: "REVENUE_VND", targetValue: 180 },
+          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 2 },
+        ],
+      },
+    ],
+  });
+  assert.equal(
+    editedDraft.allocations[0]?.targetMetrics.find(
+      (metric) => metric.metricCode === "REVENUE_VND",
+    )?.targetValue,
+    120,
+  );
+
+  const submitted = await service.submitKpiAllocationDraft(createManagerActor(), {
+    kpiPlanId: created.id,
+  });
+  assert.equal(submitted.allocations[0]?.allocationStatus, "PENDING_APPROVAL");
+  assert.equal(submitted.allocations[0]?.submittedByActorId, "manager-user");
+
+  await assert.rejects(
+    service.approveKpiAllocation(createManagerActor(), { kpiPlanId: created.id }),
+    /KPI V2 admin operations require ADMIN actor context/u,
+  );
+  await assert.rejects(
+    service.publishKpiAllocation(createManagerActor(), { kpiPlanId: created.id }),
+    /KPI V2 admin operations require ADMIN actor context/u,
+  );
+
+  const approved = await service.approveKpiAllocation(createActor(), {
+    kpiPlanId: created.id,
+    approvalNote: "Approved for May",
+  });
+  assert.equal(approved.allocations[0]?.allocationStatus, "APPROVED");
+  assert.equal(approved.allocations[0]?.approvedByActorId, "admin-1");
+  assert.equal(approved.allocations[0]?.approvalNote, "Approved for May");
+
+  const published = await service.publishKpiAllocation(createActor(), {
+    kpiPlanId: created.id,
+  });
+  assert.equal(published.allocations[0]?.allocationStatus, "PUBLISHED");
+  assert.equal(published.allocations[0]?.publishedByActorId, "admin-1");
+  assert.ok(
+    audit.records.some(
+      (record) => record.metadata?.mutationType === "kpi.allocation.publish",
+    ),
+  );
+});
+
+test("KPI allocation approval denies draft and submit to read/global/non-manager actors", async () => {
+  const { service, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
+  seedManagerAssignment(managerRepository);
+  await service.upsertKpiAllocationDraft(createManagerActor(), {
+    kpiPlanId: created.id,
+    allocations: [
+      {
+        employmentProfileId: "talent-profile-1",
+        allocationStartDate: "2026-05-01",
+        targetMetrics: [
+          { metricCode: "REVENUE_VND", targetValue: 300 },
+          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 3 },
+        ],
+      },
+    ],
+  });
+
+  const deniedActors: readonly Actor[] = [
+    createScopedActor({
+      id: "hr-user",
+      permissions: [Permission.KPI_READ, Permission.KPI_READ_PROGRESS],
+      kpiScopes: ["global"],
+    }),
+    createScopedActor({
+      id: "finance-user",
+      permissions: [Permission.KPI_READ, Permission.KPI_READ_PROGRESS],
+      kpiScopes: ["global"],
+    }),
+    createScopedActor({
+      id: "viewer-user",
+      permissions: [Permission.KPI_READ],
+      kpiScopes: ["global"],
+    }),
+    createScopedActor({
+      id: "talent-user",
+      type: "staff",
+      permissions: [Permission.KPI_READ_PROGRESS],
+      kpiScopes: ["self"],
+    }),
+    createScopedActor({
+      id: "unmanaged-manager-user",
+      type: "staff",
+      permissions: [
+        Permission.KPI_READ,
+        Permission.KPI_READ_PROGRESS,
+        Permission.KPI_ENTER_ACTUAL,
+        Permission.KPI_CORRECT_ACTUAL,
+      ],
+      kpiScopes: ["managedGroup"],
+    }),
+    createScopedActor({
+      id: "global-read-user",
+      permissions: [Permission.KPI_READ, Permission.KPI_READ_PROGRESS],
+      kpiScopes: ["global"],
+    }),
+    createScopedActor({
+      id: "global-enter-actual-user",
+      permissions: [
+        Permission.KPI_READ,
+        Permission.KPI_READ_PROGRESS,
+        Permission.KPI_ENTER_ACTUAL,
+      ],
+      kpiScopes: ["global"],
+    }),
+  ];
+
+  for (const actor of deniedActors) {
+    await assert.rejects(
+      service.upsertKpiAllocationDraft(actor, {
+        kpiPlanId: created.id,
+        allocations: [
+          {
+            employmentProfileId: "talent-profile-1",
+            allocationStartDate: "2026-05-01",
+            targetMetrics: [
+              { metricCode: "REVENUE_VND", targetValue: 300 },
+              { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 3 },
+            ],
+          },
+        ],
+      }),
+    );
+    await assert.rejects(
+      service.submitKpiAllocationDraft(actor, { kpiPlanId: created.id }),
+    );
+  }
+});
+
+test("KPI allocation approval rejects unmanaged or direct Talent-style draft targets", async () => {
+  const { service, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
+  seedManagerAssignment(managerRepository);
+
+  await assert.rejects(
+    service.upsertKpiAllocationDraft(createManagerActor(), {
+      kpiPlanId: created.id,
+      allocations: [
+        {
+          employmentProfileId: "unmanaged-profile",
+          allocationStartDate: "2026-05-01",
+          targetMetrics: [
+            { metricCode: "REVENUE_VND", targetValue: 300 },
+            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 3 },
+          ],
+        },
+      ],
+    }),
+    KpiInvalidAllocationError,
+  );
+
+  await assert.rejects(
+    service.upsertKpiAllocationDraft(createManagerActor(), {
+      kpiPlanId: created.id,
+      allocations: [
+        {
+          memberTalentId: "talent-1",
+          allocationStartDate: "2026-05-01",
+          targetMetrics: [
+            { metricCode: "REVENUE_VND", targetValue: 300 },
+            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 3 },
+          ],
+        } as never,
+      ],
+    }),
+    KpiValidationError,
+  );
+});
+
+test("KPI allocation approval denies non-admin publisher roles and ignores non-published allocations in progress", async () => {
+  const { service, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
+  seedManagerAssignment(managerRepository);
+  await service.upsertKpiAllocationDraft(createManagerActor(), {
+    kpiPlanId: created.id,
+    allocations: [
+      {
+        employmentProfileId: "talent-profile-1",
+        allocationStartDate: "2026-05-01",
+        targetMetrics: [
+          { metricCode: "REVENUE_VND", targetValue: 300 },
+          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 3 },
+        ],
+      },
+    ],
+  });
+
+  const draftProgress = await service.getKpiProgress(createActor(), {
+    kpiPlanId: created.id,
+  });
+  assert.equal(draftProgress.memberProgress.length, 0);
+
+  for (const actor of [
+    createKpiReadOnlyActor(),
+    createActorWithPermissions("hr-user", [Permission.KPI_READ, Permission.KPI_READ_PROGRESS]),
+    createActorWithPermissions("ops-user", [Permission.KPI_READ]),
+    createActorWithPermissions("finance-user", [Permission.KPI_READ, Permission.KPI_READ_PROGRESS]),
+  ]) {
+    await assert.rejects(
+      service.approveKpiAllocation(actor, { kpiPlanId: created.id }),
+      /Missing permission kpi.manageAllocation/u,
+    );
+    await assert.rejects(
+      service.publishKpiAllocation(actor, { kpiPlanId: created.id }),
+      /Missing permission kpi.publish/u,
+    );
+  }
+
+  await service.submitKpiAllocationDraft(createManagerActor(), {
+    kpiPlanId: created.id,
+  });
+  await service.approveKpiAllocation(createActor(), { kpiPlanId: created.id });
+  const approvedProgress = await service.getKpiProgress(createActor(), {
+    kpiPlanId: created.id,
+  });
+  assert.equal(approvedProgress.memberProgress.length, 0);
+
+  await service.publishKpiAllocation(createActor(), { kpiPlanId: created.id });
+  const publishedProgress = await service.getKpiProgress(createActor(), {
+    kpiPlanId: created.id,
+  });
+  assert.equal(publishedProgress.memberProgress.length, 2);
+});
+
 test("KPI V2 create plan mutation records audit proof", async () => {
   const { service, audit } = createHarness();
 
@@ -1902,7 +2311,33 @@ class InMemoryKpiSubjectReadonlyAccess implements KpiSubjectReadonlyAccess {
     return {
       membershipId: `membership-${memberTalentId}`,
       talentId: memberTalentId,
+      employmentProfileId:
+        memberTalentId === "talent-1" ? "talent-profile-1" : "talent-profile-2",
       displayName: memberTalentId,
+    };
+  }
+
+  async findActiveGroupMemberByEmploymentProfile(
+    groupId: string,
+    employmentProfileId: string,
+  ): Promise<KpiGroupMemberLookup | null> {
+    if (groupId !== "group-1") {
+      return null;
+    }
+    const talentId =
+      employmentProfileId === "talent-profile-1"
+        ? "talent-1"
+        : employmentProfileId === "talent-profile-2"
+          ? "talent-2"
+          : null;
+    if (!talentId) {
+      return null;
+    }
+    return {
+      membershipId: `membership-${talentId}`,
+      talentId,
+      employmentProfileId,
+      displayName: employmentProfileId,
     };
   }
 
@@ -2162,6 +2597,126 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     );
   }
 
+  async listAllocations(input: {
+    readonly status?: KpiAllocation["allocationStatus"];
+    readonly kpiPlanId?: string;
+    readonly groupId?: string;
+    readonly limit: number;
+  }): Promise<readonly KpiAllocation[]> {
+    return this.allocations
+      .filter((allocation) => {
+        if (input.status && allocation.allocationStatus !== input.status) {
+          return false;
+        }
+        if (input.kpiPlanId && allocation.kpiPlanId !== input.kpiPlanId) {
+          return false;
+        }
+        if (input.groupId && allocation.groupId !== input.groupId) {
+          return false;
+        }
+        return true;
+      })
+      .slice(0, input.limit);
+  }
+
+  async replaceAllocationsForPlan(input: {
+    readonly kpiPlanId: string;
+    readonly allowedCurrentStatuses: readonly KpiAllocation["allocationStatus"][];
+    readonly allocations: readonly KpiAllocation[];
+  }): Promise<void> {
+    if (
+      this.allocations.some(
+        (allocation) =>
+          allocation.kpiPlanId === input.kpiPlanId &&
+          !input.allowedCurrentStatuses.includes(allocation.allocationStatus),
+      )
+    ) {
+      throw new Error("allocation status conflict");
+    }
+    removeMatching(
+      this.allocations,
+      (allocation) => allocation.kpiPlanId === input.kpiPlanId,
+    );
+    this.allocations.push(...input.allocations);
+  }
+
+  async transitionAllocationsForPlan(input: {
+    readonly kpiPlanId: string;
+    readonly fromStatus: KpiAllocation["allocationStatus"];
+    readonly toStatus: KpiAllocation["allocationStatus"];
+    readonly updatedAt: number;
+    readonly updatedByActorId: string;
+    readonly submittedAt?: number | null;
+    readonly submittedByActorId?: string | null;
+    readonly approvedAt?: number | null;
+    readonly approvedByActorId?: string | null;
+    readonly approvalNote?: string | null;
+    readonly rejectedAt?: number | null;
+    readonly rejectedByActorId?: string | null;
+    readonly rejectionReason?: string | null;
+    readonly publishedAt?: number | null;
+    readonly publishedByActorId?: string | null;
+  }): Promise<number> {
+    let modified = 0;
+    for (let index = 0; index < this.allocations.length; index += 1) {
+      const allocation = this.allocations[index] as KpiAllocation;
+      if (
+        allocation.kpiPlanId !== input.kpiPlanId ||
+        allocation.allocationStatus !== input.fromStatus
+      ) {
+        continue;
+      }
+      this.allocations[index] = {
+        ...allocation,
+        allocationStatus: input.toStatus,
+        updatedAt: input.updatedAt,
+        updatedByActorId: input.updatedByActorId,
+        submittedAt:
+          input.submittedAt === undefined
+            ? allocation.submittedAt
+            : input.submittedAt,
+        submittedByActorId:
+          input.submittedByActorId === undefined
+            ? allocation.submittedByActorId
+            : input.submittedByActorId,
+        approvedAt:
+          input.approvedAt === undefined
+            ? allocation.approvedAt
+            : input.approvedAt,
+        approvedByActorId:
+          input.approvedByActorId === undefined
+            ? allocation.approvedByActorId
+            : input.approvedByActorId,
+        approvalNote:
+          input.approvalNote === undefined
+            ? allocation.approvalNote
+            : input.approvalNote,
+        rejectedAt:
+          input.rejectedAt === undefined
+            ? allocation.rejectedAt
+            : input.rejectedAt,
+        rejectedByActorId:
+          input.rejectedByActorId === undefined
+            ? allocation.rejectedByActorId
+            : input.rejectedByActorId,
+        rejectionReason:
+          input.rejectionReason === undefined
+            ? allocation.rejectionReason
+            : input.rejectionReason,
+        publishedAt:
+          input.publishedAt === undefined
+            ? allocation.publishedAt
+            : input.publishedAt,
+        publishedByActorId:
+          input.publishedByActorId === undefined
+            ? allocation.publishedByActorId
+            : input.publishedByActorId,
+      };
+      modified += 1;
+    }
+    return modified;
+  }
+
   async activateAllocationsForPlan(
     kpiPlanId: string,
     publishedAt: number,
@@ -2174,7 +2729,7 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
       ) {
         this.allocations[index] = {
           ...allocation,
-          allocationStatus: "ACTIVE",
+          allocationStatus: "PUBLISHED",
           publishedAt,
           updatedAt: publishedAt,
         };

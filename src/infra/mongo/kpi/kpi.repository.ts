@@ -8,6 +8,8 @@ import { BaseRepository } from "@infra/database/repository";
 import {
   KpiPlanRepository,
   ListKpiPlansInput,
+  ReplaceKpiAllocationsForPlanInput,
+  TransitionKpiAllocationsForPlanInput,
   TransitionKpiPlanStatusInput,
   UpdateKpiDraftCoreInput,
 } from "@modules/kpi/domain/kpi.repository";
@@ -72,6 +74,7 @@ interface KpiAllocationDocument {
   readonly _id: string;
   readonly kpiPlanId: string;
   readonly groupId: string;
+  readonly memberEmploymentProfileId?: string | null;
   readonly memberTalentId: string;
   readonly membershipId: string | null;
   readonly allocationStatus: KpiAllocationStatus;
@@ -79,9 +82,21 @@ interface KpiAllocationDocument {
   readonly allocationEndDate: string | null;
   readonly targetMetrics: readonly KpiAllocationTargetMetric[];
   readonly snapshotMemberDisplayName: string | null;
+  readonly note?: string | null;
   readonly createdAt: number;
+  readonly createdByActorId?: string | null;
   readonly updatedAt: number;
+  readonly updatedByActorId?: string | null;
+  readonly submittedAt?: number | null;
+  readonly submittedByActorId?: string | null;
+  readonly approvedAt?: number | null;
+  readonly approvedByActorId?: string | null;
+  readonly approvalNote?: string | null;
+  readonly rejectedAt?: number | null;
+  readonly rejectedByActorId?: string | null;
+  readonly rejectionReason?: string | null;
   readonly publishedAt: number | null;
+  readonly publishedByActorId?: string | null;
   readonly closedAt: number | null;
 }
 
@@ -347,6 +362,90 @@ export class NativeMongoKpiPlanRepository
     return docs.map(toKpiAllocation);
   }
 
+  async listAllocations(input: {
+    readonly status?: KpiAllocationStatus;
+    readonly kpiPlanId?: string;
+    readonly groupId?: string;
+    readonly limit: number;
+  }): Promise<readonly KpiAllocation[]> {
+    const query: Record<string, unknown> = {};
+    assignIfDefined(query, "allocationStatus", input.status);
+    assignIfDefined(query, "kpiPlanId", input.kpiPlanId);
+    assignIfDefined(query, "groupId", input.groupId);
+    const docs = await this.allocationCollection
+      .find(query)
+      .sort({ updatedAt: -1, _id: 1 })
+      .limit(input.limit)
+      .toArray();
+    return docs.map(toKpiAllocation);
+  }
+
+  async replaceAllocationsForPlan(
+    input: ReplaceKpiAllocationsForPlanInput,
+    session: ClientSession,
+  ): Promise<void> {
+    const existing = await this.allocationCollection
+      .find({ kpiPlanId: input.kpiPlanId }, this.withSession(session))
+      .toArray();
+    if (
+      existing.some(
+        (allocation) =>
+          !input.allowedCurrentStatuses.includes(
+            allocation.allocationStatus,
+          ),
+      )
+    ) {
+      throw new Error("KPI allocation status conflict");
+    }
+    for (const allocation of existing) {
+      await this.allocationCollection.deleteOne(
+        { _id: allocation._id },
+        this.withSession(session),
+      );
+    }
+    await this.insertAllocations(input.allocations, session);
+    await this.collection.updateOne(
+      { _id: input.kpiPlanId },
+      {
+        $set: {
+          updatedAt: input.updatedAt,
+          updatedByActorId: input.updatedByActorId,
+        },
+      },
+      this.withSession(session),
+    );
+  }
+
+  async transitionAllocationsForPlan(
+    input: TransitionKpiAllocationsForPlanInput,
+    session: ClientSession,
+  ): Promise<number> {
+    const set: Record<string, unknown> = {
+      allocationStatus: input.toStatus,
+      updatedAt: input.updatedAt,
+      updatedByActorId: input.updatedByActorId,
+    };
+    assignIfDefined(set, "submittedAt", input.submittedAt);
+    assignIfDefined(set, "submittedByActorId", input.submittedByActorId);
+    assignIfDefined(set, "approvedAt", input.approvedAt);
+    assignIfDefined(set, "approvedByActorId", input.approvedByActorId);
+    assignIfDefined(set, "approvalNote", input.approvalNote);
+    assignIfDefined(set, "rejectedAt", input.rejectedAt);
+    assignIfDefined(set, "rejectedByActorId", input.rejectedByActorId);
+    assignIfDefined(set, "rejectionReason", input.rejectionReason);
+    assignIfDefined(set, "publishedAt", input.publishedAt);
+    assignIfDefined(set, "publishedByActorId", input.publishedByActorId);
+    const result = await this.allocationCollection.updateMany(
+      {
+        kpiPlanId: input.kpiPlanId,
+        allocationStatus: input.fromStatus,
+      },
+      { $set: set },
+      this.withSession(session),
+    );
+    return result.modifiedCount;
+  }
+
   async activateAllocationsForPlan(
     kpiPlanId: string,
     publishedAt: number,
@@ -364,8 +463,9 @@ export class NativeMongoKpiPlanRepository
         { _id: allocation._id, allocationStatus: "DRAFT" },
         {
           $set: {
-            allocationStatus: "ACTIVE",
+            allocationStatus: "PUBLISHED",
             publishedAt,
+            publishedByActorId: null,
             updatedAt: publishedAt,
           },
         },
@@ -488,6 +588,7 @@ function toKpiAllocationDocument(
     _id: input.id,
     kpiPlanId: input.kpiPlanId,
     groupId: input.groupId,
+    memberEmploymentProfileId: input.memberEmploymentProfileId,
     memberTalentId: input.memberTalentId,
     membershipId: input.membershipId,
     allocationStatus: input.allocationStatus,
@@ -498,9 +599,21 @@ function toKpiAllocationDocument(
       targetValue: metric.targetValue,
     })),
     snapshotMemberDisplayName: input.snapshotMemberDisplayName,
+    note: input.note,
     createdAt: input.createdAt,
+    createdByActorId: input.createdByActorId,
     updatedAt: input.updatedAt,
+    updatedByActorId: input.updatedByActorId,
+    submittedAt: input.submittedAt,
+    submittedByActorId: input.submittedByActorId,
+    approvedAt: input.approvedAt,
+    approvedByActorId: input.approvedByActorId,
+    approvalNote: input.approvalNote,
+    rejectedAt: input.rejectedAt,
+    rejectedByActorId: input.rejectedByActorId,
+    rejectionReason: input.rejectionReason,
     publishedAt: input.publishedAt,
+    publishedByActorId: input.publishedByActorId,
     closedAt: input.closedAt,
   };
 }
@@ -510,6 +623,7 @@ function toKpiAllocation(doc: KpiAllocationDocument): KpiAllocation {
     id: doc._id,
     kpiPlanId: doc.kpiPlanId,
     groupId: doc.groupId,
+    memberEmploymentProfileId: doc.memberEmploymentProfileId ?? null,
     memberTalentId: doc.memberTalentId,
     membershipId: doc.membershipId,
     allocationStatus: doc.allocationStatus,
@@ -520,9 +634,21 @@ function toKpiAllocation(doc: KpiAllocationDocument): KpiAllocation {
       targetValue: metric.targetValue,
     })),
     snapshotMemberDisplayName: doc.snapshotMemberDisplayName,
+    note: doc.note ?? null,
     createdAt: doc.createdAt,
+    createdByActorId: doc.createdByActorId ?? null,
     updatedAt: doc.updatedAt,
+    updatedByActorId: doc.updatedByActorId ?? null,
+    submittedAt: doc.submittedAt ?? null,
+    submittedByActorId: doc.submittedByActorId ?? null,
+    approvedAt: doc.approvedAt ?? null,
+    approvedByActorId: doc.approvedByActorId ?? null,
+    approvalNote: doc.approvalNote ?? null,
+    rejectedAt: doc.rejectedAt ?? null,
+    rejectedByActorId: doc.rejectedByActorId ?? null,
+    rejectionReason: doc.rejectionReason ?? null,
     publishedAt: doc.publishedAt,
+    publishedByActorId: doc.publishedByActorId ?? null,
     closedAt: doc.closedAt,
   };
 }

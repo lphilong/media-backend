@@ -3,6 +3,7 @@ import { ClientSession } from "mongodb";
 export interface KpiGroupMemberLookup {
   readonly membershipId: string;
   readonly talentId: string;
+  readonly employmentProfileId: string | null;
   readonly displayName: string | null;
 }
 
@@ -20,6 +21,11 @@ export interface KpiSubjectReadonlyAccess {
   findActiveGroupMember(
     groupId: string,
     memberTalentId: string,
+    session?: ClientSession,
+  ): Promise<KpiGroupMemberLookup | null>;
+  findActiveGroupMemberByEmploymentProfile(
+    groupId: string,
+    employmentProfileId: string,
     session?: ClientSession,
   ): Promise<KpiGroupMemberLookup | null>;
   findActiveEmploymentProfileByLinkedUserId(

@@ -32,6 +32,7 @@ interface EmploymentProfileDocument {
   readonly _id: string;
   readonly linkedUserId: string | null;
   readonly employmentStatus: string;
+  readonly displayName?: string;
 }
 
 export class NativeMongoKpiSubjectReadonlyAccess
@@ -97,7 +98,54 @@ export class NativeMongoKpiSubjectReadonlyAccess
     return {
       membershipId: member._id,
       talentId: member.talentId,
+      employmentProfileId: talent?.linkedEmploymentProfileId ?? null,
       displayName: talent?.stageName ?? talent?.displayName ?? null,
+    };
+  }
+
+  async findActiveGroupMemberByEmploymentProfile(
+    groupId: string,
+    employmentProfileId: string,
+    session?: ClientSession,
+  ): Promise<KpiGroupMemberLookup | null> {
+    const profile = await this.employmentProfileCollection.findOne(
+      {
+        _id: employmentProfileId,
+        employmentStatus: "ACTIVE",
+      },
+      this.withSession(session),
+    );
+    if (!profile) {
+      return null;
+    }
+    const talent = await this.collection.findOne(
+      {
+        linkedEmploymentProfileId: employmentProfileId,
+        status: "ACTIVE",
+        operationalStatus: { $ne: "ARCHIVED" },
+      },
+      this.withSession(session),
+    );
+    if (!talent) {
+      return null;
+    }
+    const member = await this.memberCollection.findOne(
+      {
+        groupId,
+        talentId: talent._id,
+        membershipStatus: "ACTIVE",
+      },
+      this.withSession(session),
+    );
+    if (!member) {
+      return null;
+    }
+    return {
+      membershipId: member._id,
+      talentId: member.talentId,
+      employmentProfileId,
+      displayName:
+        profile.displayName ?? talent.stageName ?? talent.displayName ?? null,
     };
   }
 

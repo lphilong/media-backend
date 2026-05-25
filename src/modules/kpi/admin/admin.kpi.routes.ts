@@ -15,6 +15,11 @@ export function adminKpiRoutes(
     queryController.execute,
   );
   router.get(
+    "/allocations",
+    withCommand("KPI_ALLOCATION_LIST"),
+    queryController.execute,
+  );
+  router.get(
     "/my-progress",
     withCommand("KPI_MY_PROGRESS"),
     queryController.execute,
@@ -52,6 +57,31 @@ export function adminKpiRoutes(
   router.put(
     "/plans/:kpiPlanId/allocations",
     withCommand("KPI_PLAN_REPLACE_ALLOCATIONS"),
+    mutationController.execute,
+  );
+  router.put(
+    "/plans/:kpiPlanId/allocation-draft",
+    withCommand("KPI_ALLOCATION_DRAFT_UPSERT"),
+    mutationController.execute,
+  );
+  router.post(
+    "/plans/:kpiPlanId/allocation-submit",
+    withCommand("KPI_ALLOCATION_SUBMIT"),
+    mutationController.execute,
+  );
+  router.post(
+    "/plans/:kpiPlanId/allocation-approve",
+    withCommand("KPI_ALLOCATION_APPROVE"),
+    mutationController.execute,
+  );
+  router.post(
+    "/plans/:kpiPlanId/allocation-reject",
+    withCommand("KPI_ALLOCATION_REJECT"),
+    mutationController.execute,
+  );
+  router.post(
+    "/plans/:kpiPlanId/allocation-publish",
+    withCommand("KPI_ALLOCATION_PUBLISH"),
     mutationController.execute,
   );
   router.post(

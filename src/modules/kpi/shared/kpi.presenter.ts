@@ -9,6 +9,7 @@ import {
   KpiActualMutationResult,
   KpiPlanMutationResult,
   ListKpiActualCorrectionsResult,
+  ListKpiAllocationsResult,
   ListKpiPlansResult,
 } from "./kpi.contracts";
 import {
@@ -19,6 +20,7 @@ import {
   KpiPlanListExposure,
   KpiPlanMutationExposure,
   KpiProgressExposure,
+  KpiAllocationExposure,
 } from "./kpi.exposure";
 
 export class KpiAdminMutationPresenter extends Presenter<
@@ -106,6 +108,20 @@ export class KpiAdminCorrectionListPresenter extends Presenter<
       data: input.items.map((item) =>
         KpiActualCorrectionExposure.expose(item),
       ),
+    };
+  }
+}
+
+export class KpiAdminAllocationListPresenter extends Presenter<
+  ListKpiAllocationsResult,
+  PresentationResult
+> {
+  present(
+    input: ListKpiAllocationsResult,
+    _context: ContextType,
+  ): PresentationResult {
+    return {
+      data: KpiAllocationExposure.exposeMany(input.items),
     };
   }
 }

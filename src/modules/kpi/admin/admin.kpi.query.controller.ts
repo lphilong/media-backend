@@ -13,10 +13,12 @@ import {
   GetKpiProgressQuery,
   ListKpiActualCorrectionsQuery,
   GetMyKpiProgressQuery,
+  ListKpiAllocationsQuery,
   ListKpiPlansQuery,
 } from "@modules/kpi/shared/kpi.contracts";
 import {
   KPI_ADMIN_ACTUAL_GRID_PRESENTER_KEY,
+  KPI_ADMIN_ALLOCATION_LIST_PRESENTER_KEY,
   KPI_ADMIN_CORRECTION_LIST_PRESENTER_KEY,
   KPI_ADMIN_DETAIL_PRESENTER_KEY,
   KPI_ADMIN_LIST_PRESENTER_KEY,
@@ -26,6 +28,7 @@ import { KpiAdminService } from "./admin.kpi.service";
 
 type KpiQueryCommand =
   | "KPI_PLAN_LIST"
+  | "KPI_ALLOCATION_LIST"
   | "KPI_PLAN_GET_DETAIL"
   | "KPI_PLAN_ACTUAL_DAILY_GRID"
   | "KPI_ACTUAL_CORRECTION_LIST"
@@ -43,6 +46,12 @@ const LIST_KPI_PLANS_QUERY_FIELDS = [
   "limit",
   "sortBy",
   "sortDirection",
+] as const;
+const LIST_KPI_ALLOCATIONS_QUERY_FIELDS = [
+  "status",
+  "kpiPlanId",
+  "groupId",
+  "limit",
 ] as const;
 
 const GET_KPI_PLAN_DETAIL_QUERY_FIELDS: readonly string[] = Object.freeze([]);
@@ -73,6 +82,11 @@ export class KpiAdminQueryController extends SecureController {
     switch (command) {
       case "KPI_PLAN_LIST":
         return this.service.listKpiPlans(actor, parseListKpiPlansQuery(req));
+      case "KPI_ALLOCATION_LIST":
+        return this.service.listKpiAllocations(
+          actor,
+          parseListKpiAllocationsQuery(req),
+        );
       case "KPI_PLAN_GET_DETAIL":
         return this.service.getKpiPlanDetail(
           actor,
@@ -131,6 +145,9 @@ function resolvePresenterKey(command: KpiQueryCommand): string {
   if (command === "KPI_PLAN_LIST") {
     return KPI_ADMIN_LIST_PRESENTER_KEY;
   }
+  if (command === "KPI_ALLOCATION_LIST") {
+    return KPI_ADMIN_ALLOCATION_LIST_PRESENTER_KEY;
+  }
   if (command === "KPI_PLAN_ACTUAL_DAILY_GRID") {
     return KPI_ADMIN_ACTUAL_GRID_PRESENTER_KEY;
   }
@@ -160,6 +177,20 @@ function parseListKpiPlansQuery(req: Request): ListKpiPlansQuery {
     limit: req.query.limit as string | undefined,
     sortBy: req.query.sortBy as string | undefined,
     sortDirection: req.query.sortDirection as string | undefined,
+  };
+}
+
+function parseListKpiAllocationsQuery(req: Request): ListKpiAllocationsQuery {
+  assertNoUnexpectedFields(
+    req.query as Record<string, unknown>,
+    LIST_KPI_ALLOCATIONS_QUERY_FIELDS,
+    "listKpiAllocations",
+  );
+  return {
+    status: req.query.status as string | undefined,
+    kpiPlanId: req.query.kpiPlanId as string | undefined,
+    groupId: req.query.groupId as string | undefined,
+    limit: req.query.limit as string | undefined,
   };
 }
 
