@@ -3,9 +3,12 @@ import { InfraModule } from "@infra/infra.module";
 import { createEmploymentProfileInfra } from "@infra/providers/employment-profile.infra";
 import { createTalentInfra } from "@infra/providers/talent.infra";
 import { createUserInfra } from "@infra/providers/user.infra";
+import { createWorkScheduleInfra } from "@infra/providers/work-schedule.infra";
 import { SelfServiceCurrentPersonController } from "@modules/self-service/self-service.current-person.controller";
 import { SelfServiceCurrentPersonService } from "@modules/self-service/self-service.current-person.service";
 import { selfServiceRoutes } from "@modules/self-service/self-service.routes";
+import { SelfServiceWorkShiftsController } from "@modules/self-service/self-service.work-shifts.controller";
+import { SelfServiceWorkShiftsService } from "@modules/self-service/self-service.work-shifts.service";
 
 export async function createSelfServiceRoutes(
   infra: InfraModule,
@@ -15,6 +18,9 @@ export async function createSelfServiceRoutes(
   );
   const { userReadRepository } = createUserInfra(infra.primaryDb);
   const { talentRepository } = createTalentInfra(infra.primaryDb);
+  const { workShiftReadRepository } = createWorkScheduleInfra(
+    infra.primaryDb,
+  );
 
   const currentPersonController = new SelfServiceCurrentPersonController(
     new SelfServiceCurrentPersonService(
@@ -24,5 +30,12 @@ export async function createSelfServiceRoutes(
     ),
   );
 
-  return selfServiceRoutes(currentPersonController);
+  const workShiftsController = new SelfServiceWorkShiftsController(
+    new SelfServiceWorkShiftsService(
+      employmentProfileRepository,
+      workShiftReadRepository,
+    ),
+  );
+
+  return selfServiceRoutes(currentPersonController, workShiftsController);
 }

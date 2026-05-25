@@ -1,5 +1,9 @@
 import { EmploymentStatus } from "@modules/employment-profile/domain/employment-profile.types";
 import { UserAccountStatus } from "@modules/user/domain/user.types";
+import {
+  WorkShiftSourceType,
+  WorkShiftStatus,
+} from "@modules/work-schedule/domain/work-schedule.types";
 
 export interface SelfServiceLinkedInternalTalentSummary {
   readonly talentId: string;
@@ -19,4 +23,26 @@ export interface SelfServiceCurrentPersonView {
   readonly linkedInternalTalent?: SelfServiceLinkedInternalTalentSummary;
   readonly locale?: string;
   readonly timezone?: string;
+}
+
+export interface SelfServiceWorkShiftView {
+  readonly workShiftId: string;
+  readonly title: string;
+  readonly status: WorkShiftStatus;
+  readonly startsAt: number;
+  readonly endsAt: number;
+  readonly sourceType: WorkShiftSourceType;
+}
+
+export interface SelfServiceWorkShiftListQuery {
+  readonly status?: WorkShiftStatus;
+  readonly windowStartAt?: number;
+  readonly windowEndAt?: number;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+export interface SelfServiceWorkShiftListView {
+  readonly items: readonly SelfServiceWorkShiftView[];
+  readonly nextCursor?: string;
 }

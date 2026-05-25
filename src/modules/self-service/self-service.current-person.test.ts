@@ -28,6 +28,19 @@ import {
 import { SelfServiceCurrentPersonController } from "./self-service.current-person.controller";
 import { SelfServiceCurrentPersonService } from "./self-service.current-person.service";
 import { selfServiceRoutes } from "./self-service.routes";
+import { SelfServiceWorkShiftsController } from "./self-service.work-shifts.controller";
+import { SelfServiceWorkShiftsService } from "./self-service.work-shifts.service";
+import {
+  WorkShiftListReadInput,
+  WorkShiftReadRepository,
+} from "@modules/work-schedule/read/work-schedule.read-repository";
+import {
+  WorkShiftByResourceListItemView,
+  WorkShiftBySubjectListItemView,
+  WorkShiftDetailView,
+  WorkShiftListItemView,
+  WorkShiftStatus,
+} from "@modules/work-schedule/domain/work-schedule.types";
 
 async function listen(app: express.Express): Promise<{
   readonly server: Server;
@@ -191,6 +204,162 @@ test("self-service current person endpoint does not mutate person, user, or tale
   }
 });
 
+test("GET /self-service/work-shifts returns only current actor official EmploymentProfile shifts", async () => {
+  const harness = createHarness();
+  const { server, baseUrl } = await listen(
+    createSelfServiceTestApp(harness, createStaffActor("user-staff")),
+  );
+
+  try {
+    const response = await fetch(
+      `${baseUrl}/self-service/work-shifts?employmentProfileId=ep-other&limit=10`,
+    );
+    const rejected = await response.json();
+
+    assert.equal(response.status, 400);
+    assert.match(
+      rejected.error.message,
+      /Invalid self-service request/,
+    );
+
+    const safeResponse = await fetch(
+      `${baseUrl}/self-service/work-shifts?limit=10&windowStartAt=1000&windowEndAt=4000`,
+    );
+    const body = await safeResponse.json();
+    const serialized = JSON.stringify(body);
+
+    assert.equal(safeResponse.status, 200);
+    assert.deepEqual(body.data, [
+      {
+        workShiftId: "shift-own-active",
+        title: "Own official filming shift",
+        status: "ACTIVE",
+        startsAt: 2_000,
+        endsAt: 3_000,
+        sourceType: "ROSTER_GENERATED",
+      },
+      {
+        workShiftId: "shift-own-cancelled",
+        title: "Own cancelled official shift",
+        status: "CANCELLED",
+        startsAt: 3_000,
+        endsAt: 3_500,
+        sourceType: "MANUAL",
+      },
+    ]);
+    assert.deepEqual(harness.workShifts.listInputs, [
+      {
+        subjectKind: "EMPLOYMENT_PROFILE",
+        subjectEmploymentProfileId: "ep-staff",
+        status: undefined,
+        windowStartAt: 1_000,
+        windowEndAt: 4_000,
+        limit: 10,
+        cursor: undefined,
+        sortField: "shiftStartAt",
+        sortDirection: "ASC",
+      },
+    ]);
+
+    for (const forbidden of [
+      "shift-other",
+      "Other official shift",
+      "ep-other",
+      "subjectEmploymentProfileId",
+      "subjectRef",
+      "studioResourceIds",
+      "internal admin note",
+      "externalRef",
+      "approvalNote",
+      "requestedByUserId",
+      "managerEmploymentProfileId",
+      "legalName",
+      "auth0|",
+      "temporaryPassword",
+    ]) {
+      assert.equal(serialized.includes(forbidden), false, forbidden);
+    }
+  } finally {
+    await close(server);
+  }
+});
+
+test("GET /self-service/work-shifts can filter current actor shifts by safe status only", async () => {
+  const harness = createHarness();
+  const { server, baseUrl } = await listen(
+    createSelfServiceTestApp(harness, createStaffActor("user-staff")),
+  );
+
+  try {
+    const response = await fetch(
+      `${baseUrl}/self-service/work-shifts?status=ACTIVE`,
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      body.data.map((item: { readonly workShiftId: string }) => item.workShiftId),
+      ["shift-own-active"],
+    );
+    assert.equal(
+      harness.workShifts.listInputs[0]?.subjectEmploymentProfileId,
+      "ep-staff",
+    );
+    assert.equal(harness.workShifts.listInputs[0]?.status, "ACTIVE");
+  } finally {
+    await close(server);
+  }
+});
+
+test("GET /self-service/work-shifts returns a safe error when no linked EmploymentProfile exists", async () => {
+  const harness = createHarness();
+  const { server, baseUrl } = await listen(
+    createSelfServiceTestApp(harness, createStaffActor("user-unlinked")),
+  );
+
+  try {
+    const response = await fetch(`${baseUrl}/self-service/work-shifts`);
+    const body = await response.json();
+    const serialized = JSON.stringify(body);
+
+    assert.equal(response.status, 404);
+    assert.deepEqual(body, {
+      error: {
+        code: "SELF_SERVICE_CURRENT_PERSON_NOT_LINKED",
+        message: "No linked Employment Profile",
+      },
+    });
+    assert.equal(serialized.includes("Staff Legal"), false);
+    assert.equal(serialized.includes("shift-own-active"), false);
+    assert.deepEqual(harness.workShifts.listInputs, []);
+  } finally {
+    await close(server);
+  }
+});
+
+test("self-service work shifts endpoint is read-only and does not expose mutation routes", async () => {
+  const harness = createHarness();
+  const before = harness.snapshot();
+  const { server, baseUrl } = await listen(
+    createSelfServiceTestApp(harness, createStaffActor("user-staff")),
+  );
+
+  try {
+    const getResponse = await fetch(`${baseUrl}/self-service/work-shifts`);
+    await getResponse.json();
+    assert.equal(getResponse.status, 200);
+    assert.deepEqual(harness.snapshot(), before);
+
+    const postResponse = await fetch(`${baseUrl}/self-service/work-shifts`, {
+      method: "POST",
+    });
+    assert.equal(postResponse.status, 404);
+    assert.deepEqual(harness.snapshot(), before);
+  } finally {
+    await close(server);
+  }
+});
+
 test("self-service foundation does not change TALENT_STAFF_SELF role template permissions or scopes", () => {
   const template = ROLE_TEMPLATE_CATALOG.find(
     (candidate) => candidate.code === "TALENT_STAFF_SELF",
@@ -223,6 +392,12 @@ function createSelfServiceTestApp(
       harness.talents,
     ),
   );
+  const workShiftsController = new SelfServiceWorkShiftsController(
+    new SelfServiceWorkShiftsService(
+      harness.employmentProfiles,
+      harness.workShifts,
+    ),
+  );
 
   app.use(
     "/self-service",
@@ -231,7 +406,7 @@ function createSelfServiceTestApp(
       bindActor(req, actor);
       next();
     },
-    selfServiceRoutes(controller),
+    selfServiceRoutes(controller, workShiftsController),
   );
   app.use(createHttpErrorMiddleware({ error() {} } as never));
 
@@ -262,6 +437,7 @@ interface SelfServiceHarness {
   readonly employmentProfiles: InMemoryEmploymentProfileRepository;
   readonly users: InMemoryUserReadRepository;
   readonly talents: InMemoryTalentRepository;
+  readonly workShifts: InMemoryWorkShiftReadRepository;
   snapshot(): unknown;
 }
 
@@ -299,16 +475,56 @@ function createHarness(): SelfServiceHarness {
       displayShortName: "Legacy Talent Short",
     }),
   ]);
+  const workShifts = new InMemoryWorkShiftReadRepository([
+    workShiftListItem({
+      id: "shift-own-active",
+      title: "Own official filming shift",
+      subjectEmploymentProfileId: "ep-staff",
+      status: "ACTIVE",
+      shiftStartAt: 2_000,
+      shiftEndAt: 3_000,
+      sourceType: "ROSTER_GENERATED",
+    }),
+    workShiftListItem({
+      id: "shift-own-cancelled",
+      title: "Own cancelled official shift",
+      subjectEmploymentProfileId: "ep-staff",
+      status: "CANCELLED",
+      shiftStartAt: 3_000,
+      shiftEndAt: 3_500,
+      sourceType: "MANUAL",
+    }),
+    workShiftListItem({
+      id: "shift-own-archived",
+      title: "Own archived shift",
+      subjectEmploymentProfileId: "ep-staff",
+      status: "ARCHIVED",
+      shiftStartAt: 2_500,
+      shiftEndAt: 2_900,
+      sourceType: "MANUAL",
+    }),
+    workShiftListItem({
+      id: "shift-other",
+      title: "Other official shift",
+      subjectEmploymentProfileId: "ep-other",
+      status: "ACTIVE",
+      shiftStartAt: 2_100,
+      shiftEndAt: 3_200,
+      sourceType: "MANUAL",
+    }),
+  ]);
 
   return {
     employmentProfiles,
     users,
     talents,
+    workShifts,
     snapshot() {
       return {
         employmentProfiles: employmentProfiles.snapshot(),
         users: users.snapshot(),
         talents: talents.snapshot(),
+        workShifts: workShifts.snapshot(),
       };
     },
   };
@@ -401,6 +617,36 @@ function talentRecord(overrides: Partial<TalentRecord>): TalentRecord {
     profileSummary: null,
     createdAt: 1,
     updatedAt: 2,
+    ...overrides,
+  };
+}
+
+function workShiftListItem(
+  overrides: Partial<WorkShiftListItemView>,
+): WorkShiftListItemView {
+  return {
+    id: "shift-1",
+    shiftCode: "WS-000001",
+    title: "Shift",
+    subjectKind: "EMPLOYMENT_PROFILE",
+    subjectEmploymentProfileId: "ep-staff",
+    subjectTalentId: null,
+    subjectTalentGroupId: null,
+    subjectRef: {
+      id: "ep-staff",
+      displayName: "Staff Display",
+      name: "Staff Legal",
+    },
+    status: "ACTIVE",
+    shiftStartAt: 1_000,
+    shiftEndAt: 2_000,
+    sourceType: "MANUAL",
+    sourceRosterId: null,
+    sourceRosterRef: null,
+    sourceRosterMonth: null,
+    sourceRosterLocalDate: null,
+    sourceRosterSlotKey: null,
+    createdAt: 1,
     ...overrides,
   };
 }
@@ -548,4 +794,76 @@ class InMemoryTalentRepository implements TalentRepository {
   }
 }
 
-type _KeepImportedTypesUsed = ClientSession | EmploymentStatus | TalentOperationalStatus;
+class InMemoryWorkShiftReadRepository implements WorkShiftReadRepository {
+  readonly listInputs: WorkShiftListReadInput[] = [];
+
+  constructor(private readonly records: WorkShiftListItemView[]) {}
+
+  snapshot(): readonly WorkShiftListItemView[] {
+    return this.records.map((record) => ({ ...record }));
+  }
+
+  async listWorkShifts(
+    input: WorkShiftListReadInput,
+  ): Promise<{
+    readonly items: readonly WorkShiftListItemView[];
+    readonly nextCursor?: string;
+  }> {
+    this.listInputs.push({ ...input });
+
+    let items = this.records.filter(
+      (record) =>
+        record.subjectKind === input.subjectKind &&
+        record.subjectEmploymentProfileId ===
+          input.subjectEmploymentProfileId,
+    );
+
+    if (input.status) {
+      items = items.filter((record) => record.status === input.status);
+    } else {
+      items = items.filter((record) => record.status !== "ARCHIVED");
+    }
+
+    if (input.windowStartAt !== undefined) {
+      items = items.filter(
+        (record) => record.shiftEndAt > (input.windowStartAt as number),
+      );
+    }
+
+    if (input.windowEndAt !== undefined) {
+      items = items.filter(
+        (record) => record.shiftStartAt < (input.windowEndAt as number),
+      );
+    }
+
+    return {
+      items: items.slice(0, input.limit),
+    };
+  }
+
+  async listWorkShiftsBySubject(): Promise<{
+    readonly items: readonly WorkShiftBySubjectListItemView[];
+  }> {
+    throw new Error("Not implemented");
+  }
+
+  async listWorkShiftsByResource(): Promise<{
+    readonly items: readonly WorkShiftByResourceListItemView[];
+  }> {
+    throw new Error("Not implemented");
+  }
+
+  async getWorkShiftDetail(): Promise<WorkShiftDetailView | null> {
+    throw new Error("Not implemented");
+  }
+
+  async listActiveEmploymentProfileShiftsForWindow(): Promise<[]> {
+    throw new Error("Not implemented");
+  }
+}
+
+type _KeepImportedTypesUsed =
+  | ClientSession
+  | EmploymentStatus
+  | TalentOperationalStatus
+  | WorkShiftStatus;

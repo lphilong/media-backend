@@ -10,3 +10,14 @@ export class SelfServiceCurrentPersonNotLinkedError extends DomainError {
     );
   }
 }
+
+export class SelfServiceValidationError extends DomainError {
+  constructor(message: string) {
+    super(
+      "SELF_SERVICE_VALIDATION_ERROR",
+      message,
+      "Invalid self-service request",
+      400,
+    );
+  }
+}
