@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { NativeMongoEmploymentProfileReadRepository } from "@infra/mongo/employment-profile/employment-profile.read-repository";
 import { NativeMongoOrgUnitReadRepository } from "@infra/mongo/org-unit/org-unit.read-repository";
 import { NativeMongoPlatformAccountReadRepository } from "@infra/mongo/platform-account/platform-account.read-repository";
+import { NativeMongoReferenceLookupReadRepository } from "@infra/mongo/reference-lookup/reference-lookup.read-repository";
 import { NativeMongoTalentGroupReadRepository } from "@infra/mongo/talent-group/talent-group.read-repository";
 import { NativeMongoTalentReadRepository } from "@infra/mongo/talent/talent.read-repository";
 import { EmploymentProfileAdminDetailExposure } from "@modules/employment-profile/shared/employment-profile.exposure";
@@ -221,6 +222,11 @@ function createFindResult(documents: readonly unknown[]) {
         },
       };
     },
+    limit() {
+      return {
+        toArray: async () => [...documents],
+      };
+    },
     toArray: async () => [...documents],
   };
 }
@@ -329,6 +335,9 @@ test("master-data Talent refs enrich manager and linked employment profile in on
   assert.equal(list.items[0].linkedEmploymentProfileId, "ep-child");
   assert.equal(list.items[0].managerEmploymentProfileRef?.code, "EP-1");
   assert.equal(list.items[0].linkedEmploymentProfileRef?.code, "EP-2");
+  assert.equal(list.items[0].displayName, "Bao");
+  assert.equal(list.items[0].performanceAlias, "Mina");
+  assert.equal(detail?.displayName, "Bao");
   assert.deepEqual(detail?.linkedEmploymentProfileRef, list.items[0].linkedEmploymentProfileRef);
   assert.equal(
     TalentAdminDetailExposure.expose(detail!).linkedEmploymentProfileRef !==
@@ -357,6 +366,13 @@ test("master-data Talent Group member refs preserve membership IDs and member or
           distinct: async () => ["group-1"],
         };
       }
+      if (name === "employment_profiles") {
+        return {
+          find() {
+            return createFindResult([epChild]);
+          },
+        };
+      }
       return {
         find(_query: unknown, options: unknown) {
           return createFindResult(options ? [talent] : [talentGroup]);
@@ -380,7 +396,8 @@ test("master-data Talent Group member refs preserve membership IDs and member or
   assert.deepEqual(members.items[0].talentRef, {
     id: "talent-1",
     code: "TAL-1",
-    name: "Mina",
+    name: "Bao",
+    displayName: "Bao",
     status: "ACTIVE",
   });
   assert.equal(byTalent.items[0].membershipId, "membership-1");
@@ -389,6 +406,56 @@ test("master-data Talent Group member refs preserve membership IDs and member or
     TalentGroupMemberExposure.expose(members.items[0]).talentRef !== undefined,
     true,
   );
+});
+
+test("reference lookup Talent labels derive internal names from Employment Profile", async () => {
+  const externalTalent = {
+    ...talent,
+    _id: "talent-external",
+    talentCode: "TAL-2",
+    stageName: "BaoStar",
+    legalName: "Bao External Legal",
+    displayShortName: null,
+    talentOrigin: "EXTERNAL",
+    linkedEmploymentProfileId: null,
+  };
+  const repository = new NativeMongoReferenceLookupReadRepository({
+    collection(name: string) {
+      if (name === "employment_profiles") {
+        return {
+          find() {
+            return createFindResult([epChild]);
+          },
+        };
+      }
+
+      return {
+        find() {
+          return createFindResult([talent, externalTalent]);
+        },
+      };
+    },
+  } as never);
+
+  const options = await repository.listReferenceOptions({
+    domain: "talents",
+    limit: 10,
+  });
+
+  assert.deepEqual(options[0], {
+    id: "talent-1",
+    label: "Bao",
+    secondaryLabel: "Mina",
+    code: "TAL-1",
+    status: "ACTIVE",
+  });
+  assert.deepEqual(options[1], {
+    id: "talent-external",
+    label: "BaoStar",
+    secondaryLabel: "Bao External Legal",
+    code: "TAL-2",
+    status: "ACTIVE",
+  });
 });
 
 test("master-data Platform Account ownerRef follows ownerKind polymorphism and preserves owner IDs", async () => {

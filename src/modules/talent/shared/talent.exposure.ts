@@ -12,6 +12,8 @@ import {
 const TALENT_ADMIN_LIST_FIELDS = [
   "id",
   "talentCode",
+  "displayName",
+  "performanceAlias",
   "stageName",
   "legalName",
   "displayShortName",
@@ -31,6 +33,8 @@ const TALENT_ADMIN_LIST_FIELDS = [
 const TALENT_ADMIN_DETAIL_FIELDS = [
   "id",
   "talentCode",
+  "displayName",
+  "performanceAlias",
   "stageName",
   "legalName",
   "displayShortName",
@@ -56,6 +60,9 @@ export const TalentAdminListExposure = Object.freeze({
         {
           id: input.id,
           talentCode: input.talentCode,
+          displayName: input.displayName,
+          performanceAlias:
+            input.performanceAlias,
           stageName: input.stageName,
           legalName: input.legalName,
           displayShortName:
@@ -100,6 +107,9 @@ export const TalentAdminDetailExposure =
           {
             id: input.id,
             talentCode: input.talentCode,
+            displayName: input.displayName,
+            performanceAlias:
+              input.performanceAlias,
             stageName: input.stageName,
             legalName: input.legalName,
             displayShortName:

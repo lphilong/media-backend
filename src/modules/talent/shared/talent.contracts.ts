@@ -11,8 +11,8 @@ import {
 
 export interface CreateTalentCommand {
   readonly talentCode?: string | null;
-  readonly stageName: string;
-  readonly legalName: string;
+  readonly stageName?: string | null;
+  readonly legalName?: string | null;
   readonly talentOrigin: TalentOrigin;
   readonly managerEmploymentProfileId?: string | null;
   readonly linkedEmploymentProfileId?: string | null;
@@ -26,7 +26,7 @@ export interface CreateTalentCommand {
 
 export interface UpdateTalentCoreCommand {
   readonly talentId: string;
-  readonly stageName?: string;
+  readonly stageName?: string | null;
   readonly legalName?: string;
   readonly displayShortName?: string | null;
   readonly externalRef?: string | null;

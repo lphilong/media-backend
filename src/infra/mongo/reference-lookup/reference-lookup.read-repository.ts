@@ -7,6 +7,8 @@ import {
   ReferenceLookupDomain,
   ReferenceLookupItem,
 } from "@modules/reference-lookup/shared/reference-lookup.contracts";
+import { ReferenceSummary } from "@modules/reference-summary";
+import { deriveTalentDisplaySummary } from "@modules/talent/domain/talent-display";
 
 type LookupDocument = Record<string, unknown>;
 
@@ -252,6 +254,10 @@ export class NativeMongoReferenceLookupReadRepository implements ReferenceLookup
   async listReferenceOptions(
     input: ListReferenceLookupInput,
   ): Promise<readonly ReferenceLookupItem[]> {
+    if (input.domain === "talents") {
+      return this.listTalentReferenceOptions(input);
+    }
+
     const config = LOOKUP_CONFIG_BY_DOMAIN[input.domain];
     const collection: Collection<LookupDocument> =
       this.db.collection<LookupDocument>(config.collection);
@@ -265,6 +271,65 @@ export class NativeMongoReferenceLookupReadRepository implements ReferenceLookup
       .toArray();
 
     return documents.map(config.map);
+  }
+
+  private async listTalentReferenceOptions(
+    input: ListReferenceLookupInput,
+  ): Promise<readonly ReferenceLookupItem[]> {
+    const talentCollection: Collection<LookupDocument> =
+      this.db.collection<LookupDocument>("talents");
+    const employmentProfileCollection: Collection<LookupDocument> =
+      this.db.collection<LookupDocument>("employment_profiles");
+    const linkedEmploymentProfileIds =
+      input.search === undefined
+        ? []
+        : await findMatchingEmploymentProfileIds(
+            employmentProfileCollection,
+            input.search,
+          );
+
+    const documents = await talentCollection
+      .find(
+        buildTalentLookupQuery(
+          input.search,
+          input.ids,
+          linkedEmploymentProfileIds,
+        ),
+        {
+          projection: {
+            _id: 1,
+            talentCode: 1,
+            stageName: 1,
+            legalName: 1,
+            displayShortName: 1,
+            talentOrigin: 1,
+            linkedEmploymentProfileId: 1,
+            operationalStatus: 1,
+          },
+        },
+      )
+      .sort({ talentCode: 1, _id: 1 })
+      .limit(input.limit)
+      .toArray();
+
+    const employmentProfileRefMap =
+      await loadEmploymentProfileReferenceSummaries(
+        documents
+          .map((document) =>
+            readString(document, "linkedEmploymentProfileId"),
+          )
+          .filter((value): value is string => value !== undefined),
+        employmentProfileCollection,
+      );
+
+    return documents.map((document) =>
+      talentLookupItem(
+        document,
+        employmentProfileRefMap.get(
+          readString(document, "linkedEmploymentProfileId") ?? "",
+        ) ?? null,
+      ),
+    );
   }
 }
 
@@ -306,6 +371,162 @@ function buildQuery(
   }
 
   return filters.length === 1 ? (filters[0] ?? {}) : { $and: filters };
+}
+
+async function findMatchingEmploymentProfileIds(
+  collection: Collection<LookupDocument>,
+  search: string,
+): Promise<readonly string[]> {
+  const escaped = escapeReferenceLookupRegex(search);
+  const expression = new RegExp(escaped, "iu");
+  const documents = await collection
+    .find(
+      {
+        employmentStatus: {
+          $ne: "ARCHIVED",
+        },
+        $or: ["employeeCode", "legalName", "displayName"].map((field) => ({
+          [field]: {
+            $regex: expression,
+          },
+        })),
+      },
+      {
+        projection: {
+          _id: 1,
+        },
+      },
+    )
+    .limit(50)
+    .toArray();
+
+  return documents
+    .map((document) => readString(document, "_id"))
+    .filter((value): value is string => value !== undefined);
+}
+
+function buildTalentLookupQuery(
+  search: string | undefined,
+  ids: readonly string[] | undefined,
+  linkedEmploymentProfileIds: readonly string[],
+): Record<string, unknown> {
+  const filters: Array<Record<string, unknown>> = [
+    {
+      operationalStatus: {
+        $ne: "ARCHIVED",
+      },
+    },
+  ];
+
+  if (ids && ids.length > 0) {
+    filters.push({
+      _id: {
+        $in: [...ids],
+      },
+    });
+  }
+
+  if (search) {
+    const escaped = escapeReferenceLookupRegex(search);
+    const expression = new RegExp(escaped, "iu");
+    const searchFilters: Array<Record<string, unknown>> = [
+      "talentCode",
+      "stageName",
+      "legalName",
+      "displayShortName",
+    ].map((field) => ({
+      [field]: {
+        $regex: expression,
+      },
+    }));
+
+    if (linkedEmploymentProfileIds.length > 0) {
+      searchFilters.push({
+        linkedEmploymentProfileId: {
+          $in: [...linkedEmploymentProfileIds],
+        },
+      });
+    }
+
+    filters.push({
+      $or: searchFilters,
+    });
+  }
+
+  return filters.length === 1 ? (filters[0] ?? {}) : { $and: filters };
+}
+
+async function loadEmploymentProfileReferenceSummaries(
+  ids: readonly string[],
+  collection: Collection<LookupDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  const uniqueIds = [...new Set(ids)];
+  if (uniqueIds.length === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      ({
+        _id: {
+          $in: uniqueIds,
+        },
+      } as Record<string, unknown>),
+      {
+        projection: {
+          _id: 1,
+          employeeCode: 1,
+          legalName: 1,
+          displayName: 1,
+          employmentStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(
+    documents.map((document) => [
+      readRequiredString(document, "_id"),
+      {
+        id: readRequiredString(document, "_id"),
+        code: readString(document, "employeeCode"),
+        displayName: readString(document, "displayName"),
+        name: readString(document, "legalName"),
+        status: readString(document, "employmentStatus"),
+      },
+    ]),
+  );
+}
+
+function talentLookupItem(
+  document: LookupDocument,
+  linkedEmploymentProfile: ReferenceSummary | null,
+): ReferenceLookupItem {
+  const talentOrigin =
+    readString(document, "talentOrigin") === "EXTERNAL"
+      ? "EXTERNAL"
+      : "INTERNAL";
+  const display = deriveTalentDisplaySummary(
+    {
+      talentCode: readString(document, "talentCode") ?? "",
+      stageName: readString(document, "stageName"),
+      legalName: readString(document, "legalName"),
+      displayShortName: readString(document, "displayShortName"),
+      talentOrigin,
+    },
+    linkedEmploymentProfile,
+  );
+
+  return item(document, {
+    label: display.displayName,
+    secondaryLabel:
+      talentOrigin === "INTERNAL"
+        ? display.performanceAlias ?? linkedEmploymentProfile?.code
+        : readString(document, "displayShortName") ??
+          readString(document, "legalName"),
+    code: readString(document, "talentCode"),
+    status: readString(document, "operationalStatus"),
+  });
 }
 
 function item(

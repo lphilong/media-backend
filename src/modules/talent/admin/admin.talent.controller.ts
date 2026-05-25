@@ -187,8 +187,14 @@ function parseCreateTalentCommand(
 
   return {
     talentCode: body.talentCode as string,
-    stageName: body.stageName as string,
-    legalName: body.legalName as string,
+    stageName: body.stageName as
+      | string
+      | null
+      | undefined,
+    legalName: body.legalName as
+      | string
+      | null
+      | undefined,
     talentOrigin:
       body.talentOrigin as CreateTalentCommand["talentOrigin"],
     managerEmploymentProfileId:
@@ -237,7 +243,10 @@ function parseUpdateTalentCoreCommand(
 
   return {
     talentId: req.params.talentId,
-    stageName: body.stageName as string | undefined,
+    stageName: body.stageName as
+      | string
+      | null
+      | undefined,
     legalName: body.legalName as string | undefined,
     displayShortName:
       body.displayShortName as

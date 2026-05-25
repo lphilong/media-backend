@@ -43,6 +43,7 @@ tools/
 !src/modules/talent-kpi/talent-kpi-target-filters.test.ts
 !src/modules/kpi/kpi-admin.service.test.ts
 !src/modules/reference-lookup/reference-lookup.service.test.ts
+!src/modules/talent/admin/admin.talent.service.test.ts
 !src/modules/talent-group/talent-group-manager-assignment.service.test.ts
 !src/modules/talent-manager-scope.query-service.test.ts
 !src/modules/revenue-ledger/revenue-ledger-target-filters.test.ts

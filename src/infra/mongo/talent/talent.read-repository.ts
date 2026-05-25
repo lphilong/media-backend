@@ -20,6 +20,7 @@ import {
   TalentSortDirection,
   TalentSortField,
 } from "@modules/talent/domain/talent.types";
+import { deriveTalentDisplaySummary } from "@modules/talent/domain/talent-display";
 import {
   ListTalentReadInput,
   ListTalentReadResult,
@@ -283,6 +284,11 @@ interface TalentGroupMemberReadDocument {
 
 async function enrichTalentEmploymentProfileReferenceSummaries<
   T extends {
+    readonly talentCode: string;
+    readonly stageName: string;
+    readonly legalName: string;
+    readonly displayShortName: string | null;
+    readonly talentOrigin: TalentOrigin;
     readonly managerEmploymentProfileId: string | null;
     readonly linkedEmploymentProfileId: string | null;
   },
@@ -321,15 +327,28 @@ async function enrichTalentEmploymentProfileReferenceSummaries<
     collection,
   );
 
-  return items.map((item) => ({
-    ...item,
-    managerEmploymentProfileRef: item.managerEmploymentProfileId
-      ? (employmentProfileRefMap.get(item.managerEmploymentProfileId) ?? null)
-      : null,
-    linkedEmploymentProfileRef: item.linkedEmploymentProfileId
-      ? (employmentProfileRefMap.get(item.linkedEmploymentProfileId) ?? null)
-      : null,
-  }));
+  return items.map((item) => {
+    const managerEmploymentProfileRef =
+      item.managerEmploymentProfileId
+        ? (employmentProfileRefMap.get(item.managerEmploymentProfileId) ?? null)
+        : null;
+    const linkedEmploymentProfileRef =
+      item.linkedEmploymentProfileId
+        ? (employmentProfileRefMap.get(item.linkedEmploymentProfileId) ?? null)
+        : null;
+    const display = deriveTalentDisplaySummary(
+      item,
+      linkedEmploymentProfileRef,
+    );
+
+    return {
+      ...item,
+      displayName: display.displayName,
+      performanceAlias: display.performanceAlias,
+      managerEmploymentProfileRef,
+      linkedEmploymentProfileRef,
+    };
+  });
 }
 
 async function loadEmploymentProfileReferenceSummaries(
@@ -404,6 +423,9 @@ export class NativeMongoTalentEmploymentProfileReadonlyAccess implements TalentE
       {
         projection: {
           _id: 1,
+          employeeCode: 1,
+          displayName: 1,
+          legalName: 1,
           employmentStatus: 1,
         },
         ...(session ? { session } : {}),
@@ -413,6 +435,9 @@ export class NativeMongoTalentEmploymentProfileReadonlyAccess implements TalentE
     return doc
       ? {
           id: doc._id,
+          employeeCode: doc.employeeCode,
+          displayName: doc.displayName,
+          legalName: doc.legalName,
           employmentStatus: doc.employmentStatus,
         }
       : null;
@@ -502,9 +527,19 @@ export class NativeMongoEmploymentProfileTalentReadonlyAccess implements Employm
 function toTalentListItemView(
   document: TalentReadDocument,
 ): TalentListItemView {
+  const display = deriveTalentDisplaySummary({
+    talentCode: document.talentCode,
+    stageName: document.stageName,
+    legalName: document.legalName,
+    displayShortName: document.displayShortName,
+    talentOrigin: document.talentOrigin,
+  });
+
   return {
     id: document._id,
     talentCode: document.talentCode,
+    displayName: display.displayName,
+    performanceAlias: display.performanceAlias,
     stageName: document.stageName,
     legalName: document.legalName,
     displayShortName: document.displayShortName,

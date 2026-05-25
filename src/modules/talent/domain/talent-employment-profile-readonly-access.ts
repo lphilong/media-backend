@@ -3,6 +3,9 @@ import { EmploymentStatus } from "@modules/employment-profile/domain/employment-
 
 export interface TalentReferencedEmploymentProfile {
   readonly id: string;
+  readonly employeeCode?: string;
+  readonly displayName?: string;
+  readonly legalName?: string;
   readonly employmentStatus: EmploymentStatus;
 }
 

@@ -22,7 +22,11 @@ import {
   TalentGroupReadRepository,
 } from "@modules/talent-group/read/talent-group.read-repository";
 import { ReferenceSummary } from "@modules/reference-summary";
-import { TalentOperationalStatus } from "@modules/talent/domain/talent.types";
+import {
+  TalentOperationalStatus,
+  TalentOrigin,
+} from "@modules/talent/domain/talent.types";
+import { deriveTalentDisplaySummary } from "@modules/talent/domain/talent-display";
 
 interface TalentGroupReadDocument {
   readonly _id: string;
@@ -57,7 +61,17 @@ interface TalentReferenceDocument {
   readonly stageName: string;
   readonly legalName: string;
   readonly displayShortName: string | null;
+  readonly talentOrigin: TalentOrigin;
+  readonly linkedEmploymentProfileId: string | null;
   readonly operationalStatus: TalentOperationalStatus;
+}
+
+interface EmploymentProfileReferenceDocument {
+  readonly _id: string;
+  readonly employeeCode: string;
+  readonly legalName: string;
+  readonly displayName: string;
+  readonly employmentStatus: string;
 }
 
 interface TalentGroupMembershipSummary {
@@ -109,6 +123,7 @@ export class NativeMongoTalentGroupReadRepository
 {
   private readonly memberCollection: Collection<TalentGroupMemberReadDocument>;
   private readonly talentCollection: Collection<TalentReferenceDocument>;
+  private readonly employmentProfileCollection: Collection<EmploymentProfileReferenceDocument>;
 
   constructor(db: Db) {
     super(db, "talent_groups");
@@ -116,6 +131,8 @@ export class NativeMongoTalentGroupReadRepository
       "talent_group_members",
     );
     this.talentCollection = db.collection<TalentReferenceDocument>("talents");
+    this.employmentProfileCollection =
+      db.collection<EmploymentProfileReferenceDocument>("employment_profiles");
   }
 
   async listTalentGroups(
@@ -253,6 +270,7 @@ export class NativeMongoTalentGroupReadRepository
     const items = await enrichTalentGroupMemberReferenceSummaries(
       page.map((doc) => toTalentGroupMemberListItemView(doc)),
       this.talentCollection,
+      this.employmentProfileCollection,
     );
 
     return {
@@ -357,6 +375,7 @@ export class NativeMongoTalentGroupReadRepository
         ),
       ),
       this.talentCollection,
+      this.employmentProfileCollection,
     );
 
     return {
@@ -379,6 +398,7 @@ async function enrichTalentGroupMemberReferenceSummaries<
 >(
   items: readonly T[],
   collection: Collection<TalentReferenceDocument>,
+  employmentProfileCollection: Collection<EmploymentProfileReferenceDocument>,
 ): Promise<readonly (T & { readonly talentRef: ReferenceSummary | null })[]> {
   if (items.length === 0) {
     return items.map((item) => ({
@@ -396,6 +416,7 @@ async function enrichTalentGroupMemberReferenceSummaries<
   const talentRefMap = await loadTalentReferenceSummaries(
     talentIds,
     collection,
+    employmentProfileCollection,
   );
 
   return items.map((item) => ({
@@ -407,6 +428,7 @@ async function enrichTalentGroupMemberReferenceSummaries<
 async function loadTalentReferenceSummaries(
   ids: ReadonlySet<string>,
   collection: Collection<TalentReferenceDocument>,
+  employmentProfileCollection: Collection<EmploymentProfileReferenceDocument>,
 ): Promise<Map<string, ReferenceSummary>> {
   if (ids.size === 0) {
     return new Map();
@@ -426,7 +448,58 @@ async function loadTalentReferenceSummaries(
           stageName: 1,
           legalName: 1,
           displayShortName: 1,
+          talentOrigin: 1,
+          linkedEmploymentProfileId: 1,
           operationalStatus: 1,
+        },
+      },
+    )
+    .toArray();
+
+  const linkedEmploymentProfileRefMap =
+    await loadEmploymentProfileReferenceSummaries(
+      documents
+        .map((document) => document.linkedEmploymentProfileId)
+        .filter((value): value is string => typeof value === "string"),
+      employmentProfileCollection,
+    );
+
+  return new Map(
+    documents.map((document) => [
+      document._id,
+      toTalentReferenceSummary(
+        document,
+        document.linkedEmploymentProfileId
+          ? (linkedEmploymentProfileRefMap.get(document.linkedEmploymentProfileId) ?? null)
+          : null,
+      ),
+    ]),
+  );
+}
+
+async function loadEmploymentProfileReferenceSummaries(
+  ids: readonly string[],
+  collection: Collection<EmploymentProfileReferenceDocument>,
+): Promise<Map<string, ReferenceSummary>> {
+  const uniqueIds = [...new Set(ids)];
+  if (uniqueIds.length === 0) {
+    return new Map();
+  }
+
+  const documents = await collection
+    .find(
+      {
+        _id: {
+          $in: uniqueIds,
+        },
+      },
+      {
+        projection: {
+          _id: 1,
+          employeeCode: 1,
+          legalName: 1,
+          displayName: 1,
+          employmentStatus: 1,
         },
       },
     )
@@ -435,18 +508,31 @@ async function loadTalentReferenceSummaries(
   return new Map(
     documents.map((document) => [
       document._id,
-      toTalentReferenceSummary(document),
+      {
+        id: document._id,
+        code: document.employeeCode,
+        displayName: document.displayName,
+        name: document.legalName,
+        status: document.employmentStatus,
+      },
     ]),
   );
 }
 
 function toTalentReferenceSummary(
   document: TalentReferenceDocument,
+  linkedEmploymentProfile: ReferenceSummary | null,
 ): ReferenceSummary {
+  const display = deriveTalentDisplaySummary(
+    document,
+    linkedEmploymentProfile,
+  );
+
   return {
     id: document._id,
     code: document.talentCode,
-    name: document.displayShortName ?? document.stageName ?? document.legalName,
+    name: display.displayName,
+    displayName: display.displayName,
     status: document.operationalStatus,
   };
 }

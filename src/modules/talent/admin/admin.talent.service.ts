@@ -38,6 +38,7 @@ import {
   TalentEmploymentProfileReadonlyAccess,
   TalentReferencedEmploymentProfile,
 } from "@modules/talent/domain/talent-employment-profile-readonly-access";
+import { deriveTalentDisplaySummary } from "@modules/talent/domain/talent-display";
 import { TalentPlatformAccountReadonlyAccess } from "@modules/talent/domain/talent-platform-account-readonly-access";
 import { TalentTalentGroupReadonlyAccess } from "@modules/talent/domain/talent-talent-group-readonly-access";
 import { TalentWorkScheduleReadonlyAccess } from "@modules/talent/domain/talent-work-schedule-readonly-access";
@@ -139,7 +140,8 @@ export class TalentAdminService {
           }
         }
 
-        await this.assertLinkedEmploymentProfileAllowed(
+        const linkedEmploymentProfile =
+          await this.assertLinkedEmploymentProfileAllowed(
           {
             talentOrigin: input.talentOrigin,
             linkedEmploymentProfileId:
@@ -175,15 +177,20 @@ export class TalentAdminService {
             input.talentCode ??
             (await this.allocateGeneratedCode(session));
           const now = Date.now();
+          const persistedNames =
+            resolveCreatePersistenceNames(
+              input,
+              linkedEmploymentProfile,
+            );
           const talent: TalentRecord = {
             id: crypto.randomUUID(),
             talentCode,
-            stageName: input.stageName,
+            stageName: persistedNames.stageName,
             normalizedStageName:
-              input.normalizedStageName,
-            legalName: input.legalName,
+              persistedNames.normalizedStageName,
+            legalName: persistedNames.legalName,
             normalizedLegalName:
-              input.normalizedLegalName,
+              persistedNames.normalizedLegalName,
             displayShortName:
               input.displayShortName,
             normalizedDisplayShortName:
@@ -248,7 +255,10 @@ export class TalentAdminService {
           session,
         });
 
-        return toTalentMutationView(created);
+        return this.toTalentMutationView(
+          created,
+          session,
+        );
       },
       (result) => ({
         talentId: result.id,
@@ -297,7 +307,7 @@ export class TalentAdminService {
     }
 
     const stageName = hasStageName
-      ? normalizeDisplayText(
+      ? normalizeOptionalDisplayText(
           command.stageName,
           "stageName",
         )
@@ -350,10 +360,42 @@ export class TalentAdminService {
           );
         }
 
+        await this.assertNonArchivedTalentLinkageInvariant(
+          current,
+          session,
+        );
+
+        if (
+          stageName === null &&
+          current.talentOrigin === "EXTERNAL"
+        ) {
+          throw new TalentValidationError(
+            "stageName is required for external talent",
+          );
+        }
+
+        const stageNameForPatch: string | undefined =
+          stageName === undefined
+            ? undefined
+            : stageName === null &&
+                current.talentOrigin === "INTERNAL"
+              ? (
+                await this.requireEmploymentProfileReference(
+                  normalizeRequiredText(
+                    current.linkedEmploymentProfileId,
+                    "linkedEmploymentProfileId",
+                  ),
+                  "linked employment profile",
+                  session,
+                )
+              ).displayName ??
+              current.stageName
+              : (stageName ?? undefined);
+
         const patch = buildTalentCorePatch({
           current,
           talentId,
-          stageName,
+          stageName: stageNameForPatch,
           legalName,
           displayShortName,
           externalRef,
@@ -392,7 +434,10 @@ export class TalentAdminService {
           session,
         });
 
-        return toTalentMutationView(updated);
+        return this.toTalentMutationView(
+          updated,
+          session,
+        );
       },
       (result) => ({
         talentId: result.id,
@@ -463,7 +508,10 @@ export class TalentAdminService {
           newManagerEmploymentProfileId
         ) {
           controls.markExplicitNoOpSuccess();
-          return toTalentMutationView(current);
+          return this.toTalentMutationView(
+            current,
+            session,
+          );
         }
 
         const updated =
@@ -496,7 +544,10 @@ export class TalentAdminService {
           session,
         });
 
-        return toTalentMutationView(updated);
+        return this.toTalentMutationView(
+          updated,
+          session,
+        );
       },
       (result) => ({
         talentId: result.id,
@@ -581,7 +632,10 @@ export class TalentAdminService {
           linkedEmploymentProfileId
         ) {
           controls.markExplicitNoOpSuccess();
-          return toTalentMutationView(current);
+          return this.toTalentMutationView(
+            current,
+            session,
+          );
         }
 
         const updated =
@@ -614,7 +668,10 @@ export class TalentAdminService {
           session,
         });
 
-        return toTalentMutationView(updated);
+        return this.toTalentMutationView(
+          updated,
+          session,
+        );
       },
       (result) => ({
         talentId: result.id,
@@ -722,7 +779,10 @@ export class TalentAdminService {
           session,
         });
 
-        return toTalentMutationView(updated);
+        return this.toTalentMutationView(
+          updated,
+          session,
+        );
       },
       (result) => ({
         talentId: result.id,
@@ -814,7 +874,10 @@ export class TalentAdminService {
           session,
         });
 
-        return toTalentMutationView(updated);
+        return this.toTalentMutationView(
+          updated,
+          session,
+        );
       },
       (result) => ({
         talentId: result.id,
@@ -925,7 +988,10 @@ export class TalentAdminService {
           session,
         });
 
-        return toTalentMutationView(updated);
+        return this.toTalentMutationView(
+          updated,
+          session,
+        );
       },
       (result) => ({
         talentId: result.id,
@@ -1033,7 +1099,10 @@ export class TalentAdminService {
           session,
         });
 
-        return toTalentMutationView(updated);
+        return this.toTalentMutationView(
+          updated,
+          session,
+        );
       },
       (result) => ({
         talentId: result.id,
@@ -1111,7 +1180,10 @@ export class TalentAdminService {
           current.eventEligible === eventEligible
         ) {
           controls.markExplicitNoOpSuccess();
-          return toTalentMutationView(current);
+          return this.toTalentMutationView(
+            current,
+            session,
+          );
         }
 
         const updated =
@@ -1154,7 +1226,10 @@ export class TalentAdminService {
           session,
         });
 
-        return toTalentMutationView(updated);
+        return this.toTalentMutationView(
+          updated,
+          session,
+        );
       },
       (result) => ({
         talentId: result.id,
@@ -1264,7 +1339,7 @@ export class TalentAdminService {
       readonly allowHistoricalResolution: boolean;
     },
     session: ClientSession,
-  ): Promise<void> {
+  ): Promise<TalentReferencedEmploymentProfile | null> {
     if (params.talentOrigin === "EXTERNAL") {
       if (params.linkedEmploymentProfileId !== null) {
         throw new TalentInvalidEmploymentLinkageError(
@@ -1272,7 +1347,7 @@ export class TalentAdminService {
         );
       }
 
-      return;
+      return null;
     }
 
     if (params.linkedEmploymentProfileId === null) {
@@ -1325,6 +1400,8 @@ export class TalentAdminService {
         `Linked employment profile already belongs to another non-archived talent: ${params.linkedEmploymentProfileId}`,
       );
     }
+
+    return linkedEmploymentProfile;
   }
 
   private async assertNonArchivedTalentLinkageInvariant(
@@ -1380,6 +1457,25 @@ export class TalentAdminService {
         allowHistoricalResolution: true,
       },
       session,
+    );
+  }
+
+  private async toTalentMutationView(
+    talent: TalentRecord,
+    session: ClientSession,
+  ): Promise<TalentMutationView> {
+    const linkedEmploymentProfile =
+      talent.talentOrigin === "INTERNAL" &&
+      talent.linkedEmploymentProfileId
+        ? await this.employmentProfileReadonlyAccess.findById(
+            talent.linkedEmploymentProfileId,
+            session,
+          )
+        : null;
+
+    return toTalentMutationView(
+      talent,
+      linkedEmploymentProfile,
     );
   }
 
@@ -1642,10 +1738,8 @@ export class TalentAdminService {
 
 interface NormalizedCreateCommand {
   readonly talentCode: string | undefined;
-  readonly stageName: string;
-  readonly normalizedStageName: string;
-  readonly legalName: string;
-  readonly normalizedLegalName: string;
+  readonly stageName: string | null;
+  readonly legalName: string | null;
   readonly displayShortName: string | null;
   readonly normalizedDisplayShortName: string | null;
   readonly talentOrigin: TalentOrigin;
@@ -1661,14 +1755,29 @@ interface NormalizedCreateCommand {
 function normalizeCreateCommand(
   command: CreateTalentCommand,
 ): NormalizedCreateCommand {
-  const stageName = normalizeDisplayText(
-    command.stageName,
-    "stageName",
+  const talentOrigin = normalizeTalentOrigin(
+    command.talentOrigin,
   );
-  const legalName = normalizeDisplayText(
-    command.legalName,
-    "legalName",
-  );
+  const stageName =
+    talentOrigin === "EXTERNAL"
+      ? normalizeDisplayText(
+          command.stageName,
+          "stageName",
+        )
+      : normalizeOptionalDisplayText(
+          command.stageName,
+          "stageName",
+        );
+  const legalName =
+    talentOrigin === "EXTERNAL"
+      ? normalizeDisplayText(
+          command.legalName,
+          "legalName",
+        )
+      : normalizeOptionalDisplayText(
+          command.legalName,
+          "legalName",
+        );
   const displayShortName = normalizeNullableText(
     command.displayShortName,
     "displayShortName",
@@ -1680,13 +1789,7 @@ function normalizeCreateCommand(
       "talentCode",
     ),
     stageName,
-    normalizedStageName: normalizeNameForSearch(
-      stageName,
-    ),
     legalName,
-    normalizedLegalName: normalizeNameForSearch(
-      legalName,
-    ),
     displayShortName,
     normalizedDisplayShortName:
       displayShortName === null
@@ -1694,9 +1797,7 @@ function normalizeCreateCommand(
         : normalizeNameForSearch(
             displayShortName,
           ),
-    talentOrigin: normalizeTalentOrigin(
-      command.talentOrigin,
-    ),
+    talentOrigin,
     managerEmploymentProfileId:
       normalizeOptionalNullableId(
         command.managerEmploymentProfileId,
@@ -1727,6 +1828,52 @@ function normalizeCreateCommand(
       command.profileSummary,
       "profileSummary",
     ),
+  };
+}
+
+function resolveCreatePersistenceNames(
+  input: NormalizedCreateCommand,
+  linkedEmploymentProfile: TalentReferencedEmploymentProfile | null,
+): {
+  readonly stageName: string;
+  readonly normalizedStageName: string;
+  readonly legalName: string;
+  readonly normalizedLegalName: string;
+} {
+  if (input.talentOrigin === "EXTERNAL") {
+    const stageName = input.stageName ?? "";
+    const legalName = input.legalName ?? "";
+    return {
+      stageName,
+      normalizedStageName:
+        normalizeNameForSearch(stageName),
+      legalName,
+      normalizedLegalName:
+        normalizeNameForSearch(legalName),
+    };
+  }
+
+  const employmentProfileDisplayName =
+    linkedEmploymentProfile?.displayName ??
+    linkedEmploymentProfile?.legalName ??
+    linkedEmploymentProfile?.employeeCode ??
+    "Internal Talent";
+  const employmentProfileLegalName =
+    linkedEmploymentProfile?.legalName ??
+    linkedEmploymentProfile?.displayName ??
+    employmentProfileDisplayName;
+  const stageName =
+    input.stageName ?? employmentProfileDisplayName;
+  const legalName =
+    input.legalName ?? employmentProfileLegalName;
+
+  return {
+    stageName,
+    normalizedStageName:
+      normalizeNameForSearch(stageName),
+    legalName,
+    normalizedLegalName:
+      normalizeNameForSearch(legalName),
   };
 }
 
@@ -1845,10 +1992,18 @@ function assertCommercialParticipationConsistency(
 
 function toTalentMutationView(
   talent: TalentRecord,
+  linkedEmploymentProfile?: TalentReferencedEmploymentProfile | null,
 ): TalentMutationView {
+  const display = deriveTalentDisplaySummary(
+    talent,
+    linkedEmploymentProfile,
+  );
+
   return {
     id: talent.id,
     talentCode: talent.talentCode,
+    displayName: display.displayName,
+    performanceAlias: display.performanceAlias,
     stageName: talent.stageName,
     legalName: talent.legalName,
     displayShortName: talent.displayShortName,
@@ -1914,6 +2069,28 @@ function normalizeDisplayText(
   return normalizeRequiredText(value, field)
     .normalize("NFKC")
     .replace(/\s+/gu, " ");
+}
+
+function normalizeOptionalDisplayText(
+  value: unknown,
+  field: string,
+): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  if (typeof value !== "string") {
+    throw new TalentValidationError(
+      `${field} must be a string`,
+    );
+  }
+
+  const normalized = value
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/gu, " ");
+
+  return normalized.length > 0 ? normalized : null;
 }
 
 function normalizeNullableText(

@@ -72,6 +72,8 @@ export interface TalentRecord {
 export interface TalentListItemView {
   readonly id: string;
   readonly talentCode: string;
+  readonly displayName: string;
+  readonly performanceAlias: string | null;
   readonly stageName: string;
   readonly legalName: string;
   readonly displayShortName: string | null;
