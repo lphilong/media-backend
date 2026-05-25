@@ -1,4 +1,9 @@
 import { EmploymentStatus } from "@modules/employment-profile/domain/employment-profile.types";
+import {
+  EventAssignmentKind,
+  EventAssignmentStatus,
+  EventStatus,
+} from "@modules/event-assignment/domain/event-assignment.types";
 import { UserAccountStatus } from "@modules/user/domain/user.types";
 import {
   WorkShiftSourceType,
@@ -45,4 +50,29 @@ export interface SelfServiceWorkShiftListQuery {
 export interface SelfServiceWorkShiftListView {
   readonly items: readonly SelfServiceWorkShiftView[];
   readonly nextCursor?: string;
+}
+
+export interface SelfServiceEventView {
+  readonly eventId: string;
+  readonly eventCode: string;
+  readonly title: string;
+  readonly status: EventStatus;
+  readonly startsAt: number;
+  readonly endsAt: number;
+  readonly ownAssignmentKind: Extract<
+    EventAssignmentKind,
+    "EMPLOYMENT_PROFILE" | "TALENT"
+  >;
+  readonly ownAssignmentStatus: EventAssignmentStatus;
+}
+
+export interface SelfServiceEventListQuery {
+  readonly status?: EventStatus;
+  readonly windowStartAt?: number;
+  readonly windowEndAt?: number;
+  readonly limit?: number;
+}
+
+export interface SelfServiceEventListView {
+  readonly items: readonly SelfServiceEventView[];
 }

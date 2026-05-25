@@ -5,6 +5,8 @@ import {
 import { ExposurePolicy } from "@core/exposure/exposure.policy";
 import {
   SelfServiceCurrentPersonView,
+  SelfServiceEventListView,
+  SelfServiceEventView,
   SelfServiceWorkShiftListView,
   SelfServiceWorkShiftView,
 } from "@modules/self-service/domain/self-service.types";
@@ -36,6 +38,17 @@ const SELF_SERVICE_WORK_SHIFT_FIELDS = [
   "startsAt",
   "endsAt",
   "sourceType",
+] as const;
+
+const SELF_SERVICE_EVENT_FIELDS = [
+  "eventId",
+  "eventCode",
+  "title",
+  "status",
+  "startsAt",
+  "endsAt",
+  "ownAssignmentKind",
+  "ownAssignmentStatus",
 ] as const;
 
 export const SelfServiceCurrentPersonExposure = Object.freeze({
@@ -113,5 +126,38 @@ export const SelfServiceWorkShiftExposure = Object.freeze({
     }
 
     return output;
+  },
+});
+
+export const SelfServiceEventExposure = Object.freeze({
+  expose(input: SelfServiceEventView): PlainObject {
+    return toPlainObject(
+      ExposurePolicy.expose(
+        {
+          eventId: input.eventId,
+          eventCode: input.eventCode,
+          title: input.title,
+          status: input.status,
+          startsAt: input.startsAt,
+          endsAt: input.endsAt,
+          ownAssignmentKind: input.ownAssignmentKind,
+          ownAssignmentStatus: input.ownAssignmentStatus,
+        },
+        SELF_SERVICE_EVENT_FIELDS,
+      ),
+      "SelfServiceEvent exposure",
+    );
+  },
+
+  exposeMany(items: readonly SelfServiceEventView[]): readonly PlainObject[] {
+    return items.map((item) => this.expose(item));
+  },
+
+  exposeList(input: SelfServiceEventListView): {
+    readonly data: readonly PlainObject[];
+  } {
+    return {
+      data: this.exposeMany(input.items),
+    };
   },
 });

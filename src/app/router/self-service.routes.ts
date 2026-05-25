@@ -1,11 +1,14 @@
 import { Router } from "express";
 import { InfraModule } from "@infra/infra.module";
+import { createEventAssignmentInfra } from "@infra/providers/event-assignment.infra";
 import { createEmploymentProfileInfra } from "@infra/providers/employment-profile.infra";
 import { createTalentInfra } from "@infra/providers/talent.infra";
 import { createUserInfra } from "@infra/providers/user.infra";
 import { createWorkScheduleInfra } from "@infra/providers/work-schedule.infra";
 import { SelfServiceCurrentPersonController } from "@modules/self-service/self-service.current-person.controller";
 import { SelfServiceCurrentPersonService } from "@modules/self-service/self-service.current-person.service";
+import { SelfServiceEventsController } from "@modules/self-service/self-service.events.controller";
+import { SelfServiceEventsService } from "@modules/self-service/self-service.events.service";
 import { selfServiceRoutes } from "@modules/self-service/self-service.routes";
 import { SelfServiceWorkShiftsController } from "@modules/self-service/self-service.work-shifts.controller";
 import { SelfServiceWorkShiftsService } from "@modules/self-service/self-service.work-shifts.service";
@@ -19,6 +22,9 @@ export async function createSelfServiceRoutes(
   const { userReadRepository } = createUserInfra(infra.primaryDb);
   const { talentRepository } = createTalentInfra(infra.primaryDb);
   const { workShiftReadRepository } = createWorkScheduleInfra(
+    infra.primaryDb,
+  );
+  const { eventAssignmentReadRepository } = createEventAssignmentInfra(
     infra.primaryDb,
   );
 
@@ -37,5 +43,17 @@ export async function createSelfServiceRoutes(
     ),
   );
 
-  return selfServiceRoutes(currentPersonController, workShiftsController);
+  const eventsController = new SelfServiceEventsController(
+    new SelfServiceEventsService(
+      employmentProfileRepository,
+      talentRepository,
+      eventAssignmentReadRepository,
+    ),
+  );
+
+  return selfServiceRoutes(
+    currentPersonController,
+    workShiftsController,
+    eventsController,
+  );
 }
