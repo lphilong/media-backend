@@ -11,6 +11,10 @@ import {
   MonthlyRosterStatus,
   MonthlyRosterView,
   RosterExceptionType,
+  WorkScheduleRequestListItemView,
+  WorkScheduleRequestStatus,
+  WorkScheduleRequestType,
+  WorkScheduleRequestView,
   WorkPatternListItemView,
   WorkPatternMutationView,
   WorkPatternStatus,
@@ -181,6 +185,34 @@ export interface RemoveRosterExceptionCommand {
   readonly scope?: WorkShiftScope | string;
 }
 
+export interface CreateWorkScheduleRequestCommand {
+  readonly requestType: WorkScheduleRequestType | string;
+  readonly targetEmploymentProfileId: string;
+  readonly targetWorkShiftId?: string | null;
+  readonly reason: string;
+  readonly proposedStartAt?: number | null;
+  readonly proposedEndAt?: number | null;
+  readonly proposedTitle?: string | null;
+  readonly proposedStudioResourceIds?: readonly string[];
+  readonly proposedDescription?: string | null;
+  readonly proposedExternalRef?: string | null;
+}
+
+export interface ApproveWorkScheduleRequestCommand {
+  readonly requestId: string;
+  readonly approvalNote?: string | null;
+}
+
+export interface RejectWorkScheduleRequestCommand {
+  readonly requestId: string;
+  readonly rejectionReason: string;
+}
+
+export interface CancelWorkScheduleRequestCommand {
+  readonly requestId: string;
+  readonly cancellationReason?: string | null;
+}
+
 export interface UpdateWorkShiftCoreCommand {
   readonly workShiftId: string;
   readonly title?: string;
@@ -318,6 +350,20 @@ export interface ListMonthlyRostersQuery {
   readonly scope?: WorkShiftScope | string;
 }
 
+export interface GetWorkScheduleRequestDetailQuery {
+  readonly requestId: string;
+}
+
+export interface ListWorkScheduleRequestsQuery {
+  readonly status?: WorkScheduleRequestStatus | string;
+  readonly requestType?: WorkScheduleRequestType | string;
+  readonly targetEmploymentProfileId?: string;
+  readonly targetWorkShiftId?: string;
+  readonly requestedByUserId?: string;
+  readonly limit?: number | string;
+  readonly cursor?: string;
+}
+
 export type WorkShiftMutationResult =
   WorkShiftMutationView;
 
@@ -391,5 +437,16 @@ export type PreviewMonthlyRosterResult =
 
 export interface ListMonthlyRostersResult {
   readonly items: readonly MonthlyRosterListItemView[];
+  readonly nextCursor?: string;
+}
+
+export type WorkScheduleRequestMutationResult =
+  WorkScheduleRequestView;
+
+export type GetWorkScheduleRequestDetailResult =
+  WorkScheduleRequestView;
+
+export interface ListWorkScheduleRequestsResult {
+  readonly items: readonly WorkScheduleRequestListItemView[];
   readonly nextCursor?: string;
 }

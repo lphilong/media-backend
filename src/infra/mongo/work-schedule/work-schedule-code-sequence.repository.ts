@@ -9,7 +9,8 @@ type WorkScheduleCodeSequenceModule =
   | "work-shift"
   | "work-pattern"
   | "holiday-calendar"
-  | "monthly-roster";
+  | "monthly-roster"
+  | "work-schedule-request";
 
 interface WorkShiftCodeSequenceDocument {
   readonly _id: string;
@@ -67,6 +68,17 @@ export class NativeMongoWorkShiftCodeSequenceRepository
     return this.allocateNextForBucket(
       "monthly-roster",
       rosterMonthBucket,
+      session,
+    );
+  }
+
+  async allocateNextWorkScheduleRequestCode(
+    requestMonthBucket: string,
+    session: ClientSession,
+  ): Promise<number> {
+    return this.allocateNextForBucket(
+      "work-schedule-request",
+      requestMonthBucket,
       session,
     );
   }

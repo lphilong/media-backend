@@ -21,4 +21,9 @@ export interface WorkScheduleCodeSequenceRepository
     rosterMonthBucket: string,
     session: ClientSession,
   ): Promise<number>;
+
+  allocateNextWorkScheduleRequestCode(
+    requestMonthBucket: string,
+    session: ClientSession,
+  ): Promise<number>;
 }

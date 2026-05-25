@@ -13,6 +13,15 @@ export const WORK_SCHEDULE_ADMIN_BY_RESOURCE_LIST_PRESENTER_KEY =
 export const WORK_SCHEDULE_ADMIN_DETAIL_PRESENTER_KEY =
   "work-schedule.admin.detail";
 
+export const WORK_SCHEDULE_REQUEST_ADMIN_MUTATION_PRESENTER_KEY =
+  "work-schedule-request.admin.mutation";
+
+export const WORK_SCHEDULE_REQUEST_ADMIN_LIST_PRESENTER_KEY =
+  "work-schedule-request.admin.list";
+
+export const WORK_SCHEDULE_REQUEST_ADMIN_DETAIL_PRESENTER_KEY =
+  "work-schedule-request.admin.detail";
+
 export const WORK_PATTERN_ADMIN_MUTATION_PRESENTER_KEY =
   "work-pattern.admin.mutation";
 

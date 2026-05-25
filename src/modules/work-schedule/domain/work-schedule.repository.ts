@@ -11,6 +11,9 @@ import {
   WorkShiftRecord,
   WorkShiftStatus,
   WorkShiftSubjectKind,
+  WorkScheduleRequestRecord,
+  WorkScheduleRequestStatus,
+  WorkScheduleRequestType,
 } from "./work-schedule.types";
 
 export interface WorkShiftSubjectReferenceInput {
@@ -417,4 +420,63 @@ export interface MonthlyRosterRepository {
     input: RemoveRosterExceptionInput,
     session: ClientSession,
   ): Promise<MonthlyRosterRecord | null>;
+}
+
+export interface WorkScheduleRequestListInput {
+  readonly status?: WorkScheduleRequestStatus;
+  readonly requestType?: WorkScheduleRequestType;
+  readonly targetEmploymentProfileId?: string;
+  readonly targetWorkShiftId?: string;
+  readonly requestedByUserId?: string;
+  readonly visibleTargetEmploymentProfileIds?: readonly string[];
+  readonly visibleRequestedByUserId?: string;
+  readonly limit: number;
+  readonly cursor?: string;
+}
+
+export interface WorkScheduleRequestListResult {
+  readonly items: readonly WorkScheduleRequestRecord[];
+  readonly nextCursor?: string;
+}
+
+export interface TransitionWorkScheduleRequestInput {
+  readonly requestId: string;
+  readonly fromStatus: "PENDING";
+  readonly toStatus: Exclude<
+    WorkScheduleRequestStatus,
+    "PENDING"
+  >;
+  readonly updatedAt: number;
+  readonly approvedByUserId?: string | null;
+  readonly approvedAt?: number | null;
+  readonly approvalNote?: string | null;
+  readonly rejectedByUserId?: string | null;
+  readonly rejectedAt?: number | null;
+  readonly rejectionReason?: string | null;
+  readonly cancelledByUserId?: string | null;
+  readonly cancelledAt?: number | null;
+  readonly cancellationReason?: string | null;
+  readonly appliedWorkShiftId?: string | null;
+}
+
+export interface WorkScheduleRequestRepository {
+  insert(
+    request: WorkScheduleRequestRecord,
+    session: ClientSession,
+  ): Promise<WorkScheduleRequestRecord>;
+
+  findById(
+    requestId: string,
+    session?: ClientSession,
+  ): Promise<WorkScheduleRequestRecord | null>;
+
+  list(
+    input: WorkScheduleRequestListInput,
+    session?: ClientSession,
+  ): Promise<WorkScheduleRequestListResult>;
+
+  transitionStatus(
+    input: TransitionWorkScheduleRequestInput,
+    session: ClientSession,
+  ): Promise<WorkScheduleRequestRecord | null>;
 }

@@ -5,6 +5,9 @@ import {
   WORK_SCHEDULE_ADMIN_DETAIL_PRESENTER_KEY,
   WORK_SCHEDULE_ADMIN_LIST_PRESENTER_KEY,
   WORK_SCHEDULE_ADMIN_MUTATION_PRESENTER_KEY,
+  WORK_SCHEDULE_REQUEST_ADMIN_DETAIL_PRESENTER_KEY,
+  WORK_SCHEDULE_REQUEST_ADMIN_LIST_PRESENTER_KEY,
+  WORK_SCHEDULE_REQUEST_ADMIN_MUTATION_PRESENTER_KEY,
   WORK_PATTERN_ADMIN_DETAIL_PRESENTER_KEY,
   WORK_PATTERN_ADMIN_LIST_PRESENTER_KEY,
   WORK_PATTERN_ADMIN_MUTATION_PRESENTER_KEY,
@@ -22,6 +25,9 @@ import {
   WorkScheduleAdminDetailPresenter,
   WorkScheduleAdminListPresenter,
   WorkScheduleAdminMutationPresenter,
+  WorkScheduleRequestAdminDetailPresenter,
+  WorkScheduleRequestAdminListPresenter,
+  WorkScheduleRequestAdminMutationPresenter,
   WorkPatternAdminDetailPresenter,
   WorkPatternAdminListPresenter,
   WorkPatternAdminMutationPresenter,
@@ -60,6 +66,21 @@ export function registerPresenters(
   registry.register(
     WORK_SCHEDULE_ADMIN_DETAIL_PRESENTER_KEY,
     new WorkScheduleAdminDetailPresenter(),
+  );
+
+  registry.register(
+    WORK_SCHEDULE_REQUEST_ADMIN_MUTATION_PRESENTER_KEY,
+    new WorkScheduleRequestAdminMutationPresenter(),
+  );
+
+  registry.register(
+    WORK_SCHEDULE_REQUEST_ADMIN_LIST_PRESENTER_KEY,
+    new WorkScheduleRequestAdminListPresenter(),
+  );
+
+  registry.register(
+    WORK_SCHEDULE_REQUEST_ADMIN_DETAIL_PRESENTER_KEY,
+    new WorkScheduleRequestAdminDetailPresenter(),
   );
 
   registry.register(

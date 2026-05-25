@@ -49,6 +49,7 @@ tools/
 !src/modules/commission/commission-settlement-target-filters.test.ts
 !src/modules/work-schedule/work-schedule-reference-summaries.test.ts
 !src/modules/work-schedule/work-schedule-shift-code-generation.test.ts
+!src/modules/work-schedule/work-schedule-request.service.test.ts
 !src/modules/role/role-assignment-reference-summaries.test.ts
 !src/modules/role/role-template-catalog-preview.test.ts
 !src/modules/role/role-assignment-scope-grants.test.ts

@@ -31,6 +31,10 @@ import {
   MONTHLY_ROSTER_PATTERN_LOOKUP_INDEX_NAME,
   MONTHLY_ROSTER_ROSTER_CODE_UNIQ_INDEX_NAME,
   MONTHLY_ROSTER_STATUS_MONTH_INDEX_NAME,
+  WORK_SCHEDULE_REQUEST_CODE_UNIQ_INDEX_NAME,
+  WORK_SCHEDULE_REQUEST_REQUESTER_INDEX_NAME,
+  WORK_SCHEDULE_REQUEST_STATUS_CREATED_AT_INDEX_NAME,
+  WORK_SCHEDULE_REQUEST_TARGET_PROFILE_INDEX_NAME,
   initWorkShiftIndexes,
 } from "@infra/mongo/work-schedule/work-schedule.index";
 import { registerPresenters } from "./work-schedule.presenter.register";
@@ -396,6 +400,50 @@ export function createWorkScheduleBootstrapRegistrar(): BootstrapRegistrar {
           "exceptions.subjectEmploymentProfileId": 1,
           "exceptions.exceptionDate": 1,
           "exceptions.status": 1,
+        },
+      );
+
+      await assertRequiredUniqueIndex(
+        db,
+        "work_schedule_requests",
+        WORK_SCHEDULE_REQUEST_CODE_UNIQ_INDEX_NAME,
+        {
+          requestCode: 1,
+        },
+      );
+
+      await assertRequiredIndex(
+        db,
+        "work_schedule_requests",
+        WORK_SCHEDULE_REQUEST_STATUS_CREATED_AT_INDEX_NAME,
+        {
+          status: 1,
+          createdAt: -1,
+          _id: 1,
+        },
+      );
+
+      await assertRequiredIndex(
+        db,
+        "work_schedule_requests",
+        WORK_SCHEDULE_REQUEST_TARGET_PROFILE_INDEX_NAME,
+        {
+          targetEmploymentProfileId: 1,
+          status: 1,
+          createdAt: -1,
+          _id: 1,
+        },
+      );
+
+      await assertRequiredIndex(
+        db,
+        "work_schedule_requests",
+        WORK_SCHEDULE_REQUEST_REQUESTER_INDEX_NAME,
+        {
+          requestedByUserId: 1,
+          status: 1,
+          createdAt: -1,
+          _id: 1,
         },
       );
     },

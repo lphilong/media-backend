@@ -22,6 +22,17 @@ export class WorkScheduleNotFoundError extends DomainError {
   }
 }
 
+export class WorkScheduleRequestNotFoundError extends DomainError {
+  constructor(requestId: string) {
+    super(
+      "WORK_SCHEDULE_REQUEST_NOT_FOUND",
+      `Work schedule request not found: ${requestId}`,
+      "Work schedule request not found",
+      404,
+    );
+  }
+}
+
 export class WorkScheduleConflictError extends DomainError {
   constructor(message: string) {
     super(

@@ -112,6 +112,10 @@ export const AUTHORITATIVE_ADMIN_MUTATION_IDENTITIES = [
   "work-schedule.monthly-roster.exception.add",
   "work-schedule.monthly-roster.exception.update",
   "work-schedule.monthly-roster.exception.remove",
+  "work-schedule.request.create",
+  "work-schedule.request.cancel",
+  "work-schedule.request.approve",
+  "work-schedule.request.reject",
   "contract-registry.create",
   "contract-registry.update-draft-core",
   "contract-registry.assign-owner",
@@ -302,6 +306,10 @@ const ADMIN_MUTATION_PERMISSION_BY_IDENTITY: Readonly<
     Permission.WORK_SCHEDULE_UPDATE,
   "work-schedule.monthly-roster.exception.remove":
     Permission.WORK_SCHEDULE_UPDATE,
+  "work-schedule.request.create": Permission.WORK_SCHEDULE_READ,
+  "work-schedule.request.cancel": Permission.WORK_SCHEDULE_READ,
+  "work-schedule.request.approve": Permission.WORK_SCHEDULE_UPDATE,
+  "work-schedule.request.reject": Permission.WORK_SCHEDULE_UPDATE,
 
   "contract-registry.create": Permission.CONTRACT_REGISTRY_CREATE,
   "contract-registry.update-draft-core": Permission.CONTRACT_REGISTRY_UPDATE,

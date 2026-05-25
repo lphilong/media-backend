@@ -63,6 +63,14 @@ export const MONTHLY_ROSTER_CALENDAR_LOOKUP_INDEX_NAME =
   "idx_monthly_roster_calendar_lookup";
 export const MONTHLY_ROSTER_EXCEPTION_PROFILE_DATE_INDEX_NAME =
   "idx_monthly_roster_exception_profile_date";
+export const WORK_SCHEDULE_REQUEST_CODE_UNIQ_INDEX_NAME =
+  "uniq_work_schedule_request_code";
+export const WORK_SCHEDULE_REQUEST_STATUS_CREATED_AT_INDEX_NAME =
+  "idx_work_schedule_request_status_created_at";
+export const WORK_SCHEDULE_REQUEST_TARGET_PROFILE_INDEX_NAME =
+  "idx_work_schedule_request_target_profile";
+export const WORK_SCHEDULE_REQUEST_REQUESTER_INDEX_NAME =
+  "idx_work_schedule_request_requester";
 
 interface WorkShiftLegacyDocument {
   readonly _id: string;
@@ -261,6 +269,7 @@ export async function initWorkShiftIndexes(
   await initWorkPatternIndexes(db);
   await initHolidayCalendarIndexes(db);
   await initMonthlyRosterIndexes(db);
+  await initWorkScheduleRequestIndexes(db);
 }
 
 async function initWorkShiftCodeSequenceIndexes(
@@ -485,6 +494,61 @@ async function initMonthlyRosterIndexes(
     {
       name:
         MONTHLY_ROSTER_EXCEPTION_PROFILE_DATE_INDEX_NAME,
+    },
+  );
+}
+
+async function initWorkScheduleRequestIndexes(
+  db: Db,
+): Promise<void> {
+  const collection = db.collection(
+    "work_schedule_requests",
+  );
+
+  await collection.createIndex(
+    {
+      requestCode: 1,
+    },
+    {
+      name: WORK_SCHEDULE_REQUEST_CODE_UNIQ_INDEX_NAME,
+      unique: true,
+    },
+  );
+
+  await collection.createIndex(
+    {
+      status: 1,
+      createdAt: -1,
+      _id: 1,
+    },
+    {
+      name:
+        WORK_SCHEDULE_REQUEST_STATUS_CREATED_AT_INDEX_NAME,
+    },
+  );
+
+  await collection.createIndex(
+    {
+      targetEmploymentProfileId: 1,
+      status: 1,
+      createdAt: -1,
+      _id: 1,
+    },
+    {
+      name:
+        WORK_SCHEDULE_REQUEST_TARGET_PROFILE_INDEX_NAME,
+    },
+  );
+
+  await collection.createIndex(
+    {
+      requestedByUserId: 1,
+      status: 1,
+      createdAt: -1,
+      _id: 1,
+    },
+    {
+      name: WORK_SCHEDULE_REQUEST_REQUESTER_INDEX_NAME,
     },
   );
 }

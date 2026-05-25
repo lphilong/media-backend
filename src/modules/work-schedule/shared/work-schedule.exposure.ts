@@ -22,6 +22,8 @@ import {
   WorkShiftDetailView,
   WorkShiftListItemView,
   WorkShiftMutationView,
+  WorkScheduleRequestListItemView,
+  WorkScheduleRequestView,
   WorkPatternListItemView,
   WorkPatternMutationView,
   WorkPatternView,
@@ -95,6 +97,41 @@ const WORK_SHIFT_ADMIN_DETAIL_FIELDS = [
   "sourceDepartmentOrgUnitRef",
   "sourceRosterLocalDate",
   "sourceRosterSlotKey",
+  "createdAt",
+  "updatedAt",
+] as const;
+
+const WORK_SCHEDULE_REQUEST_ADMIN_FIELDS = [
+  "id",
+  "requestCode",
+  "requestType",
+  "status",
+  "targetKind",
+  "requestSource",
+  "targetEmploymentProfileId",
+  "targetEmploymentProfileRef",
+  "targetWorkShiftId",
+  "targetWorkShiftRef",
+  "requestedByUserId",
+  "requestedByEmploymentProfileId",
+  "reason",
+  "proposedStartAt",
+  "proposedEndAt",
+  "proposedTitle",
+  "proposedStudioResourceIds",
+  "proposedDescription",
+  "proposedExternalRef",
+  "approvedByUserId",
+  "approvedAt",
+  "approvalNote",
+  "rejectedByUserId",
+  "rejectedAt",
+  "rejectionReason",
+  "cancelledByUserId",
+  "cancelledAt",
+  "cancellationReason",
+  "appliedWorkShiftId",
+  "appliedWorkShiftRef",
   "createdAt",
   "updatedAt",
 ] as const;
@@ -446,6 +483,79 @@ export const WorkScheduleAdminMutationExposure =
       return WorkScheduleAdminDetailExposure.expose(
         input,
       );
+    },
+  });
+
+export const WorkScheduleRequestAdminExposure =
+  Object.freeze({
+    expose(
+      input:
+        | WorkScheduleRequestView
+        | WorkScheduleRequestListItemView,
+    ): PlainObject {
+      return toPlainObject(
+        ExposurePolicy.expose(
+          {
+            id: input.id,
+            requestCode: input.requestCode,
+            requestType: input.requestType,
+            status: input.status,
+            targetKind: input.targetKind,
+            requestSource: input.requestSource,
+            targetEmploymentProfileId:
+              input.targetEmploymentProfileId,
+            targetEmploymentProfileRef:
+              input.targetEmploymentProfileRef ?? null,
+            targetWorkShiftId:
+              input.targetWorkShiftId,
+            targetWorkShiftRef:
+              input.targetWorkShiftRef ?? null,
+            requestedByUserId:
+              input.requestedByUserId,
+            requestedByEmploymentProfileId:
+              input.requestedByEmploymentProfileId,
+            reason: input.reason,
+            proposedStartAt:
+              input.proposedStartAt,
+            proposedEndAt: input.proposedEndAt,
+            proposedTitle: input.proposedTitle,
+            proposedStudioResourceIds: [
+              ...input.proposedStudioResourceIds,
+            ],
+            proposedDescription:
+              input.proposedDescription,
+            proposedExternalRef:
+              input.proposedExternalRef,
+            approvedByUserId:
+              input.approvedByUserId,
+            approvedAt: input.approvedAt,
+            approvalNote: input.approvalNote,
+            rejectedByUserId:
+              input.rejectedByUserId,
+            rejectedAt: input.rejectedAt,
+            rejectionReason: input.rejectionReason,
+            cancelledByUserId:
+              input.cancelledByUserId,
+            cancelledAt: input.cancelledAt,
+            cancellationReason:
+              input.cancellationReason,
+            appliedWorkShiftId:
+              input.appliedWorkShiftId,
+            appliedWorkShiftRef:
+              input.appliedWorkShiftRef ?? null,
+            createdAt: input.createdAt,
+            updatedAt: input.updatedAt,
+          },
+          WORK_SCHEDULE_REQUEST_ADMIN_FIELDS,
+        ),
+        "WorkScheduleRequestAdmin exposure",
+      );
+    },
+
+    exposeMany(
+      items: readonly WorkScheduleRequestListItemView[],
+    ): readonly PlainObject[] {
+      return items.map((item) => this.expose(item));
     },
   });
 

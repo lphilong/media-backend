@@ -533,3 +533,78 @@ export interface MonthlyRosterPreviewView {
   readonly rows: readonly MonthlyRosterPreviewRowView[];
   readonly summary: MonthlyRosterPreviewSummaryView;
 }
+
+export const WORK_SCHEDULE_REQUEST_TYPES = [
+  "CREATE_SHIFT",
+  "RESCHEDULE_SHIFT",
+  "CANCEL_SHIFT",
+] as const;
+
+export type WorkScheduleRequestType =
+  (typeof WORK_SCHEDULE_REQUEST_TYPES)[number];
+
+export const WORK_SCHEDULE_REQUEST_STATUSES = [
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+  "CANCELLED",
+] as const;
+
+export type WorkScheduleRequestStatus =
+  (typeof WORK_SCHEDULE_REQUEST_STATUSES)[number];
+
+export const WORK_SCHEDULE_REQUEST_TARGET_KINDS = [
+  "EMPLOYMENT_PROFILE_WORK_SHIFT",
+] as const;
+
+export type WorkScheduleRequestTargetKind =
+  (typeof WORK_SCHEDULE_REQUEST_TARGET_KINDS)[number];
+
+export const WORK_SCHEDULE_REQUEST_SOURCES = [
+  "TEAM_MANAGER",
+] as const;
+
+export type WorkScheduleRequestSource =
+  (typeof WORK_SCHEDULE_REQUEST_SOURCES)[number];
+
+export interface WorkScheduleRequestRecord {
+  readonly id: string;
+  readonly requestCode: string;
+  readonly requestType: WorkScheduleRequestType;
+  readonly status: WorkScheduleRequestStatus;
+  readonly targetKind: WorkScheduleRequestTargetKind;
+  readonly requestSource: WorkScheduleRequestSource;
+  readonly targetEmploymentProfileId: string;
+  readonly targetWorkShiftId: string | null;
+  readonly requestedByUserId: string;
+  readonly requestedByEmploymentProfileId: string | null;
+  readonly reason: string;
+  readonly proposedStartAt: number | null;
+  readonly proposedEndAt: number | null;
+  readonly proposedTitle: string | null;
+  readonly proposedStudioResourceIds: readonly string[];
+  readonly proposedDescription: string | null;
+  readonly proposedExternalRef: string | null;
+  readonly approvedByUserId: string | null;
+  readonly approvedAt: number | null;
+  readonly approvalNote: string | null;
+  readonly rejectedByUserId: string | null;
+  readonly rejectedAt: number | null;
+  readonly rejectionReason: string | null;
+  readonly cancelledByUserId: string | null;
+  readonly cancelledAt: number | null;
+  readonly cancellationReason: string | null;
+  readonly appliedWorkShiftId: string | null;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+export interface WorkScheduleRequestView
+  extends WorkScheduleRequestRecord {
+  readonly targetEmploymentProfileRef?: ReferenceSummary | null;
+  readonly targetWorkShiftRef?: ReferenceSummary | null;
+  readonly appliedWorkShiftRef?: ReferenceSummary | null;
+}
+
+export interface WorkScheduleRequestListItemView
+  extends WorkScheduleRequestView {}

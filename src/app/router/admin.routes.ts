@@ -102,6 +102,9 @@ import { WorkScheduleAdminController } from "@modules/work-schedule/admin/admin.
 import { WorkScheduleAdminQueryController } from "@modules/work-schedule/admin/admin.work-schedule.query.controller";
 import { WorkScheduleAdminService } from "@modules/work-schedule/admin/admin.work-schedule.service";
 import { WorkScheduleAdminQueryService } from "@modules/work-schedule/admin/admin.work-schedule.query-service";
+import { adminWorkScheduleRequestRoutes } from "@modules/work-schedule/admin/admin.work-schedule-request.routes";
+import { WorkScheduleRequestAdminController } from "@modules/work-schedule/admin/admin.work-schedule-request.controller";
+import { WorkScheduleRequestAdminService } from "@modules/work-schedule/admin/admin.work-schedule-request.service";
 import { adminWorkPatternRoutes } from "@modules/work-schedule/admin/admin.work-pattern.routes";
 import { WorkPatternAdminController } from "@modules/work-schedule/admin/admin.work-pattern.controller";
 import { WorkPatternAdminQueryController } from "@modules/work-schedule/admin/admin.work-pattern.query.controller";
@@ -336,6 +339,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     holidayCalendarReadRepository,
     monthlyRosterRepository,
     monthlyRosterReadRepository,
+    workScheduleRequestRepository,
     workScheduleOrgUnitReadonlyAccess,
     workScheduleEmploymentProfileReadonlyAccess,
     workScheduleTalentReadonlyAccess,
@@ -605,12 +609,33 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   const workScheduleQueryController = new WorkScheduleAdminQueryController(
     workScheduleQueryService,
   );
+  const workScheduleRequestService = new WorkScheduleRequestAdminService(
+    workScheduleRequestRepository,
+    workShiftRepository,
+    workShiftCodeSequenceRepository,
+    workScheduleEmploymentProfileReadonlyAccess,
+    workScheduleStudioResourceReadonlyAccess,
+    talentGroupManagerAssignmentRepository,
+    authoritativeAuditGuard,
+    adminMutationBridge,
+  );
+  const workScheduleRequestController =
+    new WorkScheduleRequestAdminController(
+      workScheduleRequestService,
+    );
 
   r.use(
     "/work-shifts",
     adminWorkScheduleRoutes(
       workScheduleController,
       workScheduleQueryController,
+    ),
+  );
+
+  r.use(
+    "/work-schedule/requests",
+    adminWorkScheduleRequestRoutes(
+      workScheduleRequestController,
     ),
   );
 
