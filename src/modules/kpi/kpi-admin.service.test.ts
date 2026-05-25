@@ -8,6 +8,7 @@ import { AuthoritativeAdminMutationBridge } from "@core/application/authoritativ
 import { AuditGuard } from "@core/audit/audit.guard";
 import { BusinessCodeSequenceRepository } from "@core/business-code/business-code-sequence.repository";
 import { Permission } from "@core/permission/permission.enum";
+import { NativeMongoKpiSubjectReadonlyAccess } from "@infra/mongo/kpi/kpi.readonly-access";
 import { KpiAdminController } from "@modules/kpi/admin/admin.kpi.controller";
 import { KpiAdminService } from "@modules/kpi/admin/admin.kpi.service";
 import { TalentGroupManagerAssignmentService } from "@modules/kpi/admin/talent-group-manager-assignment.service";
@@ -384,6 +385,102 @@ function seedManagerAssignment(
     updatedByActorId: "seed",
   });
 }
+
+test("NativeMongoKpiSubjectReadonlyAccess derives internal group member display from linked EmploymentProfile", async () => {
+  const internalTalent = {
+    _id: "talent-1",
+    displayName: "Stale Internal Display",
+    stageName: "Stale Internal Stage",
+    legalName: "Stale Internal Legal",
+    displayShortName: "Stale Internal Short",
+    status: "ACTIVE",
+    operationalStatus: "ACTIVE",
+    linkedEmploymentProfileId: "ep-binh",
+  };
+  const activeMembership = {
+    _id: "membership-1",
+    groupId: "group-1",
+    talentId: "talent-1",
+    membershipStatus: "ACTIVE",
+  };
+  const linkedEmploymentProfile = {
+    _id: "ep-binh",
+    linkedUserId: null,
+    employmentStatus: "ACTIVE",
+    displayName: "Binh Tran",
+  };
+  type KpiReadonlyQuery = Record<string, unknown>;
+  const repository = new NativeMongoKpiSubjectReadonlyAccess({
+    collection(name: string) {
+      return {
+        findOne(query: KpiReadonlyQuery) {
+          if (name === "talent_group_members") {
+            return Promise.resolve(
+              query.groupId === activeMembership.groupId &&
+                query.talentId === activeMembership.talentId &&
+                query.membershipStatus === activeMembership.membershipStatus
+                ? activeMembership
+                : null,
+            );
+          }
+
+          if (name === "talents") {
+            return Promise.resolve(
+              query._id === internalTalent._id ||
+                (query.linkedEmploymentProfileId ===
+                  internalTalent.linkedEmploymentProfileId &&
+                  query.status === "ACTIVE" &&
+                  typeof query.operationalStatus === "object" &&
+                  query.operationalStatus !== null &&
+                  (query.operationalStatus as { readonly $ne?: unknown })
+                    .$ne === "ARCHIVED")
+                ? internalTalent
+                : null,
+            );
+          }
+
+          if (name === "employment_profiles") {
+            return Promise.resolve(
+              query._id === linkedEmploymentProfile._id &&
+                (query.employmentStatus === undefined ||
+                  query.employmentStatus ===
+                    linkedEmploymentProfile.employmentStatus)
+                ? linkedEmploymentProfile
+                : null,
+            );
+          }
+
+          return Promise.resolve(null);
+        },
+      };
+    },
+  } as never);
+
+  const member = await repository.findActiveGroupMember("group-1", "talent-1");
+  const memberByProfile =
+    await repository.findActiveGroupMemberByEmploymentProfile(
+      "group-1",
+      "ep-binh",
+    );
+
+  assert.equal(member?.membershipId, "membership-1");
+  assert.equal(member?.employmentProfileId, "ep-binh");
+  assert.equal(member?.displayName, "Binh Tran");
+  assert.notEqual(member?.displayName, internalTalent.displayName);
+  assert.notEqual(member?.displayName, internalTalent.stageName);
+  assert.notEqual(member?.displayName, internalTalent.legalName);
+  assert.notEqual(member?.displayName, internalTalent.displayShortName);
+  assert.equal(memberByProfile?.membershipId, "membership-1");
+  assert.equal(memberByProfile?.talentId, "talent-1");
+  assert.equal(memberByProfile?.displayName, "Binh Tran");
+  assert.notEqual(memberByProfile?.displayName, internalTalent.displayName);
+  assert.notEqual(memberByProfile?.displayName, internalTalent.stageName);
+  assert.notEqual(memberByProfile?.displayName, internalTalent.legalName);
+  assert.notEqual(
+    memberByProfile?.displayName,
+    internalTalent.displayShortName,
+  );
+});
 
 test("KPI V2 creates TALENT draft plan with valid target metrics", async () => {
   const { service } = createHarness();

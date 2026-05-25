@@ -337,9 +337,7 @@ test("TEAM_MANAGER managedGroup scope denies unmanaged Event detail and assignme
     },
     managerAssignmentRepository: {
       async listActiveAssignmentsByManagerEmploymentProfile() {
-        return [
-          managedAssignment("group-managed"),
-        ];
+        return [managedAssignment("group-managed")];
       },
     },
   });
@@ -462,7 +460,7 @@ test("Event Assignment read repository enriches assignment subject refs and even
       eventId: "event-1",
       assignmentKind: "TALENT",
       assignmentEmploymentProfileId: null,
-      assignmentTalentId: "missing-talent",
+      assignmentTalentId: "talent-1",
       assignmentTalentGroupId: null,
       assignmentStatus: "ACTIVE",
       createdAt: 11,
@@ -505,6 +503,13 @@ test("Event Assignment read repository enriches assignment subject refs and even
                   displayName: "Alice",
                   employmentStatus: "ACTIVE",
                 },
+                {
+                  _id: "ep-binh",
+                  employeeCode: "EMP-2",
+                  legalName: "Binh Tran Legal",
+                  displayName: "Binh Tran",
+                  employmentStatus: "ACTIVE",
+                },
               ],
             };
           },
@@ -517,7 +522,18 @@ test("Event Assignment read repository enriches assignment subject refs and even
             referenceFindCalls.talents += 1;
             referenceFindOptions.talents = options;
             return {
-              toArray: async () => [],
+              toArray: async () => [
+                {
+                  _id: "talent-1",
+                  talentCode: "TAL-1",
+                  stageName: "Stale Internal Stage",
+                  legalName: "Stale Internal Legal",
+                  displayShortName: "Stale Internal Short",
+                  talentOrigin: "INTERNAL",
+                  linkedEmploymentProfileId: "ep-binh",
+                  operationalStatus: "ACTIVE",
+                },
+              ],
             };
           },
         };
@@ -627,8 +643,26 @@ test("Event Assignment read repository enriches assignment subject refs and even
     name: "Alice Legal",
     status: "ACTIVE",
   });
-  assert.equal(assignments[1].assignmentTalentId, "missing-talent");
-  assert.equal(assignments[1].assignmentSubjectRef, null);
+  assert.equal(assignments[1].assignmentTalentId, "talent-1");
+  assert.deepEqual(assignments[1].assignmentSubjectRef, {
+    id: "talent-1",
+    code: "TAL-1",
+    name: "Binh Tran",
+    displayName: "Binh Tran",
+    status: "ACTIVE",
+  });
+  assert.notEqual(
+    assignments[1].assignmentSubjectRef?.displayName,
+    "Stale Internal Stage",
+  );
+  assert.notEqual(
+    assignments[1].assignmentSubjectRef?.displayName,
+    "Stale Internal Legal",
+  );
+  assert.notEqual(
+    assignments[1].assignmentSubjectRef?.displayName,
+    "Stale Internal Short",
+  );
   assert.deepEqual(assignments[2].assignmentSubjectRef, {
     id: "group-1",
     code: "GRP-1",
@@ -673,7 +707,7 @@ test("Event Assignment read repository enriches assignment subject refs and even
     },
   ]);
   assert.deepEqual(referenceFindCalls, {
-    employmentProfiles: 1,
+    employmentProfiles: 2,
     talents: 1,
     talentGroups: 1,
     studioResources: 1,

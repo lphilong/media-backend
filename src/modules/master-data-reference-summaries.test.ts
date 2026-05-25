@@ -87,12 +87,12 @@ const epChild = {
 const talent = {
   _id: "talent-1",
   talentCode: "TAL-1",
-  stageName: "Mina",
-  normalizedStageName: "mina",
-  legalName: "Mina Legal",
-  normalizedLegalName: "mina legal",
-  displayShortName: "Mina",
-  normalizedDisplayShortName: "mina",
+  stageName: "Mina Performance Alias",
+  normalizedStageName: "mina performance alias",
+  legalName: "Stale Internal Talent Legal",
+  normalizedLegalName: "stale internal talent legal",
+  displayShortName: "Stale Internal Talent Short",
+  normalizedDisplayShortName: "stale internal talent short",
   talentOrigin: "INTERNAL",
   operationalStatus: "ACTIVE",
   managerEmploymentProfileId: "ep-manager",
@@ -131,6 +131,27 @@ const membership = {
   leftAt: null,
   createdAt: 1,
   updatedAt: 2,
+};
+
+const externalTalent = {
+  ...talent,
+  _id: "talent-external",
+  talentCode: "TAL-2",
+  stageName: "BaoStar",
+  normalizedStageName: "baostar",
+  legalName: "Bao External Legal",
+  normalizedLegalName: "bao external legal",
+  displayShortName: null,
+  normalizedDisplayShortName: null,
+  talentOrigin: "EXTERNAL",
+  linkedEmploymentProfileId: null,
+};
+
+const externalMembership = {
+  ...membership,
+  _id: "membership-external",
+  talentId: "talent-external",
+  lineupOrder: 2,
 };
 
 const platformAccounts = [
@@ -304,13 +325,19 @@ test("master-data Employment Profile refs enrich org, manager, and linked user s
   });
   assert.equal(list.items[0].linkedUserId, "missing-user");
   assert.equal(list.items[0].linkedUserRef, null);
-  assert.deepEqual(detail?.managerEmploymentProfileRef, list.items[0].managerEmploymentProfileRef);
+  assert.deepEqual(
+    detail?.managerEmploymentProfileRef,
+    list.items[0].managerEmploymentProfileRef,
+  );
   assert.equal(
     EmploymentProfileAdminDetailExposure.expose(detail!).linkedUserRef !==
       undefined,
     true,
   );
-  assert.equal(calls.filter((call) => call.collection === "org_units").length, 2);
+  assert.equal(
+    calls.filter((call) => call.collection === "org_units").length,
+    2,
+  );
   assert.equal(calls.filter((call) => call.collection === "users").length, 2);
 });
 
@@ -336,9 +363,14 @@ test("master-data Talent refs enrich manager and linked employment profile in on
   assert.equal(list.items[0].managerEmploymentProfileRef?.code, "EP-1");
   assert.equal(list.items[0].linkedEmploymentProfileRef?.code, "EP-2");
   assert.equal(list.items[0].displayName, "Bao");
-  assert.equal(list.items[0].performanceAlias, "Mina");
+  assert.equal(list.items[0].performanceAlias, "Mina Performance Alias");
+  assert.notEqual(list.items[0].displayName, talent.legalName);
+  assert.notEqual(list.items[0].displayName, talent.displayShortName);
   assert.equal(detail?.displayName, "Bao");
-  assert.deepEqual(detail?.linkedEmploymentProfileRef, list.items[0].linkedEmploymentProfileRef);
+  assert.deepEqual(
+    detail?.linkedEmploymentProfileRef,
+    list.items[0].linkedEmploymentProfileRef,
+  );
   assert.equal(
     TalentAdminDetailExposure.expose(detail!).linkedEmploymentProfileRef !==
       undefined,
@@ -360,8 +392,12 @@ test("master-data Talent Group member refs preserve membership IDs and member or
     collection(name: string) {
       if (name === "talent_group_members") {
         return {
-          find() {
-            return createFindResult([membership]);
+          find(query: { readonly talentId?: string }) {
+            return createFindResult(
+              query.talentId === "talent-1"
+                ? [membership]
+                : [membership, externalMembership],
+            );
           },
           distinct: async () => ["group-1"],
         };
@@ -375,7 +411,9 @@ test("master-data Talent Group member refs preserve membership IDs and member or
       }
       return {
         find(_query: unknown, options: unknown) {
-          return createFindResult(options ? [talent] : [talentGroup]);
+          return createFindResult(
+            options ? [talent, externalTalent] : [talentGroup],
+          );
         },
         findOne: async () => talentGroup,
       };
@@ -391,17 +429,33 @@ test("master-data Talent Group member refs preserve membership IDs and member or
     limit: 10,
   });
 
-  assert.equal(members.items[0].id, "membership-1");
-  assert.equal(members.items[0].talentId, "talent-1");
-  assert.deepEqual(members.items[0].talentRef, {
+  const internalMember = members.items.find(
+    (item) => item.id === "membership-1",
+  );
+  const externalMember = members.items.find(
+    (item) => item.id === "membership-external",
+  );
+
+  assert.equal(internalMember?.talentId, "talent-1");
+  assert.deepEqual(internalMember?.talentRef, {
     id: "talent-1",
     code: "TAL-1",
     name: "Bao",
     displayName: "Bao",
     status: "ACTIVE",
   });
-  assert.equal(byTalent.items[0].membershipId, "membership-1");
-  assert.deepEqual(byTalent.items[0].talentRef, members.items[0].talentRef);
+  assert.deepEqual(externalMember?.talentRef, {
+    id: "talent-external",
+    code: "TAL-2",
+    name: "BaoStar",
+    displayName: "BaoStar",
+    status: "ACTIVE",
+  });
+  const internalByTalent = byTalent.items.find(
+    (item) => item.membershipId === "membership-1",
+  );
+
+  assert.deepEqual(internalByTalent?.talentRef, internalMember?.talentRef);
   assert.equal(
     TalentGroupMemberExposure.expose(members.items[0]).talentRef !== undefined,
     true,
@@ -409,16 +463,6 @@ test("master-data Talent Group member refs preserve membership IDs and member or
 });
 
 test("reference lookup Talent labels derive internal names from Employment Profile", async () => {
-  const externalTalent = {
-    ...talent,
-    _id: "talent-external",
-    talentCode: "TAL-2",
-    stageName: "BaoStar",
-    legalName: "Bao External Legal",
-    displayShortName: null,
-    talentOrigin: "EXTERNAL",
-    linkedEmploymentProfileId: null,
-  };
   const repository = new NativeMongoReferenceLookupReadRepository({
     collection(name: string) {
       if (name === "employment_profiles") {
@@ -445,7 +489,7 @@ test("reference lookup Talent labels derive internal names from Employment Profi
   assert.deepEqual(options[0], {
     id: "talent-1",
     label: "Bao",
-    secondaryLabel: "Mina",
+    secondaryLabel: "Mina Performance Alias",
     code: "TAL-1",
     status: "ACTIVE",
   });
@@ -456,6 +500,27 @@ test("reference lookup Talent labels derive internal names from Employment Profi
     code: "TAL-2",
     status: "ACTIVE",
   });
+});
+
+test("reference lookup Employment Profile labels default to displayName", async () => {
+  const repository = new NativeMongoReferenceLookupReadRepository({
+    collection() {
+      return {
+        find() {
+          return createFindResult([epChild]);
+        },
+      };
+    },
+  } as never);
+
+  const options = await repository.listReferenceOptions({
+    domain: "employmentProfiles",
+    limit: 10,
+  });
+
+  assert.equal(options[0].label, "Bao");
+  assert.notEqual(options[0].label, "Bao Legal");
+  assert.equal(options[0].secondaryLabel, "Manager");
 });
 
 test("master-data Platform Account ownerRef follows ownerKind polymorphism and preserves owner IDs", async () => {
@@ -491,7 +556,13 @@ test("master-data Platform Account ownerRef follows ownerKind polymorphism and p
       undefined,
     true,
   );
-  assert.equal(calls.filter((call) => call.collection === "org_units").length, 1);
+  assert.equal(
+    calls.filter((call) => call.collection === "org_units").length,
+    1,
+  );
   assert.equal(calls.filter((call) => call.collection === "talents").length, 2);
-  assert.equal(calls.filter((call) => call.collection === "talent_groups").length, 1);
+  assert.equal(
+    calls.filter((call) => call.collection === "talent_groups").length,
+    1,
+  );
 });

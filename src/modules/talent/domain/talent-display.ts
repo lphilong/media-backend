@@ -22,22 +22,18 @@ export interface TalentDisplayEmploymentProfile {
 
 export function deriveTalentDisplaySummary(
   talent: TalentDisplayInput,
-  linkedEmploymentProfile?: TalentDisplayEmploymentProfile | ReferenceSummary | null,
+  linkedEmploymentProfile?:
+    | TalentDisplayEmploymentProfile
+    | ReferenceSummary
+    | null,
 ): TalentDisplaySummary {
   const stageName = readText(talent.stageName);
   const legalName = readText(talent.legalName);
   const displayShortName = readText(talent.displayShortName);
 
   if (talent.talentOrigin === "INTERNAL") {
-    const employmentProfileDisplayName =
-      readText(linkedEmploymentProfile?.displayName) ??
-      readText(linkedEmploymentProfile?.name);
     const displayName =
-      employmentProfileDisplayName ??
-      displayShortName ??
-      stageName ??
-      legalName ??
-      talent.talentCode;
+      readText(linkedEmploymentProfile?.displayName) ?? talent.talentCode;
 
     return {
       displayName,
@@ -48,10 +44,7 @@ export function deriveTalentDisplaySummary(
 
   return {
     displayName:
-      displayShortName ??
-      stageName ??
-      legalName ??
-      talent.talentCode,
+      displayShortName ?? stageName ?? legalName ?? talent.talentCode,
     performanceAlias: stageName ?? null,
   };
 }

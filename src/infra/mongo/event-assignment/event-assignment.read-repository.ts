@@ -26,6 +26,7 @@ import {
   EventListReadResult,
 } from "@modules/event-assignment/read/event-assignment.read-repository";
 import { ReferenceSummary } from "@modules/reference-summary";
+import { deriveTalentDisplaySummary } from "@modules/talent/domain/talent-display";
 
 interface EventReadDocument {
   readonly _id: string;
@@ -75,6 +76,8 @@ interface TalentReferenceReadDocument {
   readonly stageName: string;
   readonly legalName: string;
   readonly displayShortName: string | null;
+  readonly talentOrigin: "INTERNAL" | "EXTERNAL";
+  readonly linkedEmploymentProfileId: string | null;
   readonly operationalStatus: string;
 }
 
@@ -507,7 +510,11 @@ async function enrichAssignmentSubjectReferenceSummaries<
         employmentProfileIds,
         collections.employmentProfileCollection,
       ),
-      loadTalentReferenceSummaries(talentIds, collections.talentCollection),
+      loadTalentReferenceSummaries(
+        talentIds,
+        collections.talentCollection,
+        collections.employmentProfileCollection,
+      ),
       loadTalentGroupReferenceSummaries(
         talentGroupIds,
         collections.talentGroupCollection,
@@ -649,6 +656,7 @@ async function loadEmploymentProfileReferenceSummaries(
 async function loadTalentReferenceSummaries(
   ids: ReadonlySet<string>,
   collection: Collection<TalentReferenceReadDocument>,
+  employmentProfileCollection: Collection<EmploymentProfileReferenceReadDocument>,
 ): Promise<Map<string, ReferenceSummary>> {
   if (ids.size === 0) {
     return new Map();
@@ -668,16 +676,35 @@ async function loadTalentReferenceSummaries(
           stageName: 1,
           legalName: 1,
           displayShortName: 1,
+          talentOrigin: 1,
+          linkedEmploymentProfileId: 1,
           operationalStatus: 1,
         },
       },
     )
     .toArray();
 
+  const linkedEmploymentProfileRefMap =
+    await loadEmploymentProfileReferenceSummaries(
+      new Set(
+        documents
+          .map((document) => document.linkedEmploymentProfileId)
+          .filter((value): value is string => typeof value === "string"),
+      ),
+      employmentProfileCollection,
+    );
+
   return new Map(
     documents.map((document) => [
       document._id,
-      toTalentReferenceSummary(document),
+      toTalentReferenceSummary(
+        document,
+        document.linkedEmploymentProfileId
+          ? (linkedEmploymentProfileRefMap.get(
+              document.linkedEmploymentProfileId,
+            ) ?? null)
+          : null,
+      ),
     ]),
   );
 }
@@ -805,11 +832,15 @@ function toEmploymentProfileReferenceSummary(
 
 function toTalentReferenceSummary(
   document: TalentReferenceReadDocument,
+  linkedEmploymentProfile: ReferenceSummary | null,
 ): ReferenceSummary {
+  const display = deriveTalentDisplaySummary(document, linkedEmploymentProfile);
+
   return {
     id: document._id,
     code: document.talentCode,
-    name: document.displayShortName ?? document.stageName ?? document.legalName,
+    name: display.displayName,
+    displayName: display.displayName,
     status: document.operationalStatus,
   };
 }

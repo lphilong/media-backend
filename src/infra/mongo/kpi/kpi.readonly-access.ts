@@ -49,8 +49,9 @@ export class NativeMongoKpiSubjectReadonlyAccess
     this.memberCollection = db.collection<TalentGroupMemberDocument>(
       "talent_group_members",
     );
-    this.employmentProfileCollection =
-      db.collection<EmploymentProfileDocument>("employment_profiles");
+    this.employmentProfileCollection = db.collection<EmploymentProfileDocument>(
+      "employment_profiles",
+    );
   }
 
   async hasActiveTalent(
@@ -95,11 +96,21 @@ export class NativeMongoKpiSubjectReadonlyAccess
       { _id: memberTalentId },
       this.withSession(session),
     );
+    const employmentProfile = talent?.linkedEmploymentProfileId
+      ? await this.employmentProfileCollection.findOne(
+          {
+            _id: talent.linkedEmploymentProfileId,
+          },
+          this.withSession(session),
+        )
+      : null;
+
     return {
       membershipId: member._id,
       talentId: member.talentId,
       employmentProfileId: talent?.linkedEmploymentProfileId ?? null,
-      displayName: talent?.stageName ?? talent?.displayName ?? null,
+      displayName:
+        employmentProfile?.displayName ?? talent?.displayName ?? null,
     };
   }
 

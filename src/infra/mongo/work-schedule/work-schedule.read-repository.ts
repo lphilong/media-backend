@@ -1,6 +1,7 @@
 import { Collection, Db } from "mongodb";
 import { BaseRepository } from "@infra/database/repository/base.repository";
 import { ReferenceSummary } from "@modules/reference-summary";
+import { deriveTalentDisplaySummary } from "@modules/talent/domain/talent-display";
 import { WorkScheduleValidationError } from "@modules/work-schedule/domain/work-schedule.errors";
 import {
   WorkShiftByResourceListItemView,
@@ -68,6 +69,8 @@ interface TalentReferenceReadDocument {
   readonly stageName: string | null;
   readonly legalName: string;
   readonly displayShortName?: string | null;
+  readonly talentOrigin: "INTERNAL" | "EXTERNAL";
+  readonly linkedEmploymentProfileId: string | null;
   readonly operationalStatus: string;
 }
 
@@ -106,10 +109,7 @@ interface WorkPatternReferenceReadDocument {
   readonly status: string;
 }
 
-type ReadViewKind =
-  | "list"
-  | "by-subject"
-  | "by-resource";
+type ReadViewKind = "list" | "by-subject" | "by-resource";
 
 type SortSpec =
   | {
@@ -161,62 +161,38 @@ export class NativeMongoWorkShiftReadRepository
         "employment_profiles",
       );
     this.talentCollection =
-      db.collection<TalentReferenceReadDocument>(
-        "talents",
-      );
+      db.collection<TalentReferenceReadDocument>("talents");
     this.talentGroupCollection =
-      db.collection<TalentGroupReferenceReadDocument>(
-        "talent_groups",
-      );
+      db.collection<TalentGroupReferenceReadDocument>("talent_groups");
     this.studioResourceCollection =
-      db.collection<StudioResourceReferenceReadDocument>(
-        "studio_resources",
-      );
+      db.collection<StudioResourceReferenceReadDocument>("studio_resources");
     this.orgUnitCollection =
-      db.collection<OrgUnitReferenceReadDocument>(
-        "org_units",
-      );
+      db.collection<OrgUnitReferenceReadDocument>("org_units");
     this.monthlyRosterCollection =
-      db.collection<MonthlyRosterReferenceReadDocument>(
-        "work_monthly_rosters",
-      );
+      db.collection<MonthlyRosterReferenceReadDocument>("work_monthly_rosters");
     this.workPatternCollection =
-      db.collection<WorkPatternReferenceReadDocument>(
-        "work_patterns",
-      );
+      db.collection<WorkPatternReferenceReadDocument>("work_patterns");
   }
 
   async listWorkShifts(
     input: WorkShiftListReadInput,
   ): Promise<WorkShiftListReadResult> {
-    const page = await this.listDocuments(
-      "list",
-      input,
-      (filters) => {
-        applyBaseFilters(filters, input);
+    const page = await this.listDocuments("list", input, (filters) => {
+      applyBaseFilters(filters, input);
+    });
+
+    const items = await enrichWorkShiftReferenceSummaries(
+      page.items.map((item) => toWorkShiftListItemView(item)),
+      {
+        employmentProfileCollection: this.employmentProfileCollection,
+        talentCollection: this.talentCollection,
+        talentGroupCollection: this.talentGroupCollection,
+        studioResourceCollection: this.studioResourceCollection,
+        orgUnitCollection: this.orgUnitCollection,
+        monthlyRosterCollection: this.monthlyRosterCollection,
+        workPatternCollection: this.workPatternCollection,
       },
     );
-
-    const items =
-      await enrichWorkShiftReferenceSummaries(
-        page.items.map((item) =>
-          toWorkShiftListItemView(item),
-        ),
-        {
-          employmentProfileCollection:
-            this.employmentProfileCollection,
-          talentCollection: this.talentCollection,
-          talentGroupCollection:
-            this.talentGroupCollection,
-          studioResourceCollection:
-            this.studioResourceCollection,
-          orgUnitCollection: this.orgUnitCollection,
-          monthlyRosterCollection:
-            this.monthlyRosterCollection,
-          workPatternCollection:
-            this.workPatternCollection,
-        },
-      );
 
     return {
       items,
@@ -227,18 +203,12 @@ export class NativeMongoWorkShiftReadRepository
   async listWorkShiftsBySubject(
     input: WorkShiftBySubjectListReadInput,
   ): Promise<WorkShiftBySubjectListReadResult> {
-    const page = await this.listDocuments(
-      "by-subject",
-      input,
-      (filters) => {
-        applyBySubjectFilters(filters, input);
-      },
-    );
+    const page = await this.listDocuments("by-subject", input, (filters) => {
+      applyBySubjectFilters(filters, input);
+    });
 
     return {
-      items: page.items.map((item) =>
-        toWorkShiftBySubjectListItemView(item),
-      ),
+      items: page.items.map((item) => toWorkShiftBySubjectListItemView(item)),
       nextCursor: page.nextCursor,
     };
   }
@@ -246,18 +216,12 @@ export class NativeMongoWorkShiftReadRepository
   async listWorkShiftsByResource(
     input: WorkShiftByResourceListReadInput,
   ): Promise<WorkShiftByResourceListReadResult> {
-    const page = await this.listDocuments(
-      "by-resource",
-      input,
-      (filters) => {
-        applyByResourceFilters(filters, input);
-      },
-    );
+    const page = await this.listDocuments("by-resource", input, (filters) => {
+      applyByResourceFilters(filters, input);
+    });
 
     return {
-      items: page.items.map((item) =>
-        toWorkShiftByResourceListItemView(item),
-      ),
+      items: page.items.map((item) => toWorkShiftByResourceListItemView(item)),
       nextCursor: page.nextCursor,
     };
   }
@@ -273,33 +237,25 @@ export class NativeMongoWorkShiftReadRepository
       return null;
     }
 
-    const [detail] =
-      await enrichWorkShiftReferenceSummaries(
-        [toWorkShiftDetailView(doc)],
-        {
-          employmentProfileCollection:
-            this.employmentProfileCollection,
-          talentCollection: this.talentCollection,
-          talentGroupCollection:
-            this.talentGroupCollection,
-          studioResourceCollection:
-            this.studioResourceCollection,
-          orgUnitCollection: this.orgUnitCollection,
-          monthlyRosterCollection:
-            this.monthlyRosterCollection,
-          workPatternCollection:
-            this.workPatternCollection,
-        },
-      );
+    const [detail] = await enrichWorkShiftReferenceSummaries(
+      [toWorkShiftDetailView(doc)],
+      {
+        employmentProfileCollection: this.employmentProfileCollection,
+        talentCollection: this.talentCollection,
+        talentGroupCollection: this.talentGroupCollection,
+        studioResourceCollection: this.studioResourceCollection,
+        orgUnitCollection: this.orgUnitCollection,
+        monthlyRosterCollection: this.monthlyRosterCollection,
+        workPatternCollection: this.workPatternCollection,
+      },
+    );
 
     return detail ?? null;
   }
 
   async listActiveEmploymentProfileShiftsForWindow(
     input: ActiveEmploymentProfileWorkShiftLookupInput,
-  ): Promise<
-    readonly ActiveEmploymentProfileWorkShiftConflictView[]
-  > {
+  ): Promise<readonly ActiveEmploymentProfileWorkShiftConflictView[]> {
     if (input.subjectEmploymentProfileIds.length === 0) {
       return [];
     }
@@ -326,49 +282,38 @@ export class NativeMongoWorkShiftReadRepository
       .toArray();
 
     return docs
-      .filter(
-        (doc) =>
-          doc.subjectEmploymentProfileId !== null,
-      )
+      .filter((doc) => doc.subjectEmploymentProfileId !== null)
       .map(toActiveEmploymentProfileConflictView);
   }
 
-  private async listDocuments<TInput extends {
-    readonly limit: number;
-    readonly cursor?: string;
-    readonly sortField?: WorkShiftSortField;
-    readonly sortDirection?: WorkShiftSortDirection;
-  }>(
+  private async listDocuments<
+    TInput extends {
+      readonly limit: number;
+      readonly cursor?: string;
+      readonly sortField?: WorkShiftSortField;
+      readonly sortDirection?: WorkShiftSortDirection;
+    },
+  >(
     view: ReadViewKind,
     input: TInput,
-    buildFilters: (
-      filters: Array<Record<string, unknown>>,
-    ) => void,
+    buildFilters: (filters: Array<Record<string, unknown>>) => void,
   ): Promise<PageResult> {
     const sortSpec = toSortSpec(input);
-    const queryShapeSignature =
-      buildCursorQueryShapeSignature(
-        view,
-        input,
-        sortSpec,
-      );
+    const queryShapeSignature = buildCursorQueryShapeSignature(
+      view,
+      input,
+      sortSpec,
+    );
     const cursor =
       input.cursor === undefined
         ? undefined
-        : decodeCursor(
-            input.cursor,
-            sortSpec,
-            queryShapeSignature,
-          );
-    const queryFilters: Array<Record<string, unknown>> =
-      [];
+        : decodeCursor(input.cursor, sortSpec, queryShapeSignature);
+    const queryFilters: Array<Record<string, unknown>> = [];
 
     buildFilters(queryFilters);
 
     if (cursor) {
-      queryFilters.push(
-        buildPageAfterFilter(sortSpec, cursor),
-      );
+      queryFilters.push(buildPageAfterFilter(sortSpec, cursor));
     }
 
     const docs = await this.collection
@@ -378,9 +323,7 @@ export class NativeMongoWorkShiftReadRepository
       .toArray();
 
     const hasNext = docs.length > input.limit;
-    const page = hasNext
-      ? docs.slice(0, input.limit)
-      : docs;
+    const page = hasNext ? docs.slice(0, input.limit) : docs;
 
     return {
       items: page,
@@ -405,23 +348,15 @@ function applyBaseFilters(
   applyStatusFilter(filters, input.status);
   applySubjectFilter(filters, {
     subjectKind: input.subjectKind,
-    subjectEmploymentProfileId:
-      input.subjectEmploymentProfileId,
+    subjectEmploymentProfileId: input.subjectEmploymentProfileId,
     subjectTalentId: input.subjectTalentId,
-    subjectTalentGroupId:
-      input.subjectTalentGroupId,
+    subjectTalentGroupId: input.subjectTalentGroupId,
   });
-  applyContainsResourceFilter(
-    filters,
-    input.containsStudioResourceId,
-  );
+  applyContainsResourceFilter(filters, input.containsStudioResourceId);
   applySourceFilters(filters, input);
   applyWindowFilter(filters, input);
   applySearchFilter(filters, input.search);
-  applyScopeEmploymentProfileFilter(
-    filters,
-    input.scopeEmploymentProfileIds,
-  );
+  applyScopeEmploymentProfileFilter(filters, input.scopeEmploymentProfileIds);
 }
 
 function applySourceFilters(
@@ -463,8 +398,7 @@ function applySourceFilters(
 
   if (input.sourceDepartmentOrgUnitId) {
     filters.push({
-      sourceDepartmentOrgUnitId:
-        input.sourceDepartmentOrgUnitId,
+      sourceDepartmentOrgUnitId: input.sourceDepartmentOrgUnitId,
     });
   }
 
@@ -482,17 +416,12 @@ function applyBySubjectFilters(
   applyStatusFilter(filters, input.status);
   applyExactSubjectFilter(filters, {
     subjectKind: input.subjectKind,
-    subjectEmploymentProfileId:
-      input.subjectEmploymentProfileId,
+    subjectEmploymentProfileId: input.subjectEmploymentProfileId,
     subjectTalentId: input.subjectTalentId,
-    subjectTalentGroupId:
-      input.subjectTalentGroupId,
+    subjectTalentGroupId: input.subjectTalentGroupId,
   });
   applyWindowFilter(filters, input);
-  applyScopeEmploymentProfileFilter(
-    filters,
-    input.scopeEmploymentProfileIds,
-  );
+  applyScopeEmploymentProfileFilter(filters, input.scopeEmploymentProfileIds);
 }
 
 function applyByResourceFilters(
@@ -500,15 +429,9 @@ function applyByResourceFilters(
   input: WorkShiftByResourceListReadInput,
 ): void {
   applyStatusFilter(filters, input.status);
-  applyContainsResourceFilter(
-    filters,
-    input.studioResourceId,
-  );
+  applyContainsResourceFilter(filters, input.studioResourceId);
   applyWindowFilter(filters, input);
-  applyScopeEmploymentProfileFilter(
-    filters,
-    input.scopeEmploymentProfileIds,
-  );
+  applyScopeEmploymentProfileFilter(filters, input.scopeEmploymentProfileIds);
 }
 
 function applyStatusFilter(
@@ -546,8 +469,7 @@ function applySubjectFilter(
 
   if (input.subjectEmploymentProfileId) {
     filters.push({
-      subjectEmploymentProfileId:
-        input.subjectEmploymentProfileId,
+      subjectEmploymentProfileId: input.subjectEmploymentProfileId,
     });
   }
 
@@ -559,8 +481,7 @@ function applySubjectFilter(
 
   if (input.subjectTalentGroupId) {
     filters.push({
-      subjectTalentGroupId:
-        input.subjectTalentGroupId,
+      subjectTalentGroupId: input.subjectTalentGroupId,
     });
   }
 }
@@ -580,8 +501,7 @@ function applyExactSubjectFilter(
         subjectKind: input.subjectKind,
       });
       filters.push({
-        subjectEmploymentProfileId:
-          input.subjectEmploymentProfileId,
+        subjectEmploymentProfileId: input.subjectEmploymentProfileId,
       });
       return;
 
@@ -599,8 +519,7 @@ function applyExactSubjectFilter(
         subjectKind: input.subjectKind,
       });
       filters.push({
-        subjectTalentGroupId:
-          input.subjectTalentGroupId,
+        subjectTalentGroupId: input.subjectTalentGroupId,
       });
       return;
   }
@@ -653,10 +572,7 @@ function applySearchFilter(
 
   filters.push({
     $or: [
-      buildPrefixRange(
-        "normalizedShiftCode",
-        search,
-      ),
+      buildPrefixRange("normalizedShiftCode", search),
       buildPrefixRange("normalizedTitle", search),
     ],
   });
@@ -664,9 +580,7 @@ function applySearchFilter(
 
 function applyScopeEmploymentProfileFilter(
   filters: Array<Record<string, unknown>>,
-  scopeEmploymentProfileIds:
-    | readonly string[]
-    | undefined,
+  scopeEmploymentProfileIds: readonly string[] | undefined,
 ): void {
   if (!scopeEmploymentProfileIds) {
     return;
@@ -711,25 +625,17 @@ function toWorkShiftListItemView(
     shiftCode: document.shiftCode,
     title: document.title,
     subjectKind: document.subjectKind,
-    subjectEmploymentProfileId:
-      document.subjectEmploymentProfileId,
+    subjectEmploymentProfileId: document.subjectEmploymentProfileId,
     subjectTalentId: document.subjectTalentId,
-    subjectTalentGroupId:
-      document.subjectTalentGroupId,
+    subjectTalentGroupId: document.subjectTalentGroupId,
     status: document.status,
     shiftStartAt: document.shiftStartAt,
     shiftEndAt: document.shiftEndAt,
-    sourceType: normalizeSourceType(
-      document.sourceType,
-    ),
-    sourceRosterId:
-      document.sourceRosterId ?? null,
-    sourceRosterMonth:
-      document.sourceRosterMonth ?? null,
-    sourceRosterLocalDate:
-      document.sourceRosterLocalDate ?? null,
-    sourceRosterSlotKey:
-      document.sourceRosterSlotKey ?? null,
+    sourceType: normalizeSourceType(document.sourceType),
+    sourceRosterId: document.sourceRosterId ?? null,
+    sourceRosterMonth: document.sourceRosterMonth ?? null,
+    sourceRosterLocalDate: document.sourceRosterLocalDate ?? null,
+    sourceRosterSlotKey: document.sourceRosterSlotKey ?? null,
     createdAt: document.createdAt,
   };
 }
@@ -769,38 +675,24 @@ function toWorkShiftDetailView(
     shiftCode: document.shiftCode,
     title: document.title,
     subjectKind: document.subjectKind,
-    subjectEmploymentProfileId:
-      document.subjectEmploymentProfileId,
+    subjectEmploymentProfileId: document.subjectEmploymentProfileId,
     subjectTalentId: document.subjectTalentId,
-    subjectTalentGroupId:
-      document.subjectTalentGroupId,
-    studioResourceIds: [
-      ...document.studioResourceIds,
-    ],
+    subjectTalentGroupId: document.subjectTalentGroupId,
+    studioResourceIds: [...document.studioResourceIds],
     status: document.status,
     shiftStartAt: document.shiftStartAt,
     shiftEndAt: document.shiftEndAt,
     description: document.description,
     externalRef: document.externalRef,
-    sourceType: normalizeSourceType(
-      document.sourceType,
-    ),
-    sourceRosterId:
-      document.sourceRosterId ?? null,
-    sourcePatternId:
-      document.sourcePatternId ?? null,
-    sourceExceptionId:
-      document.sourceExceptionId ?? null,
-    sourceGenerationRunId:
-      document.sourceGenerationRunId ?? null,
-    sourceRosterMonth:
-      document.sourceRosterMonth ?? null,
-    sourceDepartmentOrgUnitId:
-      document.sourceDepartmentOrgUnitId ?? null,
-    sourceRosterLocalDate:
-      document.sourceRosterLocalDate ?? null,
-    sourceRosterSlotKey:
-      document.sourceRosterSlotKey ?? null,
+    sourceType: normalizeSourceType(document.sourceType),
+    sourceRosterId: document.sourceRosterId ?? null,
+    sourcePatternId: document.sourcePatternId ?? null,
+    sourceExceptionId: document.sourceExceptionId ?? null,
+    sourceGenerationRunId: document.sourceGenerationRunId ?? null,
+    sourceRosterMonth: document.sourceRosterMonth ?? null,
+    sourceDepartmentOrgUnitId: document.sourceDepartmentOrgUnitId ?? null,
+    sourceRosterLocalDate: document.sourceRosterLocalDate ?? null,
+    sourceRosterSlotKey: document.sourceRosterSlotKey ?? null,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
   };
@@ -813,22 +705,15 @@ function toActiveEmploymentProfileConflictView(
     workShiftId: document._id,
     shiftCode: document.shiftCode,
     title: document.title,
-    subjectEmploymentProfileId:
-      document.subjectEmploymentProfileId as string,
+    subjectEmploymentProfileId: document.subjectEmploymentProfileId as string,
     status: "ACTIVE",
     shiftStartAt: document.shiftStartAt,
     shiftEndAt: document.shiftEndAt,
-    sourceType: normalizeSourceType(
-      document.sourceType,
-    ),
-    sourceRosterId:
-      document.sourceRosterId ?? null,
-    sourceRosterMonth:
-      document.sourceRosterMonth ?? null,
-    sourceRosterLocalDate:
-      document.sourceRosterLocalDate ?? null,
-    sourceRosterSlotKey:
-      document.sourceRosterSlotKey ?? null,
+    sourceType: normalizeSourceType(document.sourceType),
+    sourceRosterId: document.sourceRosterId ?? null,
+    sourceRosterMonth: document.sourceRosterMonth ?? null,
+    sourceRosterLocalDate: document.sourceRosterLocalDate ?? null,
+    sourceRosterSlotKey: document.sourceRosterSlotKey ?? null,
   };
 }
 
@@ -881,10 +766,7 @@ async function enrichWorkShiftReferenceSummaries<
         break;
 
       case "TALENT_GROUP":
-        addOptionalReferenceId(
-          talentGroupIds,
-          item.subjectTalentGroupId,
-        );
+        addOptionalReferenceId(talentGroupIds, item.subjectTalentGroupId);
         break;
     }
 
@@ -894,10 +776,7 @@ async function enrichWorkShiftReferenceSummaries<
 
     addOptionalReferenceId(monthlyRosterIds, item.sourceRosterId ?? null);
     addOptionalReferenceId(workPatternIds, item.sourcePatternId ?? null);
-    addOptionalReferenceId(
-      orgUnitIds,
-      item.sourceDepartmentOrgUnitId ?? null,
-    );
+    addOptionalReferenceId(orgUnitIds, item.sourceDepartmentOrgUnitId ?? null);
   }
 
   const [
@@ -913,7 +792,11 @@ async function enrichWorkShiftReferenceSummaries<
       employmentProfileIds,
       collections.employmentProfileCollection,
     ),
-    loadTalentReferenceSummaries(talentIds, collections.talentCollection),
+    loadTalentReferenceSummaries(
+      talentIds,
+      collections.talentCollection,
+      collections.employmentProfileCollection,
+    ),
     loadTalentGroupReferenceSummaries(
       talentGroupIds,
       collections.talentGroupCollection,
@@ -945,8 +828,7 @@ async function enrichWorkShiftReferenceSummaries<
       ? {
           studioResourceRefs: item.studioResourceIds.map(
             (id) =>
-              studioResourceRefMap.get(id) ??
-              toFallbackReferenceSummary(id),
+              studioResourceRefMap.get(id) ?? toFallbackReferenceSummary(id),
           ),
         }
       : {}),
@@ -986,9 +868,8 @@ function readSubjectReferenceSummary(
   switch (item.subjectKind) {
     case "EMPLOYMENT_PROFILE":
       return item.subjectEmploymentProfileId
-        ? (refs.employmentProfileRefMap.get(
-            item.subjectEmploymentProfileId,
-          ) ?? null)
+        ? (refs.employmentProfileRefMap.get(item.subjectEmploymentProfileId) ??
+            null)
         : null;
 
     case "TALENT":
@@ -1037,6 +918,7 @@ async function loadEmploymentProfileReferenceSummaries(
 async function loadTalentReferenceSummaries(
   ids: ReadonlySet<string>,
   collection: Collection<TalentReferenceReadDocument>,
+  employmentProfileCollection: Collection<EmploymentProfileReferenceReadDocument>,
 ): Promise<Map<string, ReferenceSummary>> {
   if (ids.size === 0) {
     return new Map();
@@ -1052,16 +934,35 @@ async function loadTalentReferenceSummaries(
           stageName: 1,
           legalName: 1,
           displayShortName: 1,
+          talentOrigin: 1,
+          linkedEmploymentProfileId: 1,
           operationalStatus: 1,
         },
       },
     )
     .toArray();
 
+  const linkedEmploymentProfileRefMap =
+    await loadEmploymentProfileReferenceSummaries(
+      new Set(
+        documents
+          .map((document) => document.linkedEmploymentProfileId)
+          .filter((value): value is string => typeof value === "string"),
+      ),
+      employmentProfileCollection,
+    );
+
   return new Map(
     documents.map((document) => [
       document._id,
-      toTalentReferenceSummary(document),
+      toTalentReferenceSummary(
+        document,
+        document.linkedEmploymentProfileId
+          ? (linkedEmploymentProfileRefMap.get(
+              document.linkedEmploymentProfileId,
+            ) ?? null)
+          : null,
+      ),
     ]),
   );
 }
@@ -1228,11 +1129,15 @@ function toEmploymentProfileReferenceSummary(
 
 function toTalentReferenceSummary(
   document: TalentReferenceReadDocument,
+  linkedEmploymentProfile: ReferenceSummary | null,
 ): ReferenceSummary {
+  const display = deriveTalentDisplaySummary(document, linkedEmploymentProfile);
+
   return {
     id: document._id,
     code: document.talentCode,
-    name: document.displayShortName ?? document.stageName ?? document.legalName,
+    name: display.displayName,
+    displayName: display.displayName,
     status: document.operationalStatus,
   };
 }
@@ -1295,16 +1200,11 @@ function toWorkPatternReferenceSummary(
 function normalizeSourceType(
   value: WorkShiftSourceType | null | undefined,
 ): WorkShiftSourceType {
-  return value === "ROSTER_GENERATED"
-    ? "ROSTER_GENERATED"
-    : "MANUAL";
+  return value === "ROSTER_GENERATED" ? "ROSTER_GENERATED" : "MANUAL";
 }
 
 function toSortSpec(
-  input: Pick<
-    WorkShiftListReadInput,
-    "sortField" | "sortDirection"
-  >,
+  input: Pick<WorkShiftListReadInput, "sortField" | "sortDirection">,
 ): SortSpec {
   if (!input.sortField) {
     return {
@@ -1319,9 +1219,7 @@ function toSortSpec(
   };
 }
 
-function toSortDocument(
-  spec: SortSpec,
-): Record<string, 1 | -1> {
+function toSortDocument(spec: SortSpec): Record<string, 1 | -1> {
   if (spec.kind === "default") {
     return {
       shiftStartAt: 1,
@@ -1329,9 +1227,7 @@ function toSortDocument(
     };
   }
 
-  const direction = toDirectionValue(
-    spec.direction,
-  );
+  const direction = toDirectionValue(spec.direction);
 
   return {
     [spec.field]: direction,
@@ -1358,10 +1254,7 @@ function buildCursorFromDocument(
     queryShapeSignature,
     field: spec.field,
     direction: spec.direction,
-    value: readSortFieldValue(
-      document,
-      spec.field,
-    ),
+    value: readSortFieldValue(document, spec.field),
     id: document._id,
   };
 }
@@ -1416,17 +1309,13 @@ function buildPageAfterFilter(
     throw invalidCursorError();
   }
 
-  const comparisonOperator =
-    spec.direction === "ASC"
-      ? "$gt"
-      : "$lt";
+  const comparisonOperator = spec.direction === "ASC" ? "$gt" : "$lt";
 
   return {
     $or: [
       {
         [spec.field]: {
-          [comparisonOperator]:
-            cursor.value,
+          [comparisonOperator]: cursor.value,
         },
       },
       {
@@ -1439,13 +1328,8 @@ function buildPageAfterFilter(
   };
 }
 
-function encodeCursor(
-  cursor: EncodedCursor,
-): string {
-  return Buffer.from(
-    JSON.stringify(cursor),
-    "utf8",
-  ).toString("base64url");
+function encodeCursor(cursor: EncodedCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
 
 function decodeCursor(
@@ -1462,10 +1346,7 @@ function decodeCursor(
   let decodedText: string;
 
   try {
-    decodedText = Buffer.from(
-      normalized,
-      "base64url",
-    ).toString("utf8");
+    decodedText = Buffer.from(normalized, "base64url").toString("utf8");
   } catch {
     throw invalidCursorError();
   }
@@ -1486,17 +1367,12 @@ function decodeCursor(
     throw invalidCursorError();
   }
 
-  const candidate = payload as Record<
-    string,
-    unknown
-  >;
-  const queryShapeSignature =
-    candidate.queryShapeSignature;
+  const candidate = payload as Record<string, unknown>;
+  const queryShapeSignature = candidate.queryShapeSignature;
 
   if (
     typeof queryShapeSignature !== "string" ||
-    queryShapeSignature !==
-      expectedQueryShapeSignature
+    queryShapeSignature !== expectedQueryShapeSignature
   ) {
     throw invalidCursorError();
   }
@@ -1546,10 +1422,7 @@ function decodeCursor(
     if (typeof value !== "string") {
       throw invalidCursorError();
     }
-  } else if (
-    typeof value !== "number" ||
-    !Number.isInteger(value)
-  ) {
+  } else if (typeof value !== "number" || !Number.isInteger(value)) {
     throw invalidCursorError();
   }
 
@@ -1576,66 +1449,49 @@ function buildCursorQueryShapeSignature(
         view,
         status: typed.status ?? null,
         subjectKind: typed.subjectKind ?? null,
-        subjectEmploymentProfileId:
-          typed.subjectEmploymentProfileId ?? null,
-        subjectTalentId:
-          typed.subjectTalentId ?? null,
-        subjectTalentGroupId:
-          typed.subjectTalentGroupId ?? null,
-        containsStudioResourceId:
-          typed.containsStudioResourceId ?? null,
+        subjectEmploymentProfileId: typed.subjectEmploymentProfileId ?? null,
+        subjectTalentId: typed.subjectTalentId ?? null,
+        subjectTalentGroupId: typed.subjectTalentGroupId ?? null,
+        containsStudioResourceId: typed.containsStudioResourceId ?? null,
         sourceType: typed.sourceType ?? null,
-        sourceRosterId:
-          typed.sourceRosterId ?? null,
-        sourceDepartmentOrgUnitId:
-          typed.sourceDepartmentOrgUnitId ?? null,
-        sourceRosterMonth:
-          typed.sourceRosterMonth ?? null,
-        windowStartAt:
-          typed.windowStartAt ?? null,
+        sourceRosterId: typed.sourceRosterId ?? null,
+        sourceDepartmentOrgUnitId: typed.sourceDepartmentOrgUnitId ?? null,
+        sourceRosterMonth: typed.sourceRosterMonth ?? null,
+        windowStartAt: typed.windowStartAt ?? null,
         windowEndAt: typed.windowEndAt ?? null,
         search: typed.search ?? null,
-        scopeEmploymentProfileIds:
-          typed.scopeEmploymentProfileIds ?? null,
+        scopeEmploymentProfileIds: typed.scopeEmploymentProfileIds ?? null,
         sortSpec,
       });
     }
 
     case "by-subject": {
-      const typed =
-        input as WorkShiftBySubjectListReadInput;
+      const typed = input as WorkShiftBySubjectListReadInput;
 
       return JSON.stringify({
         view,
         subjectKind: typed.subjectKind,
-        subjectEmploymentProfileId:
-          typed.subjectEmploymentProfileId,
+        subjectEmploymentProfileId: typed.subjectEmploymentProfileId,
         subjectTalentId: typed.subjectTalentId,
-        subjectTalentGroupId:
-          typed.subjectTalentGroupId,
+        subjectTalentGroupId: typed.subjectTalentGroupId,
         status: typed.status ?? null,
-        windowStartAt:
-          typed.windowStartAt ?? null,
+        windowStartAt: typed.windowStartAt ?? null,
         windowEndAt: typed.windowEndAt ?? null,
-        scopeEmploymentProfileIds:
-          typed.scopeEmploymentProfileIds ?? null,
+        scopeEmploymentProfileIds: typed.scopeEmploymentProfileIds ?? null,
         sortSpec,
       });
     }
 
     case "by-resource": {
-      const typed =
-        input as WorkShiftByResourceListReadInput;
+      const typed = input as WorkShiftByResourceListReadInput;
 
       return JSON.stringify({
         view,
         studioResourceId: typed.studioResourceId,
         status: typed.status ?? null,
-        windowStartAt:
-          typed.windowStartAt ?? null,
+        windowStartAt: typed.windowStartAt ?? null,
         windowEndAt: typed.windowEndAt ?? null,
-        scopeEmploymentProfileIds:
-          typed.scopeEmploymentProfileIds ?? null,
+        scopeEmploymentProfileIds: typed.scopeEmploymentProfileIds ?? null,
         sortSpec,
       });
     }
@@ -1658,14 +1514,10 @@ function readSortFieldValue(
   }
 }
 
-function toDirectionValue(
-  direction: WorkShiftSortDirection,
-): 1 | -1 {
+function toDirectionValue(direction: WorkShiftSortDirection): 1 | -1 {
   return direction === "ASC" ? 1 : -1;
 }
 
 function invalidCursorError(): WorkScheduleValidationError {
-  return new WorkScheduleValidationError(
-    "cursor is invalid",
-  );
+  return new WorkScheduleValidationError("cursor is invalid");
 }

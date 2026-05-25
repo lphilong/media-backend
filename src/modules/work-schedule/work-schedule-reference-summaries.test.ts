@@ -45,6 +45,35 @@ const workShift = {
   updatedAt: 2,
 };
 
+const talentWorkShift = {
+  ...workShift,
+  _id: "shift-talent",
+  shiftCode: "SHIFT-TALENT",
+  normalizedShiftCode: "shift-talent",
+  title: "Talent shift",
+  normalizedTitle: "talent shift",
+  subjectKind: "TALENT",
+  subjectEmploymentProfileId: null,
+  subjectTalentId: "talent-1",
+  subjectTalentGroupId: null,
+  studioResourceIds: [],
+  sourceType: "MANUAL",
+  sourceRosterId: null,
+  sourcePatternId: null,
+  sourceRosterMonth: null,
+  sourceDepartmentOrgUnitId: null,
+  sourceRosterLocalDate: null,
+  sourceRosterSlotKey: null,
+};
+
+const externalTalentWorkShift = {
+  ...talentWorkShift,
+  _id: "shift-external-talent",
+  shiftCode: "SHIFT-EXTERNAL",
+  normalizedShiftCode: "shift-external",
+  subjectTalentId: "talent-external",
+};
+
 const monthlyRoster = {
   _id: "roster-1",
   rosterCode: "MR-1",
@@ -115,7 +144,13 @@ test("Work Schedule Work Shift refs enrich after page read, preserve raw IDs, an
       return {
         find(query: unknown, options: unknown) {
           calls.push({ collection: name, query, options });
-          if (name === "work_shifts") return createFindResult([workShift]);
+          if (name === "work_shifts") {
+            return createFindResult([
+              workShift,
+              talentWorkShift,
+              externalTalentWorkShift,
+            ]);
+          }
           if (name === "employment_profiles") {
             return createFindResult([
               {
@@ -124,6 +159,37 @@ test("Work Schedule Work Shift refs enrich after page read, preserve raw IDs, an
                 legalName: "Alice Legal",
                 displayName: "Alice",
                 employmentStatus: "ACTIVE",
+              },
+              {
+                _id: "ep-binh",
+                employeeCode: "EMP-2",
+                legalName: "Binh Tran Legal",
+                displayName: "Binh Tran",
+                employmentStatus: "ACTIVE",
+              },
+            ]);
+          }
+          if (name === "talents") {
+            return createFindResult([
+              {
+                _id: "talent-1",
+                talentCode: "TAL-1",
+                stageName: "Stale Internal Stage",
+                legalName: "Stale Internal Legal",
+                displayShortName: "Stale Internal Short",
+                talentOrigin: "INTERNAL",
+                linkedEmploymentProfileId: "ep-binh",
+                operationalStatus: "ACTIVE",
+              },
+              {
+                _id: "talent-external",
+                talentCode: "TAL-2",
+                stageName: "External Stage",
+                legalName: "External Legal",
+                displayShortName: "External Short",
+                talentOrigin: "EXTERNAL",
+                linkedEmploymentProfileId: null,
+                operationalStatus: "ACTIVE",
               },
             ]);
           }
@@ -180,11 +246,37 @@ test("Work Schedule Work Shift refs enrich after page read, preserve raw IDs, an
     name: "Alice Legal",
     status: "ACTIVE",
   });
+  assert.deepEqual(list.items[1].subjectRef, {
+    id: "talent-1",
+    code: "TAL-1",
+    name: "Binh Tran",
+    displayName: "Binh Tran",
+    status: "ACTIVE",
+  });
+  assert.notEqual(
+    list.items[1].subjectRef?.displayName,
+    "Stale Internal Stage",
+  );
+  assert.notEqual(
+    list.items[1].subjectRef?.displayName,
+    "Stale Internal Legal",
+  );
+  assert.notEqual(
+    list.items[1].subjectRef?.displayName,
+    "Stale Internal Short",
+  );
+  assert.deepEqual(list.items[2].subjectRef, {
+    id: "talent-external",
+    code: "TAL-2",
+    name: "External Short",
+    displayName: "External Short",
+    status: "ACTIVE",
+  });
   assert.equal(detail?.studioResourceIds[0], "studio-missing");
-  assert.deepEqual(detail?.studioResourceRefs?.map((ref) => ref.id), [
-    "studio-missing",
-    "studio-1",
-  ]);
+  assert.deepEqual(
+    detail?.studioResourceRefs?.map((ref) => ref.id),
+    ["studio-missing", "studio-1"],
+  );
   assert.equal(detail?.sourceRosterRef?.code, "MR-1");
   assert.equal(detail?.sourcePatternRef?.code, "WP-1");
   assert.equal(detail?.sourceDepartmentOrgUnitRef?.code, "OU-1");
@@ -281,17 +373,23 @@ test("Monthly Roster refs enrich structural fields and exception refs without dr
   assert.equal(list.items[0].workPatternRef?.code, "WP-1");
   assert.equal(list.items[0].holidayCalendarRef?.code, "HC-1");
   assert.equal(detail?.exceptions[0].subjectEmploymentProfileId, "ep-1");
-  assert.equal(detail?.exceptions[0].subjectEmploymentProfileRef?.code, "EMP-1");
-  assert.deepEqual(detail?.exceptions[0].studioResourceRefs?.map((ref) => ref.id), [
-    "studio-1",
-    "studio-missing",
-  ]);
+  assert.equal(
+    detail?.exceptions[0].subjectEmploymentProfileRef?.code,
+    "EMP-1",
+  );
+  assert.deepEqual(
+    detail?.exceptions[0].studioResourceRefs?.map((ref) => ref.id),
+    ["studio-1", "studio-missing"],
+  );
   assert.equal(
     MonthlyRosterAdminExposure.exposeDetail(detail!).departmentOrgUnitRef !==
       undefined,
     true,
   );
-  assert.equal(calls.filter((call) => call.collection === "org_units").length, 2);
+  assert.equal(
+    calls.filter((call) => call.collection === "org_units").length,
+    2,
+  );
   assert.deepEqual(
     calls.find((call) => call.collection === "work_holiday_calendars")?.options,
     {
@@ -436,18 +534,12 @@ test("Monthly Roster preview decorates rows and eligible profiles with refs afte
   assert.equal(preview.departmentOrgUnitRef?.code, "OU-1");
   assert.equal(preview.workPatternRef?.code, "WP-1");
   assert.equal(preview.holidayCalendarRef?.code, "HC-1");
-  assert.equal(
-    preview.eligibleProfiles[0].subjectEmploymentProfileId,
-    "ep-1",
-  );
+  assert.equal(preview.eligibleProfiles[0].subjectEmploymentProfileId, "ep-1");
   assert.equal(
     preview.eligibleProfiles[0].subjectEmploymentProfileRef?.code,
     "EMP-1",
   );
   assert.equal(preview.rows[0].departmentOrgUnitId, "ou-1");
   assert.equal(preview.rows[0].departmentOrgUnitRef?.code, "OU-1");
-  assert.equal(
-    preview.rows[0].subjectEmploymentProfileRef?.code,
-    "EMP-1",
-  );
+  assert.equal(preview.rows[0].subjectEmploymentProfileRef?.code, "EMP-1");
 });
