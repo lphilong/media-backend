@@ -9,6 +9,7 @@ import { Auth0ActorResolver } from "./auth/auth0.actor.resolver";
 import { createLocalMockAuthConfig } from "./auth/local-mock-auth.middleware";
 import { env } from "@config/env";
 import { createAdminRoutes } from "./router/admin.routes";
+import { createSelfServiceRoutes } from "./router/self-service.routes";
 import { InfraModule } from "@infra/infra.module";
 import { httpContextMiddleware } from "./http/http-context.middleware";
 import { httpTraceMiddleware } from "./http/http-trace.middleware";
@@ -51,6 +52,7 @@ export async function createApp(options: {
   app.use(createHttpMetricsMiddleware("http"));
 
   const adminRoutes = await createAdminRoutes(options.infra);
+  const selfServiceRoutes = await createSelfServiceRoutes(options.infra);
 
   app.use(
     "/admin",
@@ -71,6 +73,27 @@ export async function createApp(options: {
     }),
     httpContextMiddleware(),
     adminRoutes,
+  );
+
+  app.use(
+    "/self-service",
+    createSecureRouter({
+      context: "ADMIN",
+      auth0: {
+        issuerBaseURL: requireHttpAuth0IssuerBaseUrl(),
+        audience: requireHttpAuth0Audience(),
+      },
+      actorResolver: options.actorResolver,
+      localMockAuth: createLocalMockAuthConfig({
+        enabled: env.LOCAL_MOCK_AUTH_ENABLED,
+        actorId: env.LOCAL_MOCK_AUTH_ACTOR_ID,
+        email: env.LOCAL_MOCK_AUTH_EMAIL,
+        permissions: env.LOCAL_MOCK_AUTH_PERMISSIONS,
+        scopeGrants: env.LOCAL_MOCK_AUTH_SCOPE_GRANTS,
+      }),
+    }),
+    httpContextMiddleware(),
+    selfServiceRoutes,
   );
 
   app.use((_req, _res, next) => {
