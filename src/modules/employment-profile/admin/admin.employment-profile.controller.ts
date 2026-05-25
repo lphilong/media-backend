@@ -52,8 +52,14 @@ const CREATE_EMPLOYMENT_PROFILE_ALLOWED_BODY_KEYS =
     "orgUnitId",
     "managerEmploymentProfileId",
     "linkedUserId",
+    "recruiterEmploymentProfileId",
+    "hrOwnerEmploymentProfileId",
+    "onboardingOwnerEmploymentProfileId",
+    "sourcedByEmploymentProfileId",
     "contractStatus",
     "employmentStartDate",
+    "hiredAt",
+    "onboardedAt",
     "externalRef",
     "titleDescription",
   ] as const);
@@ -66,6 +72,12 @@ const UPDATE_EMPLOYMENT_PROFILE_CORE_ALLOWED_BODY_KEYS =
     "jobTitle",
     "externalRef",
     "titleDescription",
+    "recruiterEmploymentProfileId",
+    "hrOwnerEmploymentProfileId",
+    "onboardingOwnerEmploymentProfileId",
+    "sourcedByEmploymentProfileId",
+    "hiredAt",
+    "onboardedAt",
   ] as const);
 
 const ASSIGN_EMPLOYMENT_PROFILE_ORG_UNIT_ALLOWED_BODY_KEYS =
@@ -250,10 +262,42 @@ function parseCreateEmploymentProfileCommand(
         | string
         | null
         | undefined,
+    recruiterEmploymentProfileId:
+      body.recruiterEmploymentProfileId as
+        | string
+        | null
+        | undefined,
+    hrOwnerEmploymentProfileId:
+      body.hrOwnerEmploymentProfileId as
+        | string
+        | null
+        | undefined,
+    onboardingOwnerEmploymentProfileId:
+      body.onboardingOwnerEmploymentProfileId as
+        | string
+        | null
+        | undefined,
+    sourcedByEmploymentProfileId:
+      body.sourcedByEmploymentProfileId as
+        | string
+        | null
+        | undefined,
     contractStatus:
       body.contractStatus as CreateEmploymentProfileCommand["contractStatus"],
     employmentStartDate:
       body.employmentStartDate as number | string,
+    hiredAt:
+      body.hiredAt as
+        | number
+        | string
+        | null
+        | undefined,
+    onboardedAt:
+      body.onboardedAt as
+        | number
+        | string
+        | null
+        | undefined,
     externalRef:
       body.externalRef as
         | string
@@ -294,6 +338,38 @@ function parseUpdateEmploymentProfileCoreCommand(
         | undefined,
     titleDescription:
       body.titleDescription as
+        | string
+        | null
+        | undefined,
+    recruiterEmploymentProfileId:
+      body.recruiterEmploymentProfileId as
+        | string
+        | null
+        | undefined,
+    hrOwnerEmploymentProfileId:
+      body.hrOwnerEmploymentProfileId as
+        | string
+        | null
+        | undefined,
+    onboardingOwnerEmploymentProfileId:
+      body.onboardingOwnerEmploymentProfileId as
+        | string
+        | null
+        | undefined,
+    sourcedByEmploymentProfileId:
+      body.sourcedByEmploymentProfileId as
+        | string
+        | null
+        | undefined,
+    hiredAt:
+      body.hiredAt as
+        | number
+        | string
+        | null
+        | undefined,
+    onboardedAt:
+      body.onboardedAt as
+        | number
         | string
         | null
         | undefined,

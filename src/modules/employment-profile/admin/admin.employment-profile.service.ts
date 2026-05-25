@@ -171,6 +171,27 @@ export class EmploymentProfileAdminService {
           );
         }
 
+        await this.assertEmploymentProfileAttributionEligible(
+          input.recruiterEmploymentProfileId,
+          "recruiterEmploymentProfileId",
+          session,
+        );
+        await this.assertEmploymentProfileAttributionEligible(
+          input.hrOwnerEmploymentProfileId,
+          "hrOwnerEmploymentProfileId",
+          session,
+        );
+        await this.assertEmploymentProfileAttributionEligible(
+          input.onboardingOwnerEmploymentProfileId,
+          "onboardingOwnerEmploymentProfileId",
+          session,
+        );
+        await this.assertEmploymentProfileAttributionEligible(
+          input.sourcedByEmploymentProfileId,
+          "sourcedByEmploymentProfileId",
+          session,
+        );
+
         const now = Date.now();
         assertCalendarDateNotLaterThanEvaluationTime(
           input.employmentStartDate,
@@ -207,12 +228,22 @@ export class EmploymentProfileAdminService {
               orgUnitId: input.orgUnitId,
               managerEmploymentProfileId:
                 input.managerEmploymentProfileId,
+              recruiterEmploymentProfileId:
+                input.recruiterEmploymentProfileId,
+              hrOwnerEmploymentProfileId:
+                input.hrOwnerEmploymentProfileId,
+              onboardingOwnerEmploymentProfileId:
+                input.onboardingOwnerEmploymentProfileId,
+              sourcedByEmploymentProfileId:
+                input.sourcedByEmploymentProfileId,
               linkedUserId: input.linkedUserId,
               employmentStatus: "ACTIVE",
               contractStatus: input.contractStatus,
               employmentStartDate:
                 input.employmentStartDate,
               employmentEndDate: null,
+              hiredAt: input.hiredAt,
+              onboardedAt: input.onboardedAt,
               createdAt: now,
               updatedAt: now,
             };
@@ -253,6 +284,14 @@ export class EmploymentProfileAdminService {
             managerEmploymentProfileId:
               created.managerEmploymentProfileId,
             linkedUserId: created.linkedUserId,
+            recruiterEmploymentProfileId:
+              created.recruiterEmploymentProfileId,
+            hrOwnerEmploymentProfileId:
+              created.hrOwnerEmploymentProfileId,
+            onboardingOwnerEmploymentProfileId:
+              created.onboardingOwnerEmploymentProfileId,
+            sourcedByEmploymentProfileId:
+              created.sourcedByEmploymentProfileId,
           },
           session,
         });
@@ -296,6 +335,18 @@ export class EmploymentProfileAdminService {
       command.externalRef !== undefined;
     const hasTitleDescription =
       command.titleDescription !== undefined;
+    const hasRecruiterEmploymentProfileId =
+      command.recruiterEmploymentProfileId !== undefined;
+    const hasHrOwnerEmploymentProfileId =
+      command.hrOwnerEmploymentProfileId !== undefined;
+    const hasOnboardingOwnerEmploymentProfileId =
+      command.onboardingOwnerEmploymentProfileId !==
+      undefined;
+    const hasSourcedByEmploymentProfileId =
+      command.sourcedByEmploymentProfileId !== undefined;
+    const hasHiredAt = command.hiredAt !== undefined;
+    const hasOnboardedAt =
+      command.onboardedAt !== undefined;
 
     if (
       !hasLegalName &&
@@ -303,7 +354,13 @@ export class EmploymentProfileAdminService {
       !hasEmploymentKind &&
       !hasJobTitle &&
       !hasExternalRef &&
-      !hasTitleDescription
+      !hasTitleDescription &&
+      !hasRecruiterEmploymentProfileId &&
+      !hasHrOwnerEmploymentProfileId &&
+      !hasOnboardingOwnerEmploymentProfileId &&
+      !hasSourcedByEmploymentProfileId &&
+      !hasHiredAt &&
+      !hasOnboardedAt
     ) {
       throw new EmploymentProfileValidationError(
         "At least one field must be provided for update",
@@ -345,6 +402,46 @@ export class EmploymentProfileAdminService {
           "titleDescription",
         )
       : undefined;
+    const recruiterEmploymentProfileId =
+      hasRecruiterEmploymentProfileId
+        ? normalizeRequiredNullableId(
+            command.recruiterEmploymentProfileId,
+            "recruiterEmploymentProfileId",
+          )
+        : undefined;
+    const hrOwnerEmploymentProfileId =
+      hasHrOwnerEmploymentProfileId
+        ? normalizeRequiredNullableId(
+            command.hrOwnerEmploymentProfileId,
+            "hrOwnerEmploymentProfileId",
+          )
+        : undefined;
+    const onboardingOwnerEmploymentProfileId =
+      hasOnboardingOwnerEmploymentProfileId
+        ? normalizeRequiredNullableId(
+            command.onboardingOwnerEmploymentProfileId,
+            "onboardingOwnerEmploymentProfileId",
+          )
+        : undefined;
+    const sourcedByEmploymentProfileId =
+      hasSourcedByEmploymentProfileId
+        ? normalizeRequiredNullableId(
+            command.sourcedByEmploymentProfileId,
+            "sourcedByEmploymentProfileId",
+          )
+        : undefined;
+    const hiredAt = hasHiredAt
+      ? normalizeNullableCanonicalCalendarDateValue(
+          command.hiredAt,
+          "hiredAt",
+        )
+      : undefined;
+    const onboardedAt = hasOnboardedAt
+      ? normalizeNullableCanonicalCalendarDateValue(
+          command.onboardedAt,
+          "onboardedAt",
+        )
+      : undefined;
 
     return this.executeMutation(
       actor,
@@ -381,6 +478,12 @@ export class EmploymentProfileAdminService {
             jobTitle,
             externalRef,
             titleDescription,
+            recruiterEmploymentProfileId,
+            hrOwnerEmploymentProfileId,
+            onboardingOwnerEmploymentProfileId,
+            sourcedByEmploymentProfileId,
+            hiredAt,
+            onboardedAt,
           });
         const changedFields = Object.keys(
           patch,
@@ -391,6 +494,27 @@ export class EmploymentProfileAdminService {
             "At least one changed field is required",
           );
         }
+
+        await this.assertEmploymentProfileAttributionEligible(
+          patch.recruiterEmploymentProfileId,
+          "recruiterEmploymentProfileId",
+          session,
+        );
+        await this.assertEmploymentProfileAttributionEligible(
+          patch.hrOwnerEmploymentProfileId,
+          "hrOwnerEmploymentProfileId",
+          session,
+        );
+        await this.assertEmploymentProfileAttributionEligible(
+          patch.onboardingOwnerEmploymentProfileId,
+          "onboardingOwnerEmploymentProfileId",
+          session,
+        );
+        await this.assertEmploymentProfileAttributionEligible(
+          patch.sourcedByEmploymentProfileId,
+          "sourcedByEmploymentProfileId",
+          session,
+        );
 
         const updated =
           await this.repository.updateCore(
@@ -1719,6 +1843,39 @@ export class EmploymentProfileAdminService {
     }
   }
 
+  private async assertEmploymentProfileAttributionEligible(
+    employmentProfileId: string | null | undefined,
+    field: string,
+    session: ClientSession,
+  ): Promise<void> {
+    if (employmentProfileId === undefined || employmentProfileId === null) {
+      return;
+    }
+
+    const employmentProfile =
+      await this.repository.findById(
+        employmentProfileId,
+        session,
+      );
+
+    if (!employmentProfile) {
+      throw new EmploymentProfileValidationError(
+        `${field} must reference an EmploymentProfile record`,
+      );
+    }
+
+    if (
+      employmentProfile.employmentStatus === "ACTIVE" ||
+      employmentProfile.employmentStatus === "ON_LEAVE"
+    ) {
+      return;
+    }
+
+    throw new EmploymentProfileStateError(
+      `${field} must reference an ACTIVE or ON_LEAVE EmploymentProfile record: ${employmentProfileId}`,
+    );
+  }
+
   private async assertManagerAssignmentHasNoCycle(
     employmentProfileId: string,
     managerEmploymentProfileId: string,
@@ -2001,8 +2158,14 @@ interface NormalizedCreateCommand {
   readonly orgUnitId: string;
   readonly managerEmploymentProfileId: string | null;
   readonly linkedUserId: string | null;
+  readonly recruiterEmploymentProfileId: string | null;
+  readonly hrOwnerEmploymentProfileId: string | null;
+  readonly onboardingOwnerEmploymentProfileId: string | null;
+  readonly sourcedByEmploymentProfileId: string | null;
   readonly contractStatus: EmploymentContractStatus;
   readonly employmentStartDate: number;
+  readonly hiredAt: number | null;
+  readonly onboardedAt: number | null;
 }
 
 function normalizeCreateCommand(
@@ -2029,6 +2192,17 @@ function normalizeCreateCommand(
       "contractStatus must be NONE, PENDING_SIGNATURE, or ACTIVE when creating an employment profile",
     );
   }
+
+  const hiredAt = normalizeOptionalNullableCanonicalCalendarDateValue(
+    command.hiredAt,
+    "hiredAt",
+  );
+  const onboardedAt =
+    normalizeOptionalNullableCanonicalCalendarDateValue(
+      command.onboardedAt,
+      "onboardedAt",
+    );
+  assertBusinessDateOrder(hiredAt, onboardedAt);
 
   return {
     employeeCode: normalizeOptionalCreateCode(
@@ -2071,12 +2245,34 @@ function normalizeCreateCommand(
       command.linkedUserId,
       "linkedUserId",
     ),
+    recruiterEmploymentProfileId:
+      normalizeOptionalNullableId(
+        command.recruiterEmploymentProfileId,
+        "recruiterEmploymentProfileId",
+      ),
+    hrOwnerEmploymentProfileId:
+      normalizeOptionalNullableId(
+        command.hrOwnerEmploymentProfileId,
+        "hrOwnerEmploymentProfileId",
+      ),
+    onboardingOwnerEmploymentProfileId:
+      normalizeOptionalNullableId(
+        command.onboardingOwnerEmploymentProfileId,
+        "onboardingOwnerEmploymentProfileId",
+      ),
+    sourcedByEmploymentProfileId:
+      normalizeOptionalNullableId(
+        command.sourcedByEmploymentProfileId,
+        "sourcedByEmploymentProfileId",
+      ),
     contractStatus,
     employmentStartDate:
       normalizeCanonicalCalendarDateValue(
         command.employmentStartDate,
         "employmentStartDate",
       ),
+    hiredAt,
+    onboardedAt,
   };
 }
 
@@ -2109,6 +2305,12 @@ function buildEmploymentProfileCorePatch(params: {
   readonly jobTitle?: string;
   readonly externalRef?: string | null;
   readonly titleDescription?: string | null;
+  readonly recruiterEmploymentProfileId?: string | null;
+  readonly hrOwnerEmploymentProfileId?: string | null;
+  readonly onboardingOwnerEmploymentProfileId?: string | null;
+  readonly sourcedByEmploymentProfileId?: string | null;
+  readonly hiredAt?: number | null;
+  readonly onboardedAt?: number | null;
 }): UpdateEmploymentProfileCoreInput {
   const patch: {
     employmentProfileId: string;
@@ -2121,6 +2323,12 @@ function buildEmploymentProfileCorePatch(params: {
     jobTitle?: string;
     externalRef?: string | null;
     titleDescription?: string | null;
+    recruiterEmploymentProfileId?: string | null;
+    hrOwnerEmploymentProfileId?: string | null;
+    onboardingOwnerEmploymentProfileId?: string | null;
+    sourcedByEmploymentProfileId?: string | null;
+    hiredAt?: number | null;
+    onboardedAt?: number | null;
   } = {
     employmentProfileId: params.employmentProfileId,
     updatedAt: Date.now(),
@@ -2176,6 +2384,65 @@ function buildEmploymentProfileCorePatch(params: {
     patch.titleDescription =
       params.titleDescription;
   }
+
+  if (
+    params.recruiterEmploymentProfileId !== undefined &&
+    params.recruiterEmploymentProfileId !==
+      params.current.recruiterEmploymentProfileId
+  ) {
+    patch.recruiterEmploymentProfileId =
+      params.recruiterEmploymentProfileId;
+  }
+
+  if (
+    params.hrOwnerEmploymentProfileId !== undefined &&
+    params.hrOwnerEmploymentProfileId !==
+      params.current.hrOwnerEmploymentProfileId
+  ) {
+    patch.hrOwnerEmploymentProfileId =
+      params.hrOwnerEmploymentProfileId;
+  }
+
+  if (
+    params.onboardingOwnerEmploymentProfileId !== undefined &&
+    params.onboardingOwnerEmploymentProfileId !==
+      params.current.onboardingOwnerEmploymentProfileId
+  ) {
+    patch.onboardingOwnerEmploymentProfileId =
+      params.onboardingOwnerEmploymentProfileId;
+  }
+
+  if (
+    params.sourcedByEmploymentProfileId !== undefined &&
+    params.sourcedByEmploymentProfileId !==
+      params.current.sourcedByEmploymentProfileId
+  ) {
+    patch.sourcedByEmploymentProfileId =
+      params.sourcedByEmploymentProfileId;
+  }
+
+  if (
+    params.hiredAt !== undefined &&
+    params.hiredAt !== params.current.hiredAt
+  ) {
+    patch.hiredAt = params.hiredAt;
+  }
+
+  if (
+    params.onboardedAt !== undefined &&
+    params.onboardedAt !== params.current.onboardedAt
+  ) {
+    patch.onboardedAt = params.onboardedAt;
+  }
+
+  assertBusinessDateOrder(
+    patch.hiredAt !== undefined
+      ? patch.hiredAt
+      : params.current.hiredAt,
+    patch.onboardedAt !== undefined
+      ? patch.onboardedAt
+      : params.current.onboardedAt,
+  );
 
   return patch;
 }
@@ -2329,6 +2596,14 @@ function toEmploymentProfileMutationView(
     orgUnitId: employmentProfile.orgUnitId,
     managerEmploymentProfileId:
       employmentProfile.managerEmploymentProfileId,
+    recruiterEmploymentProfileId:
+      employmentProfile.recruiterEmploymentProfileId,
+    hrOwnerEmploymentProfileId:
+      employmentProfile.hrOwnerEmploymentProfileId,
+    onboardingOwnerEmploymentProfileId:
+      employmentProfile.onboardingOwnerEmploymentProfileId,
+    sourcedByEmploymentProfileId:
+      employmentProfile.sourcedByEmploymentProfileId,
     linkedUserId: employmentProfile.linkedUserId,
     employmentStatus:
       employmentProfile.employmentStatus,
@@ -2338,6 +2613,8 @@ function toEmploymentProfileMutationView(
       employmentProfile.employmentStartDate,
     employmentEndDate:
       employmentProfile.employmentEndDate,
+    hiredAt: employmentProfile.hiredAt,
+    onboardedAt: employmentProfile.onboardedAt,
     createdAt: employmentProfile.createdAt,
     updatedAt: employmentProfile.updatedAt,
   };
@@ -2492,6 +2769,34 @@ function normalizeRequiredNullableId(
   return normalized;
 }
 
+function normalizeOptionalNullableCanonicalCalendarDateValue(
+  value: unknown,
+  field: string,
+): number | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  return normalizeCanonicalCalendarDateValue(value, field);
+}
+
+function normalizeNullableCanonicalCalendarDateValue(
+  value: unknown,
+  field: string,
+): number | null {
+  if (value === undefined) {
+    throw new EmploymentProfileValidationError(
+      `${field} must be provided`,
+    );
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  return normalizeCanonicalCalendarDateValue(value, field);
+}
+
 function normalizeEmploymentKind(
   value: unknown,
 ): EmploymentKind {
@@ -2530,6 +2835,21 @@ function normalizeContractStatus(
   throw new EmploymentProfileValidationError(
     `contractStatus must be one of ${EMPLOYMENT_CONTRACT_STATUSES.join(", ")}`,
   );
+}
+
+function assertBusinessDateOrder(
+  hiredAt: number | null,
+  onboardedAt: number | null,
+): void {
+  if (
+    hiredAt !== null &&
+    onboardedAt !== null &&
+    onboardedAt < hiredAt
+  ) {
+    throw new EmploymentProfileValidationError(
+      "onboardedAt must not be before hiredAt",
+    );
+  }
 }
 
 function normalizeCanonicalCalendarDateValue(

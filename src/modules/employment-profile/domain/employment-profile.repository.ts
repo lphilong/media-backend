@@ -17,6 +17,12 @@ export interface UpdateEmploymentProfileCoreInput {
   readonly jobTitle?: string;
   readonly titleDescription?: string | null;
   readonly externalRef?: string | null;
+  readonly recruiterEmploymentProfileId?: string | null;
+  readonly hrOwnerEmploymentProfileId?: string | null;
+  readonly onboardingOwnerEmploymentProfileId?: string | null;
+  readonly sourcedByEmploymentProfileId?: string | null;
+  readonly hiredAt?: number | null;
+  readonly onboardedAt?: number | null;
   readonly updatedAt: number;
 }
 

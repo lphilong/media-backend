@@ -21,10 +21,20 @@ const EMPLOYMENT_PROFILE_ADMIN_LIST_FIELDS = [
   "orgUnitRef",
   "managerEmploymentProfileId",
   "managerEmploymentProfileRef",
+  "recruiterEmploymentProfileId",
+  "recruiterEmploymentProfileRef",
+  "hrOwnerEmploymentProfileId",
+  "hrOwnerEmploymentProfileRef",
+  "onboardingOwnerEmploymentProfileId",
+  "onboardingOwnerEmploymentProfileRef",
+  "sourcedByEmploymentProfileId",
+  "sourcedByEmploymentProfileRef",
   "linkedUserId",
   "linkedUserRef",
   "employmentStatus",
   "contractStatus",
+  "hiredAt",
+  "onboardedAt",
   "createdAt",
 ] as const;
 
@@ -53,12 +63,22 @@ const EMPLOYMENT_PROFILE_ADMIN_DETAIL_FIELDS = [
   "orgUnitRef",
   "managerEmploymentProfileId",
   "managerEmploymentProfileRef",
+  "recruiterEmploymentProfileId",
+  "recruiterEmploymentProfileRef",
+  "hrOwnerEmploymentProfileId",
+  "hrOwnerEmploymentProfileRef",
+  "onboardingOwnerEmploymentProfileId",
+  "onboardingOwnerEmploymentProfileRef",
+  "sourcedByEmploymentProfileId",
+  "sourcedByEmploymentProfileRef",
   "linkedUserId",
   "linkedUserRef",
   "employmentStatus",
   "contractStatus",
   "employmentStartDate",
   "employmentEndDate",
+  "hiredAt",
+  "onboardedAt",
   "createdAt",
   "updatedAt",
 ] as const;
@@ -86,11 +106,29 @@ export const EmploymentProfileAdminListExposure =
                 input.managerEmploymentProfileId,
               managerEmploymentProfileRef:
                 input.managerEmploymentProfileRef,
+              recruiterEmploymentProfileId:
+                input.recruiterEmploymentProfileId,
+              recruiterEmploymentProfileRef:
+                input.recruiterEmploymentProfileRef,
+              hrOwnerEmploymentProfileId:
+                input.hrOwnerEmploymentProfileId,
+              hrOwnerEmploymentProfileRef:
+                input.hrOwnerEmploymentProfileRef,
+              onboardingOwnerEmploymentProfileId:
+                input.onboardingOwnerEmploymentProfileId,
+              onboardingOwnerEmploymentProfileRef:
+                input.onboardingOwnerEmploymentProfileRef,
+              sourcedByEmploymentProfileId:
+                input.sourcedByEmploymentProfileId,
+              sourcedByEmploymentProfileRef:
+                input.sourcedByEmploymentProfileRef,
               linkedUserId: input.linkedUserId,
               linkedUserRef: input.linkedUserRef,
               employmentStatus:
                 input.employmentStatus,
               contractStatus: input.contractStatus,
+              hiredAt: input.hiredAt,
+              onboardedAt: input.onboardedAt,
               createdAt: input.createdAt,
             },
             EMPLOYMENT_PROFILE_ADMIN_LIST_FIELDS,
@@ -153,6 +191,22 @@ export const EmploymentProfileAdminDetailExposure =
               input.managerEmploymentProfileId,
             managerEmploymentProfileRef:
               input.managerEmploymentProfileRef,
+            recruiterEmploymentProfileId:
+              input.recruiterEmploymentProfileId,
+            recruiterEmploymentProfileRef:
+              input.recruiterEmploymentProfileRef,
+            hrOwnerEmploymentProfileId:
+              input.hrOwnerEmploymentProfileId,
+            hrOwnerEmploymentProfileRef:
+              input.hrOwnerEmploymentProfileRef,
+            onboardingOwnerEmploymentProfileId:
+              input.onboardingOwnerEmploymentProfileId,
+            onboardingOwnerEmploymentProfileRef:
+              input.onboardingOwnerEmploymentProfileRef,
+            sourcedByEmploymentProfileId:
+              input.sourcedByEmploymentProfileId,
+            sourcedByEmploymentProfileRef:
+              input.sourcedByEmploymentProfileRef,
             linkedUserId: input.linkedUserId,
             linkedUserRef: input.linkedUserRef,
             employmentStatus: input.employmentStatus,
@@ -161,6 +215,8 @@ export const EmploymentProfileAdminDetailExposure =
               input.employmentStartDate,
             employmentEndDate:
               input.employmentEndDate,
+            hiredAt: input.hiredAt,
+            onboardedAt: input.onboardedAt,
             createdAt: input.createdAt,
             updatedAt: input.updatedAt,
           },

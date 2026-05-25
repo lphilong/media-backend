@@ -48,11 +48,17 @@ interface EmploymentProfileReadDocument {
   readonly externalRef: string | null;
   readonly orgUnitId: string;
   readonly managerEmploymentProfileId: string | null;
+  readonly recruiterEmploymentProfileId?: string | null;
+  readonly hrOwnerEmploymentProfileId?: string | null;
+  readonly onboardingOwnerEmploymentProfileId?: string | null;
+  readonly sourcedByEmploymentProfileId?: string | null;
   readonly linkedUserId: string | null;
   readonly employmentStatus: EmploymentStatus;
   readonly contractStatus: EmploymentContractStatus;
   readonly employmentStartDate: number;
   readonly employmentEndDate: number | null;
+  readonly hiredAt?: number | null;
+  readonly onboardedAt?: number | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -346,6 +352,10 @@ async function enrichEmploymentProfileReferenceSummaries<
   T extends {
     readonly orgUnitId: string;
     readonly managerEmploymentProfileId: string | null;
+    readonly recruiterEmploymentProfileId?: string | null;
+    readonly hrOwnerEmploymentProfileId?: string | null;
+    readonly onboardingOwnerEmploymentProfileId?: string | null;
+    readonly sourcedByEmploymentProfileId?: string | null;
     readonly linkedUserId?: string | null;
   },
 >(
@@ -359,6 +369,10 @@ async function enrichEmploymentProfileReferenceSummaries<
   readonly (T & {
     readonly orgUnitRef: ReferenceSummary | null;
     readonly managerEmploymentProfileRef: ReferenceSummary | null;
+    readonly recruiterEmploymentProfileRef?: ReferenceSummary | null;
+    readonly hrOwnerEmploymentProfileRef?: ReferenceSummary | null;
+    readonly onboardingOwnerEmploymentProfileRef?: ReferenceSummary | null;
+    readonly sourcedByEmploymentProfileRef?: ReferenceSummary | null;
     readonly linkedUserRef?: ReferenceSummary | null;
   })[]
 > {
@@ -367,32 +381,64 @@ async function enrichEmploymentProfileReferenceSummaries<
       ...item,
       orgUnitRef: null,
       managerEmploymentProfileRef: null,
+      recruiterEmploymentProfileRef:
+        item.recruiterEmploymentProfileId === undefined
+          ? undefined
+          : null,
+      hrOwnerEmploymentProfileRef:
+        item.hrOwnerEmploymentProfileId === undefined
+          ? undefined
+          : null,
+      onboardingOwnerEmploymentProfileRef:
+        item.onboardingOwnerEmploymentProfileId === undefined
+          ? undefined
+          : null,
+      sourcedByEmploymentProfileRef:
+        item.sourcedByEmploymentProfileId === undefined
+          ? undefined
+          : null,
       linkedUserRef:
         item.linkedUserId === undefined ? undefined : null,
     }));
   }
 
   const orgUnitIds = new Set<string>();
-  const managerEmploymentProfileIds = new Set<string>();
+  const employmentProfileIds = new Set<string>();
   const linkedUserIds = new Set<string>();
 
   for (const item of items) {
     addRequiredReferenceId(orgUnitIds, item.orgUnitId);
     addOptionalReferenceId(
-      managerEmploymentProfileIds,
+      employmentProfileIds,
       item.managerEmploymentProfileId,
+    );
+    addOptionalReferenceId(
+      employmentProfileIds,
+      item.recruiterEmploymentProfileId ?? null,
+    );
+    addOptionalReferenceId(
+      employmentProfileIds,
+      item.hrOwnerEmploymentProfileId ?? null,
+    );
+    addOptionalReferenceId(
+      employmentProfileIds,
+      item.onboardingOwnerEmploymentProfileId ?? null,
+    );
+    addOptionalReferenceId(
+      employmentProfileIds,
+      item.sourcedByEmploymentProfileId ?? null,
     );
     addOptionalReferenceId(linkedUserIds, item.linkedUserId ?? null);
   }
 
-  const [orgUnitRefMap, managerRefMap, userRefMap] =
+  const [orgUnitRefMap, employmentProfileRefMap, userRefMap] =
     await Promise.all([
       loadOrgUnitReferenceSummaries(
         orgUnitIds,
         collections.orgUnitCollection,
       ),
       loadEmploymentProfileReferenceSummaries(
-        managerEmploymentProfileIds,
+        employmentProfileIds,
         collections.employmentProfileCollection,
       ),
       loadUserReferenceSummaries(
@@ -405,8 +451,37 @@ async function enrichEmploymentProfileReferenceSummaries<
     ...item,
     orgUnitRef: orgUnitRefMap.get(item.orgUnitId) ?? null,
     managerEmploymentProfileRef: item.managerEmploymentProfileId
-      ? managerRefMap.get(item.managerEmploymentProfileId) ?? null
+      ? employmentProfileRefMap.get(item.managerEmploymentProfileId) ?? null
       : null,
+    recruiterEmploymentProfileRef:
+      item.recruiterEmploymentProfileId === undefined
+        ? undefined
+        : item.recruiterEmploymentProfileId
+          ? employmentProfileRefMap.get(item.recruiterEmploymentProfileId) ??
+            null
+          : null,
+    hrOwnerEmploymentProfileRef:
+      item.hrOwnerEmploymentProfileId === undefined
+        ? undefined
+        : item.hrOwnerEmploymentProfileId
+          ? employmentProfileRefMap.get(item.hrOwnerEmploymentProfileId) ??
+            null
+          : null,
+    onboardingOwnerEmploymentProfileRef:
+      item.onboardingOwnerEmploymentProfileId === undefined
+        ? undefined
+        : item.onboardingOwnerEmploymentProfileId
+          ? employmentProfileRefMap.get(
+              item.onboardingOwnerEmploymentProfileId,
+            ) ?? null
+          : null,
+    sourcedByEmploymentProfileRef:
+      item.sourcedByEmploymentProfileId === undefined
+        ? undefined
+        : item.sourcedByEmploymentProfileId
+          ? employmentProfileRefMap.get(item.sourcedByEmploymentProfileId) ??
+            null
+          : null,
     linkedUserRef:
       item.linkedUserId === undefined
         ? undefined
@@ -692,9 +767,19 @@ function toEmploymentProfileListItemView(
     orgUnitId: document.orgUnitId,
     managerEmploymentProfileId:
       document.managerEmploymentProfileId,
+    recruiterEmploymentProfileId:
+      document.recruiterEmploymentProfileId ?? null,
+    hrOwnerEmploymentProfileId:
+      document.hrOwnerEmploymentProfileId ?? null,
+    onboardingOwnerEmploymentProfileId:
+      document.onboardingOwnerEmploymentProfileId ?? null,
+    sourcedByEmploymentProfileId:
+      document.sourcedByEmploymentProfileId ?? null,
     linkedUserId: document.linkedUserId,
     employmentStatus: document.employmentStatus,
     contractStatus: document.contractStatus,
+    hiredAt: document.hiredAt ?? null,
+    onboardedAt: document.onboardedAt ?? null,
     createdAt: document.createdAt,
   };
 }
@@ -729,6 +814,14 @@ function toEmploymentProfileDetailView(
     orgUnitId: document.orgUnitId,
     managerEmploymentProfileId:
       document.managerEmploymentProfileId,
+    recruiterEmploymentProfileId:
+      document.recruiterEmploymentProfileId ?? null,
+    hrOwnerEmploymentProfileId:
+      document.hrOwnerEmploymentProfileId ?? null,
+    onboardingOwnerEmploymentProfileId:
+      document.onboardingOwnerEmploymentProfileId ?? null,
+    sourcedByEmploymentProfileId:
+      document.sourcedByEmploymentProfileId ?? null,
     linkedUserId: document.linkedUserId,
     employmentStatus: document.employmentStatus,
     contractStatus: document.contractStatus,
@@ -736,6 +829,8 @@ function toEmploymentProfileDetailView(
       document.employmentStartDate,
     employmentEndDate:
       document.employmentEndDate,
+    hiredAt: document.hiredAt ?? null,
+    onboardedAt: document.onboardedAt ?? null,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
   };

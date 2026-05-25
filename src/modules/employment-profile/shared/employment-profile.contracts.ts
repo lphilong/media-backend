@@ -19,8 +19,14 @@ export interface CreateEmploymentProfileCommand {
   readonly orgUnitId: string;
   readonly managerEmploymentProfileId?: string | null;
   readonly linkedUserId?: string | null;
+  readonly recruiterEmploymentProfileId?: string | null;
+  readonly hrOwnerEmploymentProfileId?: string | null;
+  readonly onboardingOwnerEmploymentProfileId?: string | null;
+  readonly sourcedByEmploymentProfileId?: string | null;
   readonly contractStatus: EmploymentContractStatus;
   readonly employmentStartDate: number | string;
+  readonly hiredAt?: number | string | null;
+  readonly onboardedAt?: number | string | null;
   readonly externalRef?: string | null;
   readonly titleDescription?: string | null;
 }
@@ -33,6 +39,12 @@ export interface UpdateEmploymentProfileCoreCommand {
   readonly jobTitle?: string;
   readonly externalRef?: string | null;
   readonly titleDescription?: string | null;
+  readonly recruiterEmploymentProfileId?: string | null;
+  readonly hrOwnerEmploymentProfileId?: string | null;
+  readonly onboardingOwnerEmploymentProfileId?: string | null;
+  readonly sourcedByEmploymentProfileId?: string | null;
+  readonly hiredAt?: number | string | null;
+  readonly onboardedAt?: number | string | null;
 }
 
 export interface AssignEmploymentProfileOrgUnitCommand {

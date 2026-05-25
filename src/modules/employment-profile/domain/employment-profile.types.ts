@@ -65,12 +65,22 @@ export interface EmploymentProfileRecord {
   readonly orgUnitRef?: ReferenceSummary | null;
   readonly managerEmploymentProfileId: string | null;
   readonly managerEmploymentProfileRef?: ReferenceSummary | null;
+  readonly recruiterEmploymentProfileId: string | null;
+  readonly recruiterEmploymentProfileRef?: ReferenceSummary | null;
+  readonly hrOwnerEmploymentProfileId: string | null;
+  readonly hrOwnerEmploymentProfileRef?: ReferenceSummary | null;
+  readonly onboardingOwnerEmploymentProfileId: string | null;
+  readonly onboardingOwnerEmploymentProfileRef?: ReferenceSummary | null;
+  readonly sourcedByEmploymentProfileId: string | null;
+  readonly sourcedByEmploymentProfileRef?: ReferenceSummary | null;
   readonly linkedUserId: string | null;
   readonly linkedUserRef?: ReferenceSummary | null;
   readonly employmentStatus: EmploymentStatus;
   readonly contractStatus: EmploymentContractStatus;
   readonly employmentStartDate: number;
   readonly employmentEndDate: number | null;
+  readonly hiredAt: number | null;
+  readonly onboardedAt: number | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -86,10 +96,20 @@ export interface EmploymentProfileListItemView {
   readonly orgUnitRef?: ReferenceSummary | null;
   readonly managerEmploymentProfileId: string | null;
   readonly managerEmploymentProfileRef?: ReferenceSummary | null;
+  readonly recruiterEmploymentProfileId: string | null;
+  readonly recruiterEmploymentProfileRef?: ReferenceSummary | null;
+  readonly hrOwnerEmploymentProfileId: string | null;
+  readonly hrOwnerEmploymentProfileRef?: ReferenceSummary | null;
+  readonly onboardingOwnerEmploymentProfileId: string | null;
+  readonly onboardingOwnerEmploymentProfileRef?: ReferenceSummary | null;
+  readonly sourcedByEmploymentProfileId: string | null;
+  readonly sourcedByEmploymentProfileRef?: ReferenceSummary | null;
   readonly linkedUserId: string | null;
   readonly linkedUserRef?: ReferenceSummary | null;
   readonly employmentStatus: EmploymentStatus;
   readonly contractStatus: EmploymentContractStatus;
+  readonly hiredAt: number | null;
+  readonly onboardedAt: number | null;
   readonly createdAt: number;
 }
 
@@ -130,12 +150,22 @@ export interface EmploymentProfileDetailView {
   readonly orgUnitRef?: ReferenceSummary | null;
   readonly managerEmploymentProfileId: string | null;
   readonly managerEmploymentProfileRef?: ReferenceSummary | null;
+  readonly recruiterEmploymentProfileId: string | null;
+  readonly recruiterEmploymentProfileRef?: ReferenceSummary | null;
+  readonly hrOwnerEmploymentProfileId: string | null;
+  readonly hrOwnerEmploymentProfileRef?: ReferenceSummary | null;
+  readonly onboardingOwnerEmploymentProfileId: string | null;
+  readonly onboardingOwnerEmploymentProfileRef?: ReferenceSummary | null;
+  readonly sourcedByEmploymentProfileId: string | null;
+  readonly sourcedByEmploymentProfileRef?: ReferenceSummary | null;
   readonly linkedUserId: string | null;
   readonly linkedUserRef?: ReferenceSummary | null;
   readonly employmentStatus: EmploymentStatus;
   readonly contractStatus: EmploymentContractStatus;
   readonly employmentStartDate: number;
   readonly employmentEndDate: number | null;
+  readonly hiredAt: number | null;
+  readonly onboardedAt: number | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }

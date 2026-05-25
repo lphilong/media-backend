@@ -62,11 +62,17 @@ const epManager = {
   externalRef: null,
   orgUnitId: "ou-root",
   managerEmploymentProfileId: null,
+  recruiterEmploymentProfileId: null,
+  hrOwnerEmploymentProfileId: null,
+  onboardingOwnerEmploymentProfileId: null,
+  sourcedByEmploymentProfileId: null,
   linkedUserId: "user-1",
   employmentStatus: "ACTIVE",
   contractStatus: "ACTIVE",
   employmentStartDate: 1_704_067_200_000,
   employmentEndDate: null,
+  hiredAt: null,
+  onboardedAt: null,
   createdAt: 1,
   updatedAt: 2,
 };
@@ -81,6 +87,10 @@ const epChild = {
   normalizedDisplayName: "bao",
   orgUnitId: "ou-child",
   managerEmploymentProfileId: "ep-manager",
+  recruiterEmploymentProfileId: "ep-manager",
+  hrOwnerEmploymentProfileId: "ep-manager",
+  onboardingOwnerEmploymentProfileId: "ep-manager",
+  sourcedByEmploymentProfileId: null,
   linkedUserId: "missing-user",
 };
 
@@ -288,7 +298,7 @@ test("master-data Org Unit parent refs enrich list/detail without dropping raw I
   });
 });
 
-test("master-data Employment Profile refs enrich org, manager, and linked user safely", async () => {
+test("master-data Employment Profile refs enrich org, manager, attribution, and linked user safely", async () => {
   const calls: FindCall[] = [];
   const repository = new NativeMongoEmploymentProfileReadRepository({
     collection(name: string) {
@@ -323,6 +333,28 @@ test("master-data Employment Profile refs enrich org, manager, and linked user s
     name: "Alice Legal",
     status: "ACTIVE",
   });
+  assert.equal(list.items[0].recruiterEmploymentProfileId, "ep-manager");
+  assert.deepEqual(
+    list.items[0].recruiterEmploymentProfileRef,
+    list.items[0].managerEmploymentProfileRef,
+  );
+  assert.equal(
+    list.items[0].recruiterEmploymentProfileRef?.displayName,
+    "Alice",
+  );
+  assert.notEqual(
+    list.items[0].recruiterEmploymentProfileRef?.displayName,
+    "Alice Legal",
+  );
+  assert.deepEqual(
+    detail?.hrOwnerEmploymentProfileRef,
+    list.items[0].managerEmploymentProfileRef,
+  );
+  assert.deepEqual(
+    detail?.onboardingOwnerEmploymentProfileRef,
+    list.items[0].managerEmploymentProfileRef,
+  );
+  assert.equal(detail?.sourcedByEmploymentProfileRef, null);
   assert.equal(list.items[0].linkedUserId, "missing-user");
   assert.equal(list.items[0].linkedUserRef, null);
   assert.deepEqual(

@@ -34,11 +34,17 @@ interface EmploymentProfileDocument {
   readonly externalRef: string | null;
   readonly orgUnitId: string;
   readonly managerEmploymentProfileId: string | null;
+  readonly recruiterEmploymentProfileId?: string | null;
+  readonly hrOwnerEmploymentProfileId?: string | null;
+  readonly onboardingOwnerEmploymentProfileId?: string | null;
+  readonly sourcedByEmploymentProfileId?: string | null;
   readonly linkedUserId: string | null;
   readonly employmentStatus: EmploymentStatus;
   readonly contractStatus: EmploymentContractStatus;
   readonly employmentStartDate: number;
   readonly employmentEndDate: number | null;
+  readonly hiredAt?: number | null;
+  readonly onboardedAt?: number | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -180,6 +186,37 @@ export class NativeMongoEmploymentProfileRepository
 
     if (input.externalRef !== undefined) {
       set.externalRef = input.externalRef;
+    }
+
+    if (input.recruiterEmploymentProfileId !== undefined) {
+      set.recruiterEmploymentProfileId =
+        input.recruiterEmploymentProfileId;
+    }
+
+    if (input.hrOwnerEmploymentProfileId !== undefined) {
+      set.hrOwnerEmploymentProfileId =
+        input.hrOwnerEmploymentProfileId;
+    }
+
+    if (
+      input.onboardingOwnerEmploymentProfileId !==
+      undefined
+    ) {
+      set.onboardingOwnerEmploymentProfileId =
+        input.onboardingOwnerEmploymentProfileId;
+    }
+
+    if (input.sourcedByEmploymentProfileId !== undefined) {
+      set.sourcedByEmploymentProfileId =
+        input.sourcedByEmploymentProfileId;
+    }
+
+    if (input.hiredAt !== undefined) {
+      set.hiredAt = input.hiredAt;
+    }
+
+    if (input.onboardedAt !== undefined) {
+      set.onboardedAt = input.onboardedAt;
     }
 
     const updated = await this.collection.findOneAndUpdate(
@@ -372,6 +409,14 @@ function toEmploymentProfileDocument(
     orgUnitId: employmentProfile.orgUnitId,
     managerEmploymentProfileId:
       employmentProfile.managerEmploymentProfileId,
+    recruiterEmploymentProfileId:
+      employmentProfile.recruiterEmploymentProfileId,
+    hrOwnerEmploymentProfileId:
+      employmentProfile.hrOwnerEmploymentProfileId,
+    onboardingOwnerEmploymentProfileId:
+      employmentProfile.onboardingOwnerEmploymentProfileId,
+    sourcedByEmploymentProfileId:
+      employmentProfile.sourcedByEmploymentProfileId,
     linkedUserId: employmentProfile.linkedUserId,
     employmentStatus:
       employmentProfile.employmentStatus,
@@ -381,6 +426,8 @@ function toEmploymentProfileDocument(
       employmentProfile.employmentStartDate,
     employmentEndDate:
       employmentProfile.employmentEndDate,
+    hiredAt: employmentProfile.hiredAt,
+    onboardedAt: employmentProfile.onboardedAt,
     createdAt: employmentProfile.createdAt,
     updatedAt: employmentProfile.updatedAt,
   };
@@ -405,6 +452,14 @@ function toEmploymentProfileRecord(
     orgUnitId: document.orgUnitId,
     managerEmploymentProfileId:
       document.managerEmploymentProfileId,
+    recruiterEmploymentProfileId:
+      document.recruiterEmploymentProfileId ?? null,
+    hrOwnerEmploymentProfileId:
+      document.hrOwnerEmploymentProfileId ?? null,
+    onboardingOwnerEmploymentProfileId:
+      document.onboardingOwnerEmploymentProfileId ?? null,
+    sourcedByEmploymentProfileId:
+      document.sourcedByEmploymentProfileId ?? null,
     linkedUserId: document.linkedUserId,
     employmentStatus: document.employmentStatus,
     contractStatus: document.contractStatus,
@@ -412,6 +467,8 @@ function toEmploymentProfileRecord(
       document.employmentStartDate,
     employmentEndDate:
       document.employmentEndDate,
+    hiredAt: document.hiredAt ?? null,
+    onboardedAt: document.onboardedAt ?? null,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
   };
