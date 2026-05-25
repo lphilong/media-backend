@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { Request } from "express";
 import { ClientSession } from "mongodb";
+import { bindCommand } from "@app/base/command.middleware";
 import { Actor } from "@core/actor/actor";
 import type {
   AuthoritativeAdminMutationBridge,
@@ -11,8 +13,10 @@ import { SystemInvariantError } from "@core/error/system-error";
 import { Permission } from "@core/permission/permission.enum";
 import { bindTraceId } from "@core/trace/trace.context";
 import { WorkScheduleRequestAdminService } from "@modules/work-schedule/admin/admin.work-schedule-request.service";
+import { WorkScheduleRequestAdminController } from "@modules/work-schedule/admin/admin.work-schedule-request.controller";
 import type { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import {
+  WorkScheduleValidationError,
   WorkSchedulePermissionScopeError,
   WorkScheduleStateError,
 } from "@modules/work-schedule/domain/work-schedule.errors";
@@ -33,6 +37,15 @@ import type {
   WorkScheduleRequestRecord,
   WorkShiftRecord,
 } from "@modules/work-schedule/domain/work-schedule.types";
+
+class TestableWorkScheduleRequestAdminController extends WorkScheduleRequestAdminController {
+  async testHandle(
+    req: Request,
+    actor: Actor = teamManagerActor(),
+  ): Promise<unknown> {
+    return this.handle(req, actor, "ADMIN");
+  }
+}
 
 class MemoryRequestRepository
   implements WorkScheduleRequestRepository
@@ -769,6 +782,106 @@ test("ADMIN_FULL can reject and HR cannot approve in MVP", async () => {
   assert.equal(rejected.rejectedByUserId, "admin-user");
 });
 
+test("HR cannot reject a PENDING request", async () => {
+  const requestRepository =
+    new MemoryRequestRepository();
+  const service = createService({ requestRepository });
+  const created = await withTrace(() =>
+    service.createRequest(
+      teamManagerActor(),
+      createRequestPayload(),
+    ),
+  );
+
+  await assert.rejects(
+    withTrace(() =>
+      service.rejectRequest(hrActor(), {
+        requestId: created.id,
+        rejectionReason: "HR cannot decide",
+      }),
+    ),
+    SystemInvariantError,
+  );
+});
+
+test("ADMIN_FULL can approve a PENDING request", async () => {
+  const requestRepository =
+    new MemoryRequestRepository();
+  const workShiftRepository =
+    new MemoryWorkShiftRepository();
+  const service = createService({
+    requestRepository,
+    workShiftRepository,
+  });
+  const created = await withTrace(() =>
+    service.createRequest(
+      teamManagerActor(),
+      createRequestPayload(),
+    ),
+  );
+
+  const approved = await withTrace(() =>
+    service.approveRequest(adminFullActor(), {
+      requestId: created.id,
+      approvalNote: "Approved by admin",
+    }),
+  );
+
+  assert.equal(approved.status, "APPROVED");
+  assert.equal(approved.approvedByUserId, "admin-user");
+  assert.ok(approved.appliedWorkShiftId);
+  assert.equal(workShiftRepository.records.length, 1);
+});
+
+test("PRODUCTION_OPS can reject a PENDING request", async () => {
+  const requestRepository =
+    new MemoryRequestRepository();
+  const service = createService({ requestRepository });
+  const created = await withTrace(() =>
+    service.createRequest(
+      teamManagerActor(),
+      createRequestPayload(),
+    ),
+  );
+
+  const rejected = await withTrace(() =>
+    service.rejectRequest(productionOpsActor(), {
+      requestId: created.id,
+      rejectionReason: "Coverage cancelled",
+    }),
+  );
+
+  assert.equal(rejected.status, "REJECTED");
+  assert.equal(rejected.rejectedByUserId, "ops-user");
+});
+
+test("rejected request cannot be cancelled", async () => {
+  const requestRepository =
+    new MemoryRequestRepository();
+  const service = createService({ requestRepository });
+  const created = await withTrace(() =>
+    service.createRequest(
+      teamManagerActor(),
+      createRequestPayload(),
+    ),
+  );
+  const rejected = await withTrace(() =>
+    service.rejectRequest(productionOpsActor(), {
+      requestId: created.id,
+      rejectionReason: "Coverage cancelled",
+    }),
+  );
+
+  await assert.rejects(
+    withTrace(() =>
+      service.cancelRequest(teamManagerActor(), {
+        requestId: rejected.id,
+      }),
+    ),
+    WorkScheduleStateError,
+  );
+});
+
 test("approval applies RESCHEDULE_SHIFT and CANCEL_SHIFT only on approval", async () => {
   const requestRepository =
     new MemoryRequestRepository();
@@ -827,4 +940,53 @@ test("approval applies RESCHEDULE_SHIFT and CANCEL_SHIFT only on approval", asyn
     workShiftRepository.records[0]?.status,
     "CANCELLED",
   );
+});
+
+test("request controller rejects unsupported extra fields and direct Talent request target fields", async () => {
+  let serviceCalled = false;
+  const controller =
+    new TestableWorkScheduleRequestAdminController({
+      async createRequest() {
+        serviceCalled = true;
+        throw new Error("service should not be called");
+      },
+    } as unknown as WorkScheduleRequestAdminService);
+
+  const extraFieldReq = {
+    body: {
+      ...createRequestPayload(),
+      scopeGrants: ["forbidden"],
+    },
+    params: {},
+    query: {},
+  } as unknown as Request;
+  bindCommand(
+    extraFieldReq,
+    "WORK_SCHEDULE_REQUEST_CREATE",
+  );
+
+  await assert.rejects(
+    () => controller.testHandle(extraFieldReq),
+    WorkScheduleValidationError,
+  );
+
+  const directTalentReq = {
+    body: {
+      ...createRequestPayload(),
+      targetKind: "TALENT",
+      subjectTalentId: "talent-001",
+    },
+    params: {},
+    query: {},
+  } as unknown as Request;
+  bindCommand(
+    directTalentReq,
+    "WORK_SCHEDULE_REQUEST_CREATE",
+  );
+
+  await assert.rejects(
+    () => controller.testHandle(directTalentReq),
+    WorkScheduleValidationError,
+  );
+  assert.equal(serviceCalled, false);
 });
