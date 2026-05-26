@@ -5,10 +5,7 @@ import {
   EventStatus,
 } from "@modules/event-assignment/domain/event-assignment.types";
 import { UserAccountStatus } from "@modules/user/domain/user.types";
-import {
-  KpiMetricCode,
-  KpiMetricUnit,
-} from "@modules/kpi/domain/kpi.types";
+import { KpiMetricCode, KpiMetricUnit } from "@modules/kpi/domain/kpi.types";
 import {
   WorkShiftSourceType,
   WorkShiftStatus,
@@ -30,6 +27,11 @@ export interface SelfServiceCurrentPersonView {
   readonly accountStatus?: UserAccountStatus;
   readonly accountLinkStatus: "LINKED";
   readonly linkedInternalTalent?: SelfServiceLinkedInternalTalentSummary;
+  readonly locale?: string;
+  readonly timezone?: string;
+}
+
+export interface SelfServiceAccountPreferencesUpdateInput {
   readonly locale?: string;
   readonly timezone?: string;
 }

@@ -6,11 +6,10 @@ import {
   TransitionUserLifecycleInput,
   UpdateUserActorKindInput,
   UpdateUserProfileInput,
+  UpdateUserPreferencesInput,
   UserMutationRepository,
 } from "@modules/user/domain/user.repository";
-import {
-  UserRecord,
-} from "@modules/user/domain/user.types";
+import { UserRecord } from "@modules/user/domain/user.types";
 import { UserMapper } from "./user.mapper";
 import { UserPersistence } from "./user.persistence";
 
@@ -40,12 +39,8 @@ export class UserRepository
         email: input.profile.email,
         phone: input.profile.phone,
       },
-      searchDisplayName: normalizeSearchField(
-        input.profile.displayName,
-      ),
-      searchEmail: normalizeSearchField(
-        input.profile.email,
-      ),
+      searchDisplayName: normalizeSearchField(input.profile.displayName),
+      searchEmail: normalizeSearchField(input.profile.email),
       contextAccess: {
         contexts: input.contextAccess.contexts,
       },
@@ -60,10 +55,7 @@ export class UserRepository
       archivedAt: input.archivedAt,
     };
 
-    await this.collection.insertOne(
-      doc,
-      this.withSession(session),
-    );
+    await this.collection.insertOne(doc, this.withSession(session));
 
     return UserMapper.toDomain(doc);
   }
@@ -161,16 +153,12 @@ export class UserRepository
 
     if (input.displayName !== undefined) {
       set["profile.displayName"] = input.displayName;
-      set.searchDisplayName = normalizeSearchField(
-        input.displayName,
-      );
+      set.searchDisplayName = normalizeSearchField(input.displayName);
     }
 
     if (input.email !== undefined) {
       set["profile.email"] = input.email;
-      set.searchEmail = normalizeSearchField(
-        input.email,
-      );
+      set.searchEmail = normalizeSearchField(input.email);
     }
 
     if (input.phone !== undefined) {
@@ -187,6 +175,39 @@ export class UserRepository
 
     const updated = await this.collection.findOneAndUpdate(
       { _id: input.userId },
+      {
+        $set: set,
+      },
+      {
+        ...this.withSession(session),
+        returnDocument: "after",
+      },
+    );
+
+    return updated ? UserMapper.toDomain(updated) : null;
+  }
+
+  async updatePreferences(
+    input: UpdateUserPreferencesInput,
+    session?: ClientSession,
+  ): Promise<UserRecord | null> {
+    const set: Record<string, unknown> = {
+      updatedAt: input.updatedAt,
+    };
+
+    if (input.locale !== undefined) {
+      set["preferences.locale"] = input.locale;
+    }
+
+    if (input.timezone !== undefined) {
+      set["preferences.timezone"] = input.timezone;
+    }
+
+    const updated = await this.collection.findOneAndUpdate(
+      {
+        _id: input.userId,
+        accountStatus: { $ne: "ARCHIVED" },
+      },
       {
         $set: set,
       },
@@ -291,8 +312,6 @@ export class UserRepository
   }
 }
 
-function normalizeSearchField(
-  value: string | undefined,
-): string {
+function normalizeSearchField(value: string | undefined): string {
   return (value ?? "").trim().toLowerCase();
 }

@@ -20,6 +20,7 @@ import {
   SetUserAuthLinkageInput,
   TransitionUserLifecycleInput,
   UpdateUserProfileInput,
+  UpdateUserPreferencesInput,
   UserMutationRepository,
 } from "@modules/user/domain/user.repository";
 import {
@@ -127,10 +128,7 @@ test("provision user creates internal user, links Auth0, and sends Auth0 setup e
   assert.equal(result.provisioning?.auth0UserCreated, true);
   assert.equal(result.provisioning?.invitationEmailSent, true);
   assert.equal(result.provisioning?.invitationTicketCreated, false);
-  assert.equal(
-    result.provisioning?.passwordSetupDeliveryMode,
-    "auth0_email",
-  );
+  assert.equal(result.provisioning?.passwordSetupDeliveryMode, "auth0_email");
   assert.equal(result.passwordSetup?.emailSent, true);
   assert.equal(result.passwordSetup?.ticketCreated, false);
   assert.equal(auth0.createUserCalls.length, 1);
@@ -340,10 +338,7 @@ test("password setup sends Auth0 email and audits without returning ticket URL",
     audit.records[0]?.metadata.mutationType,
     "user.password-setup.send",
   );
-  assert.equal(
-    audit.records[0]?.metadata.deliveryMode,
-    "auth0_email",
-  );
+  assert.equal(audit.records[0]?.metadata.deliveryMode, "auth0_email");
   assert.equal(audit.records[0]?.metadata.provider, "auth0");
   assert.equal(audit.records[0]?.metadata.emailSent, true);
   assert.equal(audit.records[0]?.metadata.ticketCreated, false);
@@ -377,10 +372,7 @@ test("password setup backend_ticket mode creates ticket but does not claim email
   assert.equal(result.passwordSetup?.deliveryMode, "backend_ticket");
   assert.equal(result.passwordSetup?.emailSent, false);
   assert.equal(result.passwordSetup?.ticketCreated, true);
-  assert.equal(
-    JSON.stringify(result).includes("ticket.example.test"),
-    false,
-  );
+  assert.equal(JSON.stringify(result).includes("ticket.example.test"), false);
 });
 
 test("password setup rejects unlinked and missing email users before Auth0 delivery", async () => {
@@ -503,8 +495,7 @@ test("Auth0 HTTP client sends database password and redacts HTTP failures", asyn
           typeof body === "object" &&
           body !== null &&
           !Array.isArray(body) &&
-          (body as Record<string, unknown>).email ===
-            "adapter@example.test"
+          (body as Record<string, unknown>).email === "adapter@example.test"
         ) {
           resetEmailBodies.push(body);
           return {
@@ -632,9 +623,8 @@ test("new account provisioning mutations resolve to dedicated permissions", () =
     Permission.USER_PASSWORD_SETUP_SEND,
   );
   assert.equal(
-    resolveAuthoritativePermissionForMutationIdentity(
-      "user.actor-kind.update",
-    ).code,
+    resolveAuthoritativePermissionForMutationIdentity("user.actor-kind.update")
+      .code,
     Permission.USER_ACTOR_KIND_UPDATE,
   );
 });
@@ -694,12 +684,7 @@ test("actorKind conversion STAFF to ADMIN audits and invalidates auth security",
   const repo = new InMemoryUserRepository();
   const audit = new RecordingAuditGuard();
   const bridge = new InlineMutationBridge();
-  const service = createService(
-    repo,
-    new MockAuth0Management(),
-    audit,
-    bridge,
-  );
+  const service = createService(repo, new MockAuth0Management(), audit, bridge);
   const now = Date.now();
   await repo.insert({
     id: "target-user",
@@ -796,8 +781,7 @@ function createService(
   provisioningOptions: Partial<
     ConstructorParameters<typeof UserLifecycleService>[6]
   > = {},
-  capabilityRepository: UserAdminCapabilityRepository =
-    new PermissiveCapabilityRepository(),
+  capabilityRepository: UserAdminCapabilityRepository = new PermissiveCapabilityRepository(),
 ): UserLifecycleService {
   return new UserLifecycleService(
     repo,
@@ -1020,6 +1004,27 @@ class InMemoryUserRepository implements UserMutationRepository {
     return updated;
   }
 
+  async updatePreferences(
+    input: UpdateUserPreferencesInput,
+  ): Promise<UserRecord | null> {
+    const current = await this.findById(input.userId);
+    if (!current || current.accountStatus === "ARCHIVED") {
+      return null;
+    }
+
+    const updated = {
+      ...current,
+      preferences: {
+        ...current.preferences,
+        locale: input.locale ?? current.preferences.locale,
+        timezone: input.timezone ?? current.preferences.timezone,
+      },
+      updatedAt: input.updatedAt,
+    };
+    this.replace(updated);
+    return updated;
+  }
+
   async transitionLifecycle(
     input: TransitionUserLifecycleInput,
   ): Promise<UserRecord | null> {
@@ -1059,13 +1064,11 @@ class InMemoryUserRepository implements UserMutationRepository {
     return updated;
   }
 
-  async updateActorKind(
-    input: {
-      readonly userId: string;
-      readonly actorKind: "ADMIN" | "STAFF";
-      readonly updatedAt: number;
-    },
-  ): Promise<UserRecord | null> {
+  async updateActorKind(input: {
+    readonly userId: string;
+    readonly actorKind: "ADMIN" | "STAFF";
+    readonly updatedAt: number;
+  }): Promise<UserRecord | null> {
     const current = await this.findById(input.userId);
     if (!current) {
       return null;

@@ -6,6 +6,8 @@ import { createKpiInfra } from "@infra/providers/kpi.infra";
 import { createTalentInfra } from "@infra/providers/talent.infra";
 import { createUserInfra } from "@infra/providers/user.infra";
 import { createWorkScheduleInfra } from "@infra/providers/work-schedule.infra";
+import { SelfServiceAccountPreferencesController } from "@modules/self-service/self-service.account-preferences.controller";
+import { SelfServiceAccountPreferencesService } from "@modules/self-service/self-service.account-preferences.service";
 import { SelfServiceCurrentPersonController } from "@modules/self-service/self-service.current-person.controller";
 import { SelfServiceCurrentPersonService } from "@modules/self-service/self-service.current-person.service";
 import { SelfServiceEventsController } from "@modules/self-service/self-service.events.controller";
@@ -22,11 +24,11 @@ export async function createSelfServiceRoutes(
   const { employmentProfileRepository } = createEmploymentProfileInfra(
     infra.primaryDb,
   );
-  const { userReadRepository } = createUserInfra(infra.primaryDb);
-  const { talentRepository } = createTalentInfra(infra.primaryDb);
-  const { workShiftReadRepository } = createWorkScheduleInfra(
+  const { userRepository, userReadRepository } = createUserInfra(
     infra.primaryDb,
   );
+  const { talentRepository } = createTalentInfra(infra.primaryDb);
+  const { workShiftReadRepository } = createWorkScheduleInfra(infra.primaryDb);
   const { eventAssignmentReadRepository } = createEventAssignmentInfra(
     infra.primaryDb,
   );
@@ -34,12 +36,13 @@ export async function createSelfServiceRoutes(
     infra.primaryDb,
   );
 
+  const currentPersonService = new SelfServiceCurrentPersonService(
+    employmentProfileRepository,
+    userReadRepository,
+    talentRepository,
+  );
   const currentPersonController = new SelfServiceCurrentPersonController(
-    new SelfServiceCurrentPersonService(
-      employmentProfileRepository,
-      userReadRepository,
-      talentRepository,
-    ),
+    currentPersonService,
   );
 
   const workShiftsController = new SelfServiceWorkShiftsController(
@@ -57,6 +60,15 @@ export async function createSelfServiceRoutes(
     ),
   );
 
+  const accountPreferencesController =
+    new SelfServiceAccountPreferencesController(
+      new SelfServiceAccountPreferencesService(
+        employmentProfileRepository,
+        userRepository,
+        currentPersonService,
+      ),
+    );
+
   const kpiController = new SelfServiceKpiController(
     new SelfServiceKpiService(
       employmentProfileRepository,
@@ -70,6 +82,7 @@ export async function createSelfServiceRoutes(
     currentPersonController,
     workShiftsController,
     eventsController,
+    accountPreferencesController,
     kpiController,
   );
 }

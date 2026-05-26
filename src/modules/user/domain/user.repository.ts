@@ -1,9 +1,5 @@
 import { ClientSession } from "mongodb";
-import {
-  UserAccountStatus,
-  UserActorKind,
-  UserRecord,
-} from "./user.types";
+import { UserAccountStatus, UserActorKind, UserRecord } from "./user.types";
 
 export interface CreateUserInput {
   readonly id: string;
@@ -43,6 +39,13 @@ export interface UpdateUserProfileInput {
   readonly updatedAt: number;
 }
 
+export interface UpdateUserPreferencesInput {
+  readonly userId: string;
+  readonly locale?: string;
+  readonly timezone?: string;
+  readonly updatedAt: number;
+}
+
 export interface TransitionUserLifecycleInput {
   readonly userId: string;
   readonly fromStates: readonly UserAccountStatus[];
@@ -66,15 +69,9 @@ export interface UpdateUserActorKindInput {
 }
 
 export interface UserMutationRepository {
-  insert(
-    input: CreateUserInput,
-    session: ClientSession,
-  ): Promise<UserRecord>;
+  insert(input: CreateUserInput, session: ClientSession): Promise<UserRecord>;
 
-  findById(
-    userId: string,
-    session: ClientSession,
-  ): Promise<UserRecord | null>;
+  findById(userId: string, session: ClientSession): Promise<UserRecord | null>;
 
   findByAuthSubject(
     authSubject: string,
@@ -89,6 +86,11 @@ export interface UserMutationRepository {
   updateProfile(
     input: UpdateUserProfileInput,
     session: ClientSession,
+  ): Promise<UserRecord | null>;
+
+  updatePreferences(
+    input: UpdateUserPreferencesInput,
+    session?: ClientSession,
   ): Promise<UserRecord | null>;
 
   transitionLifecycle(

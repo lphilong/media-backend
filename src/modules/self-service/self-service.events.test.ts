@@ -52,10 +52,13 @@ import {
   WorkShiftReadRepository,
 } from "@modules/work-schedule/read/work-schedule.read-repository";
 import { UserReadRepository } from "@modules/user/read/user.read-repository";
+import { UserMutationRepository } from "@modules/user/domain/user.repository";
 import {
   UserDetailView,
   UserListItemView,
 } from "@modules/user/domain/user.types";
+import { SelfServiceAccountPreferencesController } from "./self-service.account-preferences.controller";
+import { SelfServiceAccountPreferencesService } from "./self-service.account-preferences.service";
 
 async function listen(app: express.Express): Promise<{
   readonly server: Server;
@@ -207,7 +210,10 @@ test("GET /self-service/events can filter current staff events by safe status an
     assert.equal(harness.events.listInputs[0]?.status, "SCHEDULED");
     assert.equal(harness.events.listInputs[0]?.windowStartAt, 1_000);
     assert.equal(harness.events.listInputs[0]?.windowEndAt, 3_500);
-    assert.equal(harness.events.listInputs[1]?.assignmentTalentId, "talent-staff");
+    assert.equal(
+      harness.events.listInputs[1]?.assignmentTalentId,
+      "talent-staff",
+    );
   } finally {
     await close(server);
   }
@@ -310,12 +316,14 @@ function createSelfServiceTestApp(
   actor: Actor,
 ): express.Express {
   const app = express();
+  app.use(express.json());
+  const currentPersonService = new SelfServiceCurrentPersonService(
+    harness.employmentProfiles,
+    harness.users,
+    harness.talents,
+  );
   const currentPersonController = new SelfServiceCurrentPersonController(
-    new SelfServiceCurrentPersonService(
-      harness.employmentProfiles,
-      harness.users,
-      harness.talents,
-    ),
+    currentPersonService,
   );
   const workShiftsController = new SelfServiceWorkShiftsController(
     new SelfServiceWorkShiftsService(
@@ -330,6 +338,14 @@ function createSelfServiceTestApp(
       harness.events,
     ),
   );
+  const accountPreferencesController =
+    new SelfServiceAccountPreferencesController(
+      new SelfServiceAccountPreferencesService(
+        harness.employmentProfiles,
+        harness.users as unknown as UserMutationRepository,
+        currentPersonService,
+      ),
+    );
 
   app.use(
     "/self-service",
@@ -342,6 +358,7 @@ function createSelfServiceTestApp(
       currentPersonController,
       workShiftsController,
       eventsController,
+      accountPreferencesController,
     ),
   );
   app.use(createHttpErrorMiddleware({ error() {} } as never));
@@ -664,9 +681,7 @@ function eventAssignmentRecord(
   };
 }
 
-class InMemoryEmploymentProfileRepository
-  implements EmploymentProfileRepository
-{
+class InMemoryEmploymentProfileRepository implements EmploymentProfileRepository {
   constructor(private readonly records: EmploymentProfileRecord[]) {}
 
   snapshot(): readonly EmploymentProfileRecord[] {
@@ -805,9 +820,7 @@ class InMemoryTalentRepository implements TalentRepository {
 }
 
 class InMemoryWorkShiftReadRepository implements WorkShiftReadRepository {
-  async listWorkShifts(
-    _input: WorkShiftListReadInput,
-  ): Promise<{
+  async listWorkShifts(_input: WorkShiftListReadInput): Promise<{
     readonly items: readonly WorkShiftListItemView[];
   }> {
     return { items: [] };
@@ -834,9 +847,7 @@ class InMemoryWorkShiftReadRepository implements WorkShiftReadRepository {
   }
 }
 
-class InMemoryEventAssignmentReadRepository
-  implements EventAssignmentReadRepository
-{
+class InMemoryEventAssignmentReadRepository implements EventAssignmentReadRepository {
   readonly listInputs: EventByAssignmentListReadInput[] = [];
 
   constructor(
@@ -851,9 +862,7 @@ class InMemoryEventAssignmentReadRepository
     };
   }
 
-  async listEventsByAssignment(
-    input: EventByAssignmentListReadInput,
-  ): Promise<{
+  async listEventsByAssignment(input: EventByAssignmentListReadInput): Promise<{
     readonly items: readonly EventByAssignmentListItemView[];
   }> {
     this.listInputs.push({ ...input });
@@ -877,8 +886,7 @@ class InMemoryEventAssignmentReadRepository
           }
 
           return (
-            assignment.assignmentTalentGroupId ===
-            input.assignmentTalentGroupId
+            assignment.assignmentTalentGroupId === input.assignmentTalentGroupId
           );
         })
         .map((assignment) => assignment.eventId),

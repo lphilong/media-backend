@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { withCommand } from "@app/base/command.middleware";
+import { SelfServiceAccountPreferencesController } from "./self-service.account-preferences.controller";
 import { SelfServiceCurrentPersonController } from "./self-service.current-person.controller";
 import { SelfServiceEventsController } from "./self-service.events.controller";
 import { SelfServiceKpiController } from "./self-service.kpi.controller";
@@ -9,6 +10,7 @@ export function selfServiceRoutes(
   currentPersonController: SelfServiceCurrentPersonController,
   workShiftsController: SelfServiceWorkShiftsController,
   eventsController: SelfServiceEventsController,
+  accountPreferencesController: SelfServiceAccountPreferencesController,
   kpiController?: SelfServiceKpiController,
 ): Router {
   const router = Router();
@@ -29,6 +31,12 @@ export function selfServiceRoutes(
     "/events",
     withCommand("SELF_SERVICE_EVENTS_LIST"),
     eventsController.execute,
+  );
+
+  router.patch(
+    "/account/preferences",
+    withCommand("SELF_SERVICE_ACCOUNT_PREFERENCES_UPDATE"),
+    accountPreferencesController.execute,
   );
 
   if (kpiController) {

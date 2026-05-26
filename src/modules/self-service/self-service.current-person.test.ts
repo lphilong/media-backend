@@ -22,9 +22,16 @@ import {
 } from "@modules/talent/domain/talent.types";
 import { UserReadRepository } from "@modules/user/read/user.read-repository";
 import {
+  UpdateUserPreferencesInput,
+  UserMutationRepository,
+} from "@modules/user/domain/user.repository";
+import {
   UserDetailView,
   UserListItemView,
+  UserRecord,
 } from "@modules/user/domain/user.types";
+import { SelfServiceAccountPreferencesController } from "./self-service.account-preferences.controller";
+import { SelfServiceAccountPreferencesService } from "./self-service.account-preferences.service";
 import { SelfServiceCurrentPersonController } from "./self-service.current-person.controller";
 import { SelfServiceCurrentPersonService } from "./self-service.current-person.service";
 import { SelfServiceEventsController } from "./self-service.events.controller";
@@ -218,6 +225,202 @@ test("self-service current person endpoint does not mutate person, user, or tale
   }
 });
 
+test("PATCH /self-service/account/preferences updates only current actor locale and timezone", async () => {
+  const harness = createHarness();
+  const beforeEmploymentProfiles = harness.employmentProfiles.snapshot();
+  const beforeTalents = harness.talents.snapshot();
+  const beforeWorkShifts = harness.workShifts.snapshot();
+  const { server, baseUrl } = await listen(
+    createSelfServiceTestApp(harness, createStaffActor("user-staff")),
+  );
+
+  try {
+    const response = await fetch(
+      `${baseUrl}/self-service/account/preferences`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          locale: "vi",
+          timezone: "Asia/Ho_Chi_Minh",
+        }),
+      },
+    );
+    const body = await response.json();
+    const serialized = JSON.stringify(body);
+
+    assert.equal(response.status, 200);
+    assert.equal(body.data.employmentProfileId, "ep-staff");
+    assert.equal(body.data.locale, "vi");
+    assert.equal(body.data.timezone, "Asia/Ho_Chi_Minh");
+    assert.deepEqual(harness.users.updatedUserIds, ["user-staff"]);
+    assert.equal(harness.users.getUser("user-other")?.preferences.locale, "en");
+
+    const meResponse = await fetch(`${baseUrl}/self-service/me`);
+    const meBody = await meResponse.json();
+
+    assert.equal(meResponse.status, 200);
+    assert.equal(meBody.data.locale, "vi");
+    assert.equal(meBody.data.timezone, "Asia/Ho_Chi_Minh");
+    assert.deepEqual(
+      harness.employmentProfiles.snapshot(),
+      beforeEmploymentProfiles,
+    );
+    assert.deepEqual(harness.talents.snapshot(), beforeTalents);
+    assert.deepEqual(harness.workShifts.snapshot(), beforeWorkShifts);
+
+    for (const forbidden of [
+      "legalName",
+      "linkedUserId",
+      "roles",
+      "permissions",
+      "auth0|staff",
+      "subject",
+      "setupUrl",
+      "ticketUrl",
+      "resetUrl",
+      "temporaryPassword",
+      "credential",
+      "session",
+    ]) {
+      assert.equal(serialized.includes(forbidden), false, forbidden);
+    }
+  } finally {
+    await close(server);
+  }
+});
+
+test("PATCH /self-service/account/preferences rejects forbidden fields without mutation", async () => {
+  const harness = createHarness();
+  const before = harness.snapshot();
+  const { server, baseUrl } = await listen(
+    createSelfServiceTestApp(harness, createStaffActor("user-staff")),
+  );
+
+  try {
+    const response = await fetch(
+      `${baseUrl}/self-service/account/preferences`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          locale: "vi",
+          userId: "user-other",
+          employmentProfileId: "ep-other",
+          actorId: "user-other",
+          linkedUserId: "user-other",
+          subject: "auth0|other",
+          email: "other@example.test",
+          phone: "+84000000000",
+          address: "Hidden address",
+          displayName: "Changed",
+          legalName: "Changed Legal",
+          accountStatus: "DISABLED",
+          role: "SUPER_ADMIN",
+          permission: "USER_WRITE",
+          scope: "all",
+          password: "temporary",
+          auth0: { subject: "auth0|other" },
+          ticketUrl: "https://example.test/ticket",
+          resetUrl: "https://example.test/reset",
+          setupUrl: "https://example.test/setup",
+          temporaryPassword: "secret",
+        }),
+      },
+    );
+    const body = await response.json();
+    const serialized = JSON.stringify(body);
+
+    assert.equal(response.status, 400);
+    assert.match(body.error.message, /Invalid self-service request/);
+    assert.deepEqual(harness.snapshot(), before);
+    assert.equal(serialized.includes("other@example.test"), false);
+    assert.equal(serialized.includes("temporary"), false);
+  } finally {
+    await close(server);
+  }
+});
+
+test("PATCH /self-service/account/preferences rejects unsupported locale and invalid timezone", async () => {
+  const harness = createHarness();
+  const before = harness.snapshot();
+  const { server, baseUrl } = await listen(
+    createSelfServiceTestApp(harness, createStaffActor("user-staff")),
+  );
+
+  try {
+    const unsupportedLocaleResponse = await fetch(
+      `${baseUrl}/self-service/account/preferences`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          locale: "fr",
+          timezone: "Asia/Saigon",
+        }),
+      },
+    );
+    const unsupportedLocaleBody = await unsupportedLocaleResponse.json();
+
+    assert.equal(unsupportedLocaleResponse.status, 400);
+    assert.match(
+      unsupportedLocaleBody.error.message,
+      /Invalid self-service request/,
+    );
+
+    const invalidTimezoneResponse = await fetch(
+      `${baseUrl}/self-service/account/preferences`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          locale: "vi",
+          timezone: "Not/A_Timezone",
+        }),
+      },
+    );
+    const invalidTimezoneBody = await invalidTimezoneResponse.json();
+
+    assert.equal(invalidTimezoneResponse.status, 400);
+    assert.match(
+      invalidTimezoneBody.error.message,
+      /Invalid self-service request/,
+    );
+    assert.deepEqual(harness.snapshot(), before);
+  } finally {
+    await close(server);
+  }
+});
+
+test("PATCH /self-service/account/preferences cannot target another user", async () => {
+  const harness = createHarness();
+  const before = harness.snapshot();
+  const { server, baseUrl } = await listen(
+    createSelfServiceTestApp(harness, createStaffActor("user-staff")),
+  );
+
+  try {
+    const response = await fetch(
+      `${baseUrl}/self-service/account/preferences`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          userId: "user-other",
+          locale: "vi",
+          timezone: "Asia/Ho_Chi_Minh",
+        }),
+      },
+    );
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(harness.snapshot(), before);
+    assert.equal(harness.users.updatedUserIds.length, 0);
+  } finally {
+    await close(server);
+  }
+});
+
 test("GET /self-service/work-shifts returns only current actor official EmploymentProfile shifts", async () => {
   const harness = createHarness();
   const { server, baseUrl } = await listen(
@@ -231,10 +434,7 @@ test("GET /self-service/work-shifts returns only current actor official Employme
     const rejected = await response.json();
 
     assert.equal(response.status, 400);
-    assert.match(
-      rejected.error.message,
-      /Invalid self-service request/,
-    );
+    assert.match(rejected.error.message, /Invalid self-service request/);
 
     const safeResponse = await fetch(
       `${baseUrl}/self-service/work-shifts?limit=10&windowStartAt=1000&windowEndAt=4000`,
@@ -312,7 +512,9 @@ test("GET /self-service/work-shifts can filter current actor shifts by safe stat
 
     assert.equal(response.status, 200);
     assert.deepEqual(
-      body.data.map((item: { readonly workShiftId: string }) => item.workShiftId),
+      body.data.map(
+        (item: { readonly workShiftId: string }) => item.workShiftId,
+      ),
       ["shift-own-active"],
     );
     assert.equal(
@@ -399,12 +601,15 @@ function createSelfServiceTestApp(
   actor: Actor,
 ): express.Express {
   const app = express();
+  app.use(express.json());
+
+  const currentPersonService = new SelfServiceCurrentPersonService(
+    harness.employmentProfiles,
+    harness.users,
+    harness.talents,
+  );
   const controller = new SelfServiceCurrentPersonController(
-    new SelfServiceCurrentPersonService(
-      harness.employmentProfiles,
-      harness.users,
-      harness.talents,
-    ),
+    currentPersonService,
   );
   const workShiftsController = new SelfServiceWorkShiftsController(
     new SelfServiceWorkShiftsService(
@@ -419,6 +624,15 @@ function createSelfServiceTestApp(
       new EmptyEventAssignmentReadRepository(),
     ),
   );
+  const accountPreferencesController =
+    new SelfServiceAccountPreferencesController(
+      new SelfServiceAccountPreferencesService(
+        harness.employmentProfiles,
+        harness.users,
+        currentPersonService,
+        () => 10,
+      ),
+    );
 
   app.use(
     "/self-service",
@@ -427,7 +641,12 @@ function createSelfServiceTestApp(
       bindActor(req, actor);
       next();
     },
-    selfServiceRoutes(controller, workShiftsController, eventsController),
+    selfServiceRoutes(
+      controller,
+      workShiftsController,
+      eventsController,
+      accountPreferencesController,
+    ),
   );
   app.use(createHttpErrorMiddleware({ error() {} } as never));
 
@@ -484,6 +703,11 @@ function createHarness(): SelfServiceHarness {
       id: "user-staff",
       email: "staff@example.test",
       authSubject: "auth0|staff",
+    }),
+    userDetail({
+      id: "user-other",
+      email: "other@example.test",
+      authSubject: "auth0|other",
     }),
   ]);
   const talents = new InMemoryTalentRepository([
@@ -672,9 +896,7 @@ function workShiftListItem(
   };
 }
 
-class InMemoryEmploymentProfileRepository
-  implements EmploymentProfileRepository
-{
+class InMemoryEmploymentProfileRepository implements EmploymentProfileRepository {
   readonly lookupLinkedUserIds: string[] = [];
 
   constructor(private readonly records: EmploymentProfileRecord[]) {}
@@ -741,11 +963,25 @@ class InMemoryEmploymentProfileRepository
   }
 }
 
-class InMemoryUserReadRepository implements UserReadRepository {
+class InMemoryUserReadRepository
+  implements UserReadRepository, UserMutationRepository
+{
+  readonly updatedUserIds: string[] = [];
+
   constructor(private readonly records: UserDetailView[]) {}
 
   snapshot(): readonly UserDetailView[] {
-    return this.records.map((record) => ({ ...record }));
+    return this.records.map((record) => ({
+      ...record,
+      authLinkage: { ...record.authLinkage },
+      profile: { ...record.profile },
+      contextAccess: { ...record.contextAccess },
+      preferences: { ...record.preferences },
+    }));
+  }
+
+  getUser(userId: string): UserDetailView | null {
+    return this.records.find((record) => record.id === userId) ?? null;
   }
 
   async getUserDetail(userId: string): Promise<UserDetailView | null> {
@@ -755,6 +991,67 @@ class InMemoryUserReadRepository implements UserReadRepository {
   async listUsers(): Promise<{
     readonly items: readonly UserListItemView[];
   }> {
+    throw new Error("Not implemented");
+  }
+
+  async updatePreferences(
+    input: UpdateUserPreferencesInput,
+  ): Promise<UserRecord | null> {
+    const record = this.records.find(
+      (candidate) =>
+        candidate.id === input.userId && candidate.accountStatus !== "ARCHIVED",
+    );
+
+    if (!record) {
+      return null;
+    }
+
+    this.updatedUserIds.push(input.userId);
+
+    const mutable = record as {
+      preferences: UserDetailView["preferences"];
+      updatedAt: number;
+    };
+
+    mutable.preferences = {
+      ...record.preferences,
+      locale: input.locale ?? record.preferences.locale,
+      timezone: input.timezone ?? record.preferences.timezone,
+    };
+    mutable.updatedAt = input.updatedAt;
+
+    return record as unknown as UserRecord;
+  }
+
+  async insert(): Promise<UserRecord> {
+    throw new Error("Not implemented");
+  }
+
+  async findById(): Promise<UserRecord | null> {
+    throw new Error("Not implemented");
+  }
+
+  async findByAuthSubject(): Promise<UserRecord | null> {
+    throw new Error("Not implemented");
+  }
+
+  async findByEmail(): Promise<UserRecord | null> {
+    throw new Error("Not implemented");
+  }
+
+  async updateProfile(): Promise<UserRecord | null> {
+    throw new Error("Not implemented");
+  }
+
+  async transitionLifecycle(): Promise<UserRecord | null> {
+    throw new Error("Not implemented");
+  }
+
+  async setAuthLinkage(): Promise<UserRecord | null> {
+    throw new Error("Not implemented");
+  }
+
+  async updateActorKind(): Promise<UserRecord | null> {
     throw new Error("Not implemented");
   }
 }
@@ -824,9 +1121,7 @@ class InMemoryWorkShiftReadRepository implements WorkShiftReadRepository {
     return this.records.map((record) => ({ ...record }));
   }
 
-  async listWorkShifts(
-    input: WorkShiftListReadInput,
-  ): Promise<{
+  async listWorkShifts(input: WorkShiftListReadInput): Promise<{
     readonly items: readonly WorkShiftListItemView[];
     readonly nextCursor?: string;
   }> {
@@ -835,8 +1130,7 @@ class InMemoryWorkShiftReadRepository implements WorkShiftReadRepository {
     let items = this.records.filter(
       (record) =>
         record.subjectKind === input.subjectKind &&
-        record.subjectEmploymentProfileId ===
-          input.subjectEmploymentProfileId,
+        record.subjectEmploymentProfileId === input.subjectEmploymentProfileId,
     );
 
     if (input.status) {
@@ -883,9 +1177,7 @@ class InMemoryWorkShiftReadRepository implements WorkShiftReadRepository {
   }
 }
 
-class EmptyEventAssignmentReadRepository
-  implements EventAssignmentReadRepository
-{
+class EmptyEventAssignmentReadRepository implements EventAssignmentReadRepository {
   async listEventsByAssignment(
     _input: EventByAssignmentListReadInput,
   ): Promise<{
