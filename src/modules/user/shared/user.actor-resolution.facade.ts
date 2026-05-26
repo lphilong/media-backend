@@ -36,7 +36,10 @@ export class UserActorResolutionFacade {
   async resolveByAuthLinkage(
     input: ResolveActorByAuthLinkageInput,
   ): Promise<ResolveActorByAuthLinkageResult> {
-    if (input.context !== "ADMIN") {
+    if (
+      input.context !== "ADMIN" &&
+      input.context !== "SELF_SERVICE"
+    ) {
       throw new UserInactiveActorResolutionError(
         `context ${input.context}`,
       );
@@ -76,14 +79,12 @@ export class UserActorResolutionFacade {
       );
     }
 
-    const actor: ResolvedActorUser & {
-      readonly scopeGrants?: ActorScopeGrants;
-    } = {
+    const actor: ResolvedActorUser = {
       userId: candidate.userId,
       actorKind: candidate.actorKind,
       accountStatus: candidate.accountStatus,
       permissions: candidate.permissions,
-      context: "ADMIN",
+      context: input.context,
       scopeGrants: candidate.scopeGrants,
     };
 

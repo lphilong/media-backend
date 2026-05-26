@@ -15,6 +15,10 @@ export function assertHttpContext(
     return ctx;
   }
 
+  if (ctx === "SELF_SERVICE") {
+    return ctx;
+  }
+
   throw new SystemInvariantError(
     "INVALID_SYSTEM_CONTEXT",
     `Invalid active HTTP context: ${ctx}`,

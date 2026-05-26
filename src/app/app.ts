@@ -78,7 +78,7 @@ export async function createApp(options: {
   app.use(
     "/self-service",
     createSecureRouter({
-      context: "ADMIN",
+      context: "SELF_SERVICE",
       auth0: {
         issuerBaseURL: requireHttpAuth0IssuerBaseUrl(),
         audience: requireHttpAuth0Audience(),

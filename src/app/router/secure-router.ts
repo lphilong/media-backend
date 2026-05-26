@@ -20,14 +20,14 @@ import { SystemInvariantError } from "@core/error/system-error";
 
 function assertSecureHttpContext(
   context: ContextType,
-): "ADMIN" {
-  if (context === "ADMIN") {
+): "ADMIN" | "SELF_SERVICE" {
+  if (context === "ADMIN" || context === "SELF_SERVICE") {
     return context;
   }
 
   throw new SystemInvariantError(
     "SYSTEM_INVARIANT_VIOLATION",
-    `Secure HTTP router can only be bound to ADMIN context. Received: ${context}`,
+    `Secure HTTP router can only be bound to ADMIN or SELF_SERVICE context. Received: ${context}`,
   );
 }
 

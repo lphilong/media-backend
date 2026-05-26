@@ -282,7 +282,7 @@ function createSelfServiceKpiTestApp(
 
   app.get(
     "/self-service/kpi",
-    contextMiddleware("ADMIN"),
+    contextMiddleware("SELF_SERVICE"),
     (req, _res, next) => {
       bindActor(req, actor);
       next();
@@ -299,7 +299,7 @@ function createStaffActor(userId: string): Actor {
   return new Actor({
     id: userId,
     type: "staff",
-    context: "ADMIN",
+    context: "SELF_SERVICE",
     roles: ["TALENT_STAFF_SELF"],
     permissions: [Permission.KPI_READ_PROGRESS],
     scopeGrants: {

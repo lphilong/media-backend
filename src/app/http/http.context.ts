@@ -29,12 +29,14 @@ function assertHttpContextAllowList(ctx: HttpContext): void {
 }
 
 function assertHttpContextType(ctx: HttpContextType): void {
-  if (ctx !== "ADMIN") {
-    throw new SystemInvariantError(
-      "SYSTEM_INVARIANT_VIOLATION",
-      `HTTP context must be ADMIN. Received: ${ctx}`,
-    );
+  if (ctx === "ADMIN" || ctx === "SELF_SERVICE") {
+    return;
   }
+
+  throw new SystemInvariantError(
+    "SYSTEM_INVARIANT_VIOLATION",
+    `HTTP context must be ADMIN or SELF_SERVICE. Received: ${ctx}`,
+  );
 }
 
 export function runWithHttpContext<T>(

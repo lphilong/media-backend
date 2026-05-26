@@ -82,7 +82,10 @@ export function createLocalMockAuthMiddleware(params: {
         req,
         new Actor({
           id: config.actorId,
-          type: "admin",
+          type:
+            params.context === "SELF_SERVICE"
+              ? "staff"
+              : "admin",
           context: params.context,
           roles: [],
           permissions: config.permissions,

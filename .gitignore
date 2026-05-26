@@ -31,6 +31,7 @@ tools/
 !src/app/http/http-error.map.test.ts
 !src/app/router/admin-auth-boundary.test.ts
 !src/app/router/current-actor-capabilities.test.ts
+!src/app/router/self-service-auth-context.test.ts
 !src/app/auth/local-mock-auth.middleware.test.ts
 !src/config/local-mock-auth.env.test.ts
 !src/modules/dashboard-lite/domain/dashboard-lite.time.test.ts

@@ -1,4 +1,5 @@
 import { ContextType } from "@core/context/context.types";
+import type { ActorScopeGrants } from "@core/actor/actor";
 
 export type UserAccountStatus = "PENDING" | "ACTIVE" | "DISABLED" | "ARCHIVED";
 
@@ -104,5 +105,6 @@ export interface ResolvedActorUser {
   readonly actorKind: UserActorKind;
   readonly accountStatus: UserAccountStatus;
   readonly permissions: readonly string[];
-  readonly context: Extract<ContextType, "ADMIN">;
+  readonly context: Extract<ContextType, "ADMIN" | "SELF_SERVICE">;
+  readonly scopeGrants?: ActorScopeGrants;
 }
