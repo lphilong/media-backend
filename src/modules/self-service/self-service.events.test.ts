@@ -60,6 +60,11 @@ import {
 import { SelfServiceAccountPreferencesController } from "./self-service.account-preferences.controller";
 import { SelfServiceAccountPreferencesService } from "./self-service.account-preferences.service";
 
+const EVENTS_NOW = 3_000;
+const RECENT_PAST_DAYS = 30;
+const UPCOMING_DAYS = 90;
+const DAY_MS = 24 * 60 * 60 * 1_000;
+
 async function listen(app: express.Express): Promise<{
   readonly server: Server;
   readonly baseUrl: string;
@@ -131,6 +136,16 @@ test("GET /self-service/events returns only active direct current staff event as
         ownAssignmentStatus: "ACTIVE",
       },
     ]);
+    assert.deepEqual(body.meta, {
+      window: {
+        recentPastDays: RECENT_PAST_DAYS,
+        upcomingDays: UPCOMING_DAYS,
+        windowStartAt: EVENTS_NOW - RECENT_PAST_DAYS * DAY_MS,
+        windowEndAt: EVENTS_NOW + UPCOMING_DAYS * DAY_MS,
+      },
+      limit: 20,
+      truncated: false,
+    });
     assert.deepEqual(harness.events.listInputs, [
       {
         assignmentKind: "EMPLOYMENT_PROFILE",
@@ -138,9 +153,9 @@ test("GET /self-service/events returns only active direct current staff event as
         assignmentTalentId: null,
         assignmentTalentGroupId: null,
         status: undefined,
-        windowStartAt: undefined,
-        windowEndAt: undefined,
-        limit: 20,
+        windowStartAt: EVENTS_NOW - RECENT_PAST_DAYS * DAY_MS,
+        windowEndAt: EVENTS_NOW + UPCOMING_DAYS * DAY_MS,
+        limit: 21,
         sortField: "eventStartAt",
         sortDirection: "ASC",
       },
@@ -150,9 +165,9 @@ test("GET /self-service/events returns only active direct current staff event as
         assignmentTalentId: "talent-staff",
         assignmentTalentGroupId: null,
         status: undefined,
-        windowStartAt: undefined,
-        windowEndAt: undefined,
-        limit: 20,
+        windowStartAt: EVENTS_NOW - RECENT_PAST_DAYS * DAY_MS,
+        windowEndAt: EVENTS_NOW + UPCOMING_DAYS * DAY_MS,
+        limit: 21,
         sortField: "eventStartAt",
         sortDirection: "ASC",
       },
@@ -190,6 +205,137 @@ test("GET /self-service/events returns only active direct current staff event as
   }
 });
 
+test("GET /self-service/events marks the bounded response as truncated when more own events exist than the limit", async () => {
+  const harness = createHarness();
+  const { server, baseUrl } = await listen(
+    createSelfServiceTestApp(harness, createStaffActor("user-staff")),
+  );
+
+  try {
+    const response = await fetch(`${baseUrl}/self-service/events?limit=1`);
+    const body = await response.json();
+    const serialized = JSON.stringify(body);
+
+    assert.equal(response.status, 200);
+    assert.equal(body.data.length, 1);
+    assert.deepEqual(body.data, [
+      {
+        eventId: "event-own-talent",
+        eventCode: "EVT-SELF-TAL",
+        title: "Own internal Talent event",
+        status: "SCHEDULED",
+        startsAt: 2_000,
+        endsAt: 3_000,
+        ownAssignmentKind: "TALENT",
+        ownAssignmentStatus: "ACTIVE",
+      },
+    ]);
+    assert.deepEqual(body.meta, {
+      window: {
+        recentPastDays: RECENT_PAST_DAYS,
+        upcomingDays: UPCOMING_DAYS,
+        windowStartAt: EVENTS_NOW - RECENT_PAST_DAYS * DAY_MS,
+        windowEndAt: EVENTS_NOW + UPCOMING_DAYS * DAY_MS,
+      },
+      limit: 1,
+      truncated: true,
+    });
+    assert.deepEqual(
+      harness.events.listInputs.map((input) => input.limit),
+      [2, 2],
+    );
+
+    for (const forbidden of [
+      "assignmentTalentId",
+      "assignmentEmploymentProfileId",
+      "assignmentTalentGroupId",
+      "studioResourceIds",
+      "platform-secret-account",
+      "externalRef",
+      "client budget",
+      "Internal production note",
+    ]) {
+      assert.equal(serialized.includes(forbidden), false, forbidden);
+    }
+  } finally {
+    await close(server);
+  }
+});
+
+test("GET /self-service/events de-dupes the same event assigned to current EmploymentProfile and linked internal Talent", async () => {
+  const harness = createHarness({
+    extraEvents: [
+      eventRecord({
+        id: "event-dual-direct",
+        eventCode: "EVT-DUAL",
+        title: "Dual direct assignment event",
+        status: "SCHEDULED",
+        eventStartAt: 1_500,
+        eventEndAt: 1_900,
+      }),
+    ],
+    extraAssignments: [
+      eventAssignmentRecord({
+        id: "assignment-dual-employment-profile",
+        eventId: "event-dual-direct",
+        assignmentKind: "EMPLOYMENT_PROFILE",
+        assignmentEmploymentProfileId: "ep-staff",
+      }),
+      eventAssignmentRecord({
+        id: "assignment-dual-talent",
+        eventId: "event-dual-direct",
+        assignmentKind: "TALENT",
+        assignmentTalentId: "talent-staff",
+      }),
+    ],
+  });
+  const { server, baseUrl } = await listen(
+    createSelfServiceTestApp(harness, createStaffActor("user-staff")),
+  );
+
+  try {
+    const response = await fetch(`${baseUrl}/self-service/events?limit=20`);
+    const body = await response.json();
+    const eventIds = body.data.map(
+      (item: { readonly eventId: string }) => item.eventId,
+    );
+    const dualDirectEvents = body.data.filter(
+      (item: { readonly eventId: string }) =>
+        item.eventId === "event-dual-direct",
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(dualDirectEvents.length, 1);
+    assert.deepEqual(dualDirectEvents[0], {
+      eventId: "event-dual-direct",
+      eventCode: "EVT-DUAL",
+      title: "Dual direct assignment event",
+      status: "SCHEDULED",
+      startsAt: 1_500,
+      endsAt: 1_900,
+      ownAssignmentKind: "EMPLOYMENT_PROFILE",
+      ownAssignmentStatus: "ACTIVE",
+    });
+    assert.equal(
+      body.data.filter(
+        (item: { readonly eventId: string }) =>
+          item.eventId === "event-own-talent",
+      ).length,
+      1,
+    );
+    assert.equal(eventIds.includes("event-group-only"), false);
+    assert.equal(eventIds.includes("event-removed"), false);
+    assert.equal(eventIds.includes("event-other"), false);
+    assert.equal(eventIds.includes("event-external"), false);
+    assert.deepEqual(
+      harness.events.listInputs.map((input) => input.assignmentKind),
+      ["EMPLOYMENT_PROFILE", "TALENT"],
+    );
+  } finally {
+    await close(server);
+  }
+});
+
 test("GET /self-service/events can filter current staff events by safe status and window", async () => {
   const harness = createHarness();
   const { server, baseUrl } = await listen(
@@ -210,6 +356,12 @@ test("GET /self-service/events can filter current staff events by safe status an
     assert.equal(harness.events.listInputs[0]?.status, "SCHEDULED");
     assert.equal(harness.events.listInputs[0]?.windowStartAt, 1_000);
     assert.equal(harness.events.listInputs[0]?.windowEndAt, 3_500);
+    assert.deepEqual(body.meta.window, {
+      recentPastDays: RECENT_PAST_DAYS,
+      upcomingDays: UPCOMING_DAYS,
+      windowStartAt: 1_000,
+      windowEndAt: 3_500,
+    });
     assert.equal(
       harness.events.listInputs[1]?.assignmentTalentId,
       "talent-staff",
@@ -336,6 +488,7 @@ function createSelfServiceTestApp(
       harness.employmentProfiles,
       harness.talents,
       harness.events,
+      () => EVENTS_NOW,
     ),
   );
   const accountPreferencesController =
@@ -396,7 +549,10 @@ interface SelfServiceEventsHarness {
   snapshot(): unknown;
 }
 
-function createHarness(): SelfServiceEventsHarness {
+function createHarness(options?: {
+  readonly extraEvents?: readonly EventRecord[];
+  readonly extraAssignments?: readonly EventAssignmentRecord[];
+}): SelfServiceEventsHarness {
   const employmentProfiles = new InMemoryEmploymentProfileRepository([
     employmentProfileRecord({
       id: "ep-staff",
@@ -486,6 +642,7 @@ function createHarness(): SelfServiceEventsHarness {
         eventCode: "EVT-OTHER",
         title: "Other staff event",
       }),
+      ...(options?.extraEvents ?? []),
     ],
     [
       eventAssignmentRecord({
@@ -532,6 +689,7 @@ function createHarness(): SelfServiceEventsHarness {
         assignmentKind: "EMPLOYMENT_PROFILE",
         assignmentEmploymentProfileId: "ep-other",
       }),
+      ...(options?.extraAssignments ?? []),
     ],
   );
 

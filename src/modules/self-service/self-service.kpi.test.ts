@@ -40,6 +40,9 @@ import {
 
 const MAY_2026_START_AT = Date.UTC(2026, 4, 1, -7, 0, 0, 0);
 const MAY_2026_END_AT = Date.UTC(2026, 5, 1, -7, 0, 0, 0) - 1;
+const JUNE_2026_START_AT = Date.UTC(2026, 5, 1, -7, 0, 0, 0);
+const JUNE_2026_END_AT = Date.UTC(2026, 6, 1, -7, 0, 0, 0) - 1;
+const CURRENT_KPI_NOW = Date.UTC(2026, 4, 15, 12, 0, 0, 0);
 
 async function listen(app: express.Express): Promise<{
   readonly server: Server;
@@ -125,6 +128,12 @@ test("GET /self-service/kpi returns only current staff own PUBLISHED KPI", async
         limit: 100,
       },
     ]);
+    assert.deepEqual(harness.kpi.listPlanByIdsInputs, [
+      ["plan-official", "plan-future"],
+    ]);
+    assert.deepEqual(harness.kpi.findPlanByIdInputs, []);
+    assert.deepEqual(harness.actuals.listPlanIdInputs, []);
+    assert.deepEqual(harness.actuals.listPlanIdsInputs, [["plan-official"]]);
 
     for (const forbidden of [
       "plan-draft",
@@ -132,6 +141,7 @@ test("GET /self-service/kpi returns only current staff own PUBLISHED KPI", async
       "plan-approved",
       "plan-rejected",
       "plan-active",
+      "plan-future",
       "plan-other-member",
       "plan-unrelated-talent",
       "plan-unrelated-profile",
@@ -277,6 +287,7 @@ function createSelfServiceKpiTestApp(
       harness.talents,
       harness.kpi,
       harness.actuals,
+      () => CURRENT_KPI_NOW,
     ),
   );
 
@@ -350,6 +361,13 @@ function createHarness(): SelfServiceKpiHarness {
       kpiPlan({ id: "plan-approved", title: "Approved own KPI" }),
       kpiPlan({ id: "plan-rejected", title: "Rejected own KPI" }),
       kpiPlan({ id: "plan-active", title: "Legacy active own KPI" }),
+      kpiPlan({
+        id: "plan-future",
+        title: "Future own KPI",
+        periodMonth: "2026-06",
+        periodStartAt: JUNE_2026_START_AT,
+        periodEndAt: JUNE_2026_END_AT,
+      }),
       kpiPlan({ id: "plan-other-member", title: "Other member KPI" }),
       kpiPlan({ id: "plan-unrelated-talent", title: "Unrelated Talent KPI" }),
       kpiPlan({ id: "plan-unrelated-profile", title: "Unrelated EmploymentProfile KPI" }),
@@ -380,6 +398,10 @@ function createHarness(): SelfServiceKpiHarness {
         id: "alloc-active",
         kpiPlanId: "plan-active",
         allocationStatus: "ACTIVE",
+      }),
+      allocation({
+        id: "alloc-future",
+        kpiPlanId: "plan-future",
       }),
       allocation({
         id: "alloc-other-member",
@@ -722,6 +744,8 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     readonly memberEmploymentProfileId?: string;
     readonly limit: number;
   }> = [];
+  readonly listPlanByIdsInputs: string[][] = [];
+  readonly findPlanByIdInputs: string[] = [];
 
   constructor(
     private readonly plans: KpiPlan[],
@@ -736,7 +760,16 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
   }
 
   async findPlanById(kpiPlanId: string): Promise<KpiPlan | null> {
+    this.findPlanByIdInputs.push(kpiPlanId);
     return this.plans.find((plan) => plan.id === kpiPlanId) ?? null;
+  }
+
+  async listPlansByIds(
+    kpiPlanIds: readonly string[],
+  ): Promise<readonly KpiPlan[]> {
+    this.listPlanByIdsInputs.push([...kpiPlanIds]);
+    const ids = new Set(kpiPlanIds);
+    return this.plans.filter((plan) => ids.has(plan.id));
   }
 
   async listAllocations(input: {
@@ -826,6 +859,9 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
 }
 
 class InMemoryKpiActualRepository implements KpiActualRepository {
+  readonly listPlanIdInputs: string[] = [];
+  readonly listPlanIdsInputs: string[][] = [];
+
   constructor(private readonly entries: KpiActualEntry[]) {}
 
   snapshot(): readonly KpiActualEntry[] {
@@ -835,7 +871,16 @@ class InMemoryKpiActualRepository implements KpiActualRepository {
   async listEntriesByPlanId(
     kpiPlanId: string,
   ): Promise<readonly KpiActualEntry[]> {
+    this.listPlanIdInputs.push(kpiPlanId);
     return this.entries.filter((entry) => entry.kpiPlanId === kpiPlanId);
+  }
+
+  async listEntriesByPlanIds(
+    kpiPlanIds: readonly string[],
+  ): Promise<readonly KpiActualEntry[]> {
+    this.listPlanIdsInputs.push([...kpiPlanIds]);
+    const ids = new Set(kpiPlanIds);
+    return this.entries.filter((entry) => ids.has(entry.kpiPlanId));
   }
 
   async findEntryById(): Promise<KpiActualEntry | null> {

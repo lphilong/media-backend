@@ -40,8 +40,16 @@ test("Native Mongo self-service TalentGroup repository exposes only active produ
             origin: "INTERNAL",
           },
         ],
+        managersTruncated: false,
+        maxManagers: 5,
+        membersTruncated: false,
+        maxMembers: 50,
       },
     ],
+    meta: {
+      groupsTruncated: false,
+      maxGroups: 10,
+    },
   });
 
   for (const forbidden of [

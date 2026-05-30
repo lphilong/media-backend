@@ -2474,6 +2474,13 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     return this.plans.find((plan) => plan.id === kpiPlanId) ?? null;
   }
 
+  async listPlansByIds(
+    kpiPlanIds: readonly string[],
+  ): Promise<readonly KpiPlan[]> {
+    const ids = new Set(kpiPlanIds);
+    return this.plans.filter((plan) => ids.has(plan.id));
+  }
+
   async findPlanByPlanCode(planCode: string): Promise<KpiPlan | null> {
     return this.plans.find((plan) => plan.planCode === planCode) ?? null;
   }
@@ -2928,6 +2935,13 @@ class InMemoryKpiActualRepository implements KpiActualRepository {
     kpiPlanId: string,
   ): Promise<readonly KpiActualEntry[]> {
     return this.entries.filter((entry) => entry.kpiPlanId === kpiPlanId);
+  }
+
+  async listEntriesByPlanIds(
+    kpiPlanIds: readonly string[],
+  ): Promise<readonly KpiActualEntry[]> {
+    const ids = new Set(kpiPlanIds);
+    return this.entries.filter((entry) => ids.has(entry.kpiPlanId));
   }
 
   async listEntriesByPlanIdAndActualDate(

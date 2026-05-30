@@ -6,6 +6,7 @@ import { KpiPlanRepository } from "@modules/kpi/domain/kpi.repository";
 import {
   KpiActualEntry,
   KpiAllocation,
+  KpiPlan,
 } from "@modules/kpi/domain/kpi.types";
 import { SelfServiceCurrentPersonNotLinkedError } from "@modules/self-service/domain/self-service.errors";
 import {
@@ -22,6 +23,7 @@ export class SelfServiceKpiService {
     private readonly talentRepository: TalentRepository,
     private readonly kpiPlanRepository: KpiPlanRepository,
     private readonly kpiActualRepository: KpiActualRepository,
+    private readonly clock: () => number = Date.now,
   ) {}
 
   async listCurrentKpi(actor: Actor): Promise<SelfServiceKpiListView> {
@@ -61,62 +63,113 @@ export class SelfServiceKpiService {
         allocation.memberEmploymentProfileId === employmentProfile.id,
     );
 
-    const items = await Promise.all(
-      allocations.map((allocation) => this.toSelfServiceKpiItem(allocation)),
+    const planIds = uniqueNonEmpty(
+      allocations.map((allocation) => allocation.kpiPlanId),
+    );
+    const plans = await this.kpiPlanRepository.listPlansByIds(planIds);
+    const now = this.clock();
+    const currentPublishedPlans = plans.filter(
+      (plan) =>
+        plan.status === "PUBLISHED" &&
+        plan.periodStartAt <= now &&
+        plan.periodEndAt >= now,
+    );
+    const currentPublishedPlanIds = new Set(
+      currentPublishedPlans.map((plan) => plan.id),
+    );
+    const currentAllocations = allocations.filter((allocation) =>
+      currentPublishedPlanIds.has(allocation.kpiPlanId),
+    );
+    const entries = await this.kpiActualRepository.listEntriesByPlanIds(
+      [...currentPublishedPlanIds],
+    );
+    const entriesByAllocation = groupEntriesByAllocation(entries);
+    const planById = new Map(
+      currentPublishedPlans.map((plan) => [plan.id, plan]),
     );
 
     return {
-      items: items
+      items: currentAllocations
+        .map((allocation) =>
+          toSelfServiceKpiItem(
+            allocation,
+            planById.get(allocation.kpiPlanId),
+            entriesByAllocation.get(allocation.id) ?? [],
+          ),
+        )
         .filter((item): item is SelfServiceKpiItemView => item !== null)
         .sort(compareSelfServiceKpiItems),
     };
   }
+}
 
-  private async toSelfServiceKpiItem(
-    allocation: KpiAllocation,
-  ): Promise<SelfServiceKpiItemView | null> {
-    const plan = await this.kpiPlanRepository.findPlanById(
-      allocation.kpiPlanId,
-    );
-
-    if (!plan || plan.status === "ARCHIVED") {
-      return null;
-    }
-
-    const entries = await this.kpiActualRepository.listEntriesByPlanId(plan.id);
-    const entriesForAllocation = entries.filter(
-      (entry) =>
-        entry.allocationId === allocation.id &&
-        entry.memberTalentId === allocation.memberTalentId,
-    );
-
-    return {
-      kpiPlanId: plan.id,
-      title: plan.title,
-      periodMonth: plan.periodMonth,
-      periodStartAt: plan.periodStartAt,
-      periodEndAt: plan.periodEndAt,
-      officialStatus: "OFFICIAL_PUBLISHED",
-      lastUpdatedAt: resolveLastUpdatedAt(allocation, entriesForAllocation),
-      metrics: allocation.targetMetrics.map((metric) => {
-        const actualValue = entriesForAllocation
-          .filter((entry) => entry.metricCode === metric.metricCode)
-          .reduce((sum, entry) => sum + entry.effectiveValue, 0);
-        const catalog = getKpiMetricCatalogEntry(metric.metricCode);
-
-        return {
-          metricCode: metric.metricCode,
-          unit: catalog.unit,
-          targetValue: metric.targetValue,
-          actualValue,
-          progressPercent: calculateProgressPercent(
-            actualValue,
-            metric.targetValue,
-          ),
-        };
-      }),
-    };
+function toSelfServiceKpiItem(
+  allocation: KpiAllocation,
+  plan: KpiPlan | undefined,
+  entriesForAllocation: readonly KpiActualEntry[],
+): SelfServiceKpiItemView | null {
+  if (!plan) {
+    return null;
   }
+
+  return buildSelfServiceKpiItem(allocation, plan, entriesForAllocation);
+}
+
+function buildSelfServiceKpiItem(
+  allocation: KpiAllocation,
+  plan: KpiPlan,
+  entriesForAllocation: readonly KpiActualEntry[],
+): SelfServiceKpiItemView {
+  return {
+    kpiPlanId: plan.id,
+    title: plan.title,
+    periodMonth: plan.periodMonth,
+    periodStartAt: plan.periodStartAt,
+    periodEndAt: plan.periodEndAt,
+    officialStatus: "OFFICIAL_PUBLISHED",
+    lastUpdatedAt: resolveLastUpdatedAt(allocation, entriesForAllocation),
+    metrics: allocation.targetMetrics.map((metric) => {
+      const actualValue = entriesForAllocation
+        .filter((entry) => entry.metricCode === metric.metricCode)
+        .reduce((sum, entry) => sum + entry.effectiveValue, 0);
+      const catalog = getKpiMetricCatalogEntry(metric.metricCode);
+
+      return {
+        metricCode: metric.metricCode,
+        unit: catalog.unit,
+        targetValue: metric.targetValue,
+        actualValue,
+        progressPercent: calculateProgressPercent(
+          actualValue,
+          metric.targetValue,
+        ),
+      };
+    }),
+  };
+}
+
+function groupEntriesByAllocation(
+  entries: readonly KpiActualEntry[],
+): Map<string, KpiActualEntry[]> {
+  const map = new Map<string, KpiActualEntry[]>();
+
+  for (const entry of entries) {
+    const current = map.get(entry.allocationId) ?? [];
+    current.push(entry);
+    map.set(entry.allocationId, current);
+  }
+
+  return map;
+}
+
+function uniqueNonEmpty(values: readonly string[]): readonly string[] {
+  return [
+    ...new Set(
+      values
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0),
+    ),
+  ];
 }
 
 function resolveLastUpdatedAt(

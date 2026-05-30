@@ -158,6 +158,23 @@ export class NativeMongoKpiActualRepository
     return docs.map(toEntryDomain);
   }
 
+  async listEntriesByPlanIds(
+    kpiPlanIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly KpiActualEntry[]> {
+    const ids = uniqueNonEmpty(kpiPlanIds);
+
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const docs = await this.collection
+      .find({ kpiPlanId: { $in: ids } }, this.withSession(session))
+      .sort({ kpiPlanId: 1, allocationId: 1, metricCode: 1, actualDate: 1, _id: 1 })
+      .toArray();
+    return docs.map(toEntryDomain);
+  }
+
   async listEntriesByPlanIdAndActualDate(
     kpiPlanId: string,
     actualDate: string,
@@ -202,6 +219,16 @@ function toEntryDocument(input: KpiActualEntry): KpiActualEntryDocument {
     lastEditedAt: input.lastEditedAt,
     lastEditedByActorId: input.lastEditedByActorId,
   };
+}
+
+function uniqueNonEmpty(values: readonly string[]): readonly string[] {
+  return [
+    ...new Set(
+      values
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0),
+    ),
+  ];
 }
 
 function toEntryDomain(doc: KpiActualEntryDocument): KpiActualEntry {

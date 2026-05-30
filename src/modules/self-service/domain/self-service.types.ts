@@ -82,6 +82,16 @@ export interface SelfServiceEventListQuery {
 
 export interface SelfServiceEventListView {
   readonly items: readonly SelfServiceEventView[];
+  readonly meta: {
+    readonly window: {
+      readonly recentPastDays: number;
+      readonly upcomingDays: number;
+      readonly windowStartAt: number;
+      readonly windowEndAt: number;
+    };
+    readonly limit: number;
+    readonly truncated: boolean;
+  };
 }
 
 export interface SelfServiceKpiMetricView {
@@ -125,8 +135,16 @@ export interface SelfServiceTalentGroupItemView {
   readonly status: "ACTIVE";
   readonly managers: readonly SelfServiceTalentGroupManagerView[];
   readonly members: readonly SelfServiceTalentGroupMemberView[];
+  readonly managersTruncated: boolean;
+  readonly maxManagers: number;
+  readonly membersTruncated: boolean;
+  readonly maxMembers: number;
 }
 
 export interface SelfServiceTalentGroupListView {
   readonly items: readonly SelfServiceTalentGroupItemView[];
+  readonly meta: {
+    readonly groupsTruncated: boolean;
+    readonly maxGroups: number;
+  };
 }

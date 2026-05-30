@@ -88,6 +88,11 @@ export interface KpiPlanRepository {
     session?: ClientSession,
   ): Promise<KpiPlan | null>;
 
+  listPlansByIds(
+    kpiPlanIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly KpiPlan[]>;
+
   findPlanByPlanCode(
     planCode: string,
     session?: ClientSession,

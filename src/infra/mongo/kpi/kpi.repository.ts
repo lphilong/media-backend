@@ -137,6 +137,23 @@ export class NativeMongoKpiPlanRepository
     return doc ? toKpiPlan(doc) : null;
   }
 
+  async listPlansByIds(
+    kpiPlanIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly KpiPlan[]> {
+    const ids = uniqueNonEmpty(kpiPlanIds);
+
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const docs = await this.collection
+      .find({ _id: { $in: ids } }, this.withSession(session))
+      .sort({ periodMonth: -1, planCode: 1, _id: 1 })
+      .toArray();
+    return docs.map(toKpiPlan);
+  }
+
   async findPlanByPlanCode(
     planCode: string,
     session?: ClientSession,
@@ -495,6 +512,16 @@ function assignIfDefined(
   if (value !== undefined) {
     target[field] = value;
   }
+}
+
+function uniqueNonEmpty(values: readonly string[]): readonly string[] {
+  return [
+    ...new Set(
+      values
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0),
+    ),
+  ];
 }
 
 function toKpiPlanDocument(input: KpiPlan): KpiPlanDocument {

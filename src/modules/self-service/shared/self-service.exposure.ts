@@ -95,6 +95,10 @@ const SELF_SERVICE_TALENT_GROUP_FIELDS = [
   "status",
   "managers",
   "members",
+  "managersTruncated",
+  "maxManagers",
+  "membersTruncated",
+  "maxMembers",
 ] as const;
 
 export const SelfServiceCurrentPersonExposure = Object.freeze({
@@ -201,9 +205,11 @@ export const SelfServiceEventExposure = Object.freeze({
 
   exposeList(input: SelfServiceEventListView): {
     readonly data: readonly PlainObject[];
+    readonly meta: PlainObject;
   } {
     return {
       data: this.exposeMany(input.items),
+      meta: toPlainObject(input.meta, "SelfServiceEventList meta"),
     };
   },
 });
@@ -300,6 +306,10 @@ export const SelfServiceTalentGroupExposure = Object.freeze({
             this.exposeManager(manager),
           ),
           members: input.members.map((member) => this.exposeMember(member)),
+          managersTruncated: input.managersTruncated,
+          maxManagers: input.maxManagers,
+          membersTruncated: input.membersTruncated,
+          maxMembers: input.maxMembers,
         },
         SELF_SERVICE_TALENT_GROUP_FIELDS,
       ),
@@ -318,7 +328,7 @@ export const SelfServiceTalentGroupExposure = Object.freeze({
   } {
     return {
       data: toPlainObject(
-        { items: this.exposeMany(input.items) },
+        { items: this.exposeMany(input.items), meta: input.meta },
         "SelfServiceTalentGroupList exposure",
       ),
     };

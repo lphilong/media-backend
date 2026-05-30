@@ -57,6 +57,11 @@ export interface KpiActualRepository {
     session?: ClientSession,
   ): Promise<readonly KpiActualEntry[]>;
 
+  listEntriesByPlanIds(
+    kpiPlanIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly KpiActualEntry[]>;
+
   listEntriesByPlanIdAndActualDate(
     kpiPlanId: string,
     actualDate: string,

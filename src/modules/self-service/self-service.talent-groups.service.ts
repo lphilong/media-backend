@@ -12,6 +12,10 @@ import {
 } from "@modules/self-service/domain/self-service.types";
 import { TalentRepository } from "@modules/talent/domain/talent.repository";
 
+const MAX_GROUPS = 10;
+const MAX_MEMBERS_PER_GROUP = 50;
+const MAX_MANAGERS_PER_GROUP = 5;
+
 export class SelfServiceTalentGroupsService {
   constructor(
     private readonly employmentProfileRepository: EmploymentProfileRepository,
@@ -42,27 +46,32 @@ export class SelfServiceTalentGroupsService {
       linkedTalent.talentOrigin !== "INTERNAL" ||
       linkedTalent.linkedEmploymentProfileId !== employmentProfile.id
     ) {
-      return { items: [] };
+      return emptyTalentGroupList();
     }
 
     const memberships =
       await this.talentGroupsReadRepository.listActiveMembershipsByTalent(
         linkedTalent.id,
       );
-    const visibleGroupIds = memberships.map((membership) => membership.groupId);
+    const visibleGroupIds = uniqueNonEmpty(
+      memberships.map((membership) => membership.groupId),
+    );
+    const cappedVisibleGroupIds = visibleGroupIds.slice(0, MAX_GROUPS);
 
-    if (visibleGroupIds.length === 0) {
-      return { items: [] };
+    if (cappedVisibleGroupIds.length === 0) {
+      return emptyTalentGroupList();
     }
 
     const [groups, managers, members] = await Promise.all([
-      this.talentGroupsReadRepository.listActiveGroupsByIds(visibleGroupIds),
+      this.talentGroupsReadRepository.listActiveGroupsByIds(
+        cappedVisibleGroupIds,
+      ),
       this.talentGroupsReadRepository.listActiveCurrentManagersByGroupIds(
-        visibleGroupIds,
+        cappedVisibleGroupIds,
         this.clock(),
       ),
       this.talentGroupsReadRepository.listActiveMembersByGroupIds(
-        visibleGroupIds,
+        cappedVisibleGroupIds,
       ),
     ]);
 
@@ -75,21 +84,50 @@ export class SelfServiceTalentGroupsService {
           talentGroupCode: group.talentGroupCode,
           name: group.name,
           status: group.status,
-          managers: managersByGroup.get(group.id) ?? [],
-          members: membersByGroup.get(group.id) ?? [],
+          managers: (
+            managersByGroup.get(group.id) ?? emptyGroupManagers()
+          ).items,
+          members: (membersByGroup.get(group.id) ?? emptyGroupMembers()).items,
+          managersTruncated: (
+            managersByGroup.get(group.id) ?? emptyGroupManagers()
+          ).truncated,
+          maxManagers: MAX_MANAGERS_PER_GROUP,
+          membersTruncated:
+            (membersByGroup.get(group.id) ?? emptyGroupMembers()).truncated,
+          maxMembers: MAX_MEMBERS_PER_GROUP,
         }))
         .sort(
           (left, right) =>
             left.name.localeCompare(right.name) ||
             left.talentGroupCode.localeCompare(right.talentGroupCode),
         ),
+      meta: {
+        groupsTruncated: visibleGroupIds.length > MAX_GROUPS,
+        maxGroups: MAX_GROUPS,
+      },
     };
   }
 }
 
+function emptyTalentGroupList(): SelfServiceTalentGroupListView {
+  return {
+    items: [],
+    meta: {
+      groupsTruncated: false,
+      maxGroups: MAX_GROUPS,
+    },
+  };
+}
+
 function groupManagers(
   managers: readonly SelfServiceTalentGroupManagerReadModel[],
-): Map<string, SelfServiceTalentGroupItemView["managers"]> {
+): Map<
+  string,
+  {
+    readonly items: SelfServiceTalentGroupItemView["managers"];
+    readonly truncated: boolean;
+  }
+> {
   const map = new Map<
     string,
     Array<SelfServiceTalentGroupItemView["managers"][number]>
@@ -97,19 +135,37 @@ function groupManagers(
 
   for (const manager of [...managers].sort(compareManagers)) {
     const current = map.get(manager.groupId) ?? [];
-    current.push({
-      displayName: manager.displayName,
-      employeeCode: manager.employeeCode,
-    });
+    if (current.length < MAX_MANAGERS_PER_GROUP) {
+      current.push({
+        displayName: manager.displayName,
+        employeeCode: manager.employeeCode,
+      });
+    }
     map.set(manager.groupId, current);
   }
 
-  return map;
+  return new Map(
+    [...map.entries()].map(([groupId, items]) => [
+      groupId,
+      {
+        items,
+        truncated:
+          managers.filter((manager) => manager.groupId === groupId).length >
+          MAX_MANAGERS_PER_GROUP,
+      },
+    ]),
+  );
 }
 
 function groupMembers(
   members: readonly SelfServiceTalentGroupMemberReadModel[],
-): Map<string, SelfServiceTalentGroupItemView["members"]> {
+): Map<
+  string,
+  {
+    readonly items: SelfServiceTalentGroupItemView["members"];
+    readonly truncated: boolean;
+  }
+> {
   const map = new Map<
     string,
     Array<SelfServiceTalentGroupItemView["members"][number]>
@@ -117,16 +173,42 @@ function groupMembers(
 
   for (const member of [...members].sort(compareMembers)) {
     const current = map.get(member.groupId) ?? [];
-    current.push({
-      talentCode: member.talentCode,
-      displayName: member.displayName,
-      performanceAlias: member.performanceAlias,
-      origin: member.origin,
-    });
+    if (current.length < MAX_MEMBERS_PER_GROUP) {
+      current.push({
+        talentCode: member.talentCode,
+        displayName: member.displayName,
+        performanceAlias: member.performanceAlias,
+        origin: member.origin,
+      });
+    }
     map.set(member.groupId, current);
   }
 
-  return map;
+  return new Map(
+    [...map.entries()].map(([groupId, items]) => [
+      groupId,
+      {
+        items,
+        truncated:
+          members.filter((member) => member.groupId === groupId).length >
+          MAX_MEMBERS_PER_GROUP,
+      },
+    ]),
+  );
+}
+
+function emptyGroupManagers(): {
+  readonly items: SelfServiceTalentGroupItemView["managers"];
+  readonly truncated: boolean;
+} {
+  return { items: [], truncated: false };
+}
+
+function emptyGroupMembers(): {
+  readonly items: SelfServiceTalentGroupItemView["members"];
+  readonly truncated: boolean;
+} {
+  return { items: [], truncated: false };
 }
 
 function compareManagers(
@@ -157,4 +239,14 @@ function compareMembers(
   }
 
   return left.talentCode.localeCompare(right.talentCode);
+}
+
+function uniqueNonEmpty(values: readonly string[]): readonly string[] {
+  return [
+    ...new Set(
+      values
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0),
+    ),
+  ];
 }

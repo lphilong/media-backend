@@ -101,6 +101,10 @@ test("GET /self-service/talent-groups returns safe active groups for the current
             origin: "EXTERNAL",
           },
         ],
+        managersTruncated: false,
+        maxManagers: 5,
+        membersTruncated: false,
+        maxMembers: 50,
       },
       {
         talentGroupCode: "TG-BETA",
@@ -108,8 +112,16 @@ test("GET /self-service/talent-groups returns safe active groups for the current
         status: "ACTIVE",
         managers: [],
         members: [],
+        managersTruncated: false,
+        maxManagers: 5,
+        membersTruncated: false,
+        maxMembers: 50,
       },
     ]);
+    assert.deepEqual(body.data.meta, {
+      groupsTruncated: false,
+      maxGroups: 10,
+    });
     assert.deepEqual(harness.employmentProfiles.lookupLinkedUserIds, [
       "user-staff",
     ]);
@@ -172,7 +184,13 @@ test("GET /self-service/talent-groups returns an empty result without a linked i
     const body = await response.json();
 
     assert.equal(response.status, 200);
-    assert.deepEqual(body.data.items, []);
+    assert.deepEqual(body.data, {
+      items: [],
+      meta: {
+        groupsTruncated: false,
+        maxGroups: 10,
+      },
+    });
     assert.deepEqual(harness.talentGroups.membershipTalentIds, []);
   } finally {
     await close(server);
@@ -193,13 +211,57 @@ test("GET /self-service/talent-groups returns an empty result without active mem
     const body = await response.json();
 
     assert.equal(response.status, 200);
-    assert.deepEqual(body.data.items, []);
+    assert.deepEqual(body.data, {
+      items: [],
+      meta: {
+        groupsTruncated: false,
+        maxGroups: 10,
+      },
+    });
     assert.deepEqual(harness.talentGroups.membershipTalentIds, [
       "talent-no-membership",
     ]);
     assert.deepEqual(harness.talentGroups.groupIdBatches, []);
     assert.deepEqual(harness.talentGroups.managerInputs, []);
     assert.deepEqual(harness.talentGroups.memberGroupIdBatches, []);
+  } finally {
+    await close(server);
+  }
+});
+
+test("GET /self-service/talent-groups enforces Stage 1 group, manager, and member caps", async () => {
+  const harness = createHarness();
+  harness.talentGroups.useLargeResult = true;
+  const { server, baseUrl } = await listen(
+    createSelfServiceTalentGroupsTestApp(harness, createStaffActor("user-staff")),
+  );
+
+  try {
+    const response = await fetch(`${baseUrl}/self-service/talent-groups`);
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.data.items.length, 10);
+    assert.equal(body.data.meta.groupsTruncated, true);
+    assert.equal(body.data.meta.maxGroups, 10);
+    assert.equal(body.data.items[0].managers.length, 5);
+    assert.equal(body.data.items[0].managersTruncated, true);
+    assert.equal(body.data.items[0].maxManagers, 5);
+    assert.equal(body.data.items[0].members.length, 50);
+    assert.equal(body.data.items[0].membersTruncated, true);
+    assert.equal(body.data.items[0].maxMembers, 50);
+    assert.deepEqual(harness.talentGroups.groupIdBatches[0], [
+      "group-01",
+      "group-02",
+      "group-03",
+      "group-04",
+      "group-05",
+      "group-06",
+      "group-07",
+      "group-08",
+      "group-09",
+      "group-10",
+    ]);
   } finally {
     await close(server);
   }
@@ -416,6 +478,7 @@ function createTalentRepository(
 class InMemorySelfServiceTalentGroupsReadRepository
   implements SelfServiceTalentGroupsReadRepository
 {
+  useLargeResult = false;
   readonly membershipTalentIds: string[] = [];
   readonly groupIdBatches: string[][] = [];
   readonly managerInputs: Array<{
@@ -428,6 +491,14 @@ class InMemorySelfServiceTalentGroupsReadRepository
     talentId: string,
   ): Promise<readonly SelfServiceTalentGroupMembershipReadModel[]> {
     this.membershipTalentIds.push(talentId);
+
+    if (this.useLargeResult && talentId === "talent-staff") {
+      return Array.from({ length: 11 }, (_, index) => ({
+        groupId: `group-${String(index + 1).padStart(2, "0")}`,
+        lineupOrder: index + 1,
+        joinedAt: index + 1,
+      }));
+    }
 
     return talentId === "talent-staff"
       ? [
@@ -449,6 +520,16 @@ class InMemorySelfServiceTalentGroupsReadRepository
     groupIds: readonly string[],
   ): Promise<readonly SelfServiceTalentGroupReadModel[]> {
     this.groupIdBatches.push([...groupIds]);
+
+    if (this.useLargeResult) {
+      return groupIds.map((groupId, index) => ({
+        id: groupId,
+        talentGroupCode: `TG-${String(index + 1).padStart(2, "0")}`,
+        name: `Group ${String(index + 1).padStart(2, "0")}`,
+        status: "ACTIVE",
+        displayOrder: index + 1,
+      }));
+    }
 
     return [
       {
@@ -477,6 +558,17 @@ class InMemorySelfServiceTalentGroupsReadRepository
       asOf,
     });
 
+    if (this.useLargeResult) {
+      return groupIds.flatMap((groupId) =>
+        Array.from({ length: 6 }, (_, index) => ({
+          groupId,
+          displayName: `Manager ${index + 1}`,
+          employeeCode: `EP-MGR-${index + 1}`,
+          isPrimary: index === 0,
+        })),
+      );
+    }
+
     return [
       {
         groupId: "group-alpha",
@@ -496,6 +588,18 @@ class InMemorySelfServiceTalentGroupsReadRepository
     groupIds: readonly string[],
   ): Promise<readonly SelfServiceTalentGroupMemberReadModel[]> {
     this.memberGroupIdBatches.push([...groupIds]);
+
+    if (this.useLargeResult) {
+      return groupIds.flatMap((groupId) =>
+        Array.from({ length: 51 }, (_, index) => ({
+          groupId,
+          talentCode: `TAL-${String(index + 1).padStart(3, "0")}`,
+          displayName: `Member ${index + 1}`,
+          origin: "INTERNAL",
+          lineupOrder: index + 1,
+        })),
+      );
+    }
 
     return [
       {

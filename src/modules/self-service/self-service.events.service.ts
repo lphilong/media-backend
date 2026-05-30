@@ -16,8 +16,10 @@ import {
 } from "@modules/self-service/domain/self-service.types";
 import { TalentRepository } from "@modules/talent/domain/talent.repository";
 
-const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
+const RECENT_PAST_DAYS = 30;
+const UPCOMING_DAYS = 90;
+const DAY_MS = 24 * 60 * 60 * 1_000;
 
 type DirectSelfServiceAssignmentKind = Extract<
   EventAssignmentKind,
@@ -29,6 +31,7 @@ export class SelfServiceEventsService {
     private readonly employmentProfileRepository: EmploymentProfileRepository,
     private readonly talentRepository: TalentRepository,
     private readonly eventAssignmentReadRepository: EventAssignmentReadRepository,
+    private readonly clock: () => number = Date.now,
   ) {}
 
   async listCurrentEvents(
@@ -44,17 +47,41 @@ export class SelfServiceEventsService {
       throw new SelfServiceCurrentPersonNotLinkedError();
     }
 
-    const windowStartAt = query.windowStartAt;
-    const windowEndAt = query.windowEndAt;
+    const now = this.clock();
+    const operationalWindowStartAt = now - RECENT_PAST_DAYS * DAY_MS;
+    const operationalWindowEndAt = now + UPCOMING_DAYS * DAY_MS;
+    const requestedWindowStartAt = query.windowStartAt;
+    const requestedWindowEndAt = query.windowEndAt;
 
     if (
-      windowStartAt !== undefined &&
-      windowEndAt !== undefined &&
-      windowEndAt <= windowStartAt
+      requestedWindowStartAt !== undefined &&
+      requestedWindowEndAt !== undefined &&
+      requestedWindowEndAt <= requestedWindowStartAt
     ) {
       throw new SelfServiceValidationError(
         "windowEndAt must be strictly later than windowStartAt",
       );
+    }
+
+    const windowStartAt =
+      requestedWindowStartAt === undefined
+        ? operationalWindowStartAt
+        : Math.max(requestedWindowStartAt, operationalWindowStartAt);
+    const windowEndAt =
+      requestedWindowEndAt === undefined
+        ? operationalWindowEndAt
+        : Math.min(requestedWindowEndAt, operationalWindowEndAt);
+
+    if (windowEndAt <= windowStartAt) {
+      return {
+        items: [],
+        meta: buildMeta({
+          windowStartAt,
+          windowEndAt,
+          limit: clampLimit(query.limit),
+          truncated: false,
+        }),
+      };
     }
 
     const linkedTalent =
@@ -62,6 +89,7 @@ export class SelfServiceEventsService {
         employmentProfile.id,
       );
     const limit = clampLimit(query.limit);
+    const repositoryLimit = limit + 1;
     const employmentProfileEventsPromise =
       this.eventAssignmentReadRepository.listEventsByAssignment({
         assignmentKind: "EMPLOYMENT_PROFILE",
@@ -71,7 +99,7 @@ export class SelfServiceEventsService {
         status: query.status,
         windowStartAt,
         windowEndAt,
-        limit,
+        limit: repositoryLimit,
         sortField: "eventStartAt",
         sortDirection: "ASC",
       });
@@ -86,7 +114,7 @@ export class SelfServiceEventsService {
             status: query.status,
             windowStartAt,
             windowEndAt,
-            limit,
+            limit: repositoryLimit,
             sortField: "eventStartAt",
             sortDirection: "ASC",
           })
@@ -97,15 +125,27 @@ export class SelfServiceEventsService {
       directTalentPromise,
     ]);
 
-    return {
-      items: mergeDirectAssignments([
+    const mergedItems = mergeDirectAssignments([
         ...employmentProfileEvents.items.map((item) =>
           toSelfServiceEvent(item, "EMPLOYMENT_PROFILE"),
         ),
         ...directTalentEvents.items.map((item) =>
           toSelfServiceEvent(item, "TALENT"),
         ),
-      ]).slice(0, limit),
+      ]);
+    const truncated =
+      mergedItems.length > limit ||
+      employmentProfileEvents.items.length > limit ||
+      directTalentEvents.items.length > limit;
+
+    return {
+      items: mergedItems.slice(0, limit),
+      meta: buildMeta({
+        windowStartAt,
+        windowEndAt,
+        limit,
+        truncated,
+      }),
     };
   }
 }
@@ -148,8 +188,26 @@ function mergeDirectAssignments(
 
 function clampLimit(value: number | undefined): number {
   if (value === undefined) {
-    return DEFAULT_LIMIT;
+    return MAX_LIMIT;
   }
 
   return Math.min(value, MAX_LIMIT);
+}
+
+function buildMeta(input: {
+  readonly windowStartAt: number;
+  readonly windowEndAt: number;
+  readonly limit: number;
+  readonly truncated: boolean;
+}): SelfServiceEventListView["meta"] {
+  return {
+    window: {
+      recentPastDays: RECENT_PAST_DAYS,
+      upcomingDays: UPCOMING_DAYS,
+      windowStartAt: input.windowStartAt,
+      windowEndAt: input.windowEndAt,
+    },
+    limit: input.limit,
+    truncated: input.truncated,
+  };
 }
