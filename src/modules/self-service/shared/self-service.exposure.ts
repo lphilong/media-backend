@@ -10,6 +10,10 @@ import {
   SelfServiceKpiItemView,
   SelfServiceKpiListView,
   SelfServiceKpiMetricView,
+  SelfServiceTalentGroupItemView,
+  SelfServiceTalentGroupListView,
+  SelfServiceTalentGroupManagerView,
+  SelfServiceTalentGroupMemberView,
   SelfServiceWorkShiftListView,
   SelfServiceWorkShiftView,
 } from "@modules/self-service/domain/self-service.types";
@@ -71,6 +75,26 @@ const SELF_SERVICE_KPI_ITEM_FIELDS = [
   "officialStatus",
   "lastUpdatedAt",
   "metrics",
+] as const;
+
+const SELF_SERVICE_TALENT_GROUP_MANAGER_FIELDS = [
+  "displayName",
+  "employeeCode",
+] as const;
+
+const SELF_SERVICE_TALENT_GROUP_MEMBER_FIELDS = [
+  "talentCode",
+  "displayName",
+  "performanceAlias",
+  "origin",
+] as const;
+
+const SELF_SERVICE_TALENT_GROUP_FIELDS = [
+  "talentGroupCode",
+  "name",
+  "status",
+  "managers",
+  "members",
 ] as const;
 
 export const SelfServiceCurrentPersonExposure = Object.freeze({
@@ -231,6 +255,71 @@ export const SelfServiceKpiExposure = Object.freeze({
       data: toPlainObject(
         { items: this.exposeMany(input.items) },
         "SelfServiceKpiList exposure",
+      ),
+    };
+  },
+});
+
+export const SelfServiceTalentGroupExposure = Object.freeze({
+  exposeManager(input: SelfServiceTalentGroupManagerView): PlainObject {
+    return toPlainObject(
+      ExposurePolicy.expose(
+        {
+          displayName: input.displayName,
+          employeeCode: input.employeeCode,
+        },
+        SELF_SERVICE_TALENT_GROUP_MANAGER_FIELDS,
+      ),
+      "SelfServiceTalentGroupManager exposure",
+    );
+  },
+
+  exposeMember(input: SelfServiceTalentGroupMemberView): PlainObject {
+    return toPlainObject(
+      ExposurePolicy.expose(
+        {
+          talentCode: input.talentCode,
+          displayName: input.displayName,
+          performanceAlias: input.performanceAlias,
+          origin: input.origin,
+        },
+        SELF_SERVICE_TALENT_GROUP_MEMBER_FIELDS,
+      ),
+      "SelfServiceTalentGroupMember exposure",
+    );
+  },
+
+  expose(input: SelfServiceTalentGroupItemView): PlainObject {
+    return toPlainObject(
+      ExposurePolicy.expose(
+        {
+          talentGroupCode: input.talentGroupCode,
+          name: input.name,
+          status: input.status,
+          managers: input.managers.map((manager) =>
+            this.exposeManager(manager),
+          ),
+          members: input.members.map((member) => this.exposeMember(member)),
+        },
+        SELF_SERVICE_TALENT_GROUP_FIELDS,
+      ),
+      "SelfServiceTalentGroup exposure",
+    );
+  },
+
+  exposeMany(
+    items: readonly SelfServiceTalentGroupItemView[],
+  ): readonly PlainObject[] {
+    return items.map((item) => this.expose(item));
+  },
+
+  exposeList(input: SelfServiceTalentGroupListView): {
+    readonly data: PlainObject;
+  } {
+    return {
+      data: toPlainObject(
+        { items: this.exposeMany(input.items) },
+        "SelfServiceTalentGroupList exposure",
       ),
     };
   },

@@ -4,6 +4,7 @@ import { SelfServiceAccountPreferencesController } from "./self-service.account-
 import { SelfServiceCurrentPersonController } from "./self-service.current-person.controller";
 import { SelfServiceEventsController } from "./self-service.events.controller";
 import { SelfServiceKpiController } from "./self-service.kpi.controller";
+import { SelfServiceTalentGroupsController } from "./self-service.talent-groups.controller";
 import { SelfServiceWorkShiftsController } from "./self-service.work-shifts.controller";
 
 export function selfServiceRoutes(
@@ -12,6 +13,7 @@ export function selfServiceRoutes(
   eventsController: SelfServiceEventsController,
   accountPreferencesController: SelfServiceAccountPreferencesController,
   kpiController?: SelfServiceKpiController,
+  talentGroupsController?: SelfServiceTalentGroupsController,
 ): Router {
   const router = Router();
 
@@ -44,6 +46,14 @@ export function selfServiceRoutes(
       "/kpi",
       withCommand("SELF_SERVICE_KPI_LIST"),
       kpiController.execute,
+    );
+  }
+
+  if (talentGroupsController) {
+    router.get(
+      "/talent-groups",
+      withCommand("SELF_SERVICE_TALENT_GROUPS_LIST"),
+      talentGroupsController.execute,
     );
   }
 

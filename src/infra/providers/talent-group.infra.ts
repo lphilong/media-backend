@@ -4,6 +4,7 @@ import {
   NativeMongoTalentGroupReadRepository,
   NativeMongoTalentTalentGroupReadonlyAccess,
 } from "@infra/mongo/talent-group/talent-group.read-repository";
+import { NativeMongoSelfServiceTalentGroupsReadRepository } from "@infra/mongo/talent-group/talent-group.self-service-read-repository";
 import { NativeMongoTalentGroupPlatformAccountReadonlyAccess } from "@infra/mongo/platform-account/platform-account.read-repository";
 import { NativeMongoTalentGroupTalentReadonlyAccess } from "@infra/mongo/talent/talent.read-repository";
 import { NativeMongoTalentGroupWorkScheduleReadonlyAccess } from "@infra/mongo/work-schedule/work-schedule.readonly-access";
@@ -14,6 +15,7 @@ export interface TalentGroupInfra {
   readonly talentGroupRepository: NativeMongoTalentGroupRepository;
   readonly businessCodeSequenceRepository: NativeMongoBusinessCodeSequenceRepository;
   readonly talentGroupReadRepository: NativeMongoTalentGroupReadRepository;
+  readonly selfServiceTalentGroupsReadRepository: NativeMongoSelfServiceTalentGroupsReadRepository;
   readonly talentGroupTalentReadonlyAccess: NativeMongoTalentGroupTalentReadonlyAccess;
   readonly talentGroupPlatformAccountReadonlyAccess: NativeMongoTalentGroupPlatformAccountReadonlyAccess;
   readonly talentGroupWorkScheduleReadonlyAccess: NativeMongoTalentGroupWorkScheduleReadonlyAccess;
@@ -31,6 +33,8 @@ export function createTalentGroupInfra(
       new NativeMongoBusinessCodeSequenceRepository(db),
     talentGroupReadRepository:
       new NativeMongoTalentGroupReadRepository(db),
+    selfServiceTalentGroupsReadRepository:
+      new NativeMongoSelfServiceTalentGroupsReadRepository(db),
     talentGroupTalentReadonlyAccess:
       new NativeMongoTalentGroupTalentReadonlyAccess(
         db,

@@ -60,6 +60,8 @@ tools/
 !src/modules/self-service/self-service.current-person.test.ts
 !src/modules/self-service/self-service.events.test.ts
 !src/modules/self-service/self-service.kpi.test.ts
+!src/modules/self-service/self-service.talent-groups.test.ts
+!src/infra/mongo/talent-group/talent-group.self-service-read-repository.test.ts
 !src/bootstrap/db-index.bootstrap.test.ts
 !src/bootstrap/startup-timing.test.ts
 !src/config/db-index-bootstrap.env.test.ts

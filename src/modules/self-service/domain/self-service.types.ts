@@ -6,6 +6,7 @@ import {
 } from "@modules/event-assignment/domain/event-assignment.types";
 import { UserAccountStatus } from "@modules/user/domain/user.types";
 import { KpiMetricCode, KpiMetricUnit } from "@modules/kpi/domain/kpi.types";
+import { TalentOrigin } from "@modules/talent/domain/talent.types";
 import {
   WorkShiftSourceType,
   WorkShiftStatus,
@@ -104,4 +105,28 @@ export interface SelfServiceKpiItemView {
 
 export interface SelfServiceKpiListView {
   readonly items: readonly SelfServiceKpiItemView[];
+}
+
+export interface SelfServiceTalentGroupManagerView {
+  readonly displayName: string;
+  readonly employeeCode?: string;
+}
+
+export interface SelfServiceTalentGroupMemberView {
+  readonly talentCode: string;
+  readonly displayName: string;
+  readonly performanceAlias?: string;
+  readonly origin: TalentOrigin;
+}
+
+export interface SelfServiceTalentGroupItemView {
+  readonly talentGroupCode: string;
+  readonly name: string;
+  readonly status: "ACTIVE";
+  readonly managers: readonly SelfServiceTalentGroupManagerView[];
+  readonly members: readonly SelfServiceTalentGroupMemberView[];
+}
+
+export interface SelfServiceTalentGroupListView {
+  readonly items: readonly SelfServiceTalentGroupItemView[];
 }
