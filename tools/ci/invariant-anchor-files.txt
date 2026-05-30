@@ -1,0 +1,10 @@
+src/app/base/secure-controller.base.ts
+src/app/base/presentation-result.assert.ts
+src/infra/database/mongo/mongo.transaction.ts
+src/system/outbox/outbox.schema.ts
+src/system/outbox/outbox.poller.ts
+src/system/event-bridge/domain-event.dispatcher.ts
+src/infra/queue/queue.registry.ts
+src/bootstrap/system.runtime.ts
+src/core/trace/trace.context.ts
+src/infra/logger.adapter.ts

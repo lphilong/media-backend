@@ -15,7 +15,17 @@ logs/
 docs/
 .vscode/
 .idea/
-tools/
+tools/*
+!tools/ci/
+tools/ci/*
+!tools/ci/docs-anchor-guard.sh
+!tools/ci/invariant-anchor-files.txt
+!tools/eslint/
+tools/eslint/*
+!tools/eslint/no-controller-response.js
+!tools/test/
+tools/test/*
+!tools/test/run-tests.mjs
 .codex/
 **/.codex/
 
