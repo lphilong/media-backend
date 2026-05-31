@@ -45,6 +45,20 @@ export interface KpiMonthlyCycleUatSeedPlan {
   readonly warnings: readonly string[];
 }
 
+type LinkedUserPurpose = "manager" | "staff";
+type LinkedUserActorKind = "ADMIN" | "STAFF";
+type EmploymentProfileSource = "seed" | "existing";
+
+export interface LinkedUserSeedResolution {
+  readonly purpose: LinkedUserPurpose;
+  readonly linkedUserId: string;
+  readonly actorKind: LinkedUserActorKind;
+  readonly employmentProfileId: string;
+  readonly employmentProfileSource: EmploymentProfileSource;
+  readonly employmentProfileDisplayName?: string;
+  readonly linkedInternalTalentId?: string;
+}
+
 export interface PublicSeedPlan {
   readonly mode: SeedMode;
   readonly scenario: "monthly-cycle";
@@ -65,10 +79,11 @@ export interface PublicSeedPlan {
 }
 
 export interface KpiMonthlyCycleUatSeedRepository {
-  assertLinkedUserEligible(
-    linkedUserId: string,
-    employmentProfileId: string,
-  ): Promise<void>;
+  resolveLinkedUserForSeed(input: {
+    readonly purpose: LinkedUserPurpose;
+    readonly linkedUserId: string;
+    readonly seedEmploymentProfileId: string;
+  }): Promise<LinkedUserSeedResolution>;
   ensureInsertOnly(record: SeedRecord): Promise<"created" | "no-op">;
 }
 
@@ -94,32 +109,115 @@ export class NativeMongoKpiMonthlyCycleUatSeedRepository
 {
   constructor(private readonly db: Db) {}
 
-  async assertLinkedUserEligible(
-    linkedUserId: string,
-    employmentProfileId: string,
-  ): Promise<void> {
+  async resolveLinkedUserForSeed(input: {
+    readonly purpose: LinkedUserPurpose;
+    readonly linkedUserId: string;
+    readonly seedEmploymentProfileId: string;
+  }): Promise<LinkedUserSeedResolution> {
+    const label = linkedUserLabel(input.purpose);
     const user = await this.db.collection<StringIdDocument>("users").findOne({
-      _id: linkedUserId,
-      actorKind: "STAFF",
-      accountStatus: "ACTIVE",
+      _id: input.linkedUserId,
     });
     if (!user) {
       throw new Error(
-        "Linked UAT user must reference an existing ACTIVE STAFF user",
+        `${label} linked user does not exist: ${input.linkedUserId}`,
       );
     }
-    const conflictingProfile = await this.db
-      .collection<StringIdDocument>("employment_profiles")
-      .findOne({
-        linkedUserId,
-        employmentStatus: { $ne: "ARCHIVED" },
-        _id: { $ne: employmentProfileId },
-      });
-    if (conflictingProfile) {
+
+    if (user.accountStatus !== "ACTIVE") {
       throw new Error(
-        "Linked UAT user already belongs to another non-archived EmploymentProfile",
+        `${label} linked user must be ACTIVE: ${input.linkedUserId}`,
       );
     }
+
+    if (input.purpose === "staff" && user.actorKind !== "STAFF") {
+      throw new Error(
+        `Staff linked user is not self-service compatible; expected actorKind STAFF: ${input.linkedUserId}`,
+      );
+    }
+
+    if (
+      input.purpose === "manager" &&
+      !isSupportedManagerActorKind(user.actorKind)
+    ) {
+      throw new Error(
+        `Manager linked user must have actorKind ADMIN or STAFF: ${input.linkedUserId}`,
+      );
+    }
+
+    const linkedProfiles = await this.db
+      .collection<StringIdDocument>("employment_profiles")
+      .find({
+        linkedUserId: input.linkedUserId,
+        employmentStatus: { $ne: "ARCHIVED" },
+      })
+      .limit(2)
+      .toArray();
+    if (linkedProfiles.length > 1) {
+      throw new Error(
+        `${label} linked user has ambiguous existing EmploymentProfile linkage; multiple non-archived profiles: ${input.linkedUserId}`,
+      );
+    }
+
+    const linkedProfile = linkedProfiles[0];
+    if (!linkedProfile) {
+      return {
+        purpose: input.purpose,
+        linkedUserId: input.linkedUserId,
+        actorKind: user.actorKind as LinkedUserActorKind,
+        employmentProfileId: input.seedEmploymentProfileId,
+        employmentProfileSource: "seed",
+      };
+    }
+
+    const resolution: LinkedUserSeedResolution = {
+      purpose: input.purpose,
+      linkedUserId: input.linkedUserId,
+      actorKind: user.actorKind as LinkedUserActorKind,
+      employmentProfileId: linkedProfile._id,
+      employmentProfileSource: "existing",
+      ...(typeof linkedProfile.displayName === "string"
+        ? { employmentProfileDisplayName: linkedProfile.displayName }
+        : {}),
+    };
+
+    if (input.purpose !== "staff") {
+      return resolution;
+    }
+
+    const linkedTalents = await this.db
+      .collection<StringIdDocument>("talents")
+      .find({
+        linkedEmploymentProfileId: linkedProfile._id,
+        operationalStatus: { $ne: "ARCHIVED" },
+      })
+      .limit(2)
+      .toArray();
+
+    if (linkedTalents.length > 1) {
+      throw new Error(
+        `Staff linked user has ambiguous existing Talent linkage; multiple non-archived Talents for resolved EmploymentProfile: ${input.linkedUserId}`,
+      );
+    }
+
+    const linkedTalent = linkedTalents[0];
+    if (!linkedTalent) {
+      return resolution;
+    }
+
+    if (
+      linkedTalent.talentOrigin !== "INTERNAL" ||
+      linkedTalent.linkedEmploymentProfileId !== linkedProfile._id
+    ) {
+      throw new Error(
+        `Staff linked user has ambiguous existing Talent linkage; expected INTERNAL Talent linked to resolved EmploymentProfile: ${input.linkedUserId}`,
+      );
+    }
+
+    return {
+      ...resolution,
+      linkedInternalTalentId: linkedTalent._id,
+    };
   }
 
   async ensureInsertOnly(record: SeedRecord): Promise<"created" | "no-op"> {
@@ -553,21 +651,29 @@ export async function writeKpiMonthlyCycleUatSeedPlan(
     readonly staffLinkedUserId?: string;
   },
 ): Promise<{ readonly created: number; readonly noOp: number }> {
-  if (params.managerLinkedUserId) {
-    await repository.assertLinkedUserEligible(
-      params.managerLinkedUserId,
-      `${plan.seedKey.toLowerCase()}:employment-profile:manager`,
-    );
-  }
-  if (params.staffLinkedUserId) {
-    await repository.assertLinkedUserEligible(
-      params.staffLinkedUserId,
-      `${plan.seedKey.toLowerCase()}:employment-profile:published`,
-    );
-  }
+  const seedIds = getSeedLinkedRecordIds(plan.seedKey);
+  const managerResolution = params.managerLinkedUserId
+    ? await repository.resolveLinkedUserForSeed({
+        purpose: "manager",
+        linkedUserId: params.managerLinkedUserId,
+        seedEmploymentProfileId: seedIds.managerEmploymentProfileId,
+      })
+    : undefined;
+  const staffResolution = params.staffLinkedUserId
+    ? await repository.resolveLinkedUserForSeed({
+        purpose: "staff",
+        linkedUserId: params.staffLinkedUserId,
+        seedEmploymentProfileId: seedIds.publishedEmploymentProfileId,
+      })
+    : undefined;
+  const writePlan = applyLinkedUserSeedResolutions(plan, {
+    manager: managerResolution,
+    staff: staffResolution,
+  });
+
   let created = 0;
   let noOp = 0;
-  for (const record of plan.records) {
+  for (const record of writePlan.records) {
     const result = await repository.ensureInsertOnly(record);
     if (result === "created") {
       created += 1;
@@ -576,6 +682,76 @@ export async function writeKpiMonthlyCycleUatSeedPlan(
     }
   }
   return { created, noOp };
+}
+
+export function applyLinkedUserSeedResolutions(
+  plan: KpiMonthlyCycleUatSeedPlan,
+  resolutions: {
+    readonly manager?: LinkedUserSeedResolution;
+    readonly staff?: LinkedUserSeedResolution;
+  },
+): KpiMonthlyCycleUatSeedPlan {
+  const seedIds = getSeedLinkedRecordIds(plan.seedKey);
+  const managerEmploymentProfileId =
+    resolutions.manager?.employmentProfileId ??
+    seedIds.managerEmploymentProfileId;
+  const staffEmploymentProfileId =
+    resolutions.staff?.employmentProfileId ??
+    seedIds.publishedEmploymentProfileId;
+  const staffTalentId =
+    resolutions.staff?.linkedInternalTalentId ?? seedIds.publishedTalentId;
+
+  if (
+    resolutions.staff?.employmentProfileSource === "existing" &&
+    !resolutions.staff.linkedInternalTalentId
+  ) {
+    throw new Error(
+      `Staff linked user resolves to an existing EmploymentProfile without a reusable INTERNAL Talent; owner review required: ${resolutions.staff.linkedUserId}`,
+    );
+  }
+
+  const records = plan.records
+    .filter((record) => {
+      if (
+        resolutions.manager?.employmentProfileSource === "existing" &&
+        record.collection === "employment_profiles" &&
+        record.key === "support.manager-employment-profile"
+      ) {
+        return false;
+      }
+      if (
+        resolutions.staff?.employmentProfileSource === "existing" &&
+        record.collection === "employment_profiles" &&
+        record.key === "member.published.employment-profile"
+      ) {
+        return false;
+      }
+      if (
+        resolutions.staff?.linkedInternalTalentId &&
+        record.collection === "talents" &&
+        record.key === "member.published.talent"
+      ) {
+        return false;
+      }
+      return true;
+    })
+    .map((record) =>
+      rewriteLinkedRecordIds(record, {
+        seedManagerEmploymentProfileId: seedIds.managerEmploymentProfileId,
+        managerEmploymentProfileId,
+        seedPublishedEmploymentProfileId:
+          seedIds.publishedEmploymentProfileId,
+        staffEmploymentProfileId,
+        seedPublishedTalentId: seedIds.publishedTalentId,
+        staffTalentId,
+        staffDisplayName: resolutions.staff?.employmentProfileDisplayName,
+      }),
+    );
+
+  return {
+    ...plan,
+    records,
+  };
 }
 
 export function toPublicSeedPlan(
@@ -647,6 +823,97 @@ export function validateSeedWriteEnv(
     throw new Error("MONGO_MAX_POOL_SIZE must be a positive integer");
   }
   return { mongoUri, mongoDbName, mongoMaxPoolSize };
+}
+
+function getSeedLinkedRecordIds(seedKey: string): {
+  readonly managerEmploymentProfileId: string;
+  readonly publishedEmploymentProfileId: string;
+  readonly publishedTalentId: string;
+} {
+  const normalizedSeedKey = normalizeSeedKey(seedKey).toLowerCase();
+  return {
+    managerEmploymentProfileId: `${normalizedSeedKey}:employment-profile:manager`,
+    publishedEmploymentProfileId: `${normalizedSeedKey}:employment-profile:published`,
+    publishedTalentId: `${normalizedSeedKey}:talent:published`,
+  };
+}
+
+function rewriteLinkedRecordIds(
+  record: SeedRecord,
+  replacements: {
+    readonly seedManagerEmploymentProfileId: string;
+    readonly managerEmploymentProfileId: string;
+    readonly seedPublishedEmploymentProfileId: string;
+    readonly staffEmploymentProfileId: string;
+    readonly seedPublishedTalentId: string;
+    readonly staffTalentId: string;
+    readonly staffDisplayName?: string;
+  },
+): SeedRecord {
+  const document = replaceDocumentValues(record.document, {
+    [replacements.seedManagerEmploymentProfileId]:
+      replacements.managerEmploymentProfileId,
+    [replacements.seedPublishedEmploymentProfileId]:
+      replacements.staffEmploymentProfileId,
+    [replacements.seedPublishedTalentId]: replacements.staffTalentId,
+  });
+
+  if (
+    replacements.staffDisplayName &&
+    record.collection === "kpi_allocations" &&
+    record.key === "monthly.published.allocation"
+  ) {
+    return {
+      ...record,
+      document: {
+        ...document,
+        snapshotMemberDisplayName: replacements.staffDisplayName,
+      },
+    };
+  }
+
+  return {
+    ...record,
+    document,
+  };
+}
+
+function replaceDocumentValues(
+  value: unknown,
+  replacements: Readonly<Record<string, string>>,
+): Readonly<Record<string, unknown>> {
+  return replaceValue(value, replacements) as Readonly<Record<string, unknown>>;
+}
+
+function replaceValue(
+  value: unknown,
+  replacements: Readonly<Record<string, string>>,
+): unknown {
+  if (typeof value === "string") {
+    return replacements[value] ?? value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => replaceValue(item, replacements));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        replaceValue(item, replacements),
+      ]),
+    );
+  }
+  return value;
+}
+
+function linkedUserLabel(purpose: LinkedUserPurpose): string {
+  return purpose === "manager" ? "Manager" : "Staff";
+}
+
+function isSupportedManagerActorKind(
+  value: unknown,
+): value is LinkedUserActorKind {
+  return value === "ADMIN" || value === "STAFF";
 }
 
 function createPeriod(now: number): {
@@ -747,9 +1014,20 @@ function helpText(): string {
     "  npm run kpi:monthly-cycle-uat-seed -- --write --env-file .env.dev --scenario monthly-cycle --seed-key KPI-UAT --json",
     "",
     "Optional UAT linkage:",
-    "  --manager-linked-user-id <existing-active-staff-user-id>",
+    "  --manager-linked-user-id <existing-active-admin-or-staff-user-id>",
     "  --staff-linked-user-id <existing-active-staff-user-id>",
     "  --include-legacy-active",
+    "",
+    "Linked runtime users:",
+    "  Manager actorKind may be ADMIN or STAFF; authority still comes from role/scope/group assignment.",
+    "  Staff actorKind must be STAFF for Self-Service My KPI compatibility.",
+    "  Existing linked EmploymentProfiles are reused; duplicate non-archived links are refused.",
+    "  Existing staff INTERNAL Talent is reused; ambiguous staff Talent linkage fails closed.",
+    "",
+    "Owner-run discipline:",
+    "  Always run dry-run before write, review output, then write only against dev/staging/UAT.",
+    "  After a successful write, rerun with the same seed key and expect insert-only no-op behavior.",
+    "  If write fails mid-run, inspect dry-run output before retry; do not rerun write blindly.",
     "",
     "Write guard:",
     "  ALLOW_KPI_UAT_SEED=true",
