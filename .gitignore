@@ -85,3 +85,5 @@ tools/test/*
 !src/tools/smoke/seed-smoke-fixtures.ts
 !src/tools/smoke/seed-smoke-fixtures.test.ts
 !src/tools/smoke/seed-smoke-fixtures.adapter.test.ts
+!src/tools/diagnostics/kpi-allocation-data-smoke.test.ts
+!src/tools/smoke/kpi-monthly-cycle-uat-seed.test.ts
