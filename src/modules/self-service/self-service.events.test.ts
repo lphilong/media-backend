@@ -39,6 +39,7 @@ import { SelfServiceCurrentPersonService } from "./self-service.current-person.s
 import { SelfServiceEventsController } from "./self-service.events.controller";
 import { SelfServiceEventsService } from "./self-service.events.service";
 import { selfServiceRoutes } from "./self-service.routes";
+import { SelfServiceIdentityResolver } from "./shared/self-service.identity-resolver";
 import { SelfServiceWorkShiftsController } from "./self-service.work-shifts.controller";
 import { SelfServiceWorkShiftsService } from "./self-service.work-shifts.service";
 import {
@@ -469,24 +470,26 @@ function createSelfServiceTestApp(
 ): express.Express {
   const app = express();
   app.use(express.json());
-  const currentPersonService = new SelfServiceCurrentPersonService(
+  const identityResolver = new SelfServiceIdentityResolver(
     harness.employmentProfiles,
-    harness.users,
     harness.talents,
+  );
+  const currentPersonService = new SelfServiceCurrentPersonService(
+    identityResolver,
+    harness.users,
   );
   const currentPersonController = new SelfServiceCurrentPersonController(
     currentPersonService,
   );
   const workShiftsController = new SelfServiceWorkShiftsController(
     new SelfServiceWorkShiftsService(
-      harness.employmentProfiles,
+      identityResolver,
       harness.workShifts,
     ),
   );
   const eventsController = new SelfServiceEventsController(
     new SelfServiceEventsService(
-      harness.employmentProfiles,
-      harness.talents,
+      identityResolver,
       harness.events,
       () => EVENTS_NOW,
     ),
@@ -494,7 +497,7 @@ function createSelfServiceTestApp(
   const accountPreferencesController =
     new SelfServiceAccountPreferencesController(
       new SelfServiceAccountPreferencesService(
-        harness.employmentProfiles,
+        identityResolver,
         harness.users as unknown as UserMutationRepository,
         currentPersonService,
       ),

@@ -1,12 +1,10 @@
 import { Actor } from "@core/actor/actor";
-import { EmploymentProfileRepository } from "@modules/employment-profile/domain/employment-profile.repository";
 import {
   EventAssignmentKind,
   EventByAssignmentListItemView,
 } from "@modules/event-assignment/domain/event-assignment.types";
 import { EventAssignmentReadRepository } from "@modules/event-assignment/read/event-assignment.read-repository";
 import {
-  SelfServiceCurrentPersonNotLinkedError,
   SelfServiceValidationError,
 } from "@modules/self-service/domain/self-service.errors";
 import {
@@ -14,7 +12,7 @@ import {
   SelfServiceEventListView,
   SelfServiceEventView,
 } from "@modules/self-service/domain/self-service.types";
-import { TalentRepository } from "@modules/talent/domain/talent.repository";
+import { SelfServiceIdentityResolver } from "@modules/self-service/shared/self-service.identity-resolver";
 
 const MAX_LIMIT = 50;
 const RECENT_PAST_DAYS = 30;
@@ -28,8 +26,7 @@ type DirectSelfServiceAssignmentKind = Extract<
 
 export class SelfServiceEventsService {
   constructor(
-    private readonly employmentProfileRepository: EmploymentProfileRepository,
-    private readonly talentRepository: TalentRepository,
+    private readonly identityResolver: SelfServiceIdentityResolver,
     private readonly eventAssignmentReadRepository: EventAssignmentReadRepository,
     private readonly clock: () => number = Date.now,
   ) {}
@@ -38,14 +35,10 @@ export class SelfServiceEventsService {
     actor: Actor,
     query: SelfServiceEventListQuery,
   ): Promise<SelfServiceEventListView> {
-    const employmentProfile =
-      await this.employmentProfileRepository.findNonArchivedByLinkedUserId(
-        actor.id,
+    const { employmentProfile, linkedInternalTalent } =
+      await this.identityResolver.resolveEmploymentProfileWithLinkedInternalTalent(
+        actor,
       );
-
-    if (!employmentProfile) {
-      throw new SelfServiceCurrentPersonNotLinkedError();
-    }
 
     const now = this.clock();
     const operationalWindowStartAt = now - RECENT_PAST_DAYS * DAY_MS;
@@ -84,10 +77,6 @@ export class SelfServiceEventsService {
       };
     }
 
-    const linkedTalent =
-      await this.talentRepository.findNonArchivedByLinkedEmploymentProfileId(
-        employmentProfile.id,
-      );
     const limit = clampLimit(query.limit);
     const repositoryLimit = limit + 1;
     const employmentProfileEventsPromise =
@@ -104,12 +93,11 @@ export class SelfServiceEventsService {
         sortDirection: "ASC",
       });
     const directTalentPromise =
-      linkedTalent?.talentOrigin === "INTERNAL" &&
-      linkedTalent.linkedEmploymentProfileId === employmentProfile.id
+      linkedInternalTalent
         ? this.eventAssignmentReadRepository.listEventsByAssignment({
             assignmentKind: "TALENT",
             assignmentEmploymentProfileId: null,
-            assignmentTalentId: linkedTalent.id,
+            assignmentTalentId: linkedInternalTalent.id,
             assignmentTalentGroupId: null,
             status: query.status,
             windowStartAt,

@@ -1,6 +1,6 @@
 import { Actor } from "@core/actor/actor";
-import { EmploymentProfileRepository } from "@modules/employment-profile/domain/employment-profile.repository";
 import { UserMutationRepository } from "@modules/user/domain/user.repository";
+import { SelfServiceIdentityResolver } from "@modules/self-service/shared/self-service.identity-resolver";
 import {
   SelfServiceAccountPreferencesUpdateInput,
   SelfServiceCurrentPersonView,
@@ -15,7 +15,7 @@ const SUPPORTED_SELF_SERVICE_LOCALES = new Set(["en", "vi", "zh"]);
 
 export class SelfServiceAccountPreferencesService {
   constructor(
-    private readonly employmentProfiles: EmploymentProfileRepository,
+    private readonly identityResolver: SelfServiceIdentityResolver,
     private readonly users: UserMutationRepository,
     private readonly currentPersonService: SelfServiceCurrentPersonService,
     private readonly now: () => number = Date.now,
@@ -42,12 +42,7 @@ export class SelfServiceAccountPreferencesService {
       throw new SelfServiceValidationError("Unsupported self-service timezone");
     }
 
-    const employmentProfile =
-      await this.employmentProfiles.findNonArchivedByLinkedUserId(actor.id);
-
-    if (!employmentProfile) {
-      throw new SelfServiceCurrentPersonNotLinkedError();
-    }
+    await this.identityResolver.resolveEmploymentProfile(actor);
 
     const updated = await this.users.updatePreferences({
       userId: actor.id,

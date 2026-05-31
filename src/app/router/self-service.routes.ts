@@ -20,6 +20,7 @@ import { SelfServiceTalentGroupsController } from "@modules/self-service/self-se
 import { SelfServiceTalentGroupsService } from "@modules/self-service/self-service.talent-groups.service";
 import { SelfServiceWorkShiftsController } from "@modules/self-service/self-service.work-shifts.controller";
 import { SelfServiceWorkShiftsService } from "@modules/self-service/self-service.work-shifts.service";
+import { SelfServiceIdentityResolver } from "@modules/self-service/shared/self-service.identity-resolver";
 
 export async function createSelfServiceRoutes(
   infra: InfraModule,
@@ -42,10 +43,13 @@ export async function createSelfServiceRoutes(
     infra.primaryDb,
   );
 
-  const currentPersonService = new SelfServiceCurrentPersonService(
+  const identityResolver = new SelfServiceIdentityResolver(
     employmentProfileRepository,
-    userReadRepository,
     talentRepository,
+  );
+  const currentPersonService = new SelfServiceCurrentPersonService(
+    identityResolver,
+    userReadRepository,
   );
   const currentPersonController = new SelfServiceCurrentPersonController(
     currentPersonService,
@@ -53,15 +57,14 @@ export async function createSelfServiceRoutes(
 
   const workShiftsController = new SelfServiceWorkShiftsController(
     new SelfServiceWorkShiftsService(
-      employmentProfileRepository,
+      identityResolver,
       workShiftReadRepository,
     ),
   );
 
   const eventsController = new SelfServiceEventsController(
     new SelfServiceEventsService(
-      employmentProfileRepository,
-      talentRepository,
+      identityResolver,
       eventAssignmentReadRepository,
     ),
   );
@@ -69,7 +72,7 @@ export async function createSelfServiceRoutes(
   const accountPreferencesController =
     new SelfServiceAccountPreferencesController(
       new SelfServiceAccountPreferencesService(
-        employmentProfileRepository,
+        identityResolver,
         userRepository,
         currentPersonService,
       ),
@@ -77,8 +80,7 @@ export async function createSelfServiceRoutes(
 
   const kpiController = new SelfServiceKpiController(
     new SelfServiceKpiService(
-      employmentProfileRepository,
-      talentRepository,
+      identityResolver,
       kpiPlanRepository,
       kpiActualRepository,
     ),
@@ -86,8 +88,7 @@ export async function createSelfServiceRoutes(
 
   const talentGroupsController = new SelfServiceTalentGroupsController(
     new SelfServiceTalentGroupsService(
-      employmentProfileRepository,
-      talentRepository,
+      identityResolver,
       selfServiceTalentGroupsReadRepository,
     ),
   );

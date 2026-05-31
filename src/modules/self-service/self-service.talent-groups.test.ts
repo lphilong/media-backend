@@ -21,6 +21,7 @@ import { TalentRepository } from "@modules/talent/domain/talent.repository";
 import { TalentRecord } from "@modules/talent/domain/talent.types";
 import { SelfServiceTalentGroupsController } from "./self-service.talent-groups.controller";
 import { SelfServiceTalentGroupsService } from "./self-service.talent-groups.service";
+import { SelfServiceIdentityResolver } from "./shared/self-service.identity-resolver";
 
 const NOW = 50;
 
@@ -341,10 +342,13 @@ function createSelfServiceTalentGroupsTestApp(
   actor: Actor,
 ): express.Express {
   const app = express();
+  const identityResolver = new SelfServiceIdentityResolver(
+    harness.employmentProfiles,
+    harness.talents,
+  );
   const controller = new SelfServiceTalentGroupsController(
     new SelfServiceTalentGroupsService(
-      harness.employmentProfiles,
-      harness.talents,
+      identityResolver,
       harness.talentGroups,
       () => NOW,
     ),

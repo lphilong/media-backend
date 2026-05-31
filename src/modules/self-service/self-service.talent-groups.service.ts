@@ -1,16 +1,14 @@
 import { Actor } from "@core/actor/actor";
-import { EmploymentProfileRepository } from "@modules/employment-profile/domain/employment-profile.repository";
 import {
   SelfServiceTalentGroupsReadRepository,
   SelfServiceTalentGroupManagerReadModel,
   SelfServiceTalentGroupMemberReadModel,
 } from "@modules/self-service/domain/self-service-talent-groups.repository";
-import { SelfServiceCurrentPersonNotLinkedError } from "@modules/self-service/domain/self-service.errors";
 import {
   SelfServiceTalentGroupItemView,
   SelfServiceTalentGroupListView,
 } from "@modules/self-service/domain/self-service.types";
-import { TalentRepository } from "@modules/talent/domain/talent.repository";
+import { SelfServiceIdentityResolver } from "@modules/self-service/shared/self-service.identity-resolver";
 
 const MAX_GROUPS = 10;
 const MAX_MEMBERS_PER_GROUP = 50;
@@ -18,8 +16,7 @@ const MAX_MANAGERS_PER_GROUP = 5;
 
 export class SelfServiceTalentGroupsService {
   constructor(
-    private readonly employmentProfileRepository: EmploymentProfileRepository,
-    private readonly talentRepository: TalentRepository,
+    private readonly identityResolver: SelfServiceIdentityResolver,
     private readonly talentGroupsReadRepository: SelfServiceTalentGroupsReadRepository,
     private readonly clock: () => number = Date.now,
   ) {}
@@ -27,31 +24,18 @@ export class SelfServiceTalentGroupsService {
   async listCurrentTalentGroups(
     actor: Actor,
   ): Promise<SelfServiceTalentGroupListView> {
-    const employmentProfile =
-      await this.employmentProfileRepository.findNonArchivedByLinkedUserId(
-        actor.id,
+    const { linkedInternalTalent } =
+      await this.identityResolver.resolveEmploymentProfileWithLinkedInternalTalent(
+        actor,
       );
 
-    if (!employmentProfile) {
-      throw new SelfServiceCurrentPersonNotLinkedError();
-    }
-
-    const linkedTalent =
-      await this.talentRepository.findNonArchivedByLinkedEmploymentProfileId(
-        employmentProfile.id,
-      );
-
-    if (
-      !linkedTalent ||
-      linkedTalent.talentOrigin !== "INTERNAL" ||
-      linkedTalent.linkedEmploymentProfileId !== employmentProfile.id
-    ) {
+    if (!linkedInternalTalent) {
       return emptyTalentGroupList();
     }
 
     const memberships =
       await this.talentGroupsReadRepository.listActiveMembershipsByTalent(
-        linkedTalent.id,
+        linkedInternalTalent.id,
       );
     const visibleGroupIds = uniqueNonEmpty(
       memberships.map((membership) => membership.groupId),

@@ -32,6 +32,7 @@ import {
 import { ROLE_TEMPLATE_CATALOG } from "@modules/role/domain/role-template.catalog";
 import { SelfServiceKpiController } from "./self-service.kpi.controller";
 import { SelfServiceKpiService } from "./self-service.kpi.service";
+import { SelfServiceIdentityResolver } from "./shared/self-service.identity-resolver";
 import { TalentRepository } from "@modules/talent/domain/talent.repository";
 import {
   TalentOperationalStatus,
@@ -281,10 +282,13 @@ function createSelfServiceKpiTestApp(
   actor: Actor,
 ): express.Express {
   const app = express();
+  const identityResolver = new SelfServiceIdentityResolver(
+    harness.employmentProfiles,
+    harness.talents,
+  );
   const kpiController = new SelfServiceKpiController(
     new SelfServiceKpiService(
-      harness.employmentProfiles,
-      harness.talents,
+      identityResolver,
       harness.kpi,
       harness.actuals,
       () => CURRENT_KPI_NOW,

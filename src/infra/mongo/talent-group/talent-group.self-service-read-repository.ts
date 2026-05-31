@@ -6,6 +6,7 @@ import {
   SelfServiceTalentGroupMembershipReadModel,
   SelfServiceTalentGroupReadModel,
 } from "@modules/self-service/domain/self-service-talent-groups.repository";
+import { deriveTalentDisplaySummary } from "@modules/talent/domain/talent-display";
 import { TalentOrigin } from "@modules/talent/domain/talent.types";
 
 interface TalentGroupDocument {
@@ -248,7 +249,7 @@ export class NativeMongoSelfServiceTalentGroupsReadRepository
           return null;
         }
 
-        const display = deriveSelfServiceTalentDisplay(
+        const display = deriveTalentDisplaySummary(
           talent,
           talent.linkedEmploymentProfileId
             ? (profiles.get(talent.linkedEmploymentProfileId) ?? null)
@@ -336,33 +337,6 @@ export class NativeMongoSelfServiceTalentGroupsReadRepository
 
     return new Map(docs.map((doc) => [doc._id, doc]));
   }
-}
-
-function deriveSelfServiceTalentDisplay(
-  talent: TalentDocument,
-  employmentProfile: EmploymentProfileDocument | null,
-): {
-  readonly displayName: string;
-  readonly performanceAlias?: string;
-} {
-  const stageName = optionalText(talent.stageName);
-  const displayShortName = optionalText(talent.displayShortName);
-
-  if (talent.talentOrigin === "INTERNAL") {
-    const displayName = optionalText(employmentProfile?.displayName) ?? talent.talentCode;
-    const performanceAlias =
-      stageName && stageName !== displayName ? stageName : undefined;
-
-    return {
-      displayName,
-      performanceAlias,
-    };
-  }
-
-  return {
-    displayName: displayShortName ?? stageName ?? talent.talentCode,
-    performanceAlias: stageName,
-  };
 }
 
 function uniqueNonEmpty(values: readonly string[]): readonly string[] {

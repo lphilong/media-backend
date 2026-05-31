@@ -4,15 +4,19 @@ import { Actor } from "@core/actor/actor";
 import { EmploymentProfileRepository } from "@modules/employment-profile/domain/employment-profile.repository";
 import { TalentRepository } from "@modules/talent/domain/talent.repository";
 import { SelfServiceTalentGroupsService } from "@modules/self-service/self-service.talent-groups.service";
+import { SelfServiceIdentityResolver } from "@modules/self-service/shared/self-service.identity-resolver";
 import { Collection, Db, Document, Filter, FindOptions, Sort } from "mongodb";
 import { NativeMongoSelfServiceTalentGroupsReadRepository } from "./talent-group.self-service-read-repository";
 
 const NOW = 50;
 
 test("Native Mongo self-service TalentGroup repository exposes only active production-path boundaries", async () => {
-  const service = new SelfServiceTalentGroupsService(
+  const identityResolver = new SelfServiceIdentityResolver(
     createEmploymentProfileRepository(),
     createTalentRepository(),
+  );
+  const service = new SelfServiceTalentGroupsService(
+    identityResolver,
     new NativeMongoSelfServiceTalentGroupsReadRepository(createFakeDb()),
     () => NOW,
   );

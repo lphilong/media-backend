@@ -1,13 +1,12 @@
 import { Actor } from "@core/actor/actor";
-import { EmploymentProfileRepository } from "@modules/employment-profile/domain/employment-profile.repository";
 import {
-  SelfServiceCurrentPersonNotLinkedError,
   SelfServiceValidationError,
 } from "@modules/self-service/domain/self-service.errors";
 import {
   SelfServiceWorkShiftListQuery,
   SelfServiceWorkShiftListView,
 } from "@modules/self-service/domain/self-service.types";
+import { SelfServiceIdentityResolver } from "@modules/self-service/shared/self-service.identity-resolver";
 import { WorkShiftReadRepository } from "@modules/work-schedule/read/work-schedule.read-repository";
 
 const DEFAULT_LIMIT = 20;
@@ -15,7 +14,7 @@ const MAX_LIMIT = 50;
 
 export class SelfServiceWorkShiftsService {
   constructor(
-    private readonly employmentProfileRepository: EmploymentProfileRepository,
+    private readonly identityResolver: SelfServiceIdentityResolver,
     private readonly workShiftReadRepository: WorkShiftReadRepository,
   ) {}
 
@@ -23,14 +22,8 @@ export class SelfServiceWorkShiftsService {
     actor: Actor,
     query: SelfServiceWorkShiftListQuery,
   ): Promise<SelfServiceWorkShiftListView> {
-    const employmentProfile =
-      await this.employmentProfileRepository.findNonArchivedByLinkedUserId(
-        actor.id,
-      );
-
-    if (!employmentProfile) {
-      throw new SelfServiceCurrentPersonNotLinkedError();
-    }
+    const { employmentProfile } =
+      await this.identityResolver.resolveEmploymentProfile(actor);
 
     const windowStartAt = query.windowStartAt;
     const windowEndAt = query.windowEndAt;
