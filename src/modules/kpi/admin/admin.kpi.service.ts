@@ -76,6 +76,8 @@ import {
   KpiAllocationInput,
   ListKpiAllocationsQuery,
   ListKpiAllocationsResult,
+  ListKpiManagedMembersQuery,
+  ListKpiManagedMembersResult,
   UpsertKpiAllocationDraftCommand,
   SubmitKpiAllocationDraftCommand,
   ApproveKpiAllocationCommand,
@@ -550,7 +552,9 @@ export class KpiAdminService {
   ): Promise<ListKpiAllocationsResult> {
     this.assertContextPermission(actor, Permission.KPI_READ);
     const status =
-      query.status === undefined ? undefined : normalizeAllocationStatus(query.status);
+      query.status === undefined
+        ? undefined
+        : normalizeAllocationStatus(query.status);
     const kpiPlanId = normalizeOptionalText(query.kpiPlanId);
     const groupId = normalizeOptionalText(query.groupId);
     const limit = normalizeLimit(query.limit);
@@ -590,6 +594,24 @@ export class KpiAdminService {
     return { items: results.flat().slice(0, limit) };
   }
 
+  async listKpiManagedMembers(
+    actor: Actor,
+    query: ListKpiManagedMembersQuery,
+  ): Promise<ListKpiManagedMembersResult> {
+    this.assertContextPermission(actor, Permission.KPI_ENTER_ACTUAL);
+    const plan = await this.requirePlan(query.kpiPlanId);
+    await this.assertActorCanDraftAllocation(actor, plan);
+    const items =
+      await this.subjectReadonlyAccess.listActiveInternalGroupMembers(
+        plan.subjectId,
+        {
+          search: normalizeOptionalText(query.search),
+          limit: normalizeLimit(query.limit),
+        },
+      );
+    return { items };
+  }
+
   async upsertKpiAllocationDraft(
     actor: Actor,
     command: UpsertKpiAllocationDraftCommand,
@@ -622,9 +644,7 @@ export class KpiAdminService {
           session,
         );
         if (
-          existing.some(
-            (allocation) => allocation.allocationStatus !== "DRAFT",
-          )
+          existing.some((allocation) => allocation.allocationStatus !== "DRAFT")
         ) {
           throw new KpiStateError(
             "KPI allocation draft can be edited only while all rows are DRAFT",
@@ -719,7 +739,10 @@ export class KpiAdminService {
           permission,
           kpiPlanId: plan.id,
           mutationType: operation,
-          metadata: { nextStatus: "PENDING_APPROVAL", allocationCount: modified },
+          metadata: {
+            nextStatus: "PENDING_APPROVAL",
+            allocationCount: modified,
+          },
           session,
         });
         return this.loadPlanDetail(plan.id, session);
@@ -736,8 +759,7 @@ export class KpiAdminService {
       permissionCode: Permission.KPI_MANAGE_ALLOCATION,
       fromStatus: "PENDING_APPROVAL",
       toStatus: "APPROVED",
-      approvalNote:
-        normalizeNullableText(command.approvalNote) ?? null,
+      approvalNote: normalizeNullableText(command.approvalNote) ?? null,
     });
   }
 
@@ -1748,8 +1770,8 @@ export class KpiAdminService {
     for (const entry of entries) {
       if (
         !officialAllocationIds.has(entry.allocationId) ||
-        allowedTalentIds !== undefined &&
-        !allowedTalentIds.has(entry.memberTalentId)
+        (allowedTalentIds !== undefined &&
+          !allowedTalentIds.has(entry.memberTalentId))
       ) {
         continue;
       }
@@ -2265,7 +2287,7 @@ export class KpiAdminService {
   private async assertActorCanDraftAllocation(
     actor: Actor,
     plan: KpiPlan,
-    session: ClientSession,
+    session?: ClientSession,
   ): Promise<void> {
     if (actor.type !== "staff") {
       throw new KpiPermissionScopeError(
@@ -2303,7 +2325,9 @@ export class KpiAdminService {
         this.clock(),
         session,
       );
-    if (assignments.some((assignment) => assignment.groupId === plan.subjectId)) {
+    if (
+      assignments.some((assignment) => assignment.groupId === plan.subjectId)
+    ) {
       return;
     }
     throw new KpiPermissionScopeError(

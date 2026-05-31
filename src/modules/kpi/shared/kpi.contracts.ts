@@ -164,6 +164,12 @@ export interface GetKpiProgressQuery {
   readonly kpiPlanId: string;
 }
 
+export interface ListKpiManagedMembersQuery {
+  readonly kpiPlanId: string;
+  readonly search?: string;
+  readonly limit?: number | string;
+}
+
 export interface GetKpiActualDailyGridQuery {
   readonly kpiPlanId: string;
   readonly actualDate?: string;
@@ -205,6 +211,19 @@ export interface ListKpiPlansResult {
 
 export interface ListKpiAllocationsResult {
   readonly items: readonly KpiAllocation[];
+}
+
+export interface KpiManagedMemberPickerItem {
+  readonly employmentProfileId: string;
+  readonly employeeCode: string | null;
+  readonly displayName: string;
+  readonly talentId: string;
+  readonly talentCode: string | null;
+  readonly groupId: string;
+}
+
+export interface ListKpiManagedMembersResult {
+  readonly items: readonly KpiManagedMemberPickerItem[];
 }
 
 export interface ReplaceKpiAllocationsResult {

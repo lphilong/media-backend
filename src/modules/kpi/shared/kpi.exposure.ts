@@ -14,6 +14,7 @@ import {
   KpiProgressView,
   KpiTargetMetric,
 } from "@modules/kpi/domain/kpi.types";
+import { KpiManagedMemberPickerItem } from "./kpi.contracts";
 
 const KPI_TARGET_METRIC_FIELDS = [
   "id",
@@ -164,6 +165,15 @@ const KPI_ACTUAL_GRID_FIELDS = [
   "rows",
 ] as const;
 
+const KPI_MANAGED_MEMBER_PICKER_FIELDS = [
+  "employmentProfileId",
+  "employeeCode",
+  "displayName",
+  "talentId",
+  "talentCode",
+  "groupId",
+] as const;
+
 export const KpiTargetMetricExposure = Object.freeze({
   expose(input: KpiTargetMetric): PlainObject {
     return toPlainObject(
@@ -208,8 +218,7 @@ export const KpiAllocationExposure = Object.freeze({
             metricCode: metric.metricCode,
             targetValue: metric.targetValue,
           })),
-          snapshotMemberDisplayName:
-            input.snapshotMemberDisplayName,
+          snapshotMemberDisplayName: input.snapshotMemberDisplayName,
           note: input.note,
           createdAt: input.createdAt,
           createdByActorId: input.createdByActorId,
@@ -271,9 +280,7 @@ export const KpiPlanDetailExposure = Object.freeze({
           targetMetrics: KpiTargetMetricExposure.exposeMany(
             input.targetMetrics,
           ),
-          allocations: KpiAllocationExposure.exposeMany(
-            input.allocations,
-          ),
+          allocations: KpiAllocationExposure.exposeMany(input.allocations),
         },
         KPI_PLAN_DETAIL_FIELDS,
       ),
@@ -401,10 +408,8 @@ export const KpiActualDailyGridExposure = Object.freeze({
             timezone: input.policy.timezone,
             entryOpenLocalTime: input.policy.entryOpenLocalTime,
             entryLockLocalTime: input.policy.entryLockLocalTime,
-            maxDirectEditsPerEntry:
-              input.policy.maxDirectEditsPerEntry,
-            correctionAllowedUntil:
-              input.policy.correctionAllowedUntil,
+            maxDirectEditsPerEntry: input.policy.maxDirectEditsPerEntry,
+            correctionAllowedUntil: input.policy.correctionAllowedUntil,
           },
           editability: {
             isDirectEditOpen: input.editability.isDirectEditOpen,
@@ -450,9 +455,7 @@ export const KpiProgressExposure = Object.freeze({
       {
         plan: input.plan,
         periodElapsedPercent: input.periodElapsedPercent,
-        targetMetrics: KpiTargetMetricExposure.exposeMany(
-          input.targetMetrics,
-        ),
+        targetMetrics: KpiTargetMetricExposure.exposeMany(input.targetMetrics),
         groupTotals: input.groupTotals.map((total) => ({
           metricCode: total.metricCode,
           targetValue: total.targetValue,
@@ -472,5 +475,30 @@ export const KpiProgressExposure = Object.freeze({
       },
       "KpiProgress exposure",
     );
+  },
+});
+
+export const KpiManagedMemberPickerExposure = Object.freeze({
+  expose(input: KpiManagedMemberPickerItem): PlainObject {
+    return toPlainObject(
+      ExposurePolicy.expose(
+        {
+          employmentProfileId: input.employmentProfileId,
+          employeeCode: input.employeeCode,
+          displayName: input.displayName,
+          talentId: input.talentId,
+          talentCode: input.talentCode,
+          groupId: input.groupId,
+        },
+        KPI_MANAGED_MEMBER_PICKER_FIELDS,
+      ),
+      "KpiManagedMemberPicker exposure",
+    );
+  },
+
+  exposeMany(
+    items: readonly KpiManagedMemberPickerItem[],
+  ): readonly PlainObject[] {
+    return items.map((item) => this.expose(item));
   },
 });

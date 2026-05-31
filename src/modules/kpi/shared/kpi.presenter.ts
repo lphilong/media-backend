@@ -10,6 +10,7 @@ import {
   KpiPlanMutationResult,
   ListKpiActualCorrectionsResult,
   ListKpiAllocationsResult,
+  ListKpiManagedMembersResult,
   ListKpiPlansResult,
 } from "./kpi.contracts";
 import {
@@ -21,6 +22,7 @@ import {
   KpiPlanMutationExposure,
   KpiProgressExposure,
   KpiAllocationExposure,
+  KpiManagedMemberPickerExposure,
 } from "./kpi.exposure";
 
 export class KpiAdminMutationPresenter extends Presenter<
@@ -28,7 +30,10 @@ export class KpiAdminMutationPresenter extends Presenter<
   PresentationResult
 > {
   present(
-    input: KpiPlanMutationResult | KpiActualMutationResult | KpiActualCorrectionResult,
+    input:
+      | KpiPlanMutationResult
+      | KpiActualMutationResult
+      | KpiActualCorrectionResult,
     _context: ContextType,
   ): PresentationResult {
     if (isActualCorrectionResult(input)) {
@@ -105,9 +110,7 @@ export class KpiAdminCorrectionListPresenter extends Presenter<
     _context: ContextType,
   ): PresentationResult {
     return {
-      data: input.items.map((item) =>
-        KpiActualCorrectionExposure.expose(item),
-      ),
+      data: input.items.map((item) => KpiActualCorrectionExposure.expose(item)),
     };
   }
 }
@@ -126,21 +129,28 @@ export class KpiAdminAllocationListPresenter extends Presenter<
   }
 }
 
+export class KpiAdminManagedMemberListPresenter extends Presenter<
+  ListKpiManagedMembersResult,
+  PresentationResult
+> {
+  present(
+    input: ListKpiManagedMembersResult,
+    _context: ContextType,
+  ): PresentationResult {
+    return {
+      data: KpiManagedMemberPickerExposure.exposeMany(input.items),
+    };
+  }
+}
+
 function isActualMutationResult(
   input: unknown,
 ): input is KpiActualMutationResult {
-  return (
-    typeof input === "object" &&
-    input !== null &&
-    "actualEntry" in input
-  );
+  return typeof input === "object" && input !== null && "actualEntry" in input;
 }
 
 function isActualCorrectionResult(
   input: unknown,
 ): input is KpiActualCorrectionResult {
-  return (
-    isActualMutationResult(input) &&
-    "correction" in input
-  );
+  return isActualMutationResult(input) && "correction" in input;
 }

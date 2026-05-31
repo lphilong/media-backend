@@ -232,6 +232,33 @@ test("KPI UAT seed dry-run plan covers monthly lifecycle and published actual", 
   );
 });
 
+test("KPI UAT seed build and write plans keep generated Talent stageName non-empty", async () => {
+  const plan = buildKpiMonthlyCycleUatSeedPlan({
+    seedKey: "KPI-UAT",
+    now: NOW,
+  });
+  const talentRecords = plan.records.filter(
+    (record) => record.collection === "talents",
+  );
+  assert.ok(talentRecords.length > 0);
+  for (const [index, record] of talentRecords.entries()) {
+    assert.equal(record.document.stageName, `KPI-UAT Demo Member ${index + 1}`);
+    assert.equal(
+      record.document.normalizedStageName,
+      `kpi-uat demo member ${index + 1}`,
+    );
+  }
+
+  const repository = new FakeSeedRepository();
+  await writeKpiMonthlyCycleUatSeedPlan(repository, plan, {});
+  for (const record of repository.insertedRecords.filter(
+    (item) => item.collection === "talents",
+  )) {
+    assert.equal(typeof record.document.stageName, "string");
+    assert.notEqual(String(record.document.stageName).trim(), "");
+  }
+});
+
 test("KPI UAT seed accepts manager linked ACTIVE ADMIN user with existing EmploymentProfile", async () => {
   const repository = new FakeSeedRepository(
     [

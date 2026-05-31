@@ -5,6 +5,7 @@ import {
   KPI_ADMIN_CORRECTION_LIST_PRESENTER_KEY,
   KPI_ADMIN_DETAIL_PRESENTER_KEY,
   KPI_ADMIN_LIST_PRESENTER_KEY,
+  KPI_ADMIN_MANAGED_MEMBER_LIST_PRESENTER_KEY,
   KPI_ADMIN_MUTATION_PRESENTER_KEY,
   KPI_ADMIN_PROGRESS_PRESENTER_KEY,
 } from "./kpi.presenter-keys";
@@ -14,21 +15,17 @@ import {
   KpiAdminCorrectionListPresenter,
   KpiAdminDetailPresenter,
   KpiAdminListPresenter,
+  KpiAdminManagedMemberListPresenter,
   KpiAdminMutationPresenter,
   KpiAdminProgressPresenter,
 } from "./kpi.presenter";
 
-export function registerPresenters(
-  registry: PresenterRegistryWriter,
-): void {
+export function registerPresenters(registry: PresenterRegistryWriter): void {
   registry.register(
     KPI_ADMIN_MUTATION_PRESENTER_KEY,
     new KpiAdminMutationPresenter(),
   );
-  registry.register(
-    KPI_ADMIN_LIST_PRESENTER_KEY,
-    new KpiAdminListPresenter(),
-  );
+  registry.register(KPI_ADMIN_LIST_PRESENTER_KEY, new KpiAdminListPresenter());
   registry.register(
     KPI_ADMIN_DETAIL_PRESENTER_KEY,
     new KpiAdminDetailPresenter(),
@@ -48,5 +45,9 @@ export function registerPresenters(
   registry.register(
     KPI_ADMIN_ALLOCATION_LIST_PRESENTER_KEY,
     new KpiAdminAllocationListPresenter(),
+  );
+  registry.register(
+    KPI_ADMIN_MANAGED_MEMBER_LIST_PRESENTER_KEY,
+    new KpiAdminManagedMemberListPresenter(),
   );
 }

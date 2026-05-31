@@ -445,6 +445,7 @@ export function buildKpiMonthlyCycleUatSeedPlan(params: {
     const kpiPlanId = monthly(`plan:${suffix}`);
     const allocationId = monthly(`allocation:${suffix}`);
     const isPublished = status === "PUBLISHED";
+    const talentStageName = `${seedKey} Demo Member ${index + 1}`;
     const submittedAt =
       status === "PENDING_APPROVAL" ||
       status === "APPROVED" ||
@@ -491,8 +492,8 @@ export function buildKpiMonthlyCycleUatSeedPlan(params: {
     add("talents", `member.${suffix}.talent`, {
       _id: talentId,
       talentCode: `${seedKey}-TAL-${index + 1}`,
-      stageName: "",
-      normalizedStageName: "",
+      stageName: talentStageName,
+      normalizedStageName: talentStageName.toLowerCase(),
       legalName: `${seedKey} Demo Member ${index + 1}`,
       normalizedLegalName: `${seedKey.toLowerCase()} demo member ${index + 1}`,
       displayShortName: null,

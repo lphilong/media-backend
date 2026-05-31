@@ -14,6 +14,7 @@ import {
   ListKpiActualCorrectionsQuery,
   GetMyKpiProgressQuery,
   ListKpiAllocationsQuery,
+  ListKpiManagedMembersQuery,
   ListKpiPlansQuery,
 } from "@modules/kpi/shared/kpi.contracts";
 import {
@@ -22,6 +23,7 @@ import {
   KPI_ADMIN_CORRECTION_LIST_PRESENTER_KEY,
   KPI_ADMIN_DETAIL_PRESENTER_KEY,
   KPI_ADMIN_LIST_PRESENTER_KEY,
+  KPI_ADMIN_MANAGED_MEMBER_LIST_PRESENTER_KEY,
   KPI_ADMIN_PROGRESS_PRESENTER_KEY,
 } from "@modules/kpi/shared/kpi.presenter-keys";
 import { KpiAdminService } from "./admin.kpi.service";
@@ -33,6 +35,7 @@ type KpiQueryCommand =
   | "KPI_PLAN_ACTUAL_DAILY_GRID"
   | "KPI_ACTUAL_CORRECTION_LIST"
   | "KPI_PLAN_PROGRESS"
+  | "KPI_PLAN_MANAGED_MEMBER_LIST"
   | "KPI_MY_PROGRESS";
 
 const LIST_KPI_PLANS_QUERY_FIELDS = [
@@ -59,6 +62,7 @@ const GET_KPI_ACTUAL_DAILY_GRID_QUERY_FIELDS = ["actualDate"] as const;
 const LIST_KPI_ACTUAL_CORRECTIONS_QUERY_FIELDS: readonly string[] =
   Object.freeze([]);
 const GET_KPI_PLAN_PROGRESS_QUERY_FIELDS: readonly string[] = Object.freeze([]);
+const LIST_KPI_MANAGED_MEMBERS_QUERY_FIELDS = ["search", "limit"] as const;
 const GET_MY_KPI_PROGRESS_QUERY_FIELDS = ["planId"] as const;
 
 export class KpiAdminQueryController extends SecureController {
@@ -106,6 +110,11 @@ export class KpiAdminQueryController extends SecureController {
         return this.service.getKpiProgress(
           actor,
           parseGetKpiProgressQuery(req),
+        );
+      case "KPI_PLAN_MANAGED_MEMBER_LIST":
+        return this.service.listKpiManagedMembers(
+          actor,
+          parseListKpiManagedMembersQuery(req),
         );
       case "KPI_MY_PROGRESS":
         return this.service.getMyKpiProgress(
@@ -156,6 +165,9 @@ function resolvePresenterKey(command: KpiQueryCommand): string {
   }
   if (command === "KPI_PLAN_PROGRESS" || command === "KPI_MY_PROGRESS") {
     return KPI_ADMIN_PROGRESS_PRESENTER_KEY;
+  }
+  if (command === "KPI_PLAN_MANAGED_MEMBER_LIST") {
+    return KPI_ADMIN_MANAGED_MEMBER_LIST_PRESENTER_KEY;
   }
   return KPI_ADMIN_DETAIL_PRESENTER_KEY;
 }
@@ -238,6 +250,21 @@ function parseGetKpiProgressQuery(req: Request): GetKpiProgressQuery {
     "getKpiProgress",
   );
   return { kpiPlanId: req.params.kpiPlanId };
+}
+
+function parseListKpiManagedMembersQuery(
+  req: Request,
+): ListKpiManagedMembersQuery {
+  assertNoUnexpectedFields(
+    req.query as Record<string, unknown>,
+    LIST_KPI_MANAGED_MEMBERS_QUERY_FIELDS,
+    "listKpiManagedMembers",
+  );
+  return {
+    kpiPlanId: req.params.kpiPlanId,
+    search: req.query.search as string | undefined,
+    limit: req.query.limit as string | undefined,
+  };
 }
 
 function parseGetMyKpiProgressQuery(req: Request): GetMyKpiProgressQuery {

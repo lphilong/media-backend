@@ -9,11 +9,7 @@ export function adminKpiRoutes(
 ): Router {
   const router = Router();
 
-  router.get(
-    "/plans",
-    withCommand("KPI_PLAN_LIST"),
-    queryController.execute,
-  );
+  router.get("/plans", withCommand("KPI_PLAN_LIST"), queryController.execute);
   router.get(
     "/allocations",
     withCommand("KPI_ALLOCATION_LIST"),
@@ -37,6 +33,11 @@ export function adminKpiRoutes(
   router.get(
     "/plans/:kpiPlanId/progress",
     withCommand("KPI_PLAN_PROGRESS"),
+    queryController.execute,
+  );
+  router.get(
+    "/plans/:kpiPlanId/managed-members",
+    withCommand("KPI_PLAN_MANAGED_MEMBER_LIST"),
     queryController.execute,
   );
   router.get(

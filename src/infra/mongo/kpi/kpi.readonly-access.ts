@@ -4,14 +4,16 @@ import {
   KpiActorEmploymentProfileLookup,
   KpiActorTalentLookup,
   KpiGroupMemberLookup,
+  KpiManagedMemberLookup,
   KpiSubjectReadonlyAccess,
 } from "@modules/kpi/domain/kpi-subject-readonly-access";
 
 interface TalentDocument {
   readonly _id: string;
+  readonly talentCode?: string;
   readonly displayName?: string;
   readonly stageName?: string | null;
-  readonly status: string;
+  readonly talentOrigin?: string;
   readonly operationalStatus?: string;
   readonly linkedEmploymentProfileId?: string | null;
 }
@@ -30,6 +32,7 @@ interface TalentGroupMemberDocument {
 
 interface EmploymentProfileDocument {
   readonly _id: string;
+  readonly employeeCode?: string;
   readonly linkedUserId: string | null;
   readonly employmentStatus: string;
   readonly displayName?: string;
@@ -59,7 +62,7 @@ export class NativeMongoKpiSubjectReadonlyAccess
     session?: ClientSession,
   ): Promise<boolean> {
     const doc = await this.collection.findOne(
-      { _id: talentId, status: "ACTIVE" },
+      { _id: talentId, operationalStatus: "ACTIVE" },
       { ...this.withSession(session), projection: { _id: 1 } },
     );
     return doc !== null;
@@ -132,8 +135,7 @@ export class NativeMongoKpiSubjectReadonlyAccess
     const talent = await this.collection.findOne(
       {
         linkedEmploymentProfileId: employmentProfileId,
-        status: "ACTIVE",
-        operationalStatus: { $ne: "ARCHIVED" },
+        operationalStatus: "ACTIVE",
       },
       this.withSession(session),
     );
@@ -158,6 +160,114 @@ export class NativeMongoKpiSubjectReadonlyAccess
       displayName:
         profile.displayName ?? talent.stageName ?? talent.displayName ?? null,
     };
+  }
+
+  async listActiveInternalGroupMembers(
+    groupId: string,
+    input: { readonly search?: string; readonly limit: number },
+    session?: ClientSession,
+  ): Promise<readonly KpiManagedMemberLookup[]> {
+    const members = await this.memberCollection
+      .find(
+        {
+          groupId,
+          membershipStatus: "ACTIVE",
+        },
+        {
+          ...this.withSession(session),
+          projection: { _id: 1, groupId: 1, talentId: 1 },
+        },
+      )
+      .toArray();
+    if (members.length === 0) {
+      return [];
+    }
+
+    const talents = await this.collection
+      .find(
+        {
+          _id: { $in: members.map((member) => member.talentId) },
+          talentOrigin: "INTERNAL",
+          operationalStatus: "ACTIVE",
+          linkedEmploymentProfileId: { $type: "string" },
+        },
+        {
+          ...this.withSession(session),
+          projection: {
+            _id: 1,
+            talentCode: 1,
+            displayName: 1,
+            stageName: 1,
+            linkedEmploymentProfileId: 1,
+          },
+        },
+      )
+      .toArray();
+    if (talents.length === 0) {
+      return [];
+    }
+    const talentsById = new Map(talents.map((talent) => [talent._id, talent]));
+    const employmentProfileIds = talents
+      .map((talent) => talent.linkedEmploymentProfileId)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+    const profiles = await this.employmentProfileCollection
+      .find(
+        {
+          _id: { $in: employmentProfileIds },
+          employmentStatus: "ACTIVE",
+        },
+        {
+          ...this.withSession(session),
+          projection: { _id: 1, employeeCode: 1, displayName: 1 },
+        },
+      )
+      .toArray();
+    const profilesById = new Map(
+      profiles.map((profile) => [profile._id, profile]),
+    );
+    const normalizedSearch = input.search?.trim().toLocaleLowerCase("en-US");
+
+    return members
+      .map((member): KpiManagedMemberLookup | null => {
+        const talent = talentsById.get(member.talentId);
+        const employmentProfileId = talent?.linkedEmploymentProfileId;
+        const profile = employmentProfileId
+          ? profilesById.get(employmentProfileId)
+          : undefined;
+        if (!talent || !profile || !employmentProfileId) {
+          return null;
+        }
+        const displayName =
+          profile.displayName?.trim() ||
+          talent.displayName?.trim() ||
+          talent.talentCode?.trim() ||
+          employmentProfileId;
+        const row: KpiManagedMemberLookup = {
+          employmentProfileId,
+          employeeCode: profile.employeeCode ?? null,
+          displayName,
+          talentId: talent._id,
+          talentCode: talent.talentCode ?? null,
+          groupId,
+        };
+        if (!normalizedSearch) {
+          return row;
+        }
+        const haystack = [
+          row.displayName,
+          row.employeeCode,
+          row.talentCode,
+          row.employmentProfileId,
+          row.talentId,
+        ]
+          .filter((value): value is string => Boolean(value))
+          .join(" ")
+          .toLocaleLowerCase("en-US");
+        return haystack.includes(normalizedSearch) ? row : null;
+      })
+      .filter((row): row is KpiManagedMemberLookup => row !== null)
+      .sort((left, right) => left.displayName.localeCompare(right.displayName))
+      .slice(0, input.limit);
   }
 
   async findActiveEmploymentProfileByLinkedUserId(

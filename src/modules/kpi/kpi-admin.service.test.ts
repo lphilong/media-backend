@@ -23,6 +23,7 @@ import { KpiActualRepository } from "@modules/kpi/domain/kpi-actual.repository";
 import { KpiPlanRepository } from "@modules/kpi/domain/kpi.repository";
 import {
   KpiGroupMemberLookup,
+  KpiManagedMemberLookup,
   KpiSubjectReadonlyAccess,
 } from "@modules/kpi/domain/kpi-subject-readonly-access";
 import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
@@ -368,13 +369,14 @@ async function withEphemeralManagerAssignment<T>(
 function seedManagerAssignment(
   repository: InMemoryManagerAssignmentRepository,
   groupId = "group-1",
+  effectiveFrom = MAY_2026_START_AT,
 ): void {
   repository.assignments.push({
     id: "assignment-1",
     groupId,
     managerEmploymentProfileId: "manager-profile-1",
     role: "MANAGER",
-    effectiveFrom: MAY_2026_START_AT,
+    effectiveFrom,
     effectiveTo: null,
     status: "ACTIVE",
     isPrimary: true,
@@ -428,11 +430,7 @@ test("NativeMongoKpiSubjectReadonlyAccess derives internal group member display 
               query._id === internalTalent._id ||
                 (query.linkedEmploymentProfileId ===
                   internalTalent.linkedEmploymentProfileId &&
-                  query.status === "ACTIVE" &&
-                  typeof query.operationalStatus === "object" &&
-                  query.operationalStatus !== null &&
-                  (query.operationalStatus as { readonly $ne?: unknown })
-                    .$ne === "ARCHIVED")
+                  query.operationalStatus === "ACTIVE")
                 ? internalTalent
                 : null,
             );
@@ -479,6 +477,218 @@ test("NativeMongoKpiSubjectReadonlyAccess derives internal group member display 
     memberByProfile?.displayName,
     internalTalent.displayShortName,
   );
+});
+
+test("NativeMongoKpiSubjectReadonlyAccess filters and limits managed members after canonical active joins", async () => {
+  const memberships = [
+    {
+      _id: "membership-suspended",
+      groupId: "group-1",
+      talentId: "talent-suspended",
+      membershipStatus: "ACTIVE",
+    },
+    {
+      _id: "membership-inactive",
+      groupId: "group-1",
+      talentId: "talent-inactive",
+      membershipStatus: "ACTIVE",
+    },
+    {
+      _id: "membership-archived",
+      groupId: "group-1",
+      talentId: "talent-archived",
+      membershipStatus: "ACTIVE",
+    },
+    {
+      _id: "membership-zulu",
+      groupId: "group-1",
+      talentId: "talent-zulu",
+      membershipStatus: "ACTIVE",
+    },
+    {
+      _id: "membership-alpha",
+      groupId: "group-1",
+      talentId: "talent-alpha",
+      membershipStatus: "ACTIVE",
+    },
+    {
+      _id: "membership-ordinary",
+      groupId: "group-1",
+      talentId: "talent-ordinary",
+      membershipStatus: "ACTIVE",
+    },
+    {
+      _id: "membership-unmanaged",
+      groupId: "group-2",
+      talentId: "talent-unmanaged",
+      membershipStatus: "ACTIVE",
+    },
+  ];
+  const talents = [
+    {
+      _id: "talent-suspended",
+      talentCode: "TAL-SUSPENDED",
+      talentOrigin: "INTERNAL",
+      operationalStatus: "SUSPENDED",
+      linkedEmploymentProfileId: "ep-suspended",
+    },
+    {
+      _id: "talent-inactive",
+      talentCode: "TAL-INACTIVE",
+      talentOrigin: "INTERNAL",
+      operationalStatus: "INACTIVE",
+      linkedEmploymentProfileId: "ep-inactive",
+    },
+    {
+      _id: "talent-archived",
+      talentCode: "TAL-ARCHIVED",
+      talentOrigin: "INTERNAL",
+      operationalStatus: "ARCHIVED",
+      linkedEmploymentProfileId: "ep-archived",
+    },
+    {
+      _id: "talent-zulu",
+      talentCode: "TAL-ZULU",
+      talentOrigin: "INTERNAL",
+      operationalStatus: "ACTIVE",
+      linkedEmploymentProfileId: "ep-zulu",
+    },
+    {
+      _id: "talent-alpha",
+      talentCode: "TAL-ALPHA",
+      talentOrigin: "INTERNAL",
+      operationalStatus: "ACTIVE",
+      linkedEmploymentProfileId: "ep-alpha",
+      legalName: "Forbidden Legal Name",
+      email: "forbidden@example.test",
+    },
+    {
+      _id: "talent-ordinary",
+      talentCode: "TAL-ORDINARY",
+      talentOrigin: "INTERNAL",
+      operationalStatus: "ACTIVE",
+      linkedEmploymentProfileId: "ep-ordinary",
+    },
+    {
+      _id: "talent-unmanaged",
+      talentCode: "TAL-UNMANAGED",
+      talentOrigin: "INTERNAL",
+      operationalStatus: "ACTIVE",
+      linkedEmploymentProfileId: "ep-unmanaged",
+    },
+  ];
+  const profiles = [
+    {
+      _id: "ep-zulu",
+      employeeCode: "EP-ZULU",
+      linkedUserId: "forbidden-linked-user",
+      employmentStatus: "ACTIVE",
+      displayName: "Zulu Search Target",
+    },
+    {
+      _id: "ep-alpha",
+      employeeCode: "EP-ALPHA",
+      linkedUserId: "forbidden-linked-user",
+      employmentStatus: "ACTIVE",
+      displayName: "Alpha Search Target",
+    },
+    {
+      _id: "ep-ordinary",
+      employeeCode: "EP-ORDINARY",
+      linkedUserId: null,
+      employmentStatus: "ACTIVE",
+      displayName: "Ordinary Active Member",
+    },
+    {
+      _id: "ep-unmanaged",
+      employeeCode: "EP-UNMANAGED",
+      linkedUserId: null,
+      employmentStatus: "ACTIVE",
+      displayName: "Unmanaged Member",
+    },
+  ];
+  type KpiReadonlyQuery = Record<string, unknown>;
+  let membershipLimit: number | undefined;
+  const repository = new NativeMongoKpiSubjectReadonlyAccess({
+    collection(name: string) {
+      return {
+        find(query: KpiReadonlyQuery) {
+          let rows: readonly Record<string, unknown>[];
+          if (name === "talent_group_members") {
+            rows = memberships.filter(
+              (membership) =>
+                membership.groupId === query.groupId &&
+                membership.membershipStatus === query.membershipStatus,
+            );
+          } else if (name === "talents") {
+            assert.equal(query.status, undefined);
+            assert.equal(query.operationalStatus, "ACTIVE");
+            const ids = (query._id as { readonly $in: readonly string[] }).$in;
+            rows = talents.filter(
+              (talent) =>
+                ids.includes(talent._id) &&
+                talent.talentOrigin === query.talentOrigin &&
+                talent.operationalStatus === query.operationalStatus &&
+                typeof talent.linkedEmploymentProfileId === "string",
+            );
+          } else {
+            const ids = (query._id as { readonly $in: readonly string[] }).$in;
+            rows = profiles.filter(
+              (profile) =>
+                ids.includes(profile._id) &&
+                profile.employmentStatus === query.employmentStatus,
+            );
+          }
+          let limitedRows = rows;
+          return {
+            limit(limit: number) {
+              membershipLimit = limit;
+              limitedRows = rows.slice(0, limit);
+              return this;
+            },
+            toArray() {
+              return Promise.resolve(limitedRows);
+            },
+          };
+        },
+      };
+    },
+  } as never);
+
+  const searched = await repository.listActiveInternalGroupMembers("group-1", {
+    search: "search target",
+    limit: 1,
+  });
+  const all = await repository.listActiveInternalGroupMembers("group-1", {
+    limit: 20,
+  });
+
+  assert.equal(membershipLimit, undefined);
+  assert.deepEqual(
+    searched.map((item) => item.employmentProfileId),
+    ["ep-alpha"],
+  );
+  assert.deepEqual(
+    all.map((item) => item.employmentProfileId),
+    ["ep-alpha", "ep-ordinary", "ep-zulu"],
+  );
+  assert.deepEqual(
+    Object.keys(searched[0] ?? {}).sort(),
+    [
+      "displayName",
+      "employeeCode",
+      "employmentProfileId",
+      "groupId",
+      "talentCode",
+      "talentId",
+    ].sort(),
+  );
+  for (const forbiddenField of ["legalName", "email", "linkedUserId"]) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(searched[0] ?? {}, forbiddenField),
+      false,
+    );
+  }
 });
 
 test("KPI V2 creates TALENT draft plan with valid target metrics", async () => {
@@ -946,6 +1156,86 @@ test("KPI V2 published plan rejects draft-core, target, and allocation mutation"
       allocations: [],
     }),
     KpiStateError,
+  );
+});
+
+test("KPI managed member picker lists only active managed group members with safe fields", async () => {
+  const { service, managerRepository } = createHarness();
+  const plan = await createPublishedGroupPlan(service);
+  seedManagerAssignment(managerRepository, "group-1", 0);
+
+  const result = await service.listKpiManagedMembers(createManagerActor(), {
+    kpiPlanId: plan.id,
+    limit: 20,
+  });
+
+  assert.deepEqual(
+    result.items.map((item) => item.employmentProfileId),
+    ["talent-profile-1", "talent-profile-2"],
+  );
+  assert.deepEqual(
+    Object.keys(result.items[0] ?? {}).sort(),
+    [
+      "displayName",
+      "employeeCode",
+      "employmentProfileId",
+      "groupId",
+      "talentCode",
+      "talentId",
+    ].sort(),
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(result.items[0] ?? {}, "linkedUserId"),
+    false,
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(result.items[0] ?? {}, "legalName"),
+    false,
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(result.items[0] ?? {}, "email"),
+    false,
+  );
+});
+
+test("KPI managed member picker denies unmanaged, non-group, non-published, and unscoped callers", async () => {
+  const { service, managerRepository } = createHarness();
+  const published = await createPublishedGroupPlan(service);
+  seedManagerAssignment(managerRepository, "group-1", 0);
+  const draft = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const talentPlan = await service.createKpiPlan(
+    createActor(),
+    talentPlanCommand(),
+  );
+  await service.publishKpiPlan(createActor(), { kpiPlanId: talentPlan.id });
+
+  await assert.rejects(
+    service.listKpiManagedMembers(createManagerActorWithoutKpiScope(), {
+      kpiPlanId: published.id,
+      limit: 20,
+    }),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.listKpiManagedMembers(createActor(), {
+      kpiPlanId: published.id,
+      limit: 20,
+    }),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.listKpiManagedMembers(createManagerActor(), {
+      kpiPlanId: draft.id,
+      limit: 20,
+    }),
+    KpiStateError,
+  );
+  await assert.rejects(
+    service.listKpiManagedMembers(createManagerActor(), {
+      kpiPlanId: talentPlan.id,
+      limit: 20,
+    }),
+    KpiInvalidAllocationError,
   );
 });
 
@@ -1741,7 +2031,10 @@ test("KPI allocation approval foundation supports manager draft submit and admin
   const { service, managerRepository, audit } = createHarness(
     () => MAY_5_2026_NOON_HCM,
   );
-  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
   await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
   seedManagerAssignment(managerRepository);
 
@@ -1771,31 +2064,37 @@ test("KPI allocation approval foundation supports manager draft submit and admin
     draft.allocations.map((allocation) => allocation.allocationStatus),
     ["DRAFT", "DRAFT"],
   );
-  assert.equal(draft.allocations[0]?.memberEmploymentProfileId, "talent-profile-1");
+  assert.equal(
+    draft.allocations[0]?.memberEmploymentProfileId,
+    "talent-profile-1",
+  );
   assert.equal(draft.allocations[0]?.createdByActorId, "manager-user");
 
-  const editedDraft = await service.upsertKpiAllocationDraft(createManagerActor(), {
-    kpiPlanId: created.id,
-    allocations: [
-      {
-        employmentProfileId: "talent-profile-1",
-        allocationStartDate: "2026-05-01",
-        targetMetrics: [
-          { metricCode: "REVENUE_VND", targetValue: 120 },
-          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
-        ],
-        note: "Edited primary host",
-      },
-      {
-        employmentProfileId: "talent-profile-2",
-        allocationStartDate: "2026-05-01",
-        targetMetrics: [
-          { metricCode: "REVENUE_VND", targetValue: 180 },
-          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 2 },
-        ],
-      },
-    ],
-  });
+  const editedDraft = await service.upsertKpiAllocationDraft(
+    createManagerActor(),
+    {
+      kpiPlanId: created.id,
+      allocations: [
+        {
+          employmentProfileId: "talent-profile-1",
+          allocationStartDate: "2026-05-01",
+          targetMetrics: [
+            { metricCode: "REVENUE_VND", targetValue: 120 },
+            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
+          ],
+          note: "Edited primary host",
+        },
+        {
+          employmentProfileId: "talent-profile-2",
+          allocationStartDate: "2026-05-01",
+          targetMetrics: [
+            { metricCode: "REVENUE_VND", targetValue: 180 },
+            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 2 },
+          ],
+        },
+      ],
+    },
+  );
   assert.equal(
     editedDraft.allocations[0]?.targetMetrics.find(
       (metric) => metric.metricCode === "REVENUE_VND",
@@ -1803,18 +2102,25 @@ test("KPI allocation approval foundation supports manager draft submit and admin
     120,
   );
 
-  const submitted = await service.submitKpiAllocationDraft(createManagerActor(), {
-    kpiPlanId: created.id,
-  });
+  const submitted = await service.submitKpiAllocationDraft(
+    createManagerActor(),
+    {
+      kpiPlanId: created.id,
+    },
+  );
   assert.equal(submitted.allocations[0]?.allocationStatus, "PENDING_APPROVAL");
   assert.equal(submitted.allocations[0]?.submittedByActorId, "manager-user");
 
   await assert.rejects(
-    service.approveKpiAllocation(createManagerActor(), { kpiPlanId: created.id }),
+    service.approveKpiAllocation(createManagerActor(), {
+      kpiPlanId: created.id,
+    }),
     /KPI V2 admin operations require ADMIN actor context/u,
   );
   await assert.rejects(
-    service.publishKpiAllocation(createManagerActor(), { kpiPlanId: created.id }),
+    service.publishKpiAllocation(createManagerActor(), {
+      kpiPlanId: created.id,
+    }),
     /KPI V2 admin operations require ADMIN actor context/u,
   );
 
@@ -1842,7 +2148,10 @@ test("KPI allocation approval denies draft and submit to read/global/non-manager
   const { service, managerRepository } = createHarness(
     () => MAY_5_2026_NOON_HCM,
   );
-  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
   await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
   seedManagerAssignment(managerRepository);
   await service.upsertKpiAllocationDraft(createManagerActor(), {
@@ -1934,7 +2243,10 @@ test("KPI allocation approval rejects unmanaged or direct Talent-style draft tar
   const { service, managerRepository } = createHarness(
     () => MAY_5_2026_NOON_HCM,
   );
-  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
   await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
   seedManagerAssignment(managerRepository);
 
@@ -1977,7 +2289,10 @@ test("KPI allocation approval denies non-admin publisher roles and ignores non-p
   const { service, managerRepository } = createHarness(
     () => MAY_5_2026_NOON_HCM,
   );
-  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
   await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
   seedManagerAssignment(managerRepository);
   await service.upsertKpiAllocationDraft(createManagerActor(), {
@@ -2001,9 +2316,15 @@ test("KPI allocation approval denies non-admin publisher roles and ignores non-p
 
   for (const actor of [
     createKpiReadOnlyActor(),
-    createActorWithPermissions("hr-user", [Permission.KPI_READ, Permission.KPI_READ_PROGRESS]),
+    createActorWithPermissions("hr-user", [
+      Permission.KPI_READ,
+      Permission.KPI_READ_PROGRESS,
+    ]),
     createActorWithPermissions("ops-user", [Permission.KPI_READ]),
-    createActorWithPermissions("finance-user", [Permission.KPI_READ, Permission.KPI_READ_PROGRESS]),
+    createActorWithPermissions("finance-user", [
+      Permission.KPI_READ,
+      Permission.KPI_READ_PROGRESS,
+    ]),
   ]) {
     await assert.rejects(
       service.approveKpiAllocation(actor, { kpiPlanId: created.id }),
@@ -2404,6 +2725,42 @@ class InMemoryKpiSubjectReadonlyAccess implements KpiSubjectReadonlyAccess {
       employmentProfileId,
       displayName: employmentProfileId,
     };
+  }
+
+  async listActiveInternalGroupMembers(
+    groupId: string,
+    input: { readonly search?: string; readonly limit: number },
+  ): Promise<readonly KpiManagedMemberLookup[]> {
+    if (groupId !== "group-1") {
+      return [];
+    }
+    const search = input.search?.toLocaleLowerCase("en-US");
+    return [
+      {
+        employmentProfileId: "talent-profile-1",
+        employeeCode: "EP-000001",
+        displayName: "Talent Profile 1",
+        talentId: "talent-1",
+        talentCode: "TAL-000001",
+        groupId,
+      },
+      {
+        employmentProfileId: "talent-profile-2",
+        employeeCode: "EP-000002",
+        displayName: "Talent Profile 2",
+        talentId: "talent-2",
+        talentCode: "TAL-000002",
+        groupId,
+      },
+    ]
+      .filter((item) =>
+        search
+          ? `${item.displayName} ${item.employeeCode} ${item.talentCode}`
+              .toLocaleLowerCase("en-US")
+              .includes(search)
+          : true,
+      )
+      .slice(0, input.limit);
   }
 
   async findActiveEmploymentProfileByLinkedUserId(
