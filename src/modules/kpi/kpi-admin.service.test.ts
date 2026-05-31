@@ -11,7 +11,6 @@ import { Permission } from "@core/permission/permission.enum";
 import { NativeMongoKpiSubjectReadonlyAccess } from "@infra/mongo/kpi/kpi.readonly-access";
 import { KpiAdminController } from "@modules/kpi/admin/admin.kpi.controller";
 import { KpiAdminService } from "@modules/kpi/admin/admin.kpi.service";
-import { TalentGroupManagerAssignmentService } from "@modules/kpi/admin/talent-group-manager-assignment.service";
 import {
   KpiConflictError,
   KpiInvalidAllocationError,
@@ -2249,37 +2248,6 @@ test("KPI V2 controller rejects unknown create payload keys", async () => {
     bindCommand(req, "KPI_PLAN_CREATE");
     await controller.handle(req, createActor(), "ADMIN");
   }, KpiValidationError);
-});
-
-test("Talent group manager assignment supports multiple active managers and optional primary", async () => {
-  const repository = new InMemoryManagerAssignmentRepository();
-  const service = new TalentGroupManagerAssignmentService(
-    repository,
-    fixedClock(),
-  );
-
-  await service.createAssignment(createActor(), {
-    groupId: "group-1",
-    managerEmploymentProfileId: "ep-1",
-    role: "OWNER",
-    effectiveFrom: 1000,
-    isPrimary: true,
-  });
-  await service.createAssignment(createActor(), {
-    groupId: "group-1",
-    managerEmploymentProfileId: "ep-2",
-    role: "MANAGER",
-    effectiveFrom: 1000,
-  });
-
-  const active = await service.listActiveByGroup("group-1", 2000);
-  assert.equal(active.length, 2);
-  assert.equal(active.filter((assignment) => assignment.isPrimary).length, 1);
-  const byManager = await service.listActiveByManagerEmploymentProfile(
-    "ep-2",
-    2000,
-  );
-  assert.equal(byManager.length, 1);
 });
 
 interface RecordedAudit {

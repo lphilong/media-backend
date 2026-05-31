@@ -149,6 +149,72 @@ test("Talent group manager assignment list warns when manager lacks active admin
   assert.equal(result.items[0]?.managerHasLinkedAdminUser, false);
 });
 
+test("Talent group manager assignment supports multiple active managers and one primary", async () => {
+  const harness = createHarness();
+
+  const first = await runWithTrace(() =>
+    harness.service.createManagerAssignment(createActor(), {
+      groupId: "group-1",
+      managerEmploymentProfileId: "ep-1",
+    }),
+  );
+  const second = await runWithTrace(() =>
+    harness.service.createManagerAssignment(createActor(), {
+      groupId: "group-1",
+      managerEmploymentProfileId: "ep-2",
+    }),
+  );
+
+  assert.equal(first.isPrimary, true);
+  assert.equal(second.isPrimary, false);
+
+  const activeByGroup = await harness.service.listManagerAssignments(
+    createActor(),
+    {
+      groupId: "group-1",
+    },
+  );
+  assert.equal(activeByGroup.items.length, 2);
+  assert.deepEqual(
+    activeByGroup.items.map(
+      (assignment) => assignment.managerEmploymentProfileId,
+    ),
+    ["ep-1", "ep-2"],
+  );
+  assert.equal(
+    activeByGroup.items.filter((assignment) => assignment.isPrimary).length,
+    1,
+  );
+
+  const activeByManager =
+    await harness.managerRepository.listActiveAssignmentsByManagerEmploymentProfile(
+      "ep-2",
+      NOW,
+    );
+  assert.equal(activeByManager.length, 1);
+  assert.equal(activeByManager[0]?.id, second.id);
+
+  await runWithTrace(() =>
+    harness.service.revokeManagerAssignment(createActor(), {
+      groupId: "group-1",
+      assignmentId: first.id,
+    }),
+  );
+
+  const afterRevoke = await harness.service.listManagerAssignments(
+    createActor(),
+    {
+      groupId: "group-1",
+    },
+  );
+  assert.deepEqual(
+    afterRevoke.items.map(
+      (assignment) => assignment.managerEmploymentProfileId,
+    ),
+    ["ep-2"],
+  );
+});
+
 function createHarness(): {
   readonly service: TalentGroupManagerAssignmentAdminService;
   readonly managerRepository: InMemoryManagerAssignmentRepository;
@@ -345,12 +411,26 @@ class InMemoryManagerAssignmentRepository
       },
     ],
     [
-      "ep-unlinked",
+      "ep-2",
       {
-        id: "ep-unlinked",
+        id: "ep-2",
         employeeCode: "EP-000002",
         displayName: "Bao",
         legalName: "Bao Tran",
+        employmentStatus: "ACTIVE",
+        linkedUserId: null,
+        linkedUserRef: null,
+        linkedUserActorKind: null,
+        linkedUserAccountStatus: null,
+      },
+    ],
+    [
+      "ep-unlinked",
+      {
+        id: "ep-unlinked",
+        employeeCode: "EP-000004",
+        displayName: "Chi",
+        legalName: "Chi Pham",
         employmentStatus: "ACTIVE",
         linkedUserId: null,
         linkedUserRef: null,
