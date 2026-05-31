@@ -57,7 +57,7 @@ test("dry-run reports missing TEAM_MANAGER managedGroup event scope without writ
   assert.equal(summary.authSecurityVersionBumped, false);
 });
 
-test("write union-adds missing PRODUCTION_OPS global event scope and bumps auth version", async () => {
+test("write union-adds missing PRODUCTION_OPS global scopes and bumps auth version", async () => {
   const fixture = createAccessRepairFixture({
     roles: [makeRole("PRODUCTION_OPS")],
     assignments: [
@@ -98,12 +98,24 @@ test("write union-adds missing PRODUCTION_OPS global event scope and bumps auth 
     mongoDbName: "media-dev",
   });
   const assignment = summary.roleSummaries[0]?.assignments[0];
+  const updatedScopeGrants = fixture.repository.updateCalls[0]?.scopeGrants;
 
   assert.equal(assignment?.updated, true);
-  assert.deepEqual(fixture.repository.updateCalls[0]?.scopeGrants, {
-    workSchedule: ["department"],
+  assert.deepEqual(assignment?.missingScopeGrants, {
+    workSchedule: ["global"],
     eventAssignment: ["global"],
   });
+  assert.deepEqual(Object.keys(updatedScopeGrants ?? {}).sort(), [
+    "eventAssignment",
+    "workSchedule",
+  ]);
+  assert.deepEqual(
+    new Set(updatedScopeGrants?.workSchedule),
+    new Set(["department", "global"]),
+  );
+  assert.deepEqual(new Set(updatedScopeGrants?.eventAssignment), new Set([
+    "global",
+  ]));
   assert.equal(fixture.repository.authVersionBumps, 1);
   assert.equal(summary.authSecurityVersionBumped, true);
 });
