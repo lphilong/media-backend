@@ -53,7 +53,6 @@ const CREATE_KPI_PLAN_BODY_FIELDS = [
   "periodEndAt",
   "timezone",
   "targetMetrics",
-  "allocations",
   "externalRef",
 ] as const;
 
@@ -222,8 +221,6 @@ function parseCreateKpiPlanCommand(req: Request): CreateKpiPlanCommand {
     timezone: body.timezone as string | undefined,
     targetMetrics:
       body.targetMetrics as CreateKpiPlanCommand["targetMetrics"],
-    allocations:
-      body.allocations as CreateKpiPlanCommand["allocations"],
     externalRef: body.externalRef as string | null | undefined,
   };
 }

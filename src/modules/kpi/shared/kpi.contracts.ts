@@ -54,7 +54,6 @@ export interface CreateKpiPlanCommand {
   readonly periodEndAt: number;
   readonly timezone?: string;
   readonly targetMetrics: readonly KpiTargetMetricInput[];
-  readonly allocations?: readonly KpiAllocationInput[];
   readonly externalRef?: string | null;
 }
 

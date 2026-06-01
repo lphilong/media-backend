@@ -10,6 +10,7 @@ export const KPI_SUBJECT_TYPES = [
 export type KpiSubjectType = (typeof KPI_SUBJECT_TYPES)[number];
 
 export const KPI_EXECUTABLE_SUBJECT_TYPES = ["TALENT", "TALENT_GROUP"] as const;
+export const KPI_CREATE_SUBJECT_TYPES = ["TALENT_GROUP"] as const;
 
 export type KpiExecutableSubjectType =
   (typeof KPI_EXECUTABLE_SUBJECT_TYPES)[number];

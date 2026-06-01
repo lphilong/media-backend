@@ -35,6 +35,7 @@ import { KpiActualRepository } from "@modules/kpi/domain/kpi-actual.repository";
 import { KpiSubjectReadonlyAccess } from "@modules/kpi/domain/kpi-subject-readonly-access";
 import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import {
+  KPI_CREATE_SUBJECT_TYPES,
   KPI_EXECUTABLE_SUBJECT_TYPES,
   KPI_METRIC_CODES,
   KPI_PLAN_CURRENCIES,
@@ -97,6 +98,7 @@ import {
 } from "@modules/kpi/shared/kpi.contracts";
 
 const DEFAULT_TIMEZONE = "Asia/Ho_Chi_Minh";
+const DEFAULT_TIMEZONE_OFFSET_MS = 7 * 60 * 60 * 1000;
 const HCM_UTC_OFFSET_HOURS = 7;
 const DEFAULT_ACTUAL_POLICY_VERSION = "kpi-actual-policy-v1";
 const DEFAULT_ACTUAL_ENTRY_OPEN_LOCAL_TIME = "06:00";
@@ -191,16 +193,15 @@ export class KpiAdminService {
     const subjectType = normalizeSubjectType(command.subjectType);
     const operation: AuthoritativeAdminMutationIdentity = "kpi.create-plan";
 
-    assertExecutableSubjectType(subjectType);
+    assertCreateSubjectType(subjectType);
+    assertCreateCommandHasNoAllocations(command);
+    assertPlanPeriodIsNotPast(period.periodMonth, this.clock());
 
     const targetMetrics = normalizeTargetMetrics(
       command.targetMetrics,
       subjectType,
       command.currencyCode ?? "VND",
     );
-    const allocations = command.allocations
-      ? normalizeAllocations(command.allocations, targetMetrics)
-      : [];
 
     return this.executeMutation(
       actor,
@@ -250,13 +251,7 @@ export class KpiAdminService {
           targetMetrics,
           now,
         );
-        const allocationRecords = await this.buildAllocationRecords(
-          plan,
-          allocations,
-          metricRecords,
-          now,
-          session,
-        );
+        const allocationRecords: KpiAllocation[] = [];
 
         await this.repository.insertPlan(plan, session);
         await this.repository.insertTargetMetrics(metricRecords, session);
@@ -2915,6 +2910,40 @@ function assertExecutableSubjectType(subjectType: KpiSubjectType): void {
   throw new KpiValidationError(
     `KPI subjectType ${subjectType} is future-compatible but not executable in Phase 4-C.2`,
   );
+}
+
+function assertCreateSubjectType(subjectType: KpiSubjectType): void {
+  if (KPI_CREATE_SUBJECT_TYPES.includes(subjectType as never)) {
+    return;
+  }
+
+  throw new KpiValidationError(
+    `KPI create subjectType ${subjectType} is not supported; use TALENT_GROUP`,
+  );
+}
+
+function assertCreateCommandHasNoAllocations(command: CreateKpiPlanCommand): void {
+  if (Object.prototype.hasOwnProperty.call(command, "allocations")) {
+    throw new KpiValidationError(
+      "KPI create does not accept allocations; allocate members after publish",
+    );
+  }
+}
+
+function assertPlanPeriodIsNotPast(periodMonth: string, now: number): void {
+  const currentMonth = currentMonthInDefaultTimezone(now);
+  if (periodMonth < currentMonth) {
+    throw new KpiValidationError(
+      `KPI periodMonth ${periodMonth} is before the current ${DEFAULT_TIMEZONE} month ${currentMonth}`,
+    );
+  }
+}
+
+function currentMonthInDefaultTimezone(now: number): string {
+  const local = new Date(now + DEFAULT_TIMEZONE_OFFSET_MS);
+  const year = local.getUTCFullYear();
+  const month = String(local.getUTCMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
 }
 
 function compareKpiPlanListItems(

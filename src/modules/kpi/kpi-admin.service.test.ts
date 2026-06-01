@@ -45,6 +45,8 @@ import {
 
 const MAY_2026_START_AT = Date.UTC(2026, 4, 1, -7, 0, 0, 0);
 const MAY_2026_END_AT = Date.UTC(2026, 5, 1, -7, 0, 0, 0) - 1;
+const JUNE_2026_START_AT = Date.UTC(2026, 5, 1, -7, 0, 0, 0);
+const JUNE_2026_END_AT = Date.UTC(2026, 6, 1, -7, 0, 0, 0) - 1;
 const MAY_5_2026_NOON_HCM = Date.UTC(2026, 4, 5, 5, 0, 0, 0);
 const MAY_5_2026_AFTER_LOCK_HCM = Date.UTC(2026, 4, 5, 16, 30, 0, 0);
 const JUNE_1_2026_NOON_HCM = Date.UTC(2026, 5, 1, 5, 0, 0, 0);
@@ -743,16 +745,22 @@ test("NativeMongoKpiSubjectReadonlyAccess filters and limits managed members aft
   }
 });
 
-test("KPI V2 creates TALENT draft plan with valid target metrics", async () => {
+test("KPI V2 rejects TALENT create in monthly-cycle create flow", async () => {
   const { service } = createHarness();
 
-  const result = await service.createKpiPlan(
-    createActor(),
-    talentPlanCommand(),
+  await assert.rejects(
+    service.createKpiPlan(createActor(), talentPlanCommand()),
+    /KPI create subjectType TALENT is not supported/,
   );
+});
+
+test("KPI V2 creates TALENT_GROUP draft plan with valid metrics and no allocations", async () => {
+  const { service } = createHarness();
+
+  const result = await service.createKpiPlan(createActor(), groupPlanCommand());
 
   assert.equal(result.status, "DRAFT");
-  assert.equal(result.subjectType, "TALENT");
+  assert.equal(result.subjectType, "TALENT_GROUP");
   assert.equal(result.planCode, "KPI-000001");
   assert.equal(result.currencyCode, "VND");
   assert.equal(result.targetMetrics.length, 2);
@@ -760,22 +768,48 @@ test("KPI V2 creates TALENT draft plan with valid target metrics", async () => {
   assert.equal(result.allocations.length, 0);
 });
 
-test("KPI V2 creates TALENT_GROUP draft plan with valid metrics", async () => {
-  const { service } = createHarness();
-
-  const result = await service.createKpiPlan(createActor(), groupPlanCommand());
-
-  assert.equal(result.subjectType, "TALENT_GROUP");
-  assert.equal(result.targetMetrics.length, 2);
-});
-
-test("KPI V2 rejects metrics not allowed for subject type", async () => {
+test("KPI V2 rejects create-time allocations", async () => {
   const { service } = createHarness();
 
   await assert.rejects(
     service.createKpiPlan(createActor(), {
-      ...talentPlanCommand(),
-      targetMetrics: [{ metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 }],
+      ...groupPlanCommand(),
+      allocations: [],
+    } as unknown as ReturnType<typeof groupPlanCommand>),
+    /KPI create does not accept allocations/,
+  );
+});
+
+test("KPI V2 rejects past periodMonth on create using HCM current month", async () => {
+  const { service } = createHarness(() => JUNE_1_2026_NOON_HCM);
+
+  await assert.rejects(
+    service.createKpiPlan(createActor(), groupPlanCommand()),
+    /KPI periodMonth 2026-05 is before the current Asia\/Ho_Chi_Minh month 2026-06/,
+  );
+});
+
+test("KPI V2 accepts current periodMonth on create using HCM current month", async () => {
+  const { service } = createHarness(() => JUNE_1_2026_NOON_HCM);
+
+  const result = await service.createKpiPlan(createActor(), {
+    ...groupPlanCommand(),
+    periodMonth: "2026-06",
+    periodStartAt: JUNE_2026_START_AT,
+    periodEndAt: JUNE_2026_END_AT,
+  });
+
+  assert.equal(result.periodMonth, "2026-06");
+});
+
+test("KPI V2 rejects future-compatible subject types on create", async () => {
+  const { service } = createHarness();
+
+  await assert.rejects(
+    service.createKpiPlan(createActor(), {
+      ...groupPlanCommand(),
+      subjectType: "EMPLOYMENT_PROFILE",
+      subjectId: "employment-profile-1",
     }),
     KpiValidationError,
   );
@@ -786,7 +820,7 @@ test("KPI V2 rejects ATTENDANCE_RATE and unknown metrics", async () => {
 
   await assert.rejects(
     service.createKpiPlan(createActor(), {
-      ...talentPlanCommand(),
+      ...groupPlanCommand(),
       targetMetrics: [{ metricCode: "ATTENDANCE_RATE", targetValue: 1 }],
     }),
     KpiValidationError,
@@ -798,14 +832,14 @@ test("KPI V2 rejects negative and non-finite targets", async () => {
 
   await assert.rejects(
     service.createKpiPlan(createActor(), {
-      ...talentPlanCommand(),
+      ...groupPlanCommand(),
       targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: -1 }],
     }),
     KpiValidationError,
   );
   await assert.rejects(
     service.createKpiPlan(createActor(), {
-      ...talentPlanCommand(),
+      ...groupPlanCommand(),
       targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: Infinity }],
     }),
     KpiValidationError,
@@ -817,7 +851,7 @@ test("KPI V2 rejects decimal REVENUE_VND plan target", async () => {
 
   await assert.rejects(
     service.createKpiPlan(createActor(), {
-      ...talentPlanCommand(),
+      ...groupPlanCommand(),
       targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 1.5 }],
     }),
     /REVENUE_VND requires an integer target value/,
@@ -829,7 +863,7 @@ test("KPI V2 rejects decimal count plan target", async () => {
 
   await assert.rejects(
     service.createKpiPlan(createActor(), {
-      ...talentPlanCommand(),
+      ...groupPlanCommand(),
       targetMetrics: [{ metricCode: "CONTENT_OUTPUT_COUNT", targetValue: 1.5 }],
     }),
     /CONTENT_OUTPUT_COUNT requires an integer target value/,
@@ -840,7 +874,7 @@ test("KPI V2 accepts LIVE_HOURS plan target with two decimals", async () => {
   const { service } = createHarness();
 
   const created = await service.createKpiPlan(createActor(), {
-    ...talentPlanCommand(),
+    ...groupPlanCommand(),
     targetMetrics: [{ metricCode: "LIVE_HOURS", targetValue: 1.25 }],
   });
 
@@ -852,7 +886,7 @@ test("KPI V2 rejects LIVE_HOURS plan target with more than two decimals", async 
 
   await assert.rejects(
     service.createKpiPlan(createActor(), {
-      ...talentPlanCommand(),
+      ...groupPlanCommand(),
       targetMetrics: [{ metricCode: "LIVE_HOURS", targetValue: 1.234 }],
     }),
     /LIVE_HOURS supports at most 2 decimal places/,
@@ -870,14 +904,14 @@ test("KPI V2 rejects numeric string plan target values", async () => {
 
   await assert.rejects(
     service.createKpiPlan(createActor(), {
-      ...talentPlanCommand(),
+      ...groupPlanCommand(),
       targetMetrics: formattedMoneyTarget,
     }),
     /REVENUE_VND requires a finite non-negative numeric target value/,
   );
   await assert.rejects(
     service.createKpiPlan(createActor(), {
-      ...talentPlanCommand(),
+      ...groupPlanCommand(),
       targetMetrics: numericStringTarget,
     }),
     /REVENUE_VND requires a finite non-negative numeric target value/,
@@ -889,7 +923,7 @@ test("KPI V2 rejects invalid non-monthly period window", async () => {
 
   await assert.rejects(
     service.createKpiPlan(createActor(), {
-      ...talentPlanCommand(),
+      ...groupPlanCommand(),
       periodEndAt: MAY_2026_END_AT - 1,
     }),
     KpiValidationError,
@@ -900,7 +934,7 @@ test("KPI V2 update draft core works only in DRAFT", async () => {
   const { service } = createHarness();
   const created = await service.createKpiPlan(
     createActor(),
-    talentPlanCommand(),
+    groupPlanCommand(),
   );
 
   const updated = await service.updateKpiDraftCore(createActor(), {
@@ -923,7 +957,7 @@ test("KPI V2 target replacement works only in DRAFT", async () => {
   const { service } = createHarness();
   const created = await service.createKpiPlan(
     createActor(),
-    talentPlanCommand(),
+    groupPlanCommand(),
   );
 
   const replaced = await service.replaceKpiTargetMetrics(createActor(), {
@@ -1041,15 +1075,12 @@ test("KPI V2 rejects duplicate member allocation rows in one plan", async () => 
 });
 
 test("KPI V2 group allocations are allowed only for TALENT_GROUP plans", async () => {
-  const { service } = createHarness();
-  const created = await service.createKpiPlan(
-    createActor(),
-    talentPlanCommand(),
-  );
+  const { service, repository } = createHarness();
+  repository.plans.push(buildFutureSubjectDraftPlan("TALENT"));
 
   await assert.rejects(
     service.replaceKpiAllocations(createActor(), {
-      kpiPlanId: created.id,
+      kpiPlanId: "future-TALENT",
       allocations: [
         {
           memberTalentId: "talent-1",
@@ -1062,11 +1093,29 @@ test("KPI V2 group allocations are allowed only for TALENT_GROUP plans", async (
   );
 });
 
-test("KPI V2 publish TALENT plan freezes target and moves to PUBLISHED", async () => {
+test("KPI V2 global read remains compatible with existing TALENT plan", async () => {
+  const { service, repository } = createHarness();
+  repository.plans.push(buildFutureSubjectDraftPlan("TALENT"));
+
+  const result = await service.listKpiPlans(createActor(), {
+    subjectType: "TALENT",
+  });
+  const detail = await service.getKpiPlanDetail(createActor(), {
+    kpiPlanId: "future-TALENT",
+  });
+
+  assert.deepEqual(
+    result.items.map((item) => item.id),
+    ["future-TALENT"],
+  );
+  assert.equal(detail.subjectType, "TALENT");
+});
+
+test("KPI V2 publish TALENT_GROUP plan freezes target and moves to PUBLISHED", async () => {
   const { service } = createHarness();
   const created = await service.createKpiPlan(
     createActor(),
-    talentPlanCommand(),
+    groupPlanCommand(),
   );
 
   const published = await service.publishKpiPlan(createActor(), {
@@ -1184,7 +1233,7 @@ test("KPI V2 published plan rejects draft-core, target, and allocation mutation"
   const { service } = createHarness();
   const created = await service.createKpiPlan(
     createActor(),
-    talentPlanCommand(),
+    groupPlanCommand(),
   );
   await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
 
@@ -1258,16 +1307,17 @@ test("KPI managed member picker denies unmanaged, non-group, non-published, and 
   const published = await createPublishedGroupPlan(service);
   seedManagerAssignment(managerRepository, "group-1", 0);
   const draft = await service.createKpiPlan(createActor(), groupPlanCommand());
-  const talentPlan = await service.createKpiPlan(
-    createActor(),
-    talentPlanCommand(),
-  );
-  await service.publishKpiPlan(createActor(), { kpiPlanId: talentPlan.id });
+  const talentPlan = {
+    ...buildFutureSubjectDraftPlan("TALENT"),
+    status: "PUBLISHED" as const,
+    publishedAt: MAY_5_2026_NOON_HCM,
+    publishedByActorId: "admin-1",
+  };
   repository.plans.push({
     ...published,
     id: "unmanaged-group-plan",
     subjectId: "group-2",
-  });
+  }, talentPlan);
 
   await assert.rejects(
     service.listKpiManagedMembers(createManagerActorWithoutKpiScope(), {
@@ -1350,7 +1400,7 @@ test("KPI V2 archive sets archivedAt", async () => {
   const { service } = createHarness();
   const created = await service.createKpiPlan(
     createActor(),
-    talentPlanCommand(),
+    groupPlanCommand(),
   );
 
   const archived = await service.archiveKpiPlan(createActor(), {
@@ -1872,7 +1922,7 @@ test("KPI V2 manager cannot read progress for unmanaged talent group", async () 
 
 test("KPI V2 global list plans still works", async () => {
   const { service } = createHarness();
-  const draft = await service.createKpiPlan(createActor(), talentPlanCommand());
+  const draft = await service.createKpiPlan(createActor(), groupPlanCommand());
 
   const result = await service.listKpiPlans(createActor(), {});
   const detail = await service.getKpiPlanDetail(createActor(), {
@@ -1888,7 +1938,7 @@ test("KPI V2 global list includes allocation workflow summaries from batched all
   const { service, repository } = createHarness(() => MAY_5_2026_NOON_HCM);
   const zeroAllocationPlan = await service.createKpiPlan(
     createActor(),
-    talentPlanCommand(),
+    groupPlanCommand(),
   );
   const summaryPlan = await createPublishedGroupPlan(service);
   replacePlanAllocationStatuses(repository, summaryPlan.id, [
@@ -2276,10 +2326,12 @@ test("KPI V2 correction history returns corrections ordered by correctedAt", asy
 
 test("KPI V2 list plans searches by planCode", async () => {
   const { service } = createHarness();
-  const first = await service.createKpiPlan(createActor(), talentPlanCommand());
+  const first = await service.createKpiPlan(createActor(), groupPlanCommand());
   await service.createKpiPlan(createActor(), {
-    ...talentPlanCommand(),
-    subjectId: "talent-2",
+    ...groupPlanCommand(),
+    periodMonth: "2026-06",
+    periodStartAt: JUNE_2026_START_AT,
+    periodEndAt: JUNE_2026_END_AT,
     title: "Other KPI",
   });
 
@@ -2296,12 +2348,14 @@ test("KPI V2 list plans searches by planCode", async () => {
 test("KPI V2 list plans searches by title", async () => {
   const { service } = createHarness();
   const first = await service.createKpiPlan(createActor(), {
-    ...talentPlanCommand(),
+    ...groupPlanCommand(),
     title: "North creator payout KPI",
   });
   await service.createKpiPlan(createActor(), {
-    ...talentPlanCommand(),
-    subjectId: "talent-2",
+    ...groupPlanCommand(),
+    periodMonth: "2026-06",
+    periodStartAt: JUNE_2026_START_AT,
+    periodEndAt: JUNE_2026_END_AT,
     title: "Other KPI",
   });
 
@@ -2728,7 +2782,7 @@ test("KPI V2 create plan mutation records audit proof", async () => {
 
   const created = await service.createKpiPlan(
     createActor(),
-    talentPlanCommand(),
+    groupPlanCommand(),
   );
 
   assertAuditRecord(audit, {
@@ -2742,7 +2796,7 @@ test("KPI V2 update draft-core mutation records audit proof", async () => {
   const { service, audit } = createHarness();
   const created = await service.createKpiPlan(
     createActor(),
-    talentPlanCommand(),
+    groupPlanCommand(),
   );
 
   await service.updateKpiDraftCore(createActor(), {
@@ -2761,7 +2815,7 @@ test("KPI V2 replace target metrics mutation records audit proof", async () => {
   const { service, audit } = createHarness();
   const created = await service.createKpiPlan(
     createActor(),
-    talentPlanCommand(),
+    groupPlanCommand(),
   );
 
   await service.replaceKpiTargetMetrics(createActor(), {
@@ -2808,7 +2862,7 @@ test("KPI V2 publish mutation records audit proof", async () => {
   const { service, audit } = createHarness();
   const created = await service.createKpiPlan(
     createActor(),
-    talentPlanCommand(),
+    groupPlanCommand(),
   );
 
   await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
@@ -2824,7 +2878,7 @@ test("KPI V2 archive mutation records audit proof", async () => {
   const { service, audit } = createHarness();
   const created = await service.createKpiPlan(
     createActor(),
-    talentPlanCommand(),
+    groupPlanCommand(),
   );
 
   await service.archiveKpiPlan(createActor(), { kpiPlanId: created.id });
@@ -2848,7 +2902,7 @@ test("KPI V2 rejects unknown nested target metric keys", async () => {
 
   await assert.rejects(
     service.createKpiPlan(createActor(), {
-      ...talentPlanCommand(),
+      ...groupPlanCommand(),
       targetMetrics,
     }),
     KpiValidationError,
@@ -2934,7 +2988,7 @@ test("KPI V2 controller rejects unknown create payload keys", async () => {
 
   await assert.rejects(async () => {
     const req = {
-      body: { ...talentPlanCommand(), unexpected: true },
+      body: { ...groupPlanCommand(), unexpected: true },
       params: {},
     } as Request;
     bindCommand(req, "KPI_PLAN_CREATE");
