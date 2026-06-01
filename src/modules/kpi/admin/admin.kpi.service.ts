@@ -17,7 +17,10 @@ import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import { ReferenceSummary } from "@modules/reference-summary";
 import { KPI_PLAN_CODE_POLICY } from "@modules/kpi/domain/kpi-code-policy";
-import { getKpiMetricCatalogEntry } from "@modules/kpi/domain/kpi-metric-catalog";
+import {
+  getKpiMetricCatalogEntry,
+  KPI_METRIC_CATALOG,
+} from "@modules/kpi/domain/kpi-metric-catalog";
 import { resolveManagedTalentGroupIds } from "@modules/kpi/domain/managed-group-scope";
 import {
   KpiConflictError,
@@ -57,6 +60,11 @@ import {
   KpiActualCorrection,
   KpiActualEntry,
   KpiActualPolicySnapshot,
+  KpiActualWorkspaceActionHints,
+  KpiActualWorkspaceMemberSummary,
+  KpiActualWorkspaceMetricSummary,
+  KpiActualWorkspacePlanDetail,
+  KpiActualWorkspacePlanSummary,
   KpiMetricCode,
   KpiPlan,
   KpiPlanDetailView,
@@ -74,9 +82,12 @@ import {
   CreateKpiActualCommand,
   FinalizeKpiPlanCommand,
   GetKpiPlanDetailQuery,
+  GetKpiActualWorkspacePlanDetailQuery,
   GetKpiActualDailyGridQuery,
   GetKpiProgressQuery,
   ListKpiActualCorrectionsQuery,
+  ListKpiActualWorkspacePlansQuery,
+  ListKpiActualWorkspacePlansResult,
   GetMyKpiProgressQuery,
   KpiActualCorrectionResult,
   KpiActualMutationResult,
@@ -168,6 +179,11 @@ interface NormalizedEmploymentAllocationInput {
   readonly allocationEndDate: string | null;
   readonly targetMetrics: readonly KpiAllocationTargetMetric[];
   readonly note: string | null;
+}
+
+interface KpiActualWorkspaceAggregate {
+  readonly summary: KpiActualWorkspacePlanSummary;
+  readonly members: readonly KpiActualWorkspaceMemberSummary[];
 }
 
 export class KpiAdminService {
@@ -300,6 +316,48 @@ export class KpiAdminService {
     }
 
     return this.listManagedGroupKpiPlans(actor, input);
+  }
+
+  async listKpiActualWorkspacePlans(
+    actor: Actor,
+    query: ListKpiActualWorkspacePlansQuery,
+  ): Promise<ListKpiActualWorkspacePlansResult> {
+    this.assertContextPermission(actor, Permission.KPI_READ_PROGRESS);
+    const input = this.toListActualWorkspacePlansInput(query);
+    if (
+      input.groupId !== undefined &&
+      input.subjectId !== undefined &&
+      input.groupId !== input.subjectId
+    ) {
+      return { items: [] };
+    }
+
+    const plans = this.hasKpiGlobalScope(actor)
+      ? await this.repository.listPlans(input)
+      : await this.listManagedGroupActualWorkspacePlans(actor, input);
+    const aggregates = await this.buildActualWorkspaceAggregates(actor, plans);
+    return { items: aggregates.map((aggregate) => aggregate.summary) };
+  }
+
+  async getKpiActualWorkspacePlanDetail(
+    actor: Actor,
+    query: GetKpiActualWorkspacePlanDetailQuery,
+  ): Promise<KpiActualWorkspacePlanDetail> {
+    this.assertContextPermission(actor, Permission.KPI_READ_PROGRESS);
+    const plan = await this.requirePlan(query.kpiPlanId);
+    if (plan.subjectType !== "TALENT_GROUP") {
+      throw new KpiPermissionScopeError(
+        "KPI actual workspace supports only TALENT_GROUP plans",
+      );
+    }
+    if (!this.hasKpiGlobalScope(actor)) {
+      await this.assertActorCanReadManagedGroupProgress(actor, plan);
+    }
+    const [aggregate] = await this.buildActualWorkspaceAggregates(actor, [plan]);
+    if (!aggregate) {
+      throw new KpiNotFoundError(plan.id);
+    }
+    return { ...aggregate.summary, members: aggregate.members };
   }
 
   async getKpiPlanDetail(
@@ -2043,6 +2101,133 @@ export class KpiAdminService {
     return PermissionGuard.hasKpiScopeGrant(actor, "self");
   }
 
+  private toListActualWorkspacePlansInput(
+    query: ListKpiActualWorkspacePlansQuery,
+  ): ListKpiPlansInput {
+    return {
+      subjectType: "TALENT_GROUP",
+      subjectId: normalizeOptionalText(query.subjectId),
+      groupId: normalizeOptionalText(query.groupId),
+      periodMonth: query.periodMonth
+        ? normalizePeriodMonth(query.periodMonth)
+        : undefined,
+      search: normalizeOptionalSearch(query.search),
+      limit: normalizeLimit(query.limit),
+      sortBy: query.sortBy
+        ? normalizeActualWorkspaceSortBy(query.sortBy)
+        : undefined,
+      sortDirection: query.sortDirection
+        ? normalizeSortDirection(query.sortDirection)
+        : undefined,
+    };
+  }
+
+  private async listManagedGroupActualWorkspacePlans(
+    actor: Actor,
+    input: ListKpiPlansInput,
+  ): Promise<readonly KpiPlan[]> {
+    if (
+      actor.context !== "ADMIN" ||
+      (actor.type !== "admin" && actor.type !== "staff")
+    ) {
+      throw new KpiPermissionScopeError(
+        "KPI actual workspace requires ADMIN manager authority",
+      );
+    }
+    if (!this.hasKpiManagedGroupScope(actor)) {
+      throw new KpiPermissionScopeError(
+        "KPI actual workspace requires kpi.global or kpi.managedGroup scope",
+      );
+    }
+
+    const managedGroupIds = await this.resolveManagedTalentGroupIds(actor);
+    const requestedGroupId = input.groupId ?? input.subjectId;
+    const candidateGroupIds =
+      requestedGroupId === undefined ? managedGroupIds : [requestedGroupId];
+    if (
+      candidateGroupIds.some((groupId) => !managedGroupIds.includes(groupId))
+    ) {
+      return [];
+    }
+
+    const perGroupResults = await Promise.all(
+      candidateGroupIds.map((groupId) =>
+        this.repository.listPlans({
+          ...input,
+          subjectType: "TALENT_GROUP",
+          subjectId: undefined,
+          groupId,
+          status: "PUBLISHED",
+        }),
+      ),
+    );
+    const itemsById = new Map<string, KpiPlan>();
+    for (const item of perGroupResults.flat()) {
+      itemsById.set(item.id, item);
+    }
+    return Array.from(itemsById.values())
+      .sort((left, right) => compareKpiPlanListItems(left, right, input))
+      .slice(0, input.limit);
+  }
+
+  private async buildActualWorkspaceAggregates(
+    actor: Actor,
+    plans: readonly KpiPlan[],
+  ): Promise<readonly KpiActualWorkspaceAggregate[]> {
+    if (plans.length === 0) {
+      return [];
+    }
+    const planIds = plans.map((plan) => plan.id);
+    const [targetMetrics, allocations, entries, subjectRefs] =
+      await Promise.all([
+        this.repository.listTargetMetricsByPlanIds(planIds),
+        this.repository.listAllocationsByPlanIds(planIds),
+        this.actualRepository.listEntriesByPlanIds(planIds),
+        this.subjectReadonlyAccess.listSubjectRefs(
+          plans.map((plan) => ({
+            subjectType: plan.subjectType,
+            subjectId: plan.subjectId,
+          })),
+        ),
+      ]);
+    const actionHintsByPlanId = new Map(
+      plans.map((plan) => [
+        plan.id,
+        this.actualWorkspaceActionHints(actor, plan),
+      ]),
+    );
+
+    return plans.map((plan) =>
+      buildActualWorkspaceAggregate({
+        plan,
+        targetMetrics: targetMetrics.filter(
+          (metric) => metric.kpiPlanId === plan.id,
+        ),
+        allocations: allocations.filter(
+          (allocation) => allocation.kpiPlanId === plan.id,
+        ),
+        entries: entries.filter((entry) => entry.kpiPlanId === plan.id),
+        subjectRef: subjectRefs.get(kpiSubjectRefKey(plan)) ?? null,
+        actionHints:
+          actionHintsByPlanId.get(plan.id) ??
+          createNoActualWorkspaceActionHints(),
+        now: this.clock(),
+      }),
+    );
+  }
+
+  private actualWorkspaceActionHints(
+    actor: Actor,
+    plan: KpiPlan,
+  ): KpiActualWorkspaceActionHints {
+    return {
+      canReadActualGrid: true,
+      canEnterActual:
+        plan.status === "PUBLISHED" &&
+        actor.permissions.includes(Permission.KPI_ENTER_ACTUAL),
+    };
+  }
+
   private toListPlansInput(query: ListKpiPlansQuery): ListKpiPlansInput {
     return {
       subjectType: query.subjectType
@@ -3080,6 +3265,259 @@ function currentMonthInDefaultTimezone(now: number): string {
   return `${year}-${month}`;
 }
 
+function buildActualWorkspaceAggregate(input: {
+  readonly plan: KpiPlan;
+  readonly targetMetrics: readonly KpiTargetMetric[];
+  readonly allocations: readonly KpiAllocation[];
+  readonly entries: readonly KpiActualEntry[];
+  readonly subjectRef: ReferenceSummary | null;
+  readonly actionHints: KpiActualWorkspaceActionHints;
+  readonly now: number;
+}): KpiActualWorkspaceAggregate {
+  const officialAllocations = input.allocations.filter(
+    (allocation) =>
+      isOfficialKpiAllocation(allocation) &&
+      allocation.groupId === input.plan.subjectId,
+  );
+  const officialAllocationsById = new Map(
+    officialAllocations.map((allocation) => [allocation.id, allocation]),
+  );
+  const actualByAllocationMetric = new Map<string, number>();
+  const entryCountByAllocationMetric = new Map<string, number>();
+
+  for (const entry of input.entries) {
+    const allocation = officialAllocationsById.get(entry.allocationId);
+    if (
+      !allocation ||
+      !isActualWorkspaceCatalogMetricCode(entry.metricCode) ||
+      entry.memberTalentId !== allocation.memberTalentId ||
+      !allocation.targetMetrics.some(
+        (metric) => metric.metricCode === entry.metricCode,
+      ) ||
+      !isActualEntryWithinPlanPeriod(input.plan, entry.actualDate)
+    ) {
+      continue;
+    }
+    const key = actualWorkspaceAllocationMetricKey(
+      allocation.id,
+      entry.metricCode,
+    );
+    actualByAllocationMetric.set(
+      key,
+      (actualByAllocationMetric.get(key) ?? 0) + entry.effectiveValue,
+    );
+    entryCountByAllocationMetric.set(
+      key,
+      (entryCountByAllocationMetric.get(key) ?? 0) + 1,
+    );
+  }
+
+  const periodDayCount = countLocalDaysInPlan(input.plan);
+  const members = officialAllocations.map((allocation) => {
+    const catalogTargetMetrics = allocation.targetMetrics.filter((metric) =>
+      isActualWorkspaceCatalogMetricCode(metric.metricCode),
+    );
+    const metricSummaries = catalogTargetMetrics
+      .map((metric) => {
+        const key = actualWorkspaceAllocationMetricKey(
+          allocation.id,
+          metric.metricCode,
+        );
+        const actualValue = actualByAllocationMetric.get(key) ?? 0;
+        return {
+          metricCode: metric.metricCode,
+          targetValue: metric.targetValue,
+          actualValue,
+          achievementPercent: calculateProgressPercent(
+            actualValue,
+            metric.targetValue,
+          ),
+        } satisfies KpiActualWorkspaceMetricSummary;
+      })
+      .sort(compareActualWorkspaceMetricSummary);
+    const revenue = metricSummaries.find(
+      (metric) => metric.metricCode === "REVENUE_VND",
+    );
+    const missingCount = catalogTargetMetrics.reduce((sum, metric) => {
+      const key = actualWorkspaceAllocationMetricKey(
+        allocation.id,
+        metric.metricCode,
+      );
+      return (
+        sum +
+        Math.max(periodDayCount - (entryCountByAllocationMetric.get(key) ?? 0), 0)
+      );
+    }, 0);
+
+    return {
+      allocationId: allocation.id,
+      allocationStatus: "PUBLISHED",
+      memberDisplayName: allocation.snapshotMemberDisplayName,
+      revenue: {
+        metricCode: "REVENUE_VND",
+        targetValue: revenue?.targetValue ?? 0,
+        actualValue: revenue?.actualValue ?? 0,
+        achievementPercent: revenue?.achievementPercent ?? null,
+      },
+      supportingMetrics: metricSummaries.filter(
+        (metric) => metric.metricCode !== "REVENUE_VND",
+      ),
+      missingSignal: createActualWorkspaceMissingSignal(missingCount),
+      actionHints: input.actionHints,
+    } satisfies KpiActualWorkspaceMemberSummary;
+  });
+
+  const groupTargets = new Map<KpiMetricCode, number>();
+  const groupActuals = new Map<KpiMetricCode, number>();
+  for (const allocation of officialAllocations) {
+    for (const metric of allocation.targetMetrics) {
+      if (!isActualWorkspaceCatalogMetricCode(metric.metricCode)) {
+        continue;
+      }
+      groupTargets.set(
+        metric.metricCode,
+        (groupTargets.get(metric.metricCode) ?? 0) + metric.targetValue,
+      );
+      const key = actualWorkspaceAllocationMetricKey(
+        allocation.id,
+        metric.metricCode,
+      );
+      groupActuals.set(
+        metric.metricCode,
+        (groupActuals.get(metric.metricCode) ?? 0) +
+          (actualByAllocationMetric.get(key) ?? 0),
+      );
+    }
+  }
+  const metricCodes = new Set([...groupTargets.keys(), ...groupActuals.keys()]);
+  const groupMetricSummaries = Array.from(metricCodes)
+    .map((metricCode) => {
+      const targetValue = groupTargets.get(metricCode) ?? 0;
+      const actualValue = groupActuals.get(metricCode) ?? 0;
+      return {
+        metricCode,
+        targetValue,
+        actualValue,
+        achievementPercent: calculateProgressPercent(actualValue, targetValue),
+      } satisfies KpiActualWorkspaceMetricSummary;
+    })
+    .sort(compareActualWorkspaceMetricSummary);
+  const revenue = groupMetricSummaries.find(
+    (metric) => metric.metricCode === "REVENUE_VND",
+  );
+  const operationalTargetValue = revenue?.targetValue ?? 0;
+  const planTargetValue =
+    input.targetMetrics.find((metric) => metric.metricCode === "REVENUE_VND")
+      ?.targetValue ?? null;
+  const publishedAllocationCount = input.allocations.filter(
+    isOfficialKpiAllocation,
+  ).length;
+  const totalAllocationCount = input.allocations.length;
+
+  return {
+    summary: {
+      planId: input.plan.id,
+      planCode: input.plan.planCode,
+      title: input.plan.title,
+      periodMonth: input.plan.periodMonth,
+      subjectType: "TALENT_GROUP",
+      subjectId: input.plan.subjectId,
+      subjectRef: input.subjectRef,
+      planStatus: input.plan.status,
+      revenue: {
+        metricCode: "REVENUE_VND",
+        operationalTargetValue,
+        planTargetValue,
+        actualValue: revenue?.actualValue ?? 0,
+        achievementPercent: revenue?.achievementPercent ?? null,
+        targetSource: "ALLOCATED",
+        targetMismatch:
+          planTargetValue !== null &&
+          !numbersEqual(planTargetValue, operationalTargetValue),
+      },
+      allocationCoverage: {
+        publishedAllocationCount,
+        totalAllocationCount,
+        isAllExistingAllocationsPublished:
+          totalAllocationCount > 0 &&
+          publishedAllocationCount === totalAllocationCount,
+      },
+      supportingMetrics: groupMetricSummaries.filter(
+        (metric) => metric.metricCode !== "REVENUE_VND",
+      ),
+      missingSignal: createActualWorkspaceMissingSignal(
+        members.reduce((sum, member) => sum + member.missingSignal.count, 0),
+      ),
+      closing: resolveActualWorkspaceClosing(input.plan, input.now),
+      actionHints: input.actionHints,
+    },
+    members,
+  };
+}
+
+function isActualWorkspaceCatalogMetricCode(
+  metricCode: string,
+): metricCode is KpiMetricCode {
+  return Object.prototype.hasOwnProperty.call(KPI_METRIC_CATALOG, metricCode);
+}
+
+function actualWorkspaceAllocationMetricKey(
+  allocationId: string,
+  metricCode: KpiMetricCode,
+): string {
+  return `${allocationId}:${metricCode}`;
+}
+
+function compareActualWorkspaceMetricSummary(
+  left: KpiActualWorkspaceMetricSummary,
+  right: KpiActualWorkspaceMetricSummary,
+): number {
+  return left.metricCode.localeCompare(right.metricCode);
+}
+
+function createActualWorkspaceMissingSignal(
+  count: number,
+): KpiActualWorkspacePlanSummary["missingSignal"] {
+  return {
+    count,
+    semantics: "CALENDAR_DAY_METRIC_SLOT_LIMITED",
+  };
+}
+
+function createNoActualWorkspaceActionHints(): KpiActualWorkspaceActionHints {
+  return { canReadActualGrid: false, canEnterActual: false };
+}
+
+function resolveActualWorkspaceClosing(
+  plan: KpiPlan,
+  now: number,
+): KpiActualWorkspacePlanSummary["closing"] {
+  if (now <= plan.periodEndAt) {
+    return { periodState: "CURRENT" };
+  }
+  const entryOpenUntil = localDateTimeToUtcMs(
+    lastLocalDateOfPeriod(plan.periodMonth),
+    DEFAULT_ACTUAL_ENTRY_LOCK_LOCAL_TIME,
+    1,
+  );
+  if (now <= entryOpenUntil) {
+    return { periodState: "CLOSING", entryOpenUntil };
+  }
+  return { periodState: "CLOSED" };
+}
+
+function isActualEntryWithinPlanPeriod(
+  plan: KpiPlan,
+  actualDate: string,
+): boolean {
+  try {
+    assertActualDateWithinPlan(plan, actualDate);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function compareKpiPlanListItems(
   left: KpiPlan,
   right: KpiPlan,
@@ -3212,6 +3650,18 @@ function normalizeSortBy(
     throw new KpiValidationError(`KPI sortBy is unsupported: ${text}`);
   }
   return text as "periodMonth" | "planCode" | "createdAt";
+}
+
+function normalizeActualWorkspaceSortBy(
+  value: unknown,
+): "periodMonth" | "planCode" {
+  const text = normalizeRequiredText(value, "sortBy");
+  if (text !== "periodMonth" && text !== "planCode") {
+    throw new KpiValidationError(
+      `KPI actual workspace sortBy is unsupported: ${text}`,
+    );
+  }
+  return text;
 }
 
 function normalizeSortDirection(value: unknown): "ASC" | "DESC" {

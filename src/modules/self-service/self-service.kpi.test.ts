@@ -838,6 +838,10 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     throw new Error("Not implemented");
   }
 
+  async listTargetMetricsByPlanIds(): Promise<readonly KpiTargetMetric[]> {
+    throw new Error("Not implemented");
+  }
+
   async insertAllocations(): Promise<readonly KpiAllocation[]> {
     throw new Error("Not implemented");
   }
@@ -847,6 +851,10 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
   }
 
   async listAllocationsByPlanId(): Promise<readonly KpiAllocation[]> {
+    throw new Error("Not implemented");
+  }
+
+  async listAllocationsByPlanIds(): Promise<readonly KpiAllocation[]> {
     throw new Error("Not implemented");
   }
 

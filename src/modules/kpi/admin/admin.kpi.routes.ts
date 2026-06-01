@@ -9,6 +9,16 @@ export function adminKpiRoutes(
 ): Router {
   const router = Router();
 
+  router.get(
+    "/actual-workspace/plans",
+    withCommand("KPI_ACTUAL_WORKSPACE_PLAN_LIST"),
+    queryController.execute,
+  );
+  router.get(
+    "/actual-workspace/plans/:kpiPlanId",
+    withCommand("KPI_ACTUAL_WORKSPACE_PLAN_GET_DETAIL"),
+    queryController.execute,
+  );
   router.get("/plans", withCommand("KPI_PLAN_LIST"), queryController.execute);
   router.get(
     "/allocations",

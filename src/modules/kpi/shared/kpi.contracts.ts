@@ -4,6 +4,8 @@ import {
   KpiActualCorrection,
   KpiActualDailyGridView,
   KpiActualEntry,
+  KpiActualWorkspacePlanDetail,
+  KpiActualWorkspacePlanSummary,
   KpiMetricCode,
   KpiPlanDetailView,
   KpiPlanListItemView,
@@ -159,6 +161,20 @@ export interface GetKpiPlanDetailQuery {
   readonly kpiPlanId: string;
 }
 
+export interface ListKpiActualWorkspacePlansQuery {
+  readonly periodMonth?: string;
+  readonly groupId?: string;
+  readonly subjectId?: string;
+  readonly search?: string;
+  readonly limit?: number | string;
+  readonly sortBy?: "periodMonth" | "planCode" | string;
+  readonly sortDirection?: KpiSortDirection | string;
+}
+
+export interface GetKpiActualWorkspacePlanDetailQuery {
+  readonly kpiPlanId: string;
+}
+
 export interface GetKpiProgressQuery {
   readonly kpiPlanId: string;
 }
@@ -207,6 +223,13 @@ export interface ListKpiActualCorrectionsResult {
 export interface ListKpiPlansResult {
   readonly items: readonly KpiPlanListItemView[];
 }
+
+export interface ListKpiActualWorkspacePlansResult {
+  readonly items: readonly KpiActualWorkspacePlanSummary[];
+}
+
+export type GetKpiActualWorkspacePlanDetailResult =
+  KpiActualWorkspacePlanDetail;
 
 export interface ListKpiAllocationsResult {
   readonly items: readonly KpiAllocation[];

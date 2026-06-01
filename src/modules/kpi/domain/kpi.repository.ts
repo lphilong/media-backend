@@ -134,6 +134,11 @@ export interface KpiPlanRepository {
     session?: ClientSession,
   ): Promise<readonly KpiTargetMetric[]>;
 
+  listTargetMetricsByPlanIds(
+    kpiPlanIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly KpiTargetMetric[]>;
+
   insertAllocations(
     allocations: readonly KpiAllocation[],
     session: ClientSession,
@@ -149,6 +154,11 @@ export interface KpiPlanRepository {
 
   listAllocationsByPlanId(
     kpiPlanId: string,
+    session?: ClientSession,
+  ): Promise<readonly KpiAllocation[]>;
+
+  listAllocationsByPlanIds(
+    kpiPlanIds: readonly string[],
     session?: ClientSession,
   ): Promise<readonly KpiAllocation[]>;
 

@@ -8,6 +8,8 @@ import {
   KpiActualCorrection,
   KpiActualDailyGridView,
   KpiActualEntry,
+  KpiActualWorkspacePlanDetail,
+  KpiActualWorkspacePlanSummary,
   KpiPlanDetailView,
   KpiPlanListItemView,
   KpiPlanMutationView,
@@ -502,5 +504,53 @@ export const KpiManagedMemberPickerExposure = Object.freeze({
     items: readonly KpiManagedMemberPickerItem[],
   ): readonly PlainObject[] {
     return items.map((item) => this.expose(item));
+  },
+});
+
+export const KpiActualWorkspaceExposure = Object.freeze({
+  exposeSummary(input: KpiActualWorkspacePlanSummary): PlainObject {
+    return toPlainObject(
+      {
+        planId: input.planId,
+        planCode: input.planCode,
+        title: input.title,
+        periodMonth: input.periodMonth,
+        subjectType: input.subjectType,
+        subjectId: input.subjectId,
+        subjectRef: input.subjectRef,
+        planStatus: input.planStatus,
+        revenue: input.revenue,
+        allocationCoverage: input.allocationCoverage,
+        supportingMetrics: input.supportingMetrics,
+        missingSignal: input.missingSignal,
+        closing: input.closing,
+        actionHints: input.actionHints,
+      },
+      "KpiActualWorkspacePlanSummary exposure",
+    );
+  },
+
+  exposeMany(
+    items: readonly KpiActualWorkspacePlanSummary[],
+  ): readonly PlainObject[] {
+    return items.map((item) => this.exposeSummary(item));
+  },
+
+  exposeDetail(input: KpiActualWorkspacePlanDetail): PlainObject {
+    return toPlainObject(
+      {
+        ...this.exposeSummary(input),
+        members: input.members.map((member) => ({
+          allocationId: member.allocationId,
+          allocationStatus: member.allocationStatus,
+          memberDisplayName: member.memberDisplayName,
+          revenue: member.revenue,
+          supportingMetrics: member.supportingMetrics,
+          missingSignal: member.missingSignal,
+          actionHints: member.actionHints,
+        })),
+      },
+      "KpiActualWorkspacePlanDetail exposure",
+    );
   },
 });

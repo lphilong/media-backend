@@ -9,14 +9,17 @@ import { SystemInvariantError } from "@core/error/system-error";
 import { KpiValidationError } from "@modules/kpi/domain/kpi.errors";
 import {
   GetKpiPlanDetailQuery,
+  GetKpiActualWorkspacePlanDetailQuery,
   GetKpiActualDailyGridQuery,
   GetKpiProgressQuery,
   ListKpiActualCorrectionsQuery,
+  ListKpiActualWorkspacePlansQuery,
   GetMyKpiProgressQuery,
   ListKpiAllocationsQuery,
   ListKpiManagedMembersQuery,
   ListKpiPlansQuery,
 } from "@modules/kpi/shared/kpi.contracts";
+import { KpiActualWorkspaceExposure } from "@modules/kpi/shared/kpi.exposure";
 import {
   KPI_ADMIN_ACTUAL_GRID_PRESENTER_KEY,
   KPI_ADMIN_ALLOCATION_LIST_PRESENTER_KEY,
@@ -29,6 +32,8 @@ import {
 import { KpiAdminService } from "./admin.kpi.service";
 
 type KpiQueryCommand =
+  | "KPI_ACTUAL_WORKSPACE_PLAN_LIST"
+  | "KPI_ACTUAL_WORKSPACE_PLAN_GET_DETAIL"
   | "KPI_PLAN_LIST"
   | "KPI_ALLOCATION_LIST"
   | "KPI_PLAN_GET_DETAIL"
@@ -50,6 +55,15 @@ const LIST_KPI_PLANS_QUERY_FIELDS = [
   "sortBy",
   "sortDirection",
 ] as const;
+const LIST_KPI_ACTUAL_WORKSPACE_PLANS_QUERY_FIELDS = [
+  "periodMonth",
+  "groupId",
+  "subjectId",
+  "search",
+  "limit",
+  "sortBy",
+  "sortDirection",
+] as const;
 const LIST_KPI_ALLOCATIONS_QUERY_FIELDS = [
   "status",
   "kpiPlanId",
@@ -58,6 +72,8 @@ const LIST_KPI_ALLOCATIONS_QUERY_FIELDS = [
 ] as const;
 
 const GET_KPI_PLAN_DETAIL_QUERY_FIELDS: readonly string[] = Object.freeze([]);
+const GET_KPI_ACTUAL_WORKSPACE_PLAN_DETAIL_QUERY_FIELDS: readonly string[] =
+  Object.freeze([]);
 const GET_KPI_ACTUAL_DAILY_GRID_QUERY_FIELDS = ["actualDate"] as const;
 const LIST_KPI_ACTUAL_CORRECTIONS_QUERY_FIELDS: readonly string[] =
   Object.freeze([]);
@@ -84,6 +100,16 @@ export class KpiAdminQueryController extends SecureController {
     }
 
     switch (command) {
+      case "KPI_ACTUAL_WORKSPACE_PLAN_LIST":
+        return this.service.listKpiActualWorkspacePlans(
+          actor,
+          parseListKpiActualWorkspacePlansQuery(req),
+        );
+      case "KPI_ACTUAL_WORKSPACE_PLAN_GET_DETAIL":
+        return this.service.getKpiActualWorkspacePlanDetail(
+          actor,
+          parseGetKpiActualWorkspacePlanDetailQuery(req),
+        );
       case "KPI_PLAN_LIST":
         return this.service.listKpiPlans(actor, parseListKpiPlansQuery(req));
       case "KPI_ALLOCATION_LIST":
@@ -142,6 +168,21 @@ export class KpiAdminQueryController extends SecureController {
         "KPI query command missing",
       );
     }
+    if (command === "KPI_ACTUAL_WORKSPACE_PLAN_LIST") {
+      const input = result as Awaited<
+        ReturnType<KpiAdminService["listKpiActualWorkspacePlans"]>
+      >;
+      return { data: KpiActualWorkspaceExposure.exposeMany(input.items) };
+    }
+    if (command === "KPI_ACTUAL_WORKSPACE_PLAN_GET_DETAIL") {
+      return {
+        data: KpiActualWorkspaceExposure.exposeDetail(
+          result as Awaited<
+            ReturnType<KpiAdminService["getKpiActualWorkspacePlanDetail"]>
+          >,
+        ),
+      };
+    }
     const registry = getPresenterRegistryFromRequest(req);
     const key = resolvePresenterKey(command);
     return registry
@@ -192,6 +233,25 @@ function parseListKpiPlansQuery(req: Request): ListKpiPlansQuery {
   };
 }
 
+function parseListKpiActualWorkspacePlansQuery(
+  req: Request,
+): ListKpiActualWorkspacePlansQuery {
+  assertNoUnexpectedFields(
+    req.query as Record<string, unknown>,
+    LIST_KPI_ACTUAL_WORKSPACE_PLANS_QUERY_FIELDS,
+    "listKpiActualWorkspacePlans",
+  );
+  return {
+    periodMonth: req.query.periodMonth as string | undefined,
+    groupId: req.query.groupId as string | undefined,
+    subjectId: req.query.subjectId as string | undefined,
+    search: req.query.search as string | undefined,
+    limit: req.query.limit as string | undefined,
+    sortBy: req.query.sortBy as string | undefined,
+    sortDirection: req.query.sortDirection as string | undefined,
+  };
+}
+
 function parseListKpiAllocationsQuery(req: Request): ListKpiAllocationsQuery {
   assertNoUnexpectedFields(
     req.query as Record<string, unknown>,
@@ -211,6 +271,17 @@ function parseGetKpiPlanDetailQuery(req: Request): GetKpiPlanDetailQuery {
     req.query as Record<string, unknown>,
     GET_KPI_PLAN_DETAIL_QUERY_FIELDS,
     "getKpiPlanDetail",
+  );
+  return { kpiPlanId: req.params.kpiPlanId };
+}
+
+function parseGetKpiActualWorkspacePlanDetailQuery(
+  req: Request,
+): GetKpiActualWorkspacePlanDetailQuery {
+  assertNoUnexpectedFields(
+    req.query as Record<string, unknown>,
+    GET_KPI_ACTUAL_WORKSPACE_PLAN_DETAIL_QUERY_FIELDS,
+    "getKpiActualWorkspacePlanDetail",
   );
   return { kpiPlanId: req.params.kpiPlanId };
 }

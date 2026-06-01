@@ -331,6 +331,23 @@ export class NativeMongoKpiPlanRepository
     return docs.map(toKpiTargetMetric);
   }
 
+  async listTargetMetricsByPlanIds(
+    kpiPlanIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly KpiTargetMetric[]> {
+    const ids = uniqueNonEmpty(kpiPlanIds);
+
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const docs = await this.targetMetricCollection
+      .find({ kpiPlanId: { $in: ids } }, this.withSession(session))
+      .sort({ kpiPlanId: 1, metricCode: 1, _id: 1 })
+      .toArray();
+    return docs.map(toKpiTargetMetric);
+  }
+
   async insertAllocations(
     allocations: readonly KpiAllocation[],
     session: ClientSession,
@@ -376,6 +393,23 @@ export class NativeMongoKpiPlanRepository
     const docs = await this.allocationCollection
       .find({ kpiPlanId }, this.withSession(session))
       .sort({ memberTalentId: 1, _id: 1 })
+      .toArray();
+    return docs.map(toKpiAllocation);
+  }
+
+  async listAllocationsByPlanIds(
+    kpiPlanIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly KpiAllocation[]> {
+    const ids = uniqueNonEmpty(kpiPlanIds);
+
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const docs = await this.allocationCollection
+      .find({ kpiPlanId: { $in: ids } }, this.withSession(session))
+      .sort({ kpiPlanId: 1, memberTalentId: 1, _id: 1 })
       .toArray();
     return docs.map(toKpiAllocation);
   }

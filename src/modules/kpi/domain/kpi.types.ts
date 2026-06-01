@@ -383,4 +383,79 @@ export interface KpiPlanListItemView extends KpiPlan {
   readonly allocationWorkflowSummary: KpiAllocationWorkflowSummary;
 }
 
+export interface KpiActualWorkspaceMetricSummary {
+  readonly metricCode: KpiMetricCode;
+  readonly targetValue: number;
+  readonly actualValue: number;
+  readonly achievementPercent: number | null;
+}
+
+export interface KpiActualWorkspaceRevenueSummary {
+  readonly metricCode: "REVENUE_VND";
+  readonly operationalTargetValue: number;
+  readonly planTargetValue: number | null;
+  readonly actualValue: number;
+  readonly achievementPercent: number | null;
+  readonly targetSource: "ALLOCATED";
+  readonly targetMismatch: boolean;
+}
+
+export interface KpiActualWorkspaceAllocationCoverage {
+  readonly publishedAllocationCount: number;
+  readonly totalAllocationCount: number;
+  readonly isAllExistingAllocationsPublished: boolean;
+}
+
+export interface KpiActualWorkspaceMissingSignal {
+  readonly count: number;
+  readonly semantics: "CALENDAR_DAY_METRIC_SLOT_LIMITED";
+}
+
+export interface KpiActualWorkspaceClosing {
+  readonly periodState: "CURRENT" | "CLOSING" | "CLOSED";
+  readonly entryOpenUntil?: number;
+}
+
+export interface KpiActualWorkspaceActionHints {
+  readonly canReadActualGrid: boolean;
+  readonly canEnterActual: boolean;
+}
+
+export interface KpiActualWorkspacePlanSummary {
+  readonly planId: string;
+  readonly planCode: string;
+  readonly title: string;
+  readonly periodMonth: string;
+  readonly subjectType: "TALENT_GROUP";
+  readonly subjectId: string;
+  readonly subjectRef: ReferenceSummary | null;
+  readonly planStatus: KpiPlanStatus;
+  readonly revenue: KpiActualWorkspaceRevenueSummary;
+  readonly allocationCoverage: KpiActualWorkspaceAllocationCoverage;
+  readonly supportingMetrics: readonly KpiActualWorkspaceMetricSummary[];
+  readonly missingSignal: KpiActualWorkspaceMissingSignal;
+  readonly closing: KpiActualWorkspaceClosing;
+  readonly actionHints: KpiActualWorkspaceActionHints;
+}
+
+export interface KpiActualWorkspaceMemberSummary {
+  readonly allocationId: string;
+  readonly allocationStatus: "PUBLISHED";
+  readonly memberDisplayName: string | null;
+  readonly revenue: Omit<
+    KpiActualWorkspaceRevenueSummary,
+    "operationalTargetValue" | "planTargetValue" | "targetSource" | "targetMismatch"
+  > & {
+    readonly targetValue: number;
+  };
+  readonly supportingMetrics: readonly KpiActualWorkspaceMetricSummary[];
+  readonly missingSignal: KpiActualWorkspaceMissingSignal;
+  readonly actionHints: KpiActualWorkspaceActionHints;
+}
+
+export interface KpiActualWorkspacePlanDetail
+  extends KpiActualWorkspacePlanSummary {
+  readonly members: readonly KpiActualWorkspaceMemberSummary[];
+}
+
 export interface KpiPlanMutationView extends KpiPlanDetailView {}

@@ -10,8 +10,12 @@ import { BusinessCodeSequenceRepository } from "@core/business-code/business-cod
 import { Permission } from "@core/permission/permission.enum";
 import { NativeMongoKpiSubjectReadonlyAccess } from "@infra/mongo/kpi/kpi.readonly-access";
 import { KpiAdminController } from "@modules/kpi/admin/admin.kpi.controller";
+import { KpiAdminQueryController } from "@modules/kpi/admin/admin.kpi.query.controller";
 import { KpiAdminService } from "@modules/kpi/admin/admin.kpi.service";
-import { KpiPlanListExposure } from "@modules/kpi/shared/kpi.exposure";
+import {
+  KpiActualWorkspaceExposure,
+  KpiPlanListExposure,
+} from "@modules/kpi/shared/kpi.exposure";
 import {
   KpiInvalidAllocationError,
   KpiNotFoundError,
@@ -3707,6 +3711,331 @@ for (const subjectType of ["EMPLOYMENT_PROFILE", "ORG_UNIT"] as const) {
   });
 }
 
+test("KPI actual workspace exposes correction-aware revenue, coverage, limited missing signal, and member detail", async () => {
+  const { service, repository, actualRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const published = await createPublishedGroupPlan(service);
+  const [first, second] = published.allocations as readonly [
+    KpiAllocation,
+    KpiAllocation,
+  ];
+  const created = await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: first.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 80,
+  });
+  await service.correctKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    actualEntryId: created.actualEntry.id,
+    correctedValue: 90,
+    reason: "approved correction",
+  });
+  await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: second.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 100,
+  });
+  await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: first.id,
+    metricCode: "ONBOARDED_TALENT_COUNT",
+    actualDate: "05-05-2026",
+    actualValue: 1,
+  });
+
+  const persistedUnsupportedMetricCode =
+    "LEGACY_UNSUPPORTED_METRIC" as unknown as KpiMetricCode;
+  const firstIndex = repository.allocations.findIndex(
+    (allocation) => allocation.id === first.id,
+  );
+  assert.notEqual(firstIndex, -1);
+  repository.allocations[firstIndex] = {
+    ...repository.allocations[firstIndex]!,
+    targetMetrics: [
+      { metricCode: "REVENUE_VND", targetValue: 90 },
+      { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
+      { metricCode: persistedUnsupportedMetricCode, targetValue: 7 },
+    ],
+  };
+  repository.allocations.push({
+    ...first,
+    id: "draft-coverage-gap",
+    allocationStatus: "DRAFT",
+  });
+  actualRepository.entries.push(
+    {
+      ...created.actualEntry,
+      id: "draft-actual-ignored",
+      allocationId: "draft-coverage-gap",
+      effectiveValue: 999,
+    },
+    {
+      ...created.actualEntry,
+      id: "out-of-period-actual-ignored",
+      actualDate: "01-06-2026",
+      effectiveValue: 999,
+    },
+    {
+      ...created.actualEntry,
+      id: "unsupported-metric-actual-ignored",
+      metricCode: persistedUnsupportedMetricCode,
+      actualValue: 777,
+      effectiveValue: 777,
+    },
+  );
+
+  const result = await service.listKpiActualWorkspacePlans(createActor(), {
+    periodMonth: "2026-05",
+    groupId: "group-1",
+    search: "may group",
+    sortBy: "planCode",
+    sortDirection: "ASC",
+  });
+  const item = result.items[0];
+  assert.ok(item);
+  assert.equal(item.planId, published.id);
+  assert.deepEqual(item.revenue, {
+    metricCode: "REVENUE_VND",
+    operationalTargetValue: 290,
+    planTargetValue: 300,
+    actualValue: 190,
+    achievementPercent: (190 / 290) * 100,
+    targetSource: "ALLOCATED",
+    targetMismatch: true,
+  });
+  assert.deepEqual(item.allocationCoverage, {
+    publishedAllocationCount: 2,
+    totalAllocationCount: 3,
+    isAllExistingAllocationsPublished: false,
+  });
+  assert.deepEqual(item.supportingMetrics, [
+    {
+      metricCode: "ONBOARDED_TALENT_COUNT",
+      targetValue: 3,
+      actualValue: 1,
+      achievementPercent: (1 / 3) * 100,
+    },
+  ]);
+  assert.deepEqual(item.missingSignal, {
+    count: 121,
+    semantics: "CALENDAR_DAY_METRIC_SLOT_LIMITED",
+  });
+  assert.equal(item.actionHints.canReadActualGrid, true);
+  assert.equal(item.actionHints.canEnterActual, true);
+
+  const detail = await service.getKpiActualWorkspacePlanDetail(createActor(), {
+    kpiPlanId: published.id,
+  });
+  assert.equal(detail.members.length, 2);
+  assert.equal(detail.members[0]?.allocationStatus, "PUBLISHED");
+  assert.equal(detail.members[0]?.allocationId, first.id);
+  assert.equal(
+    detail.members[0]?.memberDisplayName,
+    first.snapshotMemberDisplayName,
+  );
+  assert.equal("memberTalentId" in detail.members[0]!, false);
+  assert.equal("memberEmploymentProfileId" in detail.members[0]!, false);
+  assert.equal(detail.members[0]?.revenue.actualValue, 90);
+  assert.equal(detail.members[0]?.revenue.achievementPercent, 100);
+  assert.deepEqual(detail.members[0]?.supportingMetrics, [
+    {
+      metricCode: "ONBOARDED_TALENT_COUNT",
+      targetValue: 1,
+      actualValue: 1,
+      achievementPercent: 100,
+    },
+  ]);
+  assert.equal(
+    JSON.stringify(detail).includes(persistedUnsupportedMetricCode),
+    false,
+  );
+  const exposedDetail = KpiActualWorkspaceExposure.exposeDetail(detail);
+  const exposedMember = (
+    exposedDetail.members as readonly Record<string, unknown>[]
+  )[0];
+  assert.ok(exposedMember);
+  assert.equal(exposedMember.allocationId, first.id);
+  assert.equal(exposedMember.memberDisplayName, first.snapshotMemberDisplayName);
+  assert.equal("memberTalentId" in exposedMember, false);
+  assert.equal("memberEmploymentProfileId" in exposedMember, false);
+  assert.equal(
+    JSON.stringify(exposedDetail).includes("overdueCount"),
+    false,
+  );
+});
+
+test("KPI actual workspace keeps zero-allocation group plan visible as coverage gap", async () => {
+  const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
+  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const published = await service.publishKpiPlan(createActor(), {
+    kpiPlanId: created.id,
+  });
+
+  const result = await service.listKpiActualWorkspacePlans(createActor(), {});
+  const item = result.items.find((candidate) => candidate.planId === published.id);
+  assert.ok(item);
+  assert.deepEqual(item.revenue, {
+    metricCode: "REVENUE_VND",
+    operationalTargetValue: 0,
+    planTargetValue: 300,
+    actualValue: 0,
+    achievementPercent: null,
+    targetSource: "ALLOCATED",
+    targetMismatch: true,
+  });
+  assert.deepEqual(item.allocationCoverage, {
+    publishedAllocationCount: 0,
+    totalAllocationCount: 0,
+    isAllExistingAllocationsPublished: false,
+  });
+});
+
+test("KPI actual workspace supports base plan search and periodMonth/planCode sorting", async () => {
+  const { service } = createHarness();
+  const first = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const second = await service.createKpiPlan(createActor(), {
+    ...groupPlanCommand(),
+    title: "May group KPI second",
+  });
+
+  const result = await service.listKpiActualWorkspacePlans(createActor(), {
+    periodMonth: "2026-05",
+    subjectId: "group-1",
+    search: "may group kpi",
+    sortBy: "planCode",
+    sortDirection: "DESC",
+  });
+  assert.deepEqual(
+    result.items.map((item) => item.planId),
+    [second.id, first.id],
+  );
+  await assert.rejects(
+    service.listKpiActualWorkspacePlans(createActor(), {
+      sortBy: "achievementPercent",
+    }),
+    KpiValidationError,
+  );
+});
+
+test("KPI managed actual workspace prevents hidden group summary and detail leakage", async () => {
+  const { service, repository, actualRepository, managerRepository } =
+    createHarness(() => MAY_5_2026_NOON_HCM);
+  const managed = await createPublishedGroupPlan(service);
+  const templateAllocation = repository.allocations.find(
+    (allocation) => allocation.kpiPlanId === managed.id,
+  );
+  assert.ok(templateAllocation);
+  const hiddenPlan: KpiPlan = {
+    ...managed,
+    id: "hidden-workspace-plan",
+    planCode: "KPI-HIDDEN-WORKSPACE",
+    subjectId: "group-2",
+  };
+  repository.plans.push(hiddenPlan);
+  repository.allocations.push({
+    ...templateAllocation,
+    id: "hidden-workspace-allocation",
+    kpiPlanId: hiddenPlan.id,
+    groupId: hiddenPlan.subjectId,
+    targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 999 }],
+  });
+  repository.allocations.push({
+    ...templateAllocation,
+    id: "cross-group-workspace-allocation",
+    kpiPlanId: managed.id,
+    groupId: hiddenPlan.subjectId,
+    snapshotMemberDisplayName: "hidden cross-group member",
+  });
+  actualRepository.entries.push({
+    id: "hidden-workspace-actual",
+    kpiPlanId: hiddenPlan.id,
+    allocationId: "hidden-workspace-allocation",
+    memberTalentId: templateAllocation.memberTalentId,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 999,
+    effectiveValue: 999,
+    editCount: 0,
+    correctionCount: 0,
+    latestCorrectionId: null,
+    createdAt: MAY_5_2026_NOON_HCM,
+    createdByActorId: "hidden",
+    updatedAt: MAY_5_2026_NOON_HCM,
+    updatedByActorId: "hidden",
+    lastEditedAt: null,
+    lastEditedByActorId: null,
+  });
+  seedManagerAssignment(managerRepository, "group-1");
+
+  const result = await service.listKpiActualWorkspacePlans(
+    createProgressReadOnlyBackofficeTeamManagerActor(),
+    {},
+  );
+  assert.deepEqual(
+    result.items.map((item) => item.planId),
+    [managed.id],
+  );
+  assert.equal(JSON.stringify(result).includes("999"), false);
+  const detail = await service.getKpiActualWorkspacePlanDetail(
+    createProgressReadOnlyBackofficeTeamManagerActor(),
+    { kpiPlanId: managed.id },
+  );
+  assert.equal(
+    JSON.stringify(detail).includes("cross-group-workspace-allocation"),
+    false,
+  );
+  assert.equal(
+    JSON.stringify(detail).includes("hidden cross-group member"),
+    false,
+  );
+  await assert.rejects(
+    service.getKpiActualWorkspacePlanDetail(
+      createProgressReadOnlyBackofficeTeamManagerActor(),
+      { kpiPlanId: hiddenPlan.id },
+    ),
+    KpiPermissionScopeError,
+  );
+});
+
+test("KPI actual workspace query controller rejects unknown list fields and reads visible detail", async () => {
+  const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
+  const published = await createPublishedGroupPlan(service);
+  const controller = new KpiAdminQueryController(service) as unknown as {
+    handle(req: Request, actor: Actor, context: "ADMIN"): Promise<unknown>;
+  };
+
+  await assert.rejects(async () => {
+    const req = {
+      query: { unsupported: "true" },
+      params: {},
+    } as unknown as Request;
+    bindCommand(req, "KPI_ACTUAL_WORKSPACE_PLAN_LIST");
+    await controller.handle(req, createActor(), "ADMIN");
+  }, KpiValidationError);
+
+  const req = {
+    query: {},
+    params: { kpiPlanId: published.id },
+  } as unknown as Request;
+  bindCommand(req, "KPI_ACTUAL_WORKSPACE_PLAN_GET_DETAIL");
+  const detail = await controller.handle(req, createActor(), "ADMIN");
+  assert.equal(
+    (detail as { readonly planId: string }).planId,
+    published.id,
+  );
+  await assert.rejects(
+    service.getKpiActualWorkspacePlanDetail(createActor(), {
+      kpiPlanId: "missing-workspace-plan",
+    }),
+    KpiNotFoundError,
+  );
+});
+
 test("KPI V2 controller rejects unknown create payload keys", async () => {
   const { service } = createHarness();
   const controller = new KpiAdminController(service) as unknown as {
@@ -4204,6 +4533,13 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     return this.targets.filter((metric) => metric.kpiPlanId === kpiPlanId);
   }
 
+  async listTargetMetricsByPlanIds(
+    kpiPlanIds: readonly string[],
+  ): Promise<readonly KpiTargetMetric[]> {
+    const planIds = new Set(kpiPlanIds);
+    return this.targets.filter((metric) => planIds.has(metric.kpiPlanId));
+  }
+
   async insertAllocations(
     allocations: readonly KpiAllocation[],
   ): Promise<readonly KpiAllocation[]> {
@@ -4230,6 +4566,15 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     this.listAllocationsByPlanIdCallCount += 1;
     return this.allocations.filter(
       (allocation) => allocation.kpiPlanId === kpiPlanId,
+    );
+  }
+
+  async listAllocationsByPlanIds(
+    kpiPlanIds: readonly string[],
+  ): Promise<readonly KpiAllocation[]> {
+    const planIds = new Set(kpiPlanIds);
+    return this.allocations.filter((allocation) =>
+      planIds.has(allocation.kpiPlanId),
     );
   }
 
