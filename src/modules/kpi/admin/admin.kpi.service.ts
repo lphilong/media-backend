@@ -316,6 +316,11 @@ export class KpiAdminService {
     }
 
     const plan = await this.requirePlan(query.kpiPlanId);
+    if (plan.status !== "PUBLISHED") {
+      throw new KpiPermissionScopeError(
+        "KPI manager-scoped detail is supported only for PUBLISHED plans",
+      );
+    }
     if (plan.subjectType !== "TALENT_GROUP") {
       throw new KpiPermissionScopeError(
         "KPI manager-scoped detail is supported only for TALENT_GROUP plans",
@@ -1955,6 +1960,9 @@ export class KpiAdminService {
     if (input.subjectType && input.subjectType !== "TALENT_GROUP") {
       return { items: [] };
     }
+    if (input.status && input.status !== "PUBLISHED") {
+      return { items: [] };
+    }
 
     if (
       input.groupId !== undefined &&
@@ -1986,6 +1994,7 @@ export class KpiAdminService {
           subjectType: "TALENT_GROUP",
           subjectId: undefined,
           groupId,
+          status: "PUBLISHED",
         }),
       ),
     );

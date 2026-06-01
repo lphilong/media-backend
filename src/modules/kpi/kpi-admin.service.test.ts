@@ -1765,34 +1765,72 @@ test("KPI V2 manager cannot read progress for unmanaged talent group", async () 
 
 test("KPI V2 global list plans still works", async () => {
   const { service } = createHarness();
-  await service.createKpiPlan(createActor(), talentPlanCommand());
+  const draft = await service.createKpiPlan(createActor(), talentPlanCommand());
 
   const result = await service.listKpiPlans(createActor(), {});
+  const detail = await service.getKpiPlanDetail(createActor(), {
+    kpiPlanId: draft.id,
+  });
 
   assert.equal(result.items.length, 1);
+  assert.equal(result.items[0]?.status, "DRAFT");
+  assert.equal(detail.status, "DRAFT");
 });
 
-test("KPI V2 managedGroup list returns only managed talent-group plans", async () => {
+test("KPI V2 managedGroup list returns only published managed talent-group plans", async () => {
   const { service, repository, managerRepository } = createHarness(
     () => MAY_5_2026_NOON_HCM,
   );
   const managed = await createPublishedGroupPlan(service);
-  repository.plans.push({
-    ...managed,
-    id: "unmanaged-plan",
-    planCode: "KPI-202605-999999",
-    subjectId: "group-2",
-    createdAt: managed.createdAt + 1,
-    updatedAt: managed.updatedAt + 1,
-  });
+  repository.plans.push(
+    {
+      ...managed,
+      id: "managed-draft-plan",
+      planCode: "KPI-202605-999995",
+      status: "DRAFT",
+      publishedAt: null,
+      publishedByActorId: null,
+    },
+    {
+      ...managed,
+      id: "managed-finalized-plan",
+      planCode: "KPI-202605-999996",
+      status: "FINALIZED",
+    },
+    {
+      ...managed,
+      id: "managed-archived-plan",
+      planCode: "KPI-202605-999997",
+      status: "ARCHIVED",
+    },
+    {
+      ...managed,
+      id: "managed-talent-plan",
+      planCode: "KPI-202605-999998",
+      subjectType: "TALENT",
+      subjectId: "talent-1",
+    },
+    {
+      ...managed,
+      id: "unmanaged-plan",
+      planCode: "KPI-202605-999999",
+      subjectId: "group-2",
+      createdAt: managed.createdAt + 1,
+      updatedAt: managed.updatedAt + 1,
+    },
+  );
   seedManagerAssignment(managerRepository, "group-1");
 
   const result = await service.listKpiPlans(createManagerActor(), {});
+  const draftResult = await service.listKpiPlans(createManagerActor(), {
+    status: "DRAFT",
+  });
 
   assert.deepEqual(
     result.items.map((item) => item.id),
     [managed.id],
   );
+  assert.deepEqual(draftResult.items, []);
 });
 
 test("KPI V2 managedGroup list returns empty without active manager assignment", async () => {
@@ -1840,6 +1878,53 @@ test("KPI V2 managedGroup detail denies unmanaged plan", async () => {
     }),
     KpiPermissionScopeError,
   );
+});
+
+test("KPI V2 managedGroup detail denies non-published and non-group plans", async () => {
+  const { service, repository, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const managed = await createPublishedGroupPlan(service);
+  const hiddenPlans: readonly KpiPlan[] = [
+    {
+      ...managed,
+      id: "managed-draft-plan",
+      planCode: "KPI-202605-999995",
+      status: "DRAFT",
+      publishedAt: null,
+      publishedByActorId: null,
+    },
+    {
+      ...managed,
+      id: "managed-finalized-plan",
+      planCode: "KPI-202605-999996",
+      status: "FINALIZED",
+    },
+    {
+      ...managed,
+      id: "managed-archived-plan",
+      planCode: "KPI-202605-999997",
+      status: "ARCHIVED",
+    },
+    {
+      ...managed,
+      id: "managed-talent-plan",
+      planCode: "KPI-202605-999998",
+      subjectType: "TALENT",
+      subjectId: "talent-1",
+    },
+  ];
+  repository.plans.push(...hiddenPlans);
+  seedManagerAssignment(managerRepository, "group-1");
+
+  for (const plan of hiddenPlans) {
+    await assert.rejects(
+      service.getKpiPlanDetail(createManagerActor(), {
+        kpiPlanId: plan.id,
+      }),
+      KpiPermissionScopeError,
+    );
+  }
 });
 
 test("KPI V2 talent with self scope can read own progress but not full grid", async () => {
