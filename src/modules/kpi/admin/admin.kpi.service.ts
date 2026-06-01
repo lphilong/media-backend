@@ -1518,10 +1518,11 @@ export class KpiAdminService {
         "KPI progress read requires kpi.global, kpi.managedGroup, or kpi.self scope",
       );
     }
+    if (hasManagedGroupScope) {
+      await this.assertActorCanReadManagedGroupProgress(actor, plan);
+      return undefined;
+    }
     if (actor.type !== "staff") {
-      if (!hasSelfScope) {
-        throw new KpiPermissionScopeError("KPI progress read scope denied");
-      }
       const talentId = await this.resolveActorTalentId(actor);
       if (talentId) {
         return new Set([talentId]);
@@ -1541,21 +1542,6 @@ export class KpiAdminService {
         "KPI progress read requires actor mapping",
       );
     }
-    if (hasManagedGroupScope && plan.subjectType === "TALENT_GROUP") {
-      const assignments =
-        await this.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-          employmentProfile.employmentProfileId,
-          this.clock(),
-        );
-      if (
-        assignments.some((assignment) => assignment.groupId === plan.subjectId)
-      ) {
-        return undefined;
-      }
-    }
-    if (!hasSelfScope) {
-      throw new KpiPermissionScopeError("KPI progress read scope denied");
-    }
     const talent =
       await this.subjectReadonlyAccess.findNonArchivedTalentByLinkedEmploymentProfileId(
         employmentProfile.employmentProfileId,
@@ -1564,6 +1550,57 @@ export class KpiAdminService {
       return new Set([talent.talentId]);
     }
     throw new KpiPermissionScopeError("KPI progress read scope denied");
+  }
+
+  private async assertActorCanReadManagedGroupProgress(
+    actor: Actor,
+    plan: KpiPlan,
+  ): Promise<void> {
+    if (
+      actor.context !== "ADMIN" ||
+      (actor.type !== "admin" && actor.type !== "staff")
+    ) {
+      throw new KpiPermissionScopeError(
+        "KPI managed-group progress read requires ADMIN manager authority",
+      );
+    }
+    if (!this.hasKpiManagedGroupScope(actor)) {
+      throw new KpiPermissionScopeError(
+        "KPI managed-group progress read requires kpi.managedGroup scope",
+      );
+    }
+    if (plan.status !== "PUBLISHED") {
+      throw new KpiPermissionScopeError(
+        "KPI manager-scoped progress read is supported only for PUBLISHED plans",
+      );
+    }
+    if (plan.subjectType !== "TALENT_GROUP") {
+      throw new KpiPermissionScopeError(
+        "KPI manager-scoped progress read is supported only for TALENT_GROUP plans",
+      );
+    }
+    const employmentProfile =
+      await this.subjectReadonlyAccess.findActiveEmploymentProfileByLinkedUserId(
+        actor.id,
+      );
+    if (!employmentProfile) {
+      throw new KpiPermissionScopeError(
+        "KPI managed-group progress read requires actor-to-employment-profile mapping",
+      );
+    }
+    const assignments =
+      await this.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
+        employmentProfile.employmentProfileId,
+        this.clock(),
+      );
+    if (
+      assignments.some((assignment) => assignment.groupId === plan.subjectId)
+    ) {
+      return;
+    }
+    throw new KpiPermissionScopeError(
+      `KPI actor is not an active manager for group ${plan.subjectId}`,
+    );
   }
 
   private async resolveActorTalentId(actor: Actor): Promise<string | null> {

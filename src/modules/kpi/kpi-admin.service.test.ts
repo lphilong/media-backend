@@ -117,6 +117,27 @@ function createBackofficeTeamManagerActor(): Actor {
   });
 }
 
+function createProgressReadOnlyBackofficeTeamManagerActor(
+  params: {
+    readonly id?: string;
+    readonly context?: "ADMIN" | "SELF_SERVICE";
+    readonly permissions?: readonly Permission[];
+    readonly kpiScopes?: readonly ("global" | "managedGroup" | "self")[];
+  } = {},
+): Actor {
+  return new Actor({
+    id: params.id ?? "manager-user",
+    type: "admin",
+    context: params.context ?? "ADMIN",
+    roles: ["TEAM_MANAGER"],
+    permissions: params.permissions ?? [Permission.KPI_READ_PROGRESS],
+    scopeGrants: {
+      kpi: params.kpiScopes ?? ["managedGroup"],
+    },
+    isActive: true,
+  });
+}
+
 function createManagerActorWithoutKpiScope(): Actor {
   return new Actor({
     id: "manager-user",
@@ -1915,6 +1936,176 @@ test("KPI V2 manager cannot read progress for unmanaged talent group", async () 
   await assert.rejects(
     service.getKpiProgress(createManagerActor(), {
       kpiPlanId: published.id,
+    }),
+    KpiPermissionScopeError,
+  );
+});
+
+test("KPI managed-group progress allows read-only backoffice TEAM_MANAGER under strict authority", async () => {
+  const { service, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const published = await createPublishedGroupPlan(service);
+  seedManagerAssignment(managerRepository);
+
+  const progress = await service.getKpiProgress(
+    createProgressReadOnlyBackofficeTeamManagerActor(),
+    { kpiPlanId: published.id },
+  );
+
+  assert.ok(progress.memberProgress.length > 0);
+});
+
+test("KPI managed-group progress denies missing permission, scope, profile, assignment, lifecycle, subject, and ADMIN context", async () => {
+  const { service, repository, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const published = await createPublishedGroupPlan(service);
+  const draft = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const talentPlan: KpiPlan = {
+    ...published,
+    id: "managed-progress-talent-plan",
+    planCode: "KPI-202605-999998",
+    subjectType: "TALENT",
+    subjectId: "talent-1",
+  };
+  const unmanagedPlan: KpiPlan = {
+    ...published,
+    id: "managed-progress-unmanaged-plan",
+    planCode: "KPI-202605-999999",
+    subjectId: "group-2",
+  };
+  repository.plans.push(talentPlan, unmanagedPlan);
+  const readProgress = { kpiPlanId: published.id };
+
+  await assert.rejects(
+    service.getKpiProgress(
+      createProgressReadOnlyBackofficeTeamManagerActor({ permissions: [] }),
+      readProgress,
+    ),
+    /Missing permission kpi.readProgress/u,
+  );
+  await assert.rejects(
+    service.getKpiProgress(
+      createProgressReadOnlyBackofficeTeamManagerActor({ kpiScopes: [] }),
+      readProgress,
+    ),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.getKpiProgress(
+      createProgressReadOnlyBackofficeTeamManagerActor({
+        id: "unlinked-manager-user",
+      }),
+      readProgress,
+    ),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.getKpiProgress(
+      createProgressReadOnlyBackofficeTeamManagerActor(),
+      readProgress,
+    ),
+    KpiPermissionScopeError,
+  );
+
+  seedManagerAssignment(managerRepository);
+
+  await assert.rejects(
+    service.getKpiProgress(
+      createProgressReadOnlyBackofficeTeamManagerActor(),
+      { kpiPlanId: unmanagedPlan.id },
+    ),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.getKpiProgress(
+      createProgressReadOnlyBackofficeTeamManagerActor(),
+      { kpiPlanId: draft.id },
+    ),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.getKpiProgress(
+      createProgressReadOnlyBackofficeTeamManagerActor(),
+      { kpiPlanId: talentPlan.id },
+    ),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.getKpiProgress(
+      createProgressReadOnlyBackofficeTeamManagerActor({
+        context: "SELF_SERVICE",
+      }),
+      readProgress,
+    ),
+    /Permission kpi.readProgress not allowed in SELF_SERVICE/u,
+  );
+});
+
+test("KPI global progress remains available and excludes every nonofficial allocation status", async () => {
+  const { service, repository } = createHarness(() => MAY_5_2026_NOON_HCM);
+  const published = await createPublishedGroupPlan(service);
+  replacePlanAllocationStatuses(repository, published.id, [
+    "DRAFT",
+    "PENDING_APPROVAL",
+    "APPROVED",
+    "PUBLISHED",
+    "REJECTED",
+    "ACTIVE",
+    "CLOSED",
+    "CANCELLED",
+  ]);
+
+  const progress = await service.getKpiProgress(createActor(), {
+    kpiPlanId: published.id,
+  });
+
+  assert.ok(progress.memberProgress.length > 0);
+  assert.ok(
+    progress.memberProgress.every((item) =>
+      item.allocationId.includes("-PUBLISHED-"),
+    ),
+  );
+});
+
+test("KPI progress repair does not open actual mutation, actual grid, or correction history", async () => {
+  const { service, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const published = await createPublishedGroupPlan(service);
+  const allocation = published.allocations[0] as KpiAllocation;
+  seedManagerAssignment(managerRepository);
+  const managerActor = createProgressReadOnlyBackofficeTeamManagerActor();
+  const actual = await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 80,
+  });
+
+  await assert.rejects(
+    service.createOrSetKpiActual(managerActor, {
+      kpiPlanId: published.id,
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      actualValue: 90,
+    }),
+    /Missing permission kpi.enterActual/u,
+  );
+  await assert.rejects(
+    service.getKpiActualDailyGrid(managerActor, {
+      kpiPlanId: published.id,
+      actualDate: "05-05-2026",
+    }),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.listKpiActualCorrections(managerActor, {
+      kpiPlanId: published.id,
+      actualEntryId: actual.actualEntry.id,
     }),
     KpiPermissionScopeError,
   );
