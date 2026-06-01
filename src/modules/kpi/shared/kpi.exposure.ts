@@ -114,6 +114,7 @@ const KPI_PLAN_LIST_FIELDS = [
   "updatedAt",
   "updatedByActorId",
   "externalRef",
+  "allocationWorkflowSummary",
 ] as const;
 
 const KPI_ACTUAL_ENTRY_FIELDS = [
@@ -319,6 +320,7 @@ export const KpiPlanListExposure = Object.freeze({
           updatedAt: input.updatedAt,
           updatedByActorId: input.updatedByActorId,
           externalRef: input.externalRef,
+          allocationWorkflowSummary: input.allocationWorkflowSummary,
         },
         KPI_PLAN_LIST_FIELDS,
       ),

@@ -15,6 +15,7 @@ import {
 } from "@modules/kpi/domain/kpi.repository";
 import {
   KpiAllocation,
+  KpiAllocationStatusCount,
   KpiAllocationStatus,
   KpiAllocationTargetMetric,
   KpiActualSource,
@@ -377,6 +378,47 @@ export class NativeMongoKpiPlanRepository
       .sort({ memberTalentId: 1, _id: 1 })
       .toArray();
     return docs.map(toKpiAllocation);
+  }
+
+  async countAllocationsByPlanIds(
+    kpiPlanIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly KpiAllocationStatusCount[]> {
+    const ids = uniqueNonEmpty(kpiPlanIds);
+
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const docs = await this.allocationCollection
+      .aggregate<{
+        readonly _id: {
+          readonly kpiPlanId: string;
+          readonly allocationStatus: KpiAllocationStatus;
+        };
+        readonly count: number;
+      }>(
+        [
+          { $match: { kpiPlanId: { $in: ids } } },
+          {
+            $group: {
+              _id: {
+                kpiPlanId: "$kpiPlanId",
+                allocationStatus: "$allocationStatus",
+              },
+              count: { $sum: 1 },
+            },
+          },
+        ],
+        this.withSession(session),
+      )
+      .toArray();
+
+    return docs.map((doc) => ({
+      kpiPlanId: doc._id.kpiPlanId,
+      allocationStatus: doc._id.allocationStatus,
+      count: doc.count,
+    }));
   }
 
   async listAllocations(input: {

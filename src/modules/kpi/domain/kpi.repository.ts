@@ -2,6 +2,7 @@ import { ClientSession } from "mongodb";
 import { BusinessCodePolicy } from "@core/business-code/business-code-sequence.repository";
 import {
   KpiAllocation,
+  KpiAllocationStatusCount,
   KpiAllocationStatus,
   KpiActualPolicySnapshot,
   KpiMetricCode,
@@ -150,6 +151,11 @@ export interface KpiPlanRepository {
     kpiPlanId: string,
     session?: ClientSession,
   ): Promise<readonly KpiAllocation[]>;
+
+  countAllocationsByPlanIds(
+    kpiPlanIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly KpiAllocationStatusCount[]>;
 
   listAllocations(input: {
     readonly status?: KpiAllocationStatus;

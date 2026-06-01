@@ -11,6 +11,7 @@ import { Permission } from "@core/permission/permission.enum";
 import { NativeMongoKpiSubjectReadonlyAccess } from "@infra/mongo/kpi/kpi.readonly-access";
 import { KpiAdminController } from "@modules/kpi/admin/admin.kpi.controller";
 import { KpiAdminService } from "@modules/kpi/admin/admin.kpi.service";
+import { KpiPlanListExposure } from "@modules/kpi/shared/kpi.exposure";
 import {
   KpiConflictError,
   KpiInvalidAllocationError,
@@ -29,6 +30,8 @@ import {
 import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import {
   KpiAllocation,
+  KpiAllocationStatus,
+  KpiAllocationStatusCount,
   KpiActualCorrection,
   KpiActualEntry,
   KpiActualPolicySnapshot,
@@ -385,6 +388,36 @@ function seedManagerAssignment(
     updatedAt: MAY_2026_START_AT,
     updatedByActorId: "seed",
   });
+}
+
+function replacePlanAllocationStatuses(
+  repository: InMemoryKpiPlanRepository,
+  kpiPlanId: string,
+  statuses: readonly KpiAllocationStatus[],
+): void {
+  const template = repository.allocations.find(
+    (allocation) => allocation.kpiPlanId === kpiPlanId,
+  );
+  assert.ok(template);
+
+  const remaining = repository.allocations.filter(
+    (allocation) => allocation.kpiPlanId !== kpiPlanId,
+  );
+  repository.allocations.length = 0;
+  repository.allocations.push(
+    ...remaining,
+    ...statuses.map((status, index) => {
+      const memberIndex = index % 2 === 0 ? "1" : "2";
+      return {
+        ...template,
+        id: `${kpiPlanId}-${status}-${index}`,
+        allocationStatus: status,
+        memberTalentId: `talent-${memberIndex}`,
+        memberEmploymentProfileId: `talent-profile-${memberIndex}`,
+        membershipId: `membership-talent-${memberIndex}`,
+      };
+    }),
+  );
 }
 
 test("NativeMongoKpiSubjectReadonlyAccess derives internal group member display from linked EmploymentProfile", async () => {
@@ -1777,6 +1810,86 @@ test("KPI V2 global list plans still works", async () => {
   assert.equal(detail.status, "DRAFT");
 });
 
+test("KPI V2 global list includes allocation workflow summaries from batched allocation counts", async () => {
+  const { service, repository } = createHarness(() => MAY_5_2026_NOON_HCM);
+  const zeroAllocationPlan = await service.createKpiPlan(
+    createActor(),
+    talentPlanCommand(),
+  );
+  const summaryPlan = await createPublishedGroupPlan(service);
+  replacePlanAllocationStatuses(repository, summaryPlan.id, [
+    "DRAFT",
+    "PENDING_APPROVAL",
+    "APPROVED",
+    "PUBLISHED",
+    "REJECTED",
+    "ACTIVE",
+    "CLOSED",
+    "CANCELLED",
+  ]);
+  repository.countAllocationsByPlanIdsCallCount = 0;
+  repository.listAllocationsByPlanIdCallCount = 0;
+
+  const result = await service.listKpiPlans(createActor(), {});
+  const summaryItem = result.items.find((item) => item.id === summaryPlan.id);
+  const zeroItem = result.items.find(
+    (item) => item.id === zeroAllocationPlan.id,
+  );
+
+  assert.ok(summaryItem);
+  assert.ok(zeroItem);
+  assert.equal(repository.countAllocationsByPlanIdsCallCount, 1);
+  assert.equal(repository.listAllocationsByPlanIdCallCount, 0);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(summaryItem, "allocationStatus"),
+    false,
+  );
+  assert.deepEqual(summaryItem.allocationWorkflowSummary, {
+    total: 8,
+    byStatus: {
+      draft: 1,
+      pendingApproval: 1,
+      approved: 1,
+      published: 1,
+      rejected: 1,
+      active: 1,
+      closed: 1,
+      cancelled: 1,
+    },
+    hasDraft: true,
+    hasPendingApproval: true,
+    hasApproved: true,
+    hasPublished: true,
+    hasRejected: true,
+    hasLegacyActive: true,
+    officialPublishedCount: 1,
+  });
+  assert.deepEqual(zeroItem.allocationWorkflowSummary, {
+    total: 0,
+    byStatus: {
+      draft: 0,
+      pendingApproval: 0,
+      approved: 0,
+      published: 0,
+      rejected: 0,
+      active: 0,
+      closed: 0,
+      cancelled: 0,
+    },
+    hasDraft: false,
+    hasPendingApproval: false,
+    hasApproved: false,
+    hasPublished: false,
+    hasRejected: false,
+    hasLegacyActive: false,
+    officialPublishedCount: 0,
+  });
+  assert.deepEqual(
+    KpiPlanListExposure.expose(summaryItem).allocationWorkflowSummary,
+    summaryItem.allocationWorkflowSummary,
+  );
+});
+
 test("KPI V2 managedGroup list returns only published managed talent-group plans", async () => {
   const { service, repository, managerRepository } = createHarness(
     () => MAY_5_2026_NOON_HCM,
@@ -1831,6 +1944,64 @@ test("KPI V2 managedGroup list returns only published managed talent-group plans
     [managed.id],
   );
   assert.deepEqual(draftResult.items, []);
+});
+
+test("KPI V2 managedGroup list summarizes only visible plans without member details", async () => {
+  const { service, repository, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const managed = await createPublishedGroupPlan(service);
+  const hiddenPlan = {
+    ...managed,
+    id: "hidden-summary-plan",
+    planCode: "KPI-202605-999997",
+    subjectId: "group-2",
+  };
+  repository.plans.push(hiddenPlan);
+  const templateAllocation = repository.allocations.find(
+    (allocation) => allocation.kpiPlanId === managed.id,
+  );
+  assert.ok(templateAllocation);
+  repository.allocations.push({
+    ...templateAllocation,
+    id: "hidden-summary-allocation",
+    kpiPlanId: hiddenPlan.id,
+    groupId: hiddenPlan.subjectId,
+    allocationStatus: "REJECTED",
+  });
+  seedManagerAssignment(managerRepository, "group-1");
+  repository.countAllocationsByPlanIdsCallCount = 0;
+
+  const result = await service.listKpiPlans(createManagerActor(), {});
+
+  assert.deepEqual(
+    result.items.map((item) => item.id),
+    [managed.id],
+  );
+  assert.equal(repository.countAllocationsByPlanIdsCallCount, 1);
+  assert.equal(result.items[0]?.allocationWorkflowSummary.total, 2);
+  assert.equal(
+    result.items[0]?.allocationWorkflowSummary.byStatus.published,
+    2,
+  );
+  assert.equal(
+    result.items[0]?.allocationWorkflowSummary.byStatus.rejected,
+    0,
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      result.items[0]?.allocationWorkflowSummary,
+      "memberTalentId",
+    ),
+    false,
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      result.items[0]?.allocationWorkflowSummary,
+      "allocations",
+    ),
+    false,
+  );
 });
 
 test("KPI V2 managedGroup list returns empty without active manager assignment", async () => {
@@ -2874,6 +3045,8 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
   readonly plans: KpiPlan[] = [];
   readonly targets: KpiTargetMetric[] = [];
   readonly allocations: KpiAllocation[] = [];
+  countAllocationsByPlanIdsCallCount = 0;
+  listAllocationsByPlanIdCallCount = 0;
 
   async insertPlan(plan: KpiPlan): Promise<KpiPlan> {
     this.plans.push(plan);
@@ -3106,9 +3279,33 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
   async listAllocationsByPlanId(
     kpiPlanId: string,
   ): Promise<readonly KpiAllocation[]> {
+    this.listAllocationsByPlanIdCallCount += 1;
     return this.allocations.filter(
       (allocation) => allocation.kpiPlanId === kpiPlanId,
     );
+  }
+
+  async countAllocationsByPlanIds(
+    kpiPlanIds: readonly string[],
+  ): Promise<readonly KpiAllocationStatusCount[]> {
+    this.countAllocationsByPlanIdsCallCount += 1;
+    const planIds = new Set(kpiPlanIds);
+    const counts = new Map<string, KpiAllocationStatusCount>();
+
+    for (const allocation of this.allocations) {
+      if (!planIds.has(allocation.kpiPlanId)) {
+        continue;
+      }
+      const key = `${allocation.kpiPlanId}:${allocation.allocationStatus}`;
+      const current = counts.get(key);
+      counts.set(key, {
+        kpiPlanId: allocation.kpiPlanId,
+        allocationStatus: allocation.allocationStatus,
+        count: (current?.count ?? 0) + 1,
+      });
+    }
+
+    return Array.from(counts.values());
   }
 
   async listAllocations(input: {

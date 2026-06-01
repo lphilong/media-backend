@@ -62,6 +62,35 @@ export const KPI_ALLOCATION_STATUSES = [
 
 export type KpiAllocationStatus = (typeof KPI_ALLOCATION_STATUSES)[number];
 
+export interface KpiAllocationWorkflowSummaryByStatus {
+  readonly draft: number;
+  readonly pendingApproval: number;
+  readonly approved: number;
+  readonly published: number;
+  readonly rejected: number;
+  readonly active: number;
+  readonly closed: number;
+  readonly cancelled: number;
+}
+
+export interface KpiAllocationWorkflowSummary {
+  readonly total: number;
+  readonly byStatus: KpiAllocationWorkflowSummaryByStatus;
+  readonly hasDraft: boolean;
+  readonly hasPendingApproval: boolean;
+  readonly hasApproved: boolean;
+  readonly hasPublished: boolean;
+  readonly hasRejected: boolean;
+  readonly hasLegacyActive: boolean;
+  readonly officialPublishedCount: number;
+}
+
+export interface KpiAllocationStatusCount {
+  readonly kpiPlanId: string;
+  readonly allocationStatus: KpiAllocationStatus;
+  readonly count: number;
+}
+
 export const KPI_ACTUAL_CORRECTION_ALLOWED_UNTIL = ["PLAN_FINALIZED"] as const;
 
 export type KpiActualCorrectionAllowedUntil =
@@ -350,6 +379,7 @@ export interface KpiPlanDetailView extends KpiPlan {
 
 export interface KpiPlanListItemView extends KpiPlan {
   readonly subjectRef?: ReferenceSummary | null;
+  readonly allocationWorkflowSummary: KpiAllocationWorkflowSummary;
 }
 
 export interface KpiPlanMutationView extends KpiPlanDetailView {}

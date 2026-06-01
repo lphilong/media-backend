@@ -44,6 +44,8 @@ import {
   KPI_SUBJECT_TYPES,
   KpiAllocation,
   KPI_ALLOCATION_STATUSES,
+  KpiAllocationStatusCount,
+  KpiAllocationWorkflowSummary,
   KpiAllocationStatus,
   KpiActualDailyGridView,
   KpiAllocationTargetMetric,
@@ -289,7 +291,7 @@ export class KpiAdminService {
 
     if (this.hasKpiGlobalScope(actor)) {
       const items = await this.repository.listPlans(input);
-      return { items };
+      return { items: await this.withAllocationWorkflowSummaries(items) };
     }
 
     if (!this.hasKpiManagedGroupScope(actor)) {
@@ -1998,15 +2000,17 @@ export class KpiAdminService {
         }),
       ),
     );
-    const itemsById = new Map<string, KpiPlanListItemView>();
+    const itemsById = new Map<string, KpiPlan>();
     for (const item of perGroupResults.flat()) {
       itemsById.set(item.id, item);
     }
 
+    const visibleItems = Array.from(itemsById.values())
+      .sort((left, right) => compareKpiPlanListItems(left, right, input))
+      .slice(0, input.limit);
+
     return {
-      items: Array.from(itemsById.values())
-        .sort((left, right) => compareKpiPlanListItems(left, right, input))
-        .slice(0, input.limit),
+      items: await this.withAllocationWorkflowSummaries(visibleItems),
     };
   }
 
@@ -2064,6 +2068,25 @@ export class KpiAdminService {
       this.repository.listAllocationsByPlanId(plan.id, session),
     ]);
     return this.toDetailView(plan, targetMetrics, allocations);
+  }
+
+  private async withAllocationWorkflowSummaries(
+    plans: readonly KpiPlan[],
+  ): Promise<readonly KpiPlanListItemView[]> {
+    if (plans.length === 0) {
+      return [];
+    }
+
+    const counts = await this.repository.countAllocationsByPlanIds(
+      plans.map((plan) => plan.id),
+    );
+    const summaries = buildAllocationWorkflowSummaries(counts);
+
+    return plans.map((plan) => ({
+      ...plan,
+      allocationWorkflowSummary:
+        summaries.get(plan.id) ?? createZeroAllocationWorkflowSummary(),
+    }));
   }
 
   private toDetailView(
@@ -2892,8 +2915,8 @@ function assertExecutableSubjectType(subjectType: KpiSubjectType): void {
 }
 
 function compareKpiPlanListItems(
-  left: KpiPlanListItemView,
-  right: KpiPlanListItemView,
+  left: KpiPlan,
+  right: KpiPlan,
   input: Pick<ListKpiPlansInput, "sortBy" | "sortDirection">,
 ): number {
   const direction = input.sortDirection === "ASC" ? 1 : -1;
@@ -2910,6 +2933,87 @@ function compareKpiPlanListItems(
     left.planCode.localeCompare(right.planCode) ||
     left.id.localeCompare(right.id)
   );
+}
+
+function buildAllocationWorkflowSummaries(
+  counts: readonly KpiAllocationStatusCount[],
+): Map<string, KpiAllocationWorkflowSummary> {
+  const summaries = new Map<string, KpiAllocationWorkflowSummary>();
+
+  for (const count of counts) {
+    const current =
+      summaries.get(count.kpiPlanId) ?? createZeroAllocationWorkflowSummary();
+    const key = allocationWorkflowSummaryStatusKey(count.allocationStatus);
+    const byStatus = {
+      ...current.byStatus,
+      [key]: current.byStatus[key] + count.count,
+    };
+    summaries.set(count.kpiPlanId, createAllocationWorkflowSummary(byStatus));
+  }
+
+  return summaries;
+}
+
+function createZeroAllocationWorkflowSummary(): KpiAllocationWorkflowSummary {
+  return createAllocationWorkflowSummary({
+    draft: 0,
+    pendingApproval: 0,
+    approved: 0,
+    published: 0,
+    rejected: 0,
+    active: 0,
+    closed: 0,
+    cancelled: 0,
+  });
+}
+
+function createAllocationWorkflowSummary(
+  byStatus: KpiAllocationWorkflowSummary["byStatus"],
+): KpiAllocationWorkflowSummary {
+  return {
+    total:
+      byStatus.draft +
+      byStatus.pendingApproval +
+      byStatus.approved +
+      byStatus.published +
+      byStatus.rejected +
+      byStatus.active +
+      byStatus.closed +
+      byStatus.cancelled,
+    byStatus,
+    hasDraft: byStatus.draft > 0,
+    hasPendingApproval: byStatus.pendingApproval > 0,
+    hasApproved: byStatus.approved > 0,
+    hasPublished: byStatus.published > 0,
+    hasRejected: byStatus.rejected > 0,
+    hasLegacyActive: byStatus.active > 0,
+    officialPublishedCount: byStatus.published,
+  };
+}
+
+function allocationWorkflowSummaryStatusKey(
+  status: KpiAllocationStatus,
+): keyof KpiAllocationWorkflowSummary["byStatus"] {
+  switch (status) {
+    case "DRAFT":
+      return "draft";
+    case "PENDING_APPROVAL":
+      return "pendingApproval";
+    case "APPROVED":
+      return "approved";
+    case "PUBLISHED":
+      return "published";
+    case "REJECTED":
+      return "rejected";
+    case "ACTIVE":
+      return "active";
+    case "CLOSED":
+      return "closed";
+    case "CANCELLED":
+      return "cancelled";
+  }
+  const exhaustive: never = status;
+  return exhaustive;
 }
 
 function normalizePlanStatus(value: unknown): KpiPlanStatus {
