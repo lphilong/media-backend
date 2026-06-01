@@ -96,6 +96,25 @@ function createManagerActor(): Actor {
   });
 }
 
+function createBackofficeTeamManagerActor(): Actor {
+  return new Actor({
+    id: "manager-user",
+    type: "admin",
+    context: "ADMIN",
+    roles: [],
+    permissions: [
+      Permission.KPI_READ,
+      Permission.KPI_ENTER_ACTUAL,
+      Permission.KPI_CORRECT_ACTUAL,
+      Permission.KPI_READ_PROGRESS,
+    ],
+    scopeGrants: {
+      kpi: ["managedGroup"],
+    },
+    isActive: true,
+  });
+}
+
 function createManagerActorWithoutKpiScope(): Actor {
   return new Actor({
     id: "manager-user",
@@ -1197,10 +1216,13 @@ test("KPI managed member picker lists only active managed group members with saf
   const plan = await createPublishedGroupPlan(service);
   seedManagerAssignment(managerRepository, "group-1", 0);
 
-  const result = await service.listKpiManagedMembers(createManagerActor(), {
-    kpiPlanId: plan.id,
-    limit: 20,
-  });
+  const result = await service.listKpiManagedMembers(
+    createBackofficeTeamManagerActor(),
+    {
+      kpiPlanId: plan.id,
+      limit: 20,
+    },
+  );
 
   assert.deepEqual(
     result.items.map((item) => item.employmentProfileId),
@@ -1232,7 +1254,7 @@ test("KPI managed member picker lists only active managed group members with saf
 });
 
 test("KPI managed member picker denies unmanaged, non-group, non-published, and unscoped callers", async () => {
-  const { service, managerRepository } = createHarness();
+  const { service, repository, managerRepository } = createHarness();
   const published = await createPublishedGroupPlan(service);
   seedManagerAssignment(managerRepository, "group-1", 0);
   const draft = await service.createKpiPlan(createActor(), groupPlanCommand());
@@ -1241,6 +1263,11 @@ test("KPI managed member picker denies unmanaged, non-group, non-published, and 
     talentPlanCommand(),
   );
   await service.publishKpiPlan(createActor(), { kpiPlanId: talentPlan.id });
+  repository.plans.push({
+    ...published,
+    id: "unmanaged-group-plan",
+    subjectId: "group-2",
+  });
 
   await assert.rejects(
     service.listKpiManagedMembers(createManagerActorWithoutKpiScope(), {
@@ -1257,18 +1284,65 @@ test("KPI managed member picker denies unmanaged, non-group, non-published, and 
     KpiPermissionScopeError,
   );
   await assert.rejects(
-    service.listKpiManagedMembers(createManagerActor(), {
+    service.listKpiManagedMembers(
+      createScopedActor({
+        id: "manager-user",
+        permissions: [Permission.KPI_READ, Permission.KPI_ENTER_ACTUAL],
+      }),
+      {
+        kpiPlanId: published.id,
+        limit: 20,
+      },
+    ),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.listKpiManagedMembers(
+      createScopedActor({
+        id: "unlinked-manager-user",
+        permissions: [Permission.KPI_READ, Permission.KPI_ENTER_ACTUAL],
+        kpiScopes: ["managedGroup"],
+      }),
+      {
+        kpiPlanId: published.id,
+        limit: 20,
+      },
+    ),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.listKpiManagedMembers(createBackofficeTeamManagerActor(), {
+      kpiPlanId: "unmanaged-group-plan",
+      limit: 20,
+    }),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.listKpiManagedMembers(createBackofficeTeamManagerActor(), {
       kpiPlanId: draft.id,
       limit: 20,
     }),
     KpiStateError,
   );
   await assert.rejects(
-    service.listKpiManagedMembers(createManagerActor(), {
+    service.listKpiManagedMembers(createBackofficeTeamManagerActor(), {
       kpiPlanId: talentPlan.id,
       limit: 20,
     }),
     KpiInvalidAllocationError,
+  );
+});
+
+test("KPI managed member picker denies linked admin manager without active assignment", async () => {
+  const { service } = createHarness();
+  const published = await createPublishedGroupPlan(service);
+
+  await assert.rejects(
+    service.listKpiManagedMembers(createBackofficeTeamManagerActor(), {
+      kpiPlanId: published.id,
+      limit: 20,
+    }),
+    KpiPermissionScopeError,
   );
 });
 
@@ -2287,6 +2361,7 @@ test("KPI allocation approval foundation supports manager draft submit and admin
   const { service, managerRepository, audit } = createHarness(
     () => MAY_5_2026_NOON_HCM,
   );
+  const managerActor = createBackofficeTeamManagerActor();
   const created = await service.createKpiPlan(
     createActor(),
     groupPlanCommand(),
@@ -2294,7 +2369,7 @@ test("KPI allocation approval foundation supports manager draft submit and admin
   await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
   seedManagerAssignment(managerRepository);
 
-  const draft = await service.upsertKpiAllocationDraft(createManagerActor(), {
+  const draft = await service.upsertKpiAllocationDraft(managerActor, {
     kpiPlanId: created.id,
     allocations: [
       {
@@ -2327,7 +2402,7 @@ test("KPI allocation approval foundation supports manager draft submit and admin
   assert.equal(draft.allocations[0]?.createdByActorId, "manager-user");
 
   const editedDraft = await service.upsertKpiAllocationDraft(
-    createManagerActor(),
+    managerActor,
     {
       kpiPlanId: created.id,
       allocations: [
@@ -2359,7 +2434,7 @@ test("KPI allocation approval foundation supports manager draft submit and admin
   );
 
   const submitted = await service.submitKpiAllocationDraft(
-    createManagerActor(),
+    managerActor,
     {
       kpiPlanId: created.id,
     },
@@ -2368,16 +2443,16 @@ test("KPI allocation approval foundation supports manager draft submit and admin
   assert.equal(submitted.allocations[0]?.submittedByActorId, "manager-user");
 
   await assert.rejects(
-    service.approveKpiAllocation(createManagerActor(), {
+    service.approveKpiAllocation(managerActor, {
       kpiPlanId: created.id,
     }),
-    /KPI V2 admin operations require ADMIN actor context/u,
+    /Missing permission kpi.manageAllocation/u,
   );
   await assert.rejects(
-    service.publishKpiAllocation(createManagerActor(), {
+    service.publishKpiAllocation(managerActor, {
       kpiPlanId: created.id,
     }),
-    /KPI V2 admin operations require ADMIN actor context/u,
+    /Missing permission kpi.publish/u,
   );
 
   const approved = await service.approveKpiAllocation(createActor(), {
@@ -2441,6 +2516,15 @@ test("KPI allocation approval denies draft and submit to read/global/non-manager
       kpiScopes: ["global"],
     }),
     createScopedActor({
+      id: "manager-user",
+      permissions: [Permission.KPI_READ, Permission.KPI_ENTER_ACTUAL],
+    }),
+    createScopedActor({
+      id: "unlinked-admin-manager-user",
+      permissions: [Permission.KPI_READ, Permission.KPI_ENTER_ACTUAL],
+      kpiScopes: ["managedGroup"],
+    }),
+    createScopedActor({
       id: "talent-user",
       type: "staff",
       permissions: [Permission.KPI_READ_PROGRESS],
@@ -2493,6 +2577,37 @@ test("KPI allocation approval denies draft and submit to read/global/non-manager
       service.submitKpiAllocationDraft(actor, { kpiPlanId: created.id }),
     );
   }
+});
+
+test("KPI allocation draft and submit deny linked admin manager without active assignment", async () => {
+  const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
+  const created = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
+  await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
+  const managerActor = createBackofficeTeamManagerActor();
+
+  await assert.rejects(
+    service.upsertKpiAllocationDraft(managerActor, {
+      kpiPlanId: created.id,
+      allocations: [
+        {
+          employmentProfileId: "talent-profile-1",
+          allocationStartDate: "2026-05-01",
+          targetMetrics: [
+            { metricCode: "REVENUE_VND", targetValue: 300 },
+            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 3 },
+          ],
+        },
+      ],
+    }),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.submitKpiAllocationDraft(managerActor, { kpiPlanId: created.id }),
+    KpiPermissionScopeError,
+  );
 });
 
 test("KPI allocation approval rejects unmanaged or direct Talent-style draft targets", async () => {

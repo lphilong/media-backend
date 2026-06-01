@@ -2321,9 +2321,12 @@ export class KpiAdminService {
     plan: KpiPlan,
     session?: ClientSession,
   ): Promise<void> {
-    if (actor.type !== "staff") {
+    if (
+      actor.context !== "ADMIN" ||
+      (actor.type !== "admin" && actor.type !== "staff")
+    ) {
       throw new KpiPermissionScopeError(
-        "KPI allocation draft requires assigned team-manager staff authority",
+        "KPI allocation draft requires ADMIN manager authority",
       );
     }
     if (!this.hasKpiManagedGroupScope(actor)) {

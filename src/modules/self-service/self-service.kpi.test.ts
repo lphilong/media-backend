@@ -19,6 +19,7 @@ import { KpiActualRepository } from "@modules/kpi/domain/kpi-actual.repository";
 import { KpiPlanRepository } from "@modules/kpi/domain/kpi.repository";
 import {
   KpiAllocation,
+  KpiAllocationStatusCount,
   KpiAllocationStatus,
   KpiActualCorrection,
   KpiActualEntry,
@@ -847,6 +848,12 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
 
   async listAllocationsByPlanId(): Promise<readonly KpiAllocation[]> {
     throw new Error("Not implemented");
+  }
+
+  async countAllocationsByPlanIds(): Promise<
+    readonly KpiAllocationStatusCount[]
+  > {
+    return [];
   }
 
   async replaceAllocationsForPlan(): Promise<void> {
