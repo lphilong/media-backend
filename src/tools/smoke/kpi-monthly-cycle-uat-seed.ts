@@ -445,6 +445,7 @@ export function buildKpiMonthlyCycleUatSeedPlan(params: {
     const kpiPlanId = monthly(`plan:${suffix}`);
     const allocationId = monthly(`allocation:${suffix}`);
     const isPublished = status === "PUBLISHED";
+    const planTitle = `${seedKey} Monthly Cycle - Allocation ${allocationScenarioLabel(status)} Scenario`;
     const talentStageName = `${seedKey} Demo Member ${index + 1}`;
     const submittedAt =
       status === "PENDING_APPROVAL" ||
@@ -525,8 +526,8 @@ export function buildKpiMonthlyCycleUatSeedPlan(params: {
       _id: kpiPlanId,
       planCode: `${seedKey}-${period.periodMonth.replace("-", "")}-${index + 1}`,
       normalizedPlanCode: `${seedKey.toLowerCase()}-${period.periodMonth.replace("-", "")}-${index + 1}`,
-      title: `${seedKey} ${status} Monthly Cycle`,
-      normalizedTitle: `${seedKey.toLowerCase()} ${status.toLowerCase()} monthly cycle`,
+      title: planTitle,
+      normalizedTitle: planTitle.toLowerCase(),
       description: "UAT demo KPI monthly-cycle plan",
       subjectType: "TALENT_GROUP",
       subjectId: groupId,
@@ -909,6 +910,14 @@ function replaceValue(
 
 function linkedUserLabel(purpose: LinkedUserPurpose): string {
   return purpose === "manager" ? "Manager" : "Staff";
+}
+
+function allocationScenarioLabel(status: AllocationStatus): string {
+  return status
+    .toLowerCase()
+    .split("_")
+    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
+    .join(" ");
 }
 
 function isSupportedManagerActorKind(

@@ -16,6 +16,38 @@ import {
 } from "./kpi-monthly-cycle-uat-seed";
 
 const NOW = Date.UTC(2026, 4, 15, 0, 0, 0);
+const EXPECTED_ALLOCATION_SCENARIOS = [
+  {
+    suffix: "draft",
+    allocationStatus: "DRAFT",
+    title: "KPI-UAT Monthly Cycle - Allocation Draft Scenario",
+  },
+  {
+    suffix: "pending-approval",
+    allocationStatus: "PENDING_APPROVAL",
+    title: "KPI-UAT Monthly Cycle - Allocation Pending Approval Scenario",
+  },
+  {
+    suffix: "approved",
+    allocationStatus: "APPROVED",
+    title: "KPI-UAT Monthly Cycle - Allocation Approved Scenario",
+  },
+  {
+    suffix: "published",
+    allocationStatus: "PUBLISHED",
+    title: "KPI-UAT Monthly Cycle - Allocation Published Scenario",
+  },
+  {
+    suffix: "rejected",
+    allocationStatus: "REJECTED",
+    title: "KPI-UAT Monthly Cycle - Allocation Rejected Scenario",
+  },
+  {
+    suffix: "active",
+    allocationStatus: "ACTIVE",
+    title: "KPI-UAT Monthly Cycle - Allocation Active Scenario",
+  },
+] as const;
 
 interface FakeUser {
   readonly _id: string;
@@ -230,6 +262,60 @@ test("KPI UAT seed dry-run plan covers monthly lifecycle and published actual", 
     publicPlan.countsByCollection.talent_group_manager_assignments,
     1,
   );
+});
+
+test("KPI UAT seed plan titles label allocation scenarios without changing IDs or statuses", () => {
+  const plan = buildKpiMonthlyCycleUatSeedPlan({
+    seedKey: "KPI-UAT",
+    now: NOW,
+    includeLegacyActive: true,
+  });
+
+  for (const scenario of EXPECTED_ALLOCATION_SCENARIOS) {
+    const planRecord = plan.records.find(
+      (record) => record.key === `monthly.${scenario.suffix}.plan`,
+    );
+    assert.ok(planRecord, `Expected KPI Plan for ${scenario.suffix}`);
+    assert.equal(
+      planRecord.document._id,
+      `kpi-uat:2026-05:plan:${scenario.suffix}`,
+    );
+    assert.equal(
+      planRecord.document.externalRef,
+      `kpi-uat:2026-05:plan:${scenario.suffix}`,
+    );
+    assert.equal(planRecord.document.status, "PUBLISHED");
+    assert.equal(planRecord.document.title, scenario.title);
+    assert.equal(
+      planRecord.document.normalizedTitle,
+      scenario.title.toLowerCase(),
+    );
+    assert.doesNotMatch(
+      String(planRecord.document.title),
+      /^KPI-UAT (DRAFT|PENDING_APPROVAL|APPROVED|PUBLISHED|REJECTED|ACTIVE) Monthly Cycle$/u,
+    );
+    assert.match(
+      String(planRecord.document.title),
+      /^KPI-UAT Monthly Cycle - Allocation .+ Scenario$/u,
+    );
+
+    const allocationRecord = plan.records.find(
+      (record) => record.key === `monthly.${scenario.suffix}.allocation`,
+    );
+    assert.ok(
+      allocationRecord,
+      `Expected KPI Allocation for ${scenario.suffix}`,
+    );
+    assert.equal(
+      allocationRecord.document._id,
+      `kpi-uat:2026-05:allocation:${scenario.suffix}`,
+    );
+    assert.equal(allocationRecord.document.kpiPlanId, planRecord.document._id);
+    assert.equal(
+      allocationRecord.document.allocationStatus,
+      scenario.allocationStatus,
+    );
+  }
 });
 
 test("KPI UAT seed build and write plans keep generated Talent stageName non-empty", async () => {
