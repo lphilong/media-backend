@@ -1,4 +1,11 @@
 import { ClientSession } from "mongodb";
+import { ReferenceSummary } from "@modules/reference-summary";
+import { KpiSubjectType } from "./kpi.types";
+
+export interface KpiSubjectReferenceLookup {
+  readonly subjectType: KpiSubjectType;
+  readonly subjectId: string;
+}
 
 export interface KpiGroupMemberLookup {
   readonly membershipId: string;
@@ -25,6 +32,10 @@ export interface KpiActorTalentLookup {
 }
 
 export interface KpiSubjectReadonlyAccess {
+  listSubjectRefs(
+    subjects: readonly KpiSubjectReferenceLookup[],
+    session?: ClientSession,
+  ): Promise<Map<string, ReferenceSummary>>;
   hasActiveTalent(talentId: string, session?: ClientSession): Promise<boolean>;
   hasActiveTalentGroup(
     groupId: string,
@@ -56,4 +67,10 @@ export interface KpiSubjectReadonlyAccess {
     linkedEmploymentProfileId: string,
     session?: ClientSession,
   ): Promise<KpiActorTalentLookup | null>;
+}
+
+export function kpiSubjectRefKey(
+  subject: KpiSubjectReferenceLookup,
+): string {
+  return `${subject.subjectType}:${subject.subjectId}`;
 }

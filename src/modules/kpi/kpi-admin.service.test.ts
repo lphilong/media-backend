@@ -25,8 +25,11 @@ import { KpiPlanRepository } from "@modules/kpi/domain/kpi.repository";
 import {
   KpiGroupMemberLookup,
   KpiManagedMemberLookup,
+  KpiSubjectReferenceLookup,
   KpiSubjectReadonlyAccess,
+  kpiSubjectRefKey,
 } from "@modules/kpi/domain/kpi-subject-readonly-access";
+import { ReferenceSummary } from "@modules/reference-summary";
 import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import {
   KpiAllocation,
@@ -1130,6 +1133,101 @@ test("KPI V2 global read remains compatible with existing TALENT plan", async ()
     ["future-TALENT"],
   );
   assert.equal(detail.subjectType, "TALENT");
+  assert.equal(result.items[0]?.subjectRef, null);
+  assert.equal(detail.subjectRef, null);
+});
+
+test("KPI V2 global list and detail return safe TALENT_GROUP subjectRef", async () => {
+  const { service, subjectAccess } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const plan = await createPublishedGroupPlan(service);
+  subjectAccess.listSubjectRefsCallCount = 0;
+  subjectAccess.listSubjectRefsSubjects.length = 0;
+
+  const result = await service.listKpiPlans(createActor(), {});
+  const detail = await service.getKpiPlanDetail(createActor(), {
+    kpiPlanId: plan.id,
+  });
+  const item = result.items.find((row) => row.id === plan.id);
+
+  assert.ok(item);
+  assert.deepEqual(item.subjectRef, {
+    id: "group-1",
+    code: "TG-000001",
+    name: "Creator Team",
+    displayName: "Creator Team",
+    status: "ACTIVE",
+  });
+  assert.deepEqual(detail.subjectRef, item.subjectRef);
+  assert.equal(subjectAccess.listSubjectRefsCallCount, 2);
+  assert.deepEqual(
+    subjectAccess.listSubjectRefsSubjects.map(
+      (subject) => `${subject.subjectType}:${subject.subjectId}`,
+    ),
+    ["TALENT_GROUP:group-1", "TALENT_GROUP:group-1"],
+  );
+});
+
+test("KPI V2 global list and detail safely omit missing subjectRef", async () => {
+  const { service, repository } = createHarness();
+  const missingSubjectPlan: KpiPlan = {
+    ...buildFutureSubjectDraftPlan("TALENT_GROUP"),
+    id: "missing-subject-plan",
+    planCode: "KPI-MISSING",
+    subjectId: "missing-group",
+  };
+  repository.plans.push(missingSubjectPlan);
+
+  const result = await service.listKpiPlans(createActor(), {});
+  const detail = await service.getKpiPlanDetail(createActor(), {
+    kpiPlanId: missingSubjectPlan.id,
+  });
+
+  assert.equal(result.items[0]?.id, missingSubjectPlan.id);
+  assert.equal(result.items[0]?.subjectRef, null);
+  assert.equal(detail.subjectRef, null);
+});
+
+test("KPI V2 global TALENT subjectRef uses safe display fields only", async () => {
+  const { service, repository } = createHarness();
+  const talentPlan: KpiPlan = {
+    ...buildFutureSubjectDraftPlan("TALENT"),
+    id: "legacy-talent-plan",
+    planCode: "KPI-TALENT-LEGACY",
+    subjectId: "talent-1",
+  };
+  repository.plans.push(talentPlan);
+
+  const result = await service.listKpiPlans(createActor(), {
+    subjectType: "TALENT",
+  });
+  const detail = await service.getKpiPlanDetail(createActor(), {
+    kpiPlanId: talentPlan.id,
+  });
+
+  assert.deepEqual(result.items[0]?.subjectRef, {
+    id: "talent-1",
+    code: "TAL-000001",
+    displayName: "Talent Profile 1",
+    status: "ACTIVE",
+  });
+  assert.deepEqual(detail.subjectRef, result.items[0]?.subjectRef);
+  for (const forbiddenField of [
+    "legalName",
+    "displayShortName",
+    "linkedEmploymentProfileId",
+    "email",
+    "memberTalentId",
+  ]) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        result.items[0]?.subjectRef ?? {},
+        forbiddenField,
+      ),
+      false,
+    );
+  }
 });
 
 test("KPI V2 publish TALENT_GROUP plan freezes target and moves to PUBLISHED", async () => {
@@ -2206,9 +2304,8 @@ test("KPI V2 global list includes allocation workflow summaries from batched all
 });
 
 test("KPI V2 managedGroup list returns only published managed talent-group plans", async () => {
-  const { service, repository, managerRepository } = createHarness(
-    () => MAY_5_2026_NOON_HCM,
-  );
+  const { service, repository, managerRepository, subjectAccess } =
+    createHarness(() => MAY_5_2026_NOON_HCM);
   const managed = await createPublishedGroupPlan(service);
   repository.plans.push(
     {
@@ -2248,6 +2345,7 @@ test("KPI V2 managedGroup list returns only published managed talent-group plans
     },
   );
   seedManagerAssignment(managerRepository, "group-1");
+  subjectAccess.listSubjectRefsSubjects.length = 0;
 
   const result = await service.listKpiPlans(createManagerActor(), {});
   const draftResult = await service.listKpiPlans(createManagerActor(), {
@@ -2258,13 +2356,19 @@ test("KPI V2 managedGroup list returns only published managed talent-group plans
     result.items.map((item) => item.id),
     [managed.id],
   );
+  assert.equal(result.items[0]?.subjectRef?.displayName, "Creator Team");
+  assert.deepEqual(
+    subjectAccess.listSubjectRefsSubjects.map(
+      (subject) => `${subject.subjectType}:${subject.subjectId}`,
+    ),
+    ["TALENT_GROUP:group-1"],
+  );
   assert.deepEqual(draftResult.items, []);
 });
 
 test("KPI V2 managedGroup list summarizes only visible plans without member details", async () => {
-  const { service, repository, managerRepository } = createHarness(
-    () => MAY_5_2026_NOON_HCM,
-  );
+  const { service, repository, managerRepository, subjectAccess } =
+    createHarness(() => MAY_5_2026_NOON_HCM);
   const managed = await createPublishedGroupPlan(service);
   const hiddenPlan = {
     ...managed,
@@ -2286,6 +2390,7 @@ test("KPI V2 managedGroup list summarizes only visible plans without member deta
   });
   seedManagerAssignment(managerRepository, "group-1");
   repository.countAllocationsByPlanIdsCallCount = 0;
+  subjectAccess.listSubjectRefsSubjects.length = 0;
 
   const result = await service.listKpiPlans(createManagerActor(), {});
 
@@ -2294,6 +2399,13 @@ test("KPI V2 managedGroup list summarizes only visible plans without member deta
     [managed.id],
   );
   assert.equal(repository.countAllocationsByPlanIdsCallCount, 1);
+  assert.equal(result.items[0]?.subjectRef?.displayName, "Creator Team");
+  assert.deepEqual(
+    subjectAccess.listSubjectRefsSubjects.map(
+      (subject) => `${subject.subjectType}:${subject.subjectId}`,
+    ),
+    ["TALENT_GROUP:group-1"],
+  );
   assert.equal(result.items[0]?.allocationWorkflowSummary.total, 2);
   assert.equal(
     result.items[0]?.allocationWorkflowSummary.byStatus.published,
@@ -2329,23 +2441,30 @@ test("KPI V2 managedGroup list returns empty without active manager assignment",
 });
 
 test("KPI V2 managedGroup detail allows managed plan", async () => {
-  const { service, managerRepository } = createHarness(
+  const { service, managerRepository, subjectAccess } = createHarness(
     () => MAY_5_2026_NOON_HCM,
   );
   const managed = await createPublishedGroupPlan(service);
   seedManagerAssignment(managerRepository, "group-1");
+  subjectAccess.listSubjectRefsSubjects.length = 0;
 
   const detail = await service.getKpiPlanDetail(createManagerActor(), {
     kpiPlanId: managed.id,
   });
 
   assert.equal(detail.id, managed.id);
+  assert.equal(detail.subjectRef?.displayName, "Creator Team");
+  assert.deepEqual(
+    subjectAccess.listSubjectRefsSubjects.map(
+      (subject) => `${subject.subjectType}:${subject.subjectId}`,
+    ),
+    ["TALENT_GROUP:group-1"],
+  );
 });
 
 test("KPI V2 managedGroup detail denies unmanaged plan", async () => {
-  const { service, repository, managerRepository } = createHarness(
-    () => MAY_5_2026_NOON_HCM,
-  );
+  const { service, repository, managerRepository, subjectAccess } =
+    createHarness(() => MAY_5_2026_NOON_HCM);
   const managed = await createPublishedGroupPlan(service);
   const unmanagedPlan: KpiPlan = {
     ...managed,
@@ -2357,6 +2476,7 @@ test("KPI V2 managedGroup detail denies unmanaged plan", async () => {
   };
   repository.plans.push(unmanagedPlan);
   seedManagerAssignment(managerRepository, "group-1");
+  subjectAccess.listSubjectRefsSubjects.length = 0;
 
   await assert.rejects(
     service.getKpiPlanDetail(createManagerActor(), {
@@ -2364,6 +2484,7 @@ test("KPI V2 managedGroup detail denies unmanaged plan", async () => {
     }),
     KpiPermissionScopeError,
   );
+  assert.deepEqual(subjectAccess.listSubjectRefsSubjects, []);
 });
 
 test("KPI V2 managedGroup detail denies non-published and non-group plans", async () => {
@@ -3292,6 +3413,58 @@ class InMemoryBusinessCodeSequenceRepository implements BusinessCodeSequenceRepo
 }
 
 class InMemoryKpiSubjectReadonlyAccess implements KpiSubjectReadonlyAccess {
+  listSubjectRefsCallCount = 0;
+  readonly listSubjectRefsSubjects: KpiSubjectReferenceLookup[] = [];
+
+  async listSubjectRefs(
+    subjects: readonly KpiSubjectReferenceLookup[],
+  ): Promise<Map<string, ReferenceSummary>> {
+    this.listSubjectRefsCallCount += 1;
+    this.listSubjectRefsSubjects.push(...subjects);
+    const refs = new Map<string, ReferenceSummary>();
+    for (const subject of subjects) {
+      if (subject.subjectType === "TALENT_GROUP") {
+        if (subject.subjectId === "group-1") {
+          refs.set(kpiSubjectRefKey(subject), {
+            id: "group-1",
+            code: "TG-000001",
+            name: "Creator Team",
+            displayName: "Creator Team",
+            status: "ACTIVE",
+          });
+        }
+        if (subject.subjectId === "group-2") {
+          refs.set(kpiSubjectRefKey(subject), {
+            id: "group-2",
+            code: "TG-000002",
+            name: "Hidden Team",
+            displayName: "Hidden Team",
+            status: "ACTIVE",
+          });
+        }
+      }
+      if (subject.subjectType === "TALENT") {
+        if (subject.subjectId === "talent-1") {
+          refs.set(kpiSubjectRefKey(subject), {
+            id: "talent-1",
+            code: "TAL-000001",
+            displayName: "Talent Profile 1",
+            status: "ACTIVE",
+          });
+        }
+        if (subject.subjectId === "talent-2") {
+          refs.set(kpiSubjectRefKey(subject), {
+            id: "talent-2",
+            code: "TAL-000002",
+            displayName: "Talent Profile 2",
+            status: "ACTIVE",
+          });
+        }
+      }
+    }
+    return refs;
+  }
+
   async hasActiveTalent(talentId: string): Promise<boolean> {
     return talentId === "talent-1" || talentId === "talent-2";
   }

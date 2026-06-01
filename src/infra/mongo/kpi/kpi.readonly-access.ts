@@ -1,18 +1,25 @@
 import { ClientSession, Collection, Db } from "mongodb";
 import { BaseRepository } from "@infra/database/repository";
+import { ReferenceSummary } from "@modules/reference-summary";
 import {
   KpiActorEmploymentProfileLookup,
   KpiActorTalentLookup,
   KpiGroupMemberLookup,
   KpiManagedMemberLookup,
+  KpiSubjectReferenceLookup,
   KpiSubjectReadonlyAccess,
+  kpiSubjectRefKey,
 } from "@modules/kpi/domain/kpi-subject-readonly-access";
+import { deriveTalentDisplaySummary } from "@modules/talent/domain/talent-display";
+import { TalentOrigin } from "@modules/talent/domain/talent.types";
 
 interface TalentDocument {
   readonly _id: string;
   readonly talentCode?: string;
   readonly displayName?: string;
   readonly stageName?: string | null;
+  readonly legalName?: string | null;
+  readonly displayShortName?: string | null;
   readonly talentOrigin?: string;
   readonly operationalStatus?: string;
   readonly linkedEmploymentProfileId?: string | null;
@@ -20,6 +27,8 @@ interface TalentDocument {
 
 interface TalentGroupDocument {
   readonly _id: string;
+  readonly groupCode?: string;
+  readonly name?: string;
   readonly status: string;
 }
 
@@ -55,6 +64,117 @@ export class NativeMongoKpiSubjectReadonlyAccess
     this.employmentProfileCollection = db.collection<EmploymentProfileDocument>(
       "employment_profiles",
     );
+  }
+
+  async listSubjectRefs(
+    subjects: readonly KpiSubjectReferenceLookup[],
+    session?: ClientSession,
+  ): Promise<Map<string, ReferenceSummary>> {
+    const refs = new Map<string, ReferenceSummary>();
+    const groupIds = uniqueSubjectIds(subjects, "TALENT_GROUP");
+    const talentIds = uniqueSubjectIds(subjects, "TALENT");
+
+    if (groupIds.length > 0) {
+      const groups = await this.groupCollection
+        .find(
+          { _id: { $in: groupIds } },
+          {
+            ...this.withSession(session),
+            projection: { _id: 1, groupCode: 1, name: 1, status: 1 },
+          },
+        )
+        .toArray();
+
+      for (const group of groups) {
+        const name = readText(group.name);
+        const code = readText(group.groupCode);
+        const status = readText(group.status);
+        refs.set(
+          kpiSubjectRefKey({
+            subjectType: "TALENT_GROUP",
+            subjectId: group._id,
+          }),
+          {
+            id: group._id,
+            ...(code ? { code } : {}),
+            ...(name ? { name, displayName: name } : {}),
+            ...(status ? { status } : {}),
+          },
+        );
+      }
+    }
+
+    if (talentIds.length > 0) {
+      const talents = await this.collection
+        .find(
+          { _id: { $in: talentIds } },
+          {
+            ...this.withSession(session),
+            projection: {
+              _id: 1,
+              talentCode: 1,
+              stageName: 1,
+              legalName: 1,
+              displayShortName: 1,
+              talentOrigin: 1,
+              operationalStatus: 1,
+              linkedEmploymentProfileId: 1,
+            },
+          },
+        )
+        .toArray();
+      const profileIds = talents
+        .map((talent) => talent.linkedEmploymentProfileId)
+        .filter((id): id is string => typeof id === "string" && id.length > 0);
+      const profiles =
+        profileIds.length === 0
+          ? []
+          : await this.employmentProfileCollection
+              .find(
+                { _id: { $in: [...new Set(profileIds)] } },
+                {
+                  ...this.withSession(session),
+                  projection: { _id: 1, displayName: 1 },
+                },
+              )
+              .toArray();
+      const profilesById = new Map(
+        profiles.map((profile) => [profile._id, profile]),
+      );
+
+      for (const talent of talents) {
+        const talentOrigin = toTalentOrigin(talent.talentOrigin);
+        const talentCode = readText(talent.talentCode) ?? talent._id;
+        if (!talentOrigin) {
+          continue;
+        }
+        const linkedProfile = talent.linkedEmploymentProfileId
+          ? profilesById.get(talent.linkedEmploymentProfileId)
+          : null;
+        const display = deriveTalentDisplaySummary(
+          {
+            talentCode,
+            stageName: talent.stageName,
+            legalName: talent.legalName,
+            displayShortName: talent.displayShortName,
+            talentOrigin,
+          },
+          linkedProfile ?? null,
+        );
+        const status = readText(talent.operationalStatus);
+        refs.set(
+          kpiSubjectRefKey({ subjectType: "TALENT", subjectId: talent._id }),
+          {
+            id: talent._id,
+            code: talentCode,
+            displayName: display.displayName,
+            ...(status ? { status } : {}),
+          },
+        );
+      }
+    }
+
+    return refs;
   }
 
   async hasActiveTalent(
@@ -297,4 +417,27 @@ export class NativeMongoKpiSubjectReadonlyAccess
     );
     return doc ? { talentId: doc._id } : null;
   }
+}
+
+function uniqueSubjectIds(
+  subjects: readonly KpiSubjectReferenceLookup[],
+  subjectType: KpiSubjectReferenceLookup["subjectType"],
+): readonly string[] {
+  return [
+    ...new Set(
+      subjects
+        .filter((subject) => subject.subjectType === subjectType)
+        .map((subject) => subject.subjectId.trim())
+        .filter((subjectId) => subjectId.length > 0),
+    ),
+  ];
+}
+
+function toTalentOrigin(value: string | undefined): TalentOrigin | null {
+  return value === "INTERNAL" || value === "EXTERNAL" ? value : null;
+}
+
+function readText(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }

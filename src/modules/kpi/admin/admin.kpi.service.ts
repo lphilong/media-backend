@@ -15,6 +15,7 @@ import { Permission } from "@core/permission/permission.enum";
 import { PermissionContract } from "@core/permission/permission.contract";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
+import { ReferenceSummary } from "@modules/reference-summary";
 import { KPI_PLAN_CODE_POLICY } from "@modules/kpi/domain/kpi-code-policy";
 import { getKpiMetricCatalogEntry } from "@modules/kpi/domain/kpi-metric-catalog";
 import { resolveManagedTalentGroupIds } from "@modules/kpi/domain/managed-group-scope";
@@ -32,7 +33,10 @@ import {
   ListKpiPlansInput,
 } from "@modules/kpi/domain/kpi.repository";
 import { KpiActualRepository } from "@modules/kpi/domain/kpi-actual.repository";
-import { KpiSubjectReadonlyAccess } from "@modules/kpi/domain/kpi-subject-readonly-access";
+import {
+  KpiSubjectReadonlyAccess,
+  kpiSubjectRefKey,
+} from "@modules/kpi/domain/kpi-subject-readonly-access";
 import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import {
   KPI_CREATE_SUBJECT_TYPES,
@@ -2095,11 +2099,20 @@ export class KpiAdminService {
     session?: ClientSession,
   ): Promise<KpiPlanDetailView> {
     const plan = await this.requirePlan(kpiPlanId, session);
-    const [targetMetrics, allocations] = await Promise.all([
+    const [targetMetrics, allocations, subjectRefs] = await Promise.all([
       this.repository.listTargetMetricsByPlanId(plan.id, session),
       this.repository.listAllocationsByPlanId(plan.id, session),
+      this.subjectReadonlyAccess.listSubjectRefs(
+        [{ subjectType: plan.subjectType, subjectId: plan.subjectId }],
+        session,
+      ),
     ]);
-    return this.toDetailView(plan, targetMetrics, allocations);
+    return this.toDetailView(
+      plan,
+      targetMetrics,
+      allocations,
+      subjectRefs.get(kpiSubjectRefKey(plan)) ?? null,
+    );
   }
 
   private async withAllocationWorkflowSummaries(
@@ -2109,13 +2122,20 @@ export class KpiAdminService {
       return [];
     }
 
-    const counts = await this.repository.countAllocationsByPlanIds(
-      plans.map((plan) => plan.id),
-    );
+    const [counts, subjectRefs] = await Promise.all([
+      this.repository.countAllocationsByPlanIds(plans.map((plan) => plan.id)),
+      this.subjectReadonlyAccess.listSubjectRefs(
+        plans.map((plan) => ({
+          subjectType: plan.subjectType,
+          subjectId: plan.subjectId,
+        })),
+      ),
+    ]);
     const summaries = buildAllocationWorkflowSummaries(counts);
 
     return plans.map((plan) => ({
       ...plan,
+      subjectRef: subjectRefs.get(kpiSubjectRefKey(plan)) ?? null,
       allocationWorkflowSummary:
         summaries.get(plan.id) ?? createZeroAllocationWorkflowSummary(),
     }));
@@ -2125,12 +2145,14 @@ export class KpiAdminService {
     plan: KpiPlan,
     targetMetrics: readonly KpiTargetMetric[],
     allocations: readonly KpiAllocation[],
+    subjectRef?: ReferenceSummary | null,
   ): KpiPlanDetailView {
-    return {
+    const view: KpiPlanDetailView = {
       ...plan,
       targetMetrics,
       allocations,
     };
+    return subjectRef === undefined ? view : { ...view, subjectRef };
   }
 
   private async allocateGeneratedPlanCode(
