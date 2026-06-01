@@ -104,9 +104,9 @@ import {
 const DEFAULT_TIMEZONE = "Asia/Ho_Chi_Minh";
 const DEFAULT_TIMEZONE_OFFSET_MS = 7 * 60 * 60 * 1000;
 const HCM_UTC_OFFSET_HOURS = 7;
-const DEFAULT_ACTUAL_POLICY_VERSION = "kpi-actual-policy-v1";
-const DEFAULT_ACTUAL_ENTRY_OPEN_LOCAL_TIME = "06:00";
-const DEFAULT_ACTUAL_ENTRY_LOCK_LOCAL_TIME = "23:00";
+const DEFAULT_ACTUAL_POLICY_VERSION = "kpi-actual-policy-v2";
+const DEFAULT_ACTUAL_ENTRY_OPEN_LOCAL_TIME = "00:00";
+const DEFAULT_ACTUAL_ENTRY_LOCK_LOCAL_TIME = "10:00";
 const DEFAULT_MAX_DIRECT_EDITS_PER_ENTRY = 3;
 const MAX_LIST_LIMIT = 100;
 const DEFAULT_LIST_LIMIT = 50;
@@ -1023,6 +1023,8 @@ export class KpiAdminService {
           session,
         );
 
+        assertDirectEditWindowOpen(policy, actualDate, this.clock());
+
         const existing = await this.actualRepository.findEntryByIdentity(
           {
             kpiPlanId: plan.id,
@@ -1041,8 +1043,6 @@ export class KpiAdminService {
             "KPI actual already exists with a different value; use PATCH /actuals/:actualEntryId to edit it",
           );
         }
-
-        assertDirectEditWindowOpen(policy, actualDate, this.clock());
 
         const now = this.clock();
         const entry: KpiActualEntry = {
@@ -1117,6 +1117,7 @@ export class KpiAdminService {
         );
         this.assertActualMutationPlanOpen(plan, "update actual");
         const policy = requireActualPolicySnapshot(plan);
+        assertActualDateWithinPlan(plan, entry.actualDate);
         assertDirectEditWindowOpen(policy, entry.actualDate, this.clock());
         const allocation = await this.requireActiveAllocation(
           plan,
@@ -1181,7 +1182,7 @@ export class KpiAdminService {
           entry.metricCode,
           session,
         );
-        await this.assertActorCanManageAllocationActual(
+        await this.assertActorCanManageAllocationCorrection(
           actor,
           plan,
           allocation,
@@ -1445,6 +1446,14 @@ export class KpiAdminService {
       );
     }
     if (
+      plan.subjectType === "TALENT_GROUP" &&
+      allocation.groupId !== plan.subjectId
+    ) {
+      throw new KpiInvalidAllocationError(
+        `KPI allocation ${allocationId} does not belong to group ${plan.subjectId}`,
+      );
+    }
+    if (
       !allocation.targetMetrics.some(
         (metric) => metric.metricCode === metricCode,
       )
@@ -1465,19 +1474,76 @@ export class KpiAdminService {
     if (this.hasKpiGlobalScope(actor)) {
       return;
     }
+    await this.assertManagedGroupActualAuthority(
+      actor,
+      plan,
+      allocation.groupId,
+      "KPI actual entry",
+      session,
+    );
+  }
+
+  private async assertActorCanManageAllocationCorrection(
+    actor: Actor,
+    plan: KpiPlan,
+    allocation: KpiAllocation,
+    session?: ClientSession,
+  ): Promise<void> {
+    if (this.hasKpiGlobalScope(actor)) {
+      return;
+    }
     if (!this.hasKpiManagedGroupScope(actor)) {
       throw new KpiPermissionScopeError(
-        "KPI actual entry requires kpi.global or kpi.managedGroup scope",
+        "KPI actual correction requires kpi.global or kpi.managedGroup scope",
       );
     }
     if (actor.type !== "staff") {
       throw new KpiPermissionScopeError(
-        "KPI actual entry requires admin or assigned talent-group manager authority",
+        "KPI actual correction requires existing staff manager authority",
+      );
+    }
+    await this.assertManagedGroupActualAuthority(
+      actor,
+      plan,
+      allocation.groupId,
+      "KPI actual correction",
+      session,
+    );
+  }
+
+  private async assertManagedGroupActualAuthority(
+    actor: Actor,
+    plan: KpiPlan,
+    groupId: string,
+    operation: string,
+    session?: ClientSession,
+  ): Promise<void> {
+    if (
+      actor.context !== "ADMIN" ||
+      (actor.type !== "admin" && actor.type !== "staff")
+    ) {
+      throw new KpiPermissionScopeError(
+        `${operation} requires ADMIN manager authority`,
+      );
+    }
+    if (!this.hasKpiManagedGroupScope(actor)) {
+      throw new KpiPermissionScopeError(
+        `${operation} requires kpi.managedGroup scope`,
+      );
+    }
+    if (plan.status !== "PUBLISHED") {
+      throw new KpiPermissionScopeError(
+        `${operation} is supported only for PUBLISHED plans`,
       );
     }
     if (plan.subjectType !== "TALENT_GROUP") {
       throw new KpiPermissionScopeError(
-        "KPI manager-scoped actual entry is supported only for TALENT_GROUP plans",
+        `${operation} is supported only for TALENT_GROUP plans`,
+      );
+    }
+    if (groupId !== plan.subjectId) {
+      throw new KpiPermissionScopeError(
+        `${operation} allocation is outside plan group ${plan.subjectId}`,
       );
     }
     const employmentProfile =
@@ -1487,7 +1553,7 @@ export class KpiAdminService {
       );
     if (!employmentProfile) {
       throw new KpiPermissionScopeError(
-        "KPI manager-scoped actual entry requires actor-to-employment-profile mapping",
+        `${operation} requires actor-to-employment-profile mapping`,
       );
     }
     const assignments =
@@ -1498,13 +1564,13 @@ export class KpiAdminService {
       );
     if (
       assignments.some(
-        (assignment) => assignment.groupId === allocation.groupId,
+        (assignment) => assignment.groupId === groupId,
       )
     ) {
       return;
     }
     throw new KpiPermissionScopeError(
-      `KPI actor is not an active manager for group ${allocation.groupId}`,
+      `KPI actor is not an active manager for group ${groupId}`,
     );
   }
 
@@ -1634,9 +1700,17 @@ export class KpiAdminService {
         "KPI actual grid read requires kpi.global or kpi.managedGroup scope",
       );
     }
-    if (actor.type !== "staff") {
+    if (
+      actor.context !== "ADMIN" ||
+      (actor.type !== "admin" && actor.type !== "staff")
+    ) {
       throw new KpiPermissionScopeError(
-        "KPI actual grid read requires admin or assigned talent-group manager authority",
+        "KPI actual grid read requires ADMIN manager authority",
+      );
+    }
+    if (plan.status !== "PUBLISHED") {
+      throw new KpiPermissionScopeError(
+        "KPI manager-scoped actual grid read is supported only for PUBLISHED plans",
       );
     }
     if (plan.subjectType !== "TALENT_GROUP") {
@@ -1700,7 +1774,7 @@ export class KpiAdminService {
         `KPI actual entry allocation is missing: ${entry.allocationId}`,
       );
     }
-    await this.assertActorCanManageAllocationActual(actor, plan, allocation);
+    await this.assertActorCanManageAllocationCorrection(actor, plan, allocation);
   }
 
   private async buildActualDailyGridView(
@@ -1715,9 +1789,10 @@ export class KpiAdminService {
         actualDate,
       ),
     ]);
-    const policy =
+    const policy = effectiveActualPolicySnapshot(
       plan.actualPolicySnapshot ??
-      createDefaultActualPolicySnapshot(plan.createdAt);
+        createDefaultActualPolicySnapshot(plan.createdAt),
+    );
     const editability = resolveDailyGridEditability(
       plan,
       policy,
@@ -3221,7 +3296,18 @@ function requireActualPolicySnapshot(plan: KpiPlan): KpiActualPolicySnapshot {
       `KPI plan ${plan.id} has no actual policy snapshot`,
     );
   }
-  return plan.actualPolicySnapshot;
+  return effectiveActualPolicySnapshot(plan.actualPolicySnapshot);
+}
+
+function effectiveActualPolicySnapshot(
+  policy: KpiActualPolicySnapshot,
+): KpiActualPolicySnapshot {
+  return {
+    ...policy,
+    entryOpenLocalTime: DEFAULT_ACTUAL_ENTRY_OPEN_LOCAL_TIME,
+    entryLockLocalTime: DEFAULT_ACTUAL_ENTRY_LOCK_LOCAL_TIME,
+    policyVersion: DEFAULT_ACTUAL_POLICY_VERSION,
+  };
 }
 
 function assertActualDateWithinPlan(plan: KpiPlan, actualDate: string): void {
@@ -3256,7 +3342,11 @@ function isDirectEditWindowOpen(
     actualDate,
     policy.entryOpenLocalTime,
   );
-  const windowEnd = localDateTimeToUtcMs(actualDate, policy.entryLockLocalTime);
+  const windowEnd = localDateTimeToUtcMs(
+    actualDate,
+    policy.entryLockLocalTime,
+    1,
+  );
   return now >= windowStart && now <= windowEnd;
 }
 
@@ -3303,7 +3393,11 @@ function assertFinalizeEligible(
     );
   }
   const lastDate = lastLocalDateOfPeriod(plan.periodMonth);
-  const lastLockAt = localDateTimeToUtcMs(lastDate, policy.entryLockLocalTime);
+  const lastLockAt = localDateTimeToUtcMs(
+    lastDate,
+    policy.entryLockLocalTime,
+    1,
+  );
   if (now <= lastLockAt) {
     throw new KpiStateError(
       `KPI plan ${plan.id} cannot finalize while a daily edit window remains open`,
@@ -3311,13 +3405,17 @@ function assertFinalizeEligible(
   }
 }
 
-function localDateTimeToUtcMs(dateText: string, timeText: string): number {
+function localDateTimeToUtcMs(
+  dateText: string,
+  timeText: string,
+  dayOffset = 0,
+): number {
   const { day, month, year } = parseActualDateText(dateText, "date");
   const [hourText, minuteText] = timeText.split(":");
   return Date.UTC(
     year,
     month - 1,
-    day,
+    day + dayOffset,
     Number(hourText) - HCM_UTC_OFFSET_HOURS,
     Number(minuteText),
     0,

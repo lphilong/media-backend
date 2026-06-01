@@ -99,8 +99,8 @@ export type KpiActualCorrectionAllowedUntil =
 
 export interface KpiActualPolicySnapshot {
   readonly timezone: "Asia/Ho_Chi_Minh";
-  readonly entryOpenLocalTime: "06:00";
-  readonly entryLockLocalTime: "23:00";
+  readonly entryOpenLocalTime: "00:00";
+  readonly entryLockLocalTime: "10:00";
   readonly maxDirectEditsPerEntry: number;
   readonly correctionAllowedUntil: KpiActualCorrectionAllowedUntil;
   readonly policyVersion: string;
@@ -318,8 +318,8 @@ export interface KpiProgressView {
 
 export interface KpiActualGridPolicyView {
   readonly timezone: "Asia/Ho_Chi_Minh";
-  readonly entryOpenLocalTime: "06:00";
-  readonly entryLockLocalTime: "23:00";
+  readonly entryOpenLocalTime: "00:00";
+  readonly entryLockLocalTime: "10:00";
   readonly maxDirectEditsPerEntry: number;
   readonly correctionAllowedUntil: KpiActualCorrectionAllowedUntil;
 }

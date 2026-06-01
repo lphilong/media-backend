@@ -13,7 +13,6 @@ import { KpiAdminController } from "@modules/kpi/admin/admin.kpi.controller";
 import { KpiAdminService } from "@modules/kpi/admin/admin.kpi.service";
 import { KpiPlanListExposure } from "@modules/kpi/shared/kpi.exposure";
 import {
-  KpiConflictError,
   KpiInvalidAllocationError,
   KpiNotFoundError,
   KpiPermissionScopeError,
@@ -50,9 +49,20 @@ const MAY_2026_START_AT = Date.UTC(2026, 4, 1, -7, 0, 0, 0);
 const MAY_2026_END_AT = Date.UTC(2026, 5, 1, -7, 0, 0, 0) - 1;
 const JUNE_2026_START_AT = Date.UTC(2026, 5, 1, -7, 0, 0, 0);
 const JUNE_2026_END_AT = Date.UTC(2026, 6, 1, -7, 0, 0, 0) - 1;
+const DECEMBER_2026_START_AT = Date.UTC(2026, 11, 1, -7, 0, 0, 0);
+const DECEMBER_2026_END_AT = Date.UTC(2027, 0, 1, -7, 0, 0, 0) - 1;
+const MAY_5_2026_START_HCM = Date.UTC(2026, 4, 4, 17, 0, 0, 0);
 const MAY_5_2026_NOON_HCM = Date.UTC(2026, 4, 5, 5, 0, 0, 0);
-const MAY_5_2026_AFTER_LOCK_HCM = Date.UTC(2026, 4, 5, 16, 30, 0, 0);
+const MAY_6_2026_09_59_HCM = Date.UTC(2026, 4, 6, 2, 59, 0, 0);
+const MAY_6_2026_10_00_HCM = Date.UTC(2026, 4, 6, 3, 0, 0, 0);
+const MAY_5_2026_AFTER_LOCK_HCM = Date.UTC(2026, 4, 6, 3, 1, 0, 0);
+const JUNE_1_2026_09_30_HCM = Date.UTC(2026, 5, 1, 2, 30, 0, 0);
+const JUNE_1_2026_10_01_HCM = Date.UTC(2026, 5, 1, 3, 1, 0, 0);
 const JUNE_1_2026_NOON_HCM = Date.UTC(2026, 5, 1, 5, 0, 0, 0);
+const JULY_1_2026_09_30_HCM = Date.UTC(2026, 6, 1, 2, 30, 0, 0);
+const JULY_1_2026_10_01_HCM = Date.UTC(2026, 6, 1, 3, 1, 0, 0);
+const JAN_1_2027_10_00_HCM = Date.UTC(2027, 0, 1, 3, 0, 0, 0);
+const JAN_1_2027_10_01_HCM = Date.UTC(2027, 0, 1, 3, 1, 0, 0);
 const FEB_2028_START_AT = Date.UTC(2028, 1, 1, -7, 0, 0, 0);
 const FEB_2028_END_AT = Date.UTC(2028, 2, 1, -7, 0, 0, 0) - 1;
 const FEB_29_2028_NOON_HCM = Date.UTC(2028, 1, 29, 5, 0, 0, 0);
@@ -361,6 +371,92 @@ async function createPublishedFebruary2028GroupPlan(
           targetMetrics: [
             { metricCode: "REVENUE_VND", targetValue: 100 },
             { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
+          ],
+        },
+      ],
+    });
+    await service.submitKpiAllocationDraft(createManagerActor(), {
+      kpiPlanId: created.id,
+    });
+  });
+  await service.approveKpiAllocation(createActor(), {
+    kpiPlanId: created.id,
+  });
+  return service.publishKpiAllocation(createActor(), {
+    kpiPlanId: publishedPlan.id,
+  });
+}
+
+async function createPublishedJune2026GroupPlan(
+  service: KpiAdminService,
+): Promise<
+  ReturnType<KpiAdminService["publishKpiPlan"]> extends Promise<infer T>
+    ? T
+    : never
+> {
+  const created = await service.createKpiPlan(createActor(), {
+    ...groupPlanCommand(),
+    title: "June 2026 group KPI",
+    periodMonth: "2026-06",
+    periodStartAt: JUNE_2026_START_AT,
+    periodEndAt: JUNE_2026_END_AT,
+  });
+  const publishedPlan = await service.publishKpiPlan(createActor(), {
+    kpiPlanId: created.id,
+  });
+  await withEphemeralManagerAssignment(service, "group-1", async () => {
+    await service.upsertKpiAllocationDraft(createManagerActor(), {
+      kpiPlanId: created.id,
+      allocations: [
+        {
+          employmentProfileId: "talent-profile-1",
+          allocationStartDate: "2026-06-01",
+          targetMetrics: [
+            { metricCode: "REVENUE_VND", targetValue: 300 },
+            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 3 },
+          ],
+        },
+      ],
+    });
+    await service.submitKpiAllocationDraft(createManagerActor(), {
+      kpiPlanId: created.id,
+    });
+  });
+  await service.approveKpiAllocation(createActor(), {
+    kpiPlanId: created.id,
+  });
+  return service.publishKpiAllocation(createActor(), {
+    kpiPlanId: publishedPlan.id,
+  });
+}
+
+async function createPublishedDecember2026GroupPlan(
+  service: KpiAdminService,
+): Promise<
+  ReturnType<KpiAdminService["publishKpiPlan"]> extends Promise<infer T>
+    ? T
+    : never
+> {
+  const created = await service.createKpiPlan(createActor(), {
+    ...groupPlanCommand(),
+    title: "December 2026 group KPI",
+    periodMonth: "2026-12",
+    periodStartAt: DECEMBER_2026_START_AT,
+    periodEndAt: DECEMBER_2026_END_AT,
+  });
+  const publishedPlan = await service.publishKpiPlan(createActor(), {
+    kpiPlanId: created.id,
+  });
+  await withEphemeralManagerAssignment(service, "group-1", async () => {
+    await service.upsertKpiAllocationDraft(createManagerActor(), {
+      kpiPlanId: created.id,
+      allocations: [
+        {
+          employmentProfileId: "talent-profile-1",
+          allocationStartDate: "2026-12-01",
+          targetMetrics: [
+            { metricCode: "REVENUE_VND", targetValue: 300 },
+            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 3 },
           ],
         },
       ],
@@ -1538,8 +1634,8 @@ test("KPI V2 actual policy snapshot and actual lifecycle are enforced", async ()
   const allocation = published.allocations[0] as KpiAllocation;
 
   assert.equal(published.actualPolicySnapshot?.timezone, "Asia/Ho_Chi_Minh");
-  assert.equal(published.actualPolicySnapshot?.entryOpenLocalTime, "06:00");
-  assert.equal(published.actualPolicySnapshot?.entryLockLocalTime, "23:00");
+  assert.equal(published.actualPolicySnapshot?.entryOpenLocalTime, "00:00");
+  assert.equal(published.actualPolicySnapshot?.entryLockLocalTime, "10:00");
   assert.equal(published.actualPolicySnapshot?.maxDirectEditsPerEntry, 3);
 
   const created = await service.createOrSetKpiActual(createActor(), {
@@ -1729,7 +1825,109 @@ test("KPI V2 actualDate accepts leap day in DD-MM-YYYY within plan window", asyn
   assert.equal(result.actualEntry.effectiveValue, 100);
 });
 
-test("KPI V2 duplicate POST is idempotent only for the same value", async () => {
+test("KPI V2 direct actual window allows D 00:00 through D+1 10:00 inclusive", async () => {
+  const now = { value: MAY_5_2026_START_HCM };
+  const { service } = createHarness(() => now.value);
+  const published = await createPublishedGroupPlan(service);
+  const allocation = published.allocations[0] as KpiAllocation;
+
+  const created = await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 80,
+  });
+  assert.equal(created.actualEntry.effectiveValue, 80);
+
+  for (const allowedNow of [
+    MAY_6_2026_09_59_HCM,
+    MAY_6_2026_10_00_HCM,
+  ]) {
+    now.value = allowedNow;
+    const retry = await service.createOrSetKpiActual(createActor(), {
+      kpiPlanId: published.id,
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      actualValue: 80,
+    });
+    assert.equal(retry.actualEntry.id, created.actualEntry.id);
+  }
+
+  now.value = MAY_5_2026_AFTER_LOCK_HCM;
+  await assert.rejects(
+    service.createOrSetKpiActual(createActor(), {
+      kpiPlanId: published.id,
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      actualValue: 80,
+    }),
+    KpiStateError,
+  );
+});
+
+test("KPI V2 month-end actual remains in original period until D+1 10:00", async () => {
+  const now = { value: Date.UTC(2026, 5, 15, 5, 0, 0, 0) };
+  const { service } = createHarness(() => now.value);
+  const published = await createPublishedJune2026GroupPlan(service);
+  const allocation = published.allocations[0] as KpiAllocation;
+
+  now.value = JULY_1_2026_09_30_HCM;
+  const created = await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "30-06-2026",
+    actualValue: 100,
+  });
+  assert.equal(created.actualEntry.actualDate, "30-06-2026");
+  assert.equal(
+    (await service.getKpiPlanDetail(createActor(), { kpiPlanId: published.id }))
+      .periodMonth,
+    "2026-06",
+  );
+
+  now.value = JULY_1_2026_10_01_HCM;
+  await assert.rejects(
+    service.updateKpiActualDirect(createActor(), {
+      kpiPlanId: published.id,
+      actualEntryId: created.actualEntry.id,
+      actualValue: 101,
+    }),
+    KpiStateError,
+  );
+});
+
+test("KPI V2 year-end direct actual window crosses into next year", async () => {
+  const now = { value: Date.UTC(2026, 11, 15, 5, 0, 0, 0) };
+  const { service } = createHarness(() => now.value);
+  const published = await createPublishedDecember2026GroupPlan(service);
+  const allocation = published.allocations[0] as KpiAllocation;
+
+  now.value = JAN_1_2027_10_00_HCM;
+  const created = await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "31-12-2026",
+    actualValue: 100,
+  });
+  assert.equal(created.actualEntry.effectiveValue, 100);
+
+  now.value = JAN_1_2027_10_01_HCM;
+  await assert.rejects(
+    service.updateKpiActualDirect(createActor(), {
+      kpiPlanId: published.id,
+      actualEntryId: created.actualEntry.id,
+      actualValue: 101,
+    }),
+    KpiStateError,
+  );
+});
+
+test("KPI V2 duplicate POST is idempotent only inside the direct window", async () => {
   const now = { value: MAY_5_2026_NOON_HCM };
   const { service, audit, actualRepository } = createHarness(() => now.value);
   const published = await createPublishedGroupPlan(service);
@@ -1744,19 +1942,16 @@ test("KPI V2 duplicate POST is idempotent only for the same value", async () => 
   const auditCountAfterCreate = audit.records.length;
   now.value = MAY_5_2026_AFTER_LOCK_HCM;
 
-  const retry = await service.createOrSetKpiActual(createActor(), {
-    kpiPlanId: published.id,
-    allocationId: allocation.id,
-    metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
-    actualValue: 80,
-  });
-
-  assert.equal(retry.actualEntry.id, created.actualEntry.id);
-  assert.equal(retry.actualEntry.effectiveValue, 80);
-  assert.equal(retry.actualEntry.editCount, 0);
-  assert.equal(retry.actualEntry.updatedAt, created.actualEntry.updatedAt);
-  assert.equal(audit.records.length, auditCountAfterCreate);
+  await assert.rejects(
+    service.createOrSetKpiActual(createActor(), {
+      kpiPlanId: published.id,
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      actualValue: 80,
+    }),
+    KpiStateError,
+  );
 
   await assert.rejects(
     service.createOrSetKpiActual(createActor(), {
@@ -1766,7 +1961,7 @@ test("KPI V2 duplicate POST is idempotent only for the same value", async () => 
       actualDate: "05-05-2026",
       actualValue: 81,
     }),
-    KpiConflictError,
+    KpiStateError,
   );
 
   const stored = await actualRepository.findEntryById(created.actualEntry.id);
@@ -1980,19 +2175,34 @@ test("KPI V2 daily actual grid editability is false for FINALIZED plan", async (
   assert.equal(grid.editability.disabledReason, "PLAN_FINALIZED");
 });
 
-test("KPI V2 manager may read actual grid for managed talent group", async () => {
+test("KPI V2 backoffice TEAM_MANAGER may read actual grid for managed published group", async () => {
   const { service, managerRepository } = createHarness(
     () => MAY_5_2026_NOON_HCM,
   );
   const published = await createPublishedGroupPlan(service);
   seedManagerAssignment(managerRepository);
 
-  const grid = await service.getKpiActualDailyGrid(createManagerActor(), {
-    kpiPlanId: published.id,
-    actualDate: "05-05-2026",
-  });
+  const grid = await service.getKpiActualDailyGrid(
+    createProgressReadOnlyBackofficeTeamManagerActor(),
+    {
+      kpiPlanId: published.id,
+      actualDate: "05-05-2026",
+    },
+  );
 
   assert.equal(grid.rows.length, 2);
+  assert.deepEqual(Object.keys(grid).sort(), [
+    "actualDate",
+    "editability",
+    "kpiPlanId",
+    "planCode",
+    "policy",
+    "rows",
+    "status",
+    "subjectId",
+    "subjectType",
+    "targetMetrics",
+  ]);
 });
 
 test("KPI V2 manager needs managedGroup scope in addition to group mapping", async () => {
@@ -2020,6 +2230,75 @@ test("KPI V2 actual grid fails closed for manager without group mapping", async 
       kpiPlanId: published.id,
       actualDate: "05-05-2026",
     }),
+    KpiPermissionScopeError,
+  );
+});
+
+test("KPI actual grid managed read denies missing permission, scope, profile, assignment, lifecycle, subject, and unmanaged group", async () => {
+  const { service, repository, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const published = await createPublishedGroupPlan(service);
+  const draft = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const talentPlan: KpiPlan = {
+    ...published,
+    id: "managed-grid-talent-plan",
+    subjectType: "TALENT",
+    subjectId: "talent-1",
+  };
+  repository.plans.push(talentPlan);
+
+  const readGrid = (actor: Actor, kpiPlanId = published.id) =>
+    service.getKpiActualDailyGrid(actor, {
+      kpiPlanId,
+      actualDate: "05-05-2026",
+    });
+
+  seedManagerAssignment(managerRepository);
+
+  await assert.rejects(
+    readGrid(
+      createProgressReadOnlyBackofficeTeamManagerActor({ permissions: [] }),
+    ),
+    /Missing permission kpi.readProgress/u,
+  );
+  await assert.rejects(
+    readGrid(
+      createProgressReadOnlyBackofficeTeamManagerActor({
+        kpiScopes: [],
+      }),
+    ),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    readGrid(
+      createProgressReadOnlyBackofficeTeamManagerActor({
+        id: "unlinked-manager-user",
+      }),
+    ),
+    KpiPermissionScopeError,
+  );
+
+  managerRepository.assignments.length = 0;
+  await assert.rejects(
+    readGrid(createProgressReadOnlyBackofficeTeamManagerActor()),
+    KpiPermissionScopeError,
+  );
+
+  seedManagerAssignment(managerRepository, "group-2");
+  await assert.rejects(
+    readGrid(createProgressReadOnlyBackofficeTeamManagerActor()),
+    KpiPermissionScopeError,
+  );
+
+  managerRepository.assignments.length = 0;
+  seedManagerAssignment(managerRepository);
+  await assert.rejects(
+    readGrid(createProgressReadOnlyBackofficeTeamManagerActor(), draft.id),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    readGrid(createProgressReadOnlyBackofficeTeamManagerActor(), talentPlan.id),
     KpiPermissionScopeError,
   );
 });
@@ -2167,7 +2446,7 @@ test("KPI global progress remains available and excludes every nonofficial alloc
   );
 });
 
-test("KPI progress repair does not open actual mutation, actual grid, or correction history", async () => {
+test("KPI read-progress manager can read actual grid but not mutate actuals or correction history", async () => {
   const { service, managerRepository } = createHarness(
     () => MAY_5_2026_NOON_HCM,
   );
@@ -2193,13 +2472,11 @@ test("KPI progress repair does not open actual mutation, actual grid, or correct
     }),
     /Missing permission kpi.enterActual/u,
   );
-  await assert.rejects(
-    service.getKpiActualDailyGrid(managerActor, {
-      kpiPlanId: published.id,
-      actualDate: "05-05-2026",
-    }),
-    KpiPermissionScopeError,
-  );
+  const grid = await service.getKpiActualDailyGrid(managerActor, {
+    kpiPlanId: published.id,
+    actualDate: "05-05-2026",
+  });
+  assert.equal(grid.rows.length, 2);
   await assert.rejects(
     service.listKpiActualCorrections(managerActor, {
       kpiPlanId: published.id,
@@ -2691,28 +2968,12 @@ test("KPI V2 finalize rejects before period end", async () => {
   );
 });
 
-test("KPI V2 manager may enter actual for managed talent group", async () => {
-  const { service, managerRepository } = createHarness(
-    () => MAY_5_2026_NOON_HCM,
-  );
+test("KPI V2 manual finalize rejects during closing window and allows after D+1 10:00", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
+  const { service } = createHarness(() => now.value);
   const published = await createPublishedGroupPlan(service);
   const allocation = published.allocations[0] as KpiAllocation;
-  managerRepository.assignments.push({
-    id: "assignment-1",
-    groupId: "group-1",
-    managerEmploymentProfileId: "manager-profile-1",
-    role: "MANAGER",
-    effectiveFrom: MAY_2026_START_AT,
-    effectiveTo: null,
-    status: "ACTIVE",
-    isPrimary: true,
-    createdAt: MAY_2026_START_AT,
-    createdByActorId: "seed",
-    updatedAt: MAY_2026_START_AT,
-    updatedByActorId: "seed",
-  });
-
-  const result = await service.createOrSetKpiActual(createManagerActor(), {
+  const actual = await service.createOrSetKpiActual(createActor(), {
     kpiPlanId: published.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
@@ -2720,7 +2981,161 @@ test("KPI V2 manager may enter actual for managed talent group", async () => {
     actualValue: 80,
   });
 
+  now.value = JUNE_1_2026_09_30_HCM;
+  await assert.rejects(
+    service.finalizeKpiPlan(createActor(), { kpiPlanId: published.id }),
+    KpiStateError,
+  );
+
+  now.value = JUNE_1_2026_10_01_HCM;
+  const finalized = await service.finalizeKpiPlan(createActor(), {
+    kpiPlanId: published.id,
+  });
+  assert.equal(finalized.status, "FINALIZED");
+
+  await assert.rejects(
+    service.updateKpiActualDirect(createActor(), {
+      kpiPlanId: published.id,
+      actualEntryId: actual.actualEntry.id,
+      actualValue: 81,
+    }),
+    KpiStateError,
+  );
+  await assert.rejects(
+    service.createOrSetKpiActual(createActor(), {
+      kpiPlanId: published.id,
+      allocationId: allocation.id,
+      metricCode: "ONBOARDED_TALENT_COUNT",
+      actualDate: "05-05-2026",
+      actualValue: 0,
+    }),
+    KpiStateError,
+  );
+});
+
+test("KPI V2 backoffice TEAM_MANAGER may create zero and direct-update managed actuals", async () => {
+  const { service, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const published = await createPublishedGroupPlan(service);
+  const allocation = published.allocations[0] as KpiAllocation;
+  seedManagerAssignment(managerRepository);
+  const managerActor = createBackofficeTeamManagerActor();
+
+  const result = await service.createOrSetKpiActual(managerActor, {
+    kpiPlanId: published.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 0,
+  });
+  const updated = await service.updateKpiActualDirect(managerActor, {
+    kpiPlanId: published.id,
+    actualEntryId: result.actualEntry.id,
+    actualValue: 80,
+  });
+
   assert.equal(result.actualEntry.memberTalentId, allocation.memberTalentId);
+  assert.equal(result.actualEntry.actualValue, 0);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(result.actualEntry, "actualValue"),
+    true,
+  );
+  assert.equal(updated.actualEntry.effectiveValue, 80);
+  assert.equal(updated.actualEntry.editCount, 1);
+  await assert.rejects(
+    service.correctKpiActual(managerActor, {
+      kpiPlanId: published.id,
+      actualEntryId: result.actualEntry.id,
+      correctedValue: 90,
+      reason: "manager correction",
+    }),
+    KpiPermissionScopeError,
+  );
+});
+
+test("KPI managed actual entry denies cutoff, unmanaged, non-published allocation, lifecycle, and permission gaps", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
+  const { service, repository, managerRepository } = createHarness(
+    () => now.value,
+  );
+  const published = await createPublishedGroupPlan(service);
+  const allocation = published.allocations[0] as KpiAllocation;
+  const managerActor = createBackofficeTeamManagerActor();
+  seedManagerAssignment(managerRepository);
+
+  now.value = MAY_5_2026_AFTER_LOCK_HCM;
+  await assert.rejects(
+    service.createOrSetKpiActual(managerActor, {
+      kpiPlanId: published.id,
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      actualValue: 80,
+    }),
+    KpiStateError,
+  );
+
+  now.value = MAY_5_2026_NOON_HCM;
+  managerRepository.assignments.length = 0;
+  seedManagerAssignment(managerRepository, "group-2");
+  await assert.rejects(
+    service.createOrSetKpiActual(managerActor, {
+      kpiPlanId: published.id,
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      actualValue: 80,
+    }),
+    KpiPermissionScopeError,
+  );
+
+  managerRepository.assignments.length = 0;
+  seedManagerAssignment(managerRepository);
+  replacePlanAllocationStatuses(repository, published.id, ["DRAFT"]);
+  const draftAllocation = repository.allocations.find(
+    (item) => item.kpiPlanId === published.id,
+  );
+  assert.ok(draftAllocation);
+  await assert.rejects(
+    service.createOrSetKpiActual(managerActor, {
+      kpiPlanId: published.id,
+      allocationId: draftAllocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      actualValue: 80,
+    }),
+    KpiInvalidAllocationError,
+  );
+
+  const draftPlan = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
+  await assert.rejects(
+    service.createOrSetKpiActual(managerActor, {
+      kpiPlanId: draftPlan.id,
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      actualValue: 80,
+    }),
+    KpiStateError,
+  );
+
+  await assert.rejects(
+    service.createOrSetKpiActual(
+      createProgressReadOnlyBackofficeTeamManagerActor(),
+      {
+        kpiPlanId: published.id,
+        allocationId: allocation.id,
+        metricCode: "REVENUE_VND",
+        actualDate: "05-05-2026",
+        actualValue: 80,
+      },
+    ),
+    /Missing permission kpi.enterActual/u,
+  );
 });
 
 test("KPI allocation approval foundation supports manager draft submit and admin approve publish", async () => {
