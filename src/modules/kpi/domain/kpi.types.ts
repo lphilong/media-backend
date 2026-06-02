@@ -576,6 +576,7 @@ export interface KpiActualWorkspaceMemberSummary {
 
 export interface KpiActualWorkspacePlanDetail
   extends KpiActualWorkspacePlanSummary {
+  readonly finalResult?: KpiFinalResultSnapshot | null;
   readonly members: readonly KpiActualWorkspaceMemberSummary[];
 }
 

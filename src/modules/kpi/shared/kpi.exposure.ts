@@ -10,6 +10,7 @@ import {
   KpiActualEntry,
   KpiActualWorkspacePlanDetail,
   KpiActualWorkspacePlanSummary,
+  KpiFinalResultSnapshot,
   KpiPlanDetailView,
   KpiPlanListItemView,
   KpiPlanMutationView,
@@ -86,6 +87,7 @@ const KPI_PLAN_DETAIL_FIELDS = [
   "updatedAt",
   "updatedByActorId",
   "externalRef",
+  "finalResult",
   "targetMetrics",
   "allocations",
 ] as const;
@@ -278,6 +280,10 @@ export const KpiPlanDetailExposure = Object.freeze({
           updatedAt: input.updatedAt,
           updatedByActorId: input.updatedByActorId,
           externalRef: input.externalRef,
+          finalResult:
+            input.status === "FINALIZED"
+              ? exposeKpiFinalResult(input.finalResult)
+              : null,
           targetMetrics: KpiTargetMetricExposure.exposeMany(
             input.targetMetrics,
           ),
@@ -541,6 +547,7 @@ export const KpiActualWorkspaceExposure = Object.freeze({
     return toPlainObject(
       {
         ...this.exposeSummary(input),
+        finalResult: exposeKpiFinalResult(input.finalResult),
         members: input.members.map((member) => ({
           allocationId: member.allocationId,
           allocationStatus: member.allocationStatus,
@@ -556,3 +563,36 @@ export const KpiActualWorkspaceExposure = Object.freeze({
     );
   },
 });
+
+function exposeKpiFinalResult(
+  input: KpiFinalResultSnapshot | null | undefined,
+): PlainObject | null {
+  if (!input) {
+    return null;
+  }
+
+  return toPlainObject(
+    {
+      snapshotVersion: input.snapshotVersion,
+      planId: input.planId,
+      planCode: input.planCode,
+      periodMonth: input.periodMonth,
+      subjectType: input.subjectType,
+      subjectId: input.subjectId,
+      finalizedAt: input.finalizedAt,
+      revenue: input.revenue,
+      allocationCoverage: input.allocationCoverage,
+      actualEntryStatusSummary: input.actualEntryStatusSummary,
+      supportingMetrics: input.supportingMetrics,
+      members: input.members.map((member) => ({
+        allocationId: member.allocationId,
+        memberDisplayName: member.memberDisplayName,
+        allocationStatus: member.allocationStatus,
+        revenue: member.revenue,
+        supportingMetrics: member.supportingMetrics,
+        actualEntryStatusSummary: member.actualEntryStatusSummary,
+      })),
+    },
+    "KpiFinalResult exposure",
+  );
+}

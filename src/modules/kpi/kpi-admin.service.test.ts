@@ -3988,13 +3988,32 @@ test("KPI V2 finalize persists operational final result snapshot", async () => {
   ]) {
     assert.equal(serializedSnapshot.includes(forbidden), false, forbidden);
   }
-  assert.equal(
-    Object.prototype.hasOwnProperty.call(
-      KpiPlanDetailExposure.expose(finalized),
-      "finalResult",
-    ),
-    false,
+  const exposedPlanDetail = KpiPlanDetailExposure.expose(finalized);
+  const exposedFinalResult = exposedPlanDetail.finalResult as Record<
+    string,
+    unknown
+  >;
+  assert.ok(exposedFinalResult);
+  assert.equal(exposedFinalResult.snapshotVersion, 1);
+  assert.equal(exposedFinalResult.finalizedAt, JUNE_1_2026_NOON_HCM);
+  assert.equal("finalizedByActorId" in exposedFinalResult, false);
+  assert.equal("memberTalentId" in exposedFinalResult, false);
+  assert.equal("memberEmploymentProfileId" in exposedFinalResult, false);
+
+  const listedPlans = await service.listKpiPlans(createActor(), {
+    search: published.planCode,
+  });
+  const listedPlan = listedPlans.items[0];
+  assert.ok(listedPlan);
+  const exposedPlanListItem = KpiPlanListExposure.expose(listedPlan);
+  assert.equal("finalResult" in exposedPlanListItem, false);
+
+  const exposedWorkspaceDetail = KpiActualWorkspaceExposure.exposeDetail(
+    await service.getKpiActualWorkspacePlanDetail(createActor(), {
+      kpiPlanId: published.id,
+    }),
   );
+  assert.deepEqual(exposedWorkspaceDetail.finalResult, exposedFinalResult);
 
   await assert.rejects(
     service.finalizeKpiPlan(createActor(), { kpiPlanId: published.id }),
@@ -4898,6 +4917,7 @@ test("KPI actual workspace exposes correction-aware revenue, coverage, limited m
     false,
   );
   const exposedDetail = KpiActualWorkspaceExposure.exposeDetail(detail);
+  assert.equal(exposedDetail.finalResult, null);
   const exposedMember = (
     exposedDetail.members as readonly Record<string, unknown>[]
   )[0];

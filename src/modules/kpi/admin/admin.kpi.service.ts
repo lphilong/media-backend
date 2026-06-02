@@ -415,7 +415,11 @@ export class KpiAdminService {
     if (!aggregate) {
       throw new KpiNotFoundError(plan.id);
     }
-    return { ...aggregate.summary, members: aggregate.members };
+    return {
+      ...aggregate.summary,
+      finalResult: plan.status === "FINALIZED" ? plan.finalResult ?? null : null,
+      members: aggregate.members,
+    };
   }
 
   async getKpiPlanDetail(
