@@ -6,8 +6,10 @@ import {
 } from "@core/business-code/business-code-sequence.repository";
 import { BaseRepository } from "@infra/database/repository";
 import {
+  KpiActualWorkspaceDerivedPlanSortRow,
   KpiPlanListCursor,
   KpiPlanRepository,
+  ListKpiActualWorkspaceDerivedPlansInput,
   ListKpiPlansInput,
   ReplaceKpiAllocationsForPlanInput,
   TransitionKpiAllocationsForPlanInput,
@@ -100,6 +102,12 @@ interface KpiAllocationDocument {
   readonly publishedAt: number | null;
   readonly publishedByActorId?: string | null;
   readonly closedAt: number | null;
+}
+
+interface KpiActualWorkspaceDerivedPlanDocument extends KpiPlanDocument {
+  readonly revenueActual: number;
+  readonly achievementPercent: number | null;
+  readonly achievementNullRank: 0 | 1;
 }
 
 export class NativeMongoKpiPlanRepository
@@ -305,6 +313,273 @@ export class NativeMongoKpiPlanRepository
       .limit(input.limit)
       .toArray();
     return docs.map(toKpiPlan);
+  }
+
+  private async buildPlanMatchFilters(
+    input: ListKpiPlansInput | ListKpiActualWorkspaceDerivedPlansInput,
+  ): Promise<readonly Record<string, unknown>[]> {
+    const filters: Record<string, unknown>[] = [];
+    const query: Record<string, unknown> = {};
+    assignIfDefined(query, "subjectType", input.subjectType);
+    assignIfDefined(query, "periodMonth", input.periodMonth);
+    assignIfDefined(query, "status", input.status);
+    const subjectIds = normalizeSubjectIdFilter(input);
+    if (subjectIds === null) {
+      return [{ _id: { $in: [] } }];
+    }
+    if (input.groupId !== undefined || input.subjectIds !== undefined) {
+      query.subjectType = "TALENT_GROUP";
+    }
+    if (subjectIds !== undefined) {
+      query.subjectId =
+        subjectIds.length === 1 ? subjectIds[0] : { $in: subjectIds };
+    }
+    if ("metricCode" in input && input.metricCode !== undefined) {
+      const planIds = await this.targetMetricCollection
+        .find(
+          { metricCode: input.metricCode },
+          { projection: { kpiPlanId: 1 } },
+        )
+        .toArray();
+      query._id = { $in: planIds.map((doc) => doc.kpiPlanId) };
+    }
+    filters.push(query);
+    if (input.search !== undefined || input.searchSubjectIds !== undefined) {
+      const searchFilters: Record<string, unknown>[] = [];
+      if (input.search !== undefined) {
+        const pattern = new RegExp(escapeRegExp(input.search), "i");
+        searchFilters.push(
+          { normalizedPlanCode: pattern },
+          { normalizedTitle: pattern },
+        );
+      }
+      const searchSubjectIds = uniqueNonEmpty(input.searchSubjectIds ?? []);
+      if (searchSubjectIds.length > 0) {
+        searchFilters.push({ subjectId: { $in: searchSubjectIds } });
+      }
+      if (searchFilters.length === 0) {
+        return [{ _id: { $in: [] } }];
+      }
+      filters.push({ $or: searchFilters });
+    }
+    return filters;
+  }
+
+  async listActualWorkspaceDerivedPlans(
+    input: ListKpiActualWorkspaceDerivedPlansInput,
+  ): Promise<readonly KpiActualWorkspaceDerivedPlanSortRow[]> {
+    const filters = await this.buildPlanMatchFilters(input);
+    const pipeline: Record<string, unknown>[] = [
+      { $match: buildQuery(filters) },
+      {
+        $lookup: {
+          from: "kpi_allocations",
+          let: { planId: "$_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ["$kpiPlanId", "$$planId"] },
+              },
+            },
+          ],
+          as: "workspaceAllocations",
+        },
+      },
+      {
+        $addFields: {
+          totalAllocationCount: { $size: "$workspaceAllocations" },
+          publishedAllocationCount: {
+            $size: {
+              $filter: {
+                input: "$workspaceAllocations",
+                as: "allocation",
+                cond: {
+                  $eq: ["$$allocation.allocationStatus", "PUBLISHED"],
+                },
+              },
+            },
+          },
+        },
+      },
+      ...buildAllocationCoverageStages(input.allocationCoverage),
+      {
+        $addFields: {
+          revenueAllocations: {
+            $filter: {
+              input: "$workspaceAllocations",
+              as: "allocation",
+              cond: {
+                $and: [
+                  { $eq: ["$$allocation.allocationStatus", "PUBLISHED"] },
+                  { $eq: ["$$allocation.groupId", "$subjectId"] },
+                  {
+                    $in: [
+                      "REVENUE_VND",
+                      {
+                        $map: {
+                          input: "$$allocation.targetMetrics",
+                          as: "metric",
+                          in: "$$metric.metricCode",
+                        },
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+      {
+        $addFields: {
+          revenueAllocationPairs: {
+            $map: {
+              input: "$revenueAllocations",
+              as: "allocation",
+              in: {
+                allocationId: "$$allocation._id",
+                memberTalentId: "$$allocation.memberTalentId",
+              },
+            },
+          },
+          operationalTargetValue: {
+            $sum: {
+              $map: {
+                input: "$revenueAllocations",
+                as: "allocation",
+                in: {
+                  $sum: {
+                    $map: {
+                      input: {
+                        $filter: {
+                          input: "$$allocation.targetMetrics",
+                          as: "metric",
+                          cond: {
+                            $eq: ["$$metric.metricCode", "REVENUE_VND"],
+                          },
+                        },
+                      },
+                      as: "metric",
+                      in: "$$metric.targetValue",
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        $lookup: {
+          from: "kpi_actual_entries",
+          let: {
+            planId: "$_id",
+            periodStartAt: "$periodStartAt",
+            periodEndAt: "$periodEndAt",
+            allocationPairs: "$revenueAllocationPairs",
+          },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$kpiPlanId", "$$planId"] },
+                    { $eq: ["$metricCode", "REVENUE_VND"] },
+                    {
+                      $in: [
+                        {
+                          allocationId: "$allocationId",
+                          memberTalentId: "$memberTalentId",
+                        },
+                        "$$allocationPairs",
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+            {
+              $addFields: {
+                actualDateAt: {
+                  $dateFromString: {
+                    dateString: "$actualDate",
+                    format: "%d-%m-%Y",
+                    timezone: "Asia/Ho_Chi_Minh",
+                    onError: null,
+                    onNull: null,
+                  },
+                },
+              },
+            },
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $ne: ["$actualDateAt", null] },
+                    { $gte: [{ $toLong: "$actualDateAt" }, "$$periodStartAt"] },
+                    { $lte: [{ $toLong: "$actualDateAt" }, "$$periodEndAt"] },
+                  ],
+                },
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                actualValue: { $sum: "$effectiveValue" },
+              },
+            },
+          ],
+          as: "revenueActualRows",
+        },
+      },
+      {
+        $addFields: {
+          revenueActual: {
+            $ifNull: [
+              { $arrayElemAt: ["$revenueActualRows.actualValue", 0] },
+              0,
+            ],
+          },
+        },
+      },
+      {
+        $addFields: {
+          achievementPercent: {
+            $cond: [
+              { $eq: ["$operationalTargetValue", 0] },
+              null,
+              {
+                $multiply: [
+                  { $divide: ["$revenueActual", "$operationalTargetValue"] },
+                  100,
+                ],
+              },
+            ],
+          },
+        },
+      },
+      {
+        $addFields: {
+          achievementNullRank: {
+            $cond: [{ $eq: ["$achievementPercent", null] }, 1, 0],
+          },
+        },
+      },
+      ...buildDerivedCursorStages(input),
+      { $sort: buildDerivedSort(input) },
+      { $limit: input.limit },
+      { $project: { workspaceAllocations: 0, revenueAllocations: 0, revenueAllocationPairs: 0, revenueActualRows: 0 } },
+    ];
+
+    const docs = await this.collection
+      .aggregate<KpiActualWorkspaceDerivedPlanDocument>(pipeline)
+      .toArray();
+    return docs.map((doc) => ({
+      plan: toKpiPlan(doc),
+      revenueActual: doc.revenueActual,
+      achievementPercent: doc.achievementPercent,
+      achievementNullRank: doc.achievementNullRank,
+    }));
   }
 
   async insertTargetMetrics(
@@ -668,6 +943,113 @@ function buildKpiPlanCursorFilter(
       },
     ],
   };
+}
+
+function buildAllocationCoverageStages(
+  coverage: ListKpiActualWorkspaceDerivedPlansInput["allocationCoverage"],
+): readonly Record<string, unknown>[] {
+  if (coverage === undefined) {
+    return [];
+  }
+  const completeExpression = {
+    $and: [
+      { $gt: ["$totalAllocationCount", 0] },
+      { $eq: ["$publishedAllocationCount", "$totalAllocationCount"] },
+    ],
+  };
+  return [
+    {
+      $match: {
+        $expr:
+          coverage === "complete"
+            ? completeExpression
+            : { $not: [completeExpression] },
+      },
+    },
+  ];
+}
+
+function buildDerivedCursorStages(
+  input: ListKpiActualWorkspaceDerivedPlansInput,
+): readonly Record<string, unknown>[] {
+  if (!input.cursor) {
+    return [];
+  }
+  return [{ $match: buildDerivedCursorExpression(input.cursor) }];
+}
+
+function buildDerivedCursorExpression(
+  cursor: NonNullable<ListKpiActualWorkspaceDerivedPlansInput["cursor"]>,
+): Record<string, unknown> {
+  if (cursor.sortBy === "revenueActual") {
+    const comparisonOperator = cursor.sortDirection === "ASC" ? "$gt" : "$lt";
+    const revenueActual = cursor.revenueActual ?? 0;
+    return {
+      $expr: {
+        $or: [
+          { [comparisonOperator]: ["$revenueActual", revenueActual] },
+          {
+            $and: [
+              { $eq: ["$revenueActual", revenueActual] },
+              { $gt: ["$_id", cursor.planId] },
+            ],
+          },
+        ],
+      },
+    };
+  }
+
+  const comparisonOperator = cursor.sortDirection === "ASC" ? "$gt" : "$lt";
+  const achievementNullRank = cursor.achievementNullRank ?? 0;
+  const achievementPercent = cursor.achievementPercent ?? null;
+  if (achievementNullRank === 1) {
+    return {
+      $expr: {
+        $and: [
+          { $eq: ["$achievementNullRank", 1] },
+          { $gt: ["$_id", cursor.planId] },
+        ],
+      },
+    };
+  }
+  return {
+    $expr: {
+      $or: [
+        { $gt: ["$achievementNullRank", achievementNullRank] },
+        {
+          $and: [
+            { $eq: ["$achievementNullRank", achievementNullRank] },
+            {
+              $or: [
+                {
+                  [comparisonOperator]: [
+                    "$achievementPercent",
+                    achievementPercent,
+                  ],
+                },
+                {
+                  $and: [
+                    { $eq: ["$achievementPercent", achievementPercent] },
+                    { $gt: ["$_id", cursor.planId] },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function buildDerivedSort(
+  input: ListKpiActualWorkspaceDerivedPlansInput,
+): Record<string, 1 | -1> {
+  const direction: 1 | -1 = input.sortDirection === "ASC" ? 1 : -1;
+  if (input.sortBy === "revenueActual") {
+    return { revenueActual: direction, _id: 1 };
+  }
+  return { achievementNullRank: 1, achievementPercent: direction, _id: 1 };
 }
 
 function uniqueNonEmpty(values: readonly string[]): readonly string[] {

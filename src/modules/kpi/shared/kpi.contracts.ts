@@ -167,7 +167,12 @@ export interface ListKpiActualWorkspacePlansQuery {
   readonly subjectId?: string;
   readonly search?: string;
   readonly limit?: number | string;
-  readonly sortBy?: "periodMonth" | "planCode" | string;
+  readonly sortBy?:
+    | "periodMonth"
+    | "planCode"
+    | "revenueActual"
+    | "achievementPercent"
+    | string;
   readonly sortDirection?: KpiSortDirection | string;
   readonly cursor?: string;
   readonly allocationCoverage?: "complete" | "incomplete" | string;

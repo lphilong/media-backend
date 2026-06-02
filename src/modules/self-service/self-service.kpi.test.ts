@@ -826,6 +826,10 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     throw new Error("Not implemented");
   }
 
+  async listActualWorkspaceDerivedPlans(): Promise<readonly never[]> {
+    throw new Error("Not implemented");
+  }
+
   async insertTargetMetrics(): Promise<readonly KpiTargetMetric[]> {
     throw new Error("Not implemented");
   }

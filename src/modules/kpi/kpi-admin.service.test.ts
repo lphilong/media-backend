@@ -25,9 +25,11 @@ import {
 } from "@modules/kpi/domain/kpi.errors";
 import { KpiActualRepository } from "@modules/kpi/domain/kpi-actual.repository";
 import {
+  KpiActualWorkspaceDerivedPlanSortRow,
   ListKpiPlansInput,
   KpiPlanListCursor,
   KpiPlanRepository,
+  ListKpiActualWorkspaceDerivedPlansInput,
 } from "@modules/kpi/domain/kpi.repository";
 import {
   KpiGroupMemberLookup,
@@ -47,6 +49,7 @@ import {
   KpiActualPolicySnapshot,
   KpiMetricCode,
   KpiPlan,
+  KpiPlanDetailView,
   KpiPlanStatus,
   KpiSubjectType,
   KpiTargetMetric,
@@ -247,6 +250,7 @@ function createHarness(clock: () => number = fixedClock()): {
 } {
   const repository = new InMemoryKpiPlanRepository();
   const actualRepository = new InMemoryKpiActualRepository();
+  repository.actualEntries = actualRepository.entries;
   const subjectAccess = new InMemoryKpiSubjectReadonlyAccess();
   const managerRepository = new InMemoryManagerAssignmentRepository();
   const audit = new RecordingAuditGuard();
@@ -3962,22 +3966,247 @@ test("KPI actual workspace supports base plan search and periodMonth/planCode so
     result.items.map((item) => item.planId),
     [second.id, first.id],
   );
-  await assert.rejects(
-    service.listKpiActualWorkspacePlans(createActor(), {
-      sortBy: "achievementPercent",
-    }),
-    KpiValidationError,
-  );
-  await assert.rejects(
-    service.listKpiActualWorkspacePlans(createActor(), {
-      sortBy: "revenueActual",
-    }),
-    KpiValidationError,
-  );
+  await service.listKpiActualWorkspacePlans(createActor(), {
+    sortBy: "achievementPercent",
+  });
+  await service.listKpiActualWorkspacePlans(createActor(), {
+    sortBy: "revenueActual",
+  });
   await assert.rejects(
     service.listKpiActualWorkspacePlans(createActor(), {
       sortBy: "missingSignal",
     }),
+    KpiValidationError,
+  );
+});
+
+test("KPI actual workspace sorts revenueActual before cursor and page selection", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
+  const { service, actualRepository, repository } = createHarness(
+    () => now.value,
+  );
+  const low = await createPublishedGroupPlan(service);
+  const mid = await createPublishedGroupPlan(service);
+  const tie = await createPublishedGroupPlan(service);
+  const high = await createPublishedGroupPlan(service);
+
+  const setRevenue = async (
+    plan: KpiPlanDetailView,
+    value: number,
+  ): Promise<void> => {
+    const allocation = plan.allocations[0] as KpiAllocation;
+    await service.createOrSetKpiActual(createActor(), {
+      kpiPlanId: plan.id,
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      actualValue: value,
+    });
+  };
+  await setRevenue(low, 10);
+  await setRevenue(mid, 20);
+  await setRevenue(tie, 20);
+  await setRevenue(high, 30);
+
+  const lowAllocation = low.allocations[0] as KpiAllocation;
+  const draftAllocation = {
+    ...lowAllocation,
+    id: "derived-draft-allocation",
+    allocationStatus: "DRAFT" as const,
+  };
+  repository.allocations.push(draftAllocation);
+  actualRepository.entries.push(
+    {
+      ...actualRepository.entries[0]!,
+      id: "derived-draft-actual-ignored",
+      allocationId: draftAllocation.id,
+      effectiveValue: 999,
+    },
+    {
+      ...actualRepository.entries[0]!,
+      id: "derived-out-of-period-actual-ignored",
+      kpiPlanId: low.id,
+      allocationId: lowAllocation.id,
+      actualDate: "01-06-2026",
+      effectiveValue: 999,
+    },
+    {
+      ...actualRepository.entries[0]!,
+      id: "derived-member-mismatch-actual-ignored",
+      kpiPlanId: low.id,
+      allocationId: lowAllocation.id,
+      memberTalentId: "other-member",
+      effectiveValue: 999,
+    },
+    {
+      ...actualRepository.entries[0]!,
+      id: "derived-unsupported-metric-actual-ignored",
+      kpiPlanId: low.id,
+      allocationId: lowAllocation.id,
+      metricCode: "LIVE_HOURS",
+      effectiveValue: 999,
+    },
+  );
+
+  const tieOrdered = [mid, tie].sort((left, right) =>
+    left.id.localeCompare(right.id),
+  );
+  const expectedAsc = [low, ...tieOrdered, high].map((plan) => plan.id);
+  const expectedDesc = [high, ...tieOrdered, low].map((plan) => plan.id);
+  const firstPage = await service.listKpiActualWorkspacePlans(createActor(), {
+    sortBy: "revenueActual",
+    sortDirection: "ASC",
+    limit: 2,
+  });
+  const secondPage = await service.listKpiActualWorkspacePlans(createActor(), {
+    sortBy: "revenueActual",
+    sortDirection: "ASC",
+    limit: 3,
+    cursor: firstPage.nextCursor,
+  });
+  const desc = await service.listKpiActualWorkspacePlans(createActor(), {
+    sortBy: "revenueActual",
+    sortDirection: "DESC",
+    limit: 10,
+  });
+
+  assert.ok(firstPage.nextCursor);
+  assert.deepEqual(
+    [...firstPage.items, ...secondPage.items].map((item) => item.planId),
+    expectedAsc,
+  );
+  assert.deepEqual(
+    desc.items.map((item) => item.planId),
+    expectedDesc,
+  );
+  assert.equal(firstPage.items[0]?.revenue.actualValue, 10);
+});
+
+test("KPI actual workspace sorts achievementPercent with nulls last both directions", async () => {
+  const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
+  const nullPlan = await service.publishKpiPlan(
+    createActor(),
+    {
+      kpiPlanId: (await service.createKpiPlan(createActor(), groupPlanCommand()))
+        .id,
+    },
+  );
+  const low = await createPublishedGroupPlan(service);
+  const high = await createPublishedGroupPlan(service);
+
+  const setRevenue = async (
+    plan: KpiPlanDetailView,
+    value: number,
+  ): Promise<void> => {
+    const allocation = plan.allocations[0] as KpiAllocation;
+    await service.createOrSetKpiActual(createActor(), {
+      kpiPlanId: plan.id,
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      actualValue: value,
+    });
+  };
+  await setRevenue(low, 30);
+  await setRevenue(high, 90);
+
+  const ascFirst = await service.listKpiActualWorkspacePlans(createActor(), {
+    sortBy: "achievementPercent",
+    sortDirection: "ASC",
+    limit: 1,
+  });
+  const ascSecond = await service.listKpiActualWorkspacePlans(createActor(), {
+    sortBy: "achievementPercent",
+    sortDirection: "ASC",
+    limit: 10,
+    cursor: ascFirst.nextCursor,
+  });
+  const desc = await service.listKpiActualWorkspacePlans(createActor(), {
+    sortBy: "achievementPercent",
+    sortDirection: "DESC",
+    limit: 10,
+  });
+
+  assert.ok(ascFirst.nextCursor);
+  assert.deepEqual(
+    [...ascFirst.items, ...ascSecond.items].map((item) => item.planId),
+    [low.id, high.id, nullPlan.id],
+  );
+  assert.deepEqual(
+    desc.items.map((item) => item.planId),
+    [high.id, low.id, nullPlan.id],
+  );
+  assert.equal(
+    desc.items.find((item) => item.planId === nullPlan.id)?.revenue
+      .achievementPercent,
+    null,
+  );
+});
+
+test("KPI managed actual workspace derived sort does not leak hidden plans or cursors", async () => {
+  const { service, repository, actualRepository, managerRepository } =
+    createHarness(() => MAY_5_2026_NOON_HCM);
+  const managed = await createPublishedGroupPlan(service);
+  const hidden: KpiPlan = {
+    ...managed,
+    id: "hidden-derived-sort-plan",
+    planCode: "KPI-HIDDEN-DERIVED",
+    normalizedPlanCode: "kpi-hidden-derived",
+    subjectId: "group-2",
+  };
+  const managedAllocation = managed.allocations[0] as KpiAllocation;
+  repository.plans.push(hidden);
+  repository.allocations.push({
+    ...managedAllocation,
+    id: "hidden-derived-sort-allocation",
+    kpiPlanId: hidden.id,
+    groupId: hidden.subjectId,
+    targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 100 }],
+  });
+  await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: managed.id,
+    allocationId: managedAllocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 10,
+  });
+  actualRepository.entries.push({
+    ...actualRepository.entries[0]!,
+    id: "hidden-derived-sort-actual",
+    kpiPlanId: hidden.id,
+    allocationId: "hidden-derived-sort-allocation",
+    effectiveValue: 999,
+  });
+  seedManagerAssignment(managerRepository, "group-1");
+
+  const result = await service.listKpiActualWorkspacePlans(
+    createProgressReadOnlyBackofficeTeamManagerActor(),
+    { sortBy: "revenueActual", sortDirection: "DESC" },
+  );
+  const globalCursor = (
+    await service.listKpiActualWorkspacePlans(createActor(), {
+      sortBy: "revenueActual",
+      sortDirection: "DESC",
+      limit: 1,
+    })
+  ).nextCursor;
+
+  assert.deepEqual(
+    result.items.map((item) => item.planId),
+    [managed.id],
+  );
+  assert.equal(JSON.stringify(result).includes(hidden.id), false);
+  assert.equal(JSON.stringify(result).includes("999"), false);
+  assert.ok(globalCursor);
+  await assert.rejects(
+    service.listKpiActualWorkspacePlans(
+      createProgressReadOnlyBackofficeTeamManagerActor(),
+      {
+        sortBy: "revenueActual",
+        sortDirection: "DESC",
+        cursor: globalCursor,
+      },
+    ),
     KpiValidationError,
   );
 });
@@ -4665,6 +4894,7 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
   readonly plans: KpiPlan[] = [];
   readonly targets: KpiTargetMetric[] = [];
   readonly allocations: KpiAllocation[] = [];
+  actualEntries: KpiActualEntry[] = [];
   countAllocationsByPlanIdsCallCount = 0;
   listAllocationsByPlanIdCallCount = 0;
 
@@ -4858,6 +5088,49 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
         }
         return fieldDiff || left.id.localeCompare(right.id);
       })
+      .slice(0, input.limit);
+  }
+
+  async listActualWorkspaceDerivedPlans(
+    input: ListKpiActualWorkspaceDerivedPlansInput,
+  ): Promise<readonly KpiActualWorkspaceDerivedPlanSortRow[]> {
+    const subjectIds = normalizeTestSubjectIdFilter(input);
+    if (subjectIds === null) {
+      return [];
+    }
+    return this.plans
+      .filter((plan) => {
+        if (plan.subjectType !== input.subjectType) {
+          return false;
+        }
+        if (subjectIds !== undefined && !subjectIds.includes(plan.subjectId)) {
+          return false;
+        }
+        if (input.periodMonth && plan.periodMonth !== input.periodMonth) {
+          return false;
+        }
+        if (input.status && plan.status !== input.status) {
+          return false;
+        }
+        if (
+          (input.search || input.searchSubjectIds) &&
+          !(
+            (input.search &&
+              (plan.normalizedPlanCode.includes(input.search) ||
+                plan.normalizedTitle.includes(input.search))) ||
+            (input.searchSubjectIds ?? []).includes(plan.subjectId)
+          )
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .map((plan) => buildTestDerivedWorkspaceRow(plan, this.allocations, this.actualEntries))
+      .filter((row) =>
+        matchesTestAllocationCoverage(row, this.allocations, input.allocationCoverage),
+      )
+      .filter((row) => !input.cursor || isAfterTestDerivedCursor(row, input.cursor))
+      .sort((left, right) => compareTestDerivedRows(left, right, input))
       .slice(0, input.limit);
   }
 
@@ -5365,4 +5638,148 @@ function isAfterTestPlanCursor(
     return true;
   }
   return valueDiff === 0 && plan.id.localeCompare(cursor.planId) > 0;
+}
+
+function buildTestDerivedWorkspaceRow(
+  plan: KpiPlan,
+  allocations: readonly KpiAllocation[],
+  entries: readonly KpiActualEntry[],
+): KpiActualWorkspaceDerivedPlanSortRow {
+  const revenueAllocations = allocations.filter(
+    (allocation) =>
+      allocation.kpiPlanId === plan.id &&
+      allocation.allocationStatus === "PUBLISHED" &&
+      allocation.groupId === plan.subjectId &&
+      allocation.targetMetrics.some(
+        (metric) => metric.metricCode === "REVENUE_VND",
+      ),
+  );
+  const revenueActual = entries
+    .filter((entry) => {
+      const allocation = revenueAllocations.find(
+        (item) => item.id === entry.allocationId,
+      );
+      return (
+        entry.kpiPlanId === plan.id &&
+        entry.metricCode === "REVENUE_VND" &&
+        allocation !== undefined &&
+        entry.memberTalentId === allocation.memberTalentId &&
+        isTestActualEntryWithinPlanPeriod(plan, entry.actualDate)
+      );
+    })
+    .reduce((sum, entry) => sum + entry.effectiveValue, 0);
+  const operationalTargetValue = revenueAllocations.reduce(
+    (sum, allocation) =>
+      sum +
+      allocation.targetMetrics
+        .filter((metric) => metric.metricCode === "REVENUE_VND")
+        .reduce((metricSum, metric) => metricSum + metric.targetValue, 0),
+    0,
+  );
+  const achievementPercent =
+    operationalTargetValue === 0
+      ? null
+      : (revenueActual / operationalTargetValue) * 100;
+  return {
+    plan,
+    revenueActual,
+    achievementPercent,
+    achievementNullRank: achievementPercent === null ? 1 : 0,
+  };
+}
+
+function matchesTestAllocationCoverage(
+  row: KpiActualWorkspaceDerivedPlanSortRow,
+  allocations: readonly KpiAllocation[],
+  coverage: ListKpiActualWorkspaceDerivedPlansInput["allocationCoverage"],
+): boolean {
+  if (coverage === undefined) {
+    return true;
+  }
+  const planAllocations = allocations.filter(
+    (allocation) => allocation.kpiPlanId === row.plan.id,
+  );
+  const publishedAllocationCount = planAllocations.filter(
+    (allocation) => allocation.allocationStatus === "PUBLISHED",
+  ).length;
+  const complete =
+    planAllocations.length > 0 &&
+    publishedAllocationCount === planAllocations.length;
+  return coverage === "complete" ? complete : !complete;
+}
+
+function isAfterTestDerivedCursor(
+  row: KpiActualWorkspaceDerivedPlanSortRow,
+  cursor: NonNullable<ListKpiActualWorkspaceDerivedPlansInput["cursor"]>,
+): boolean {
+  if (cursor.sortBy === "revenueActual") {
+    const valueDiff = row.revenueActual - (cursor.revenueActual ?? 0);
+    if (cursor.sortDirection === "ASC" && valueDiff > 0) {
+      return true;
+    }
+    if (cursor.sortDirection === "DESC" && valueDiff < 0) {
+      return true;
+    }
+    return valueDiff === 0 && row.plan.id.localeCompare(cursor.planId) > 0;
+  }
+  const nullRankDiff =
+    row.achievementNullRank - (cursor.achievementNullRank ?? 0);
+  if (nullRankDiff > 0) {
+    return true;
+  }
+  if (nullRankDiff < 0) {
+    return false;
+  }
+  if (row.achievementNullRank === 1) {
+    return row.plan.id.localeCompare(cursor.planId) > 0;
+  }
+  const current = row.achievementPercent ?? 0;
+  const previous = cursor.achievementPercent ?? 0;
+  const valueDiff = current - previous;
+  if (cursor.sortDirection === "ASC" && valueDiff > 0) {
+    return true;
+  }
+  if (cursor.sortDirection === "DESC" && valueDiff < 0) {
+    return true;
+  }
+  return valueDiff === 0 && row.plan.id.localeCompare(cursor.planId) > 0;
+}
+
+function compareTestDerivedRows(
+  left: KpiActualWorkspaceDerivedPlanSortRow,
+  right: KpiActualWorkspaceDerivedPlanSortRow,
+  input: Pick<
+    ListKpiActualWorkspaceDerivedPlansInput,
+    "sortBy" | "sortDirection"
+  >,
+): number {
+  const direction = input.sortDirection === "ASC" ? 1 : -1;
+  if (input.sortBy === "revenueActual") {
+    return (
+      (left.revenueActual - right.revenueActual) * direction ||
+      left.plan.id.localeCompare(right.plan.id)
+    );
+  }
+  return (
+    left.achievementNullRank - right.achievementNullRank ||
+    (((left.achievementPercent ?? 0) - (right.achievementPercent ?? 0)) *
+      direction) ||
+    left.plan.id.localeCompare(right.plan.id)
+  );
+}
+
+function isTestActualEntryWithinPlanPeriod(
+  plan: KpiPlan,
+  actualDate: string,
+): boolean {
+  const match = /^(\d{2})-(\d{2})-(\d{4})$/.exec(actualDate);
+  if (!match) {
+    return false;
+  }
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const startAt = Date.UTC(year, month - 1, day, -7, 0, 0, 0);
+  const endAt = Date.UTC(year, month - 1, day + 1, -7, 0, 0, 0) - 1;
+  return startAt >= plan.periodStartAt && endAt <= plan.periodEndAt;
 }

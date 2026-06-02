@@ -66,6 +66,42 @@ export interface KpiPlanListCursor {
   readonly planId: string;
 }
 
+export type KpiActualWorkspaceDerivedSortBy =
+  | "revenueActual"
+  | "achievementPercent";
+
+export interface KpiActualWorkspaceDerivedCursor {
+  readonly sortBy: KpiActualWorkspaceDerivedSortBy;
+  readonly sortDirection: "ASC" | "DESC";
+  readonly revenueActual?: number;
+  readonly achievementPercent?: number | null;
+  readonly achievementNullRank?: 0 | 1;
+  readonly planId: string;
+}
+
+export interface ListKpiActualWorkspaceDerivedPlansInput {
+  readonly subjectType: "TALENT_GROUP";
+  readonly subjectId?: string;
+  readonly subjectIds?: readonly string[];
+  readonly groupId?: string;
+  readonly periodMonth?: string;
+  readonly status?: KpiPlanStatus;
+  readonly search?: string;
+  readonly searchSubjectIds?: readonly string[];
+  readonly allocationCoverage?: "complete" | "incomplete";
+  readonly limit: number;
+  readonly sortBy: KpiActualWorkspaceDerivedSortBy;
+  readonly sortDirection: "ASC" | "DESC";
+  readonly cursor?: KpiActualWorkspaceDerivedCursor;
+}
+
+export interface KpiActualWorkspaceDerivedPlanSortRow {
+  readonly plan: KpiPlan;
+  readonly revenueActual: number;
+  readonly achievementPercent: number | null;
+  readonly achievementNullRank: 0 | 1;
+}
+
 export interface ReplaceKpiAllocationsForPlanInput {
   readonly kpiPlanId: string;
   readonly allowedCurrentStatuses: readonly KpiAllocationStatus[];
@@ -126,6 +162,10 @@ export interface KpiPlanRepository {
   ): Promise<KpiPlan | null>;
 
   listPlans(input: ListKpiPlansInput): Promise<readonly KpiPlan[]>;
+
+  listActualWorkspaceDerivedPlans(
+    input: ListKpiActualWorkspaceDerivedPlansInput,
+  ): Promise<readonly KpiActualWorkspaceDerivedPlanSortRow[]>;
 
   insertTargetMetrics(
     metrics: readonly KpiTargetMetric[],

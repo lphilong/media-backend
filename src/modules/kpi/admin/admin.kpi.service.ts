@@ -32,6 +32,9 @@ import {
   KpiValidationError,
 } from "@modules/kpi/domain/kpi.errors";
 import {
+  KpiActualWorkspaceDerivedCursor,
+  KpiActualWorkspaceDerivedPlanSortRow,
+  KpiActualWorkspaceDerivedSortBy,
   KpiPlanListCursor,
   KpiPlanRepository,
   ListKpiPlansInput,
@@ -191,7 +194,10 @@ type KpiActualWorkspaceCoverageFilter = "complete" | "incomplete";
 
 interface NormalizedActualWorkspacePlansInput
   extends Omit<ListKpiPlansInput, "sortBy" | "sortDirection" | "cursor"> {
-  readonly sortBy: "periodMonth" | "planCode";
+  readonly sortBy:
+    | "periodMonth"
+    | "planCode"
+    | KpiActualWorkspaceDerivedSortBy;
   readonly sortDirection: "ASC" | "DESC";
   readonly cursor?: string;
   readonly allocationCoverage?: KpiActualWorkspaceCoverageFilter;
@@ -200,10 +206,16 @@ interface NormalizedActualWorkspacePlansInput
 interface ActualWorkspaceCursorEnvelope {
   readonly version: 1;
   readonly queryKey: string;
-  readonly sortBy: "periodMonth" | "planCode";
+  readonly sortBy:
+    | "periodMonth"
+    | "planCode"
+    | KpiActualWorkspaceDerivedSortBy;
   readonly sortDirection: "ASC" | "DESC";
   readonly lastPeriodMonth?: string;
   readonly lastPlanCode?: string;
+  readonly lastRevenueActual?: number;
+  readonly lastAchievementPercent?: number | null;
+  readonly lastAchievementNullRank?: 0 | 1;
   readonly lastPlanId: string;
 }
 
@@ -2164,14 +2176,35 @@ export class KpiAdminService {
     input: NormalizedActualWorkspacePlansInput,
   ): Promise<ActualWorkspacePlanPage> {
     const groupIds = await this.resolveActualWorkspaceSearchGroupIds(input);
-    const queryKey = buildActualWorkspaceCursorQueryKey(input);
+    const queryKey = buildActualWorkspaceCursorQueryKey({
+      ...input,
+      authorityScopeKey: "global",
+    });
+    if (isActualWorkspaceDerivedSortBy(input.sortBy)) {
+      const sortBy = input.sortBy;
+      const cursor =
+        input.cursor === undefined
+          ? undefined
+          : decodeActualWorkspaceDerivedCursor(input.cursor, input, queryKey);
+      return this.listDerivedActualWorkspacePlanPage(
+        {
+          ...input,
+          sortBy,
+          searchSubjectIds: groupIds,
+          cursor,
+        },
+        queryKey,
+      );
+    }
+    const sortBy = input.sortBy;
     const cursor =
       input.cursor === undefined
         ? undefined
-        : decodeActualWorkspaceCursor(input.cursor, input, queryKey);
+        : decodeActualWorkspacePlanCursor(input.cursor, input, queryKey);
     return this.collectActualWorkspacePlanPage(
       {
         ...input,
+        sortBy,
         searchSubjectIds: groupIds,
         cursor,
       },
@@ -2214,14 +2247,39 @@ export class KpiAdminService {
       input,
       candidateGroupIds,
     );
-    const queryKey = buildActualWorkspaceCursorQueryKey(input);
+    const queryKey = buildActualWorkspaceCursorQueryKey({
+      ...input,
+      authorityScopeKey: `managed:${candidateGroupIds.join("|")}`,
+    });
+    if (isActualWorkspaceDerivedSortBy(input.sortBy)) {
+      const sortBy = input.sortBy;
+      const cursor =
+        input.cursor === undefined
+          ? undefined
+          : decodeActualWorkspaceDerivedCursor(input.cursor, input, queryKey);
+      return this.listDerivedActualWorkspacePlanPage(
+        {
+          ...input,
+          sortBy,
+          subjectId: undefined,
+          groupId: undefined,
+          subjectIds: candidateGroupIds,
+          searchSubjectIds: groupIds,
+          status: "PUBLISHED",
+          cursor,
+        },
+        queryKey,
+      );
+    }
+    const sortBy = input.sortBy;
     const cursor =
       input.cursor === undefined
         ? undefined
-        : decodeActualWorkspaceCursor(input.cursor, input, queryKey);
+        : decodeActualWorkspacePlanCursor(input.cursor, input, queryKey);
     return this.collectActualWorkspacePlanPage(
       {
         ...input,
+        sortBy,
         subjectId: undefined,
         groupId: undefined,
         subjectIds: candidateGroupIds,
@@ -2231,6 +2289,38 @@ export class KpiAdminService {
       },
       queryKey,
     );
+  }
+
+  private async listDerivedActualWorkspacePlanPage(
+    input: Omit<NormalizedActualWorkspacePlansInput, "cursor" | "sortBy"> & {
+      readonly sortBy: KpiActualWorkspaceDerivedSortBy;
+      readonly subjectIds?: readonly string[];
+      readonly searchSubjectIds?: readonly string[];
+      readonly status?: KpiPlanStatus;
+      readonly cursor?: KpiActualWorkspaceDerivedCursor;
+    },
+    queryKey: string,
+  ): Promise<ActualWorkspacePlanPage> {
+    const rows = await this.repository.listActualWorkspaceDerivedPlans({
+      ...input,
+      subjectType: "TALENT_GROUP",
+      limit: input.limit + 1,
+    });
+    const hasNext = rows.length > input.limit;
+    const pageRows = hasNext ? rows.slice(0, input.limit) : rows;
+    return {
+      items: pageRows.map((row) => row.plan),
+      nextCursor:
+        hasNext && pageRows.length > 0
+          ? encodeActualWorkspaceCursor(
+              buildActualWorkspaceCursorEnvelope(
+                pageRows[pageRows.length - 1] as KpiActualWorkspaceDerivedPlanSortRow,
+                input,
+                queryKey,
+              ),
+            )
+          : undefined,
+    };
   }
 
   private async resolveActualWorkspaceSearchGroupIds(
@@ -2254,7 +2344,8 @@ export class KpiAdminService {
   }
 
   private async collectActualWorkspacePlanPage(
-    input: Omit<NormalizedActualWorkspacePlansInput, "cursor"> & {
+    input: Omit<NormalizedActualWorkspacePlansInput, "cursor" | "sortBy"> & {
+      readonly sortBy: "periodMonth" | "planCode";
       readonly subjectIds?: readonly string[];
       readonly searchSubjectIds?: readonly string[];
       readonly status?: KpiPlanStatus;
@@ -3721,21 +3812,32 @@ function buildPlanListCursor(
 }
 
 function buildActualWorkspaceCursorEnvelope(
-  plan: KpiPlan,
+  row: KpiPlan | KpiActualWorkspaceDerivedPlanSortRow,
   input: Pick<
     NormalizedActualWorkspacePlansInput,
     "sortBy" | "sortDirection"
   >,
   queryKey: string,
 ): ActualWorkspaceCursorEnvelope {
+  const plan = isDerivedPlanSortRow(row) ? row.plan : row;
   return {
     version: 1,
     queryKey,
     sortBy: input.sortBy,
     sortDirection: input.sortDirection,
-    ...(input.sortBy === "planCode"
-      ? { lastPlanCode: plan.planCode }
-      : { lastPeriodMonth: plan.periodMonth }),
+    ...(input.sortBy === "planCode" ? { lastPlanCode: plan.planCode } : {}),
+    ...(input.sortBy === "periodMonth"
+      ? { lastPeriodMonth: plan.periodMonth }
+      : {}),
+    ...(input.sortBy === "revenueActual" && isDerivedPlanSortRow(row)
+      ? { lastRevenueActual: row.revenueActual }
+      : {}),
+    ...(input.sortBy === "achievementPercent" && isDerivedPlanSortRow(row)
+      ? {
+          lastAchievementPercent: row.achievementPercent,
+          lastAchievementNullRank: row.achievementNullRank,
+        }
+      : {}),
     lastPlanId: plan.id,
   };
 }
@@ -3746,7 +3848,7 @@ function encodeActualWorkspaceCursor(
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
 
-function decodeActualWorkspaceCursor(
+function decodeActualWorkspacePlanCursor(
   cursor: string,
   input: Pick<
     NormalizedActualWorkspacePlansInput,
@@ -3754,6 +3856,9 @@ function decodeActualWorkspaceCursor(
   >,
   expectedQueryKey: string,
 ): KpiPlanListCursor {
+  if (input.sortBy !== "periodMonth" && input.sortBy !== "planCode") {
+    throw invalidActualWorkspaceCursorError();
+  }
   const normalized = cursor.trim();
   if (!normalized) {
     throw invalidActualWorkspaceCursorError();
@@ -3804,6 +3909,113 @@ function decodeActualWorkspaceCursor(
   };
 }
 
+function isActualWorkspaceDerivedSortBy(
+  sortBy: NormalizedActualWorkspacePlansInput["sortBy"],
+): sortBy is KpiActualWorkspaceDerivedSortBy {
+  return sortBy === "revenueActual" || sortBy === "achievementPercent";
+}
+
+function isDerivedPlanSortRow(
+  value: KpiPlan | KpiActualWorkspaceDerivedPlanSortRow,
+): value is KpiActualWorkspaceDerivedPlanSortRow {
+  return Object.prototype.hasOwnProperty.call(value, "plan");
+}
+
+function decodeActualWorkspaceDerivedCursor(
+  cursor: string,
+  input: Pick<
+    NormalizedActualWorkspacePlansInput,
+    "sortBy" | "sortDirection"
+  >,
+  expectedQueryKey: string,
+): KpiActualWorkspaceDerivedCursor {
+  if (!isActualWorkspaceDerivedSortBy(input.sortBy)) {
+    throw invalidActualWorkspaceCursorError();
+  }
+  const payload = decodeActualWorkspaceCursorPayload(cursor);
+  if (
+    payload.version !== 1 ||
+    payload.queryKey !== expectedQueryKey ||
+    payload.sortBy !== input.sortBy ||
+    payload.sortDirection !== input.sortDirection ||
+    typeof payload.lastPlanId !== "string" ||
+    payload.lastPlanId.trim().length === 0
+  ) {
+    throw invalidActualWorkspaceCursorError();
+  }
+  if (payload.sortBy === "revenueActual") {
+    if (
+      typeof payload.lastRevenueActual !== "number" ||
+      !Number.isFinite(payload.lastRevenueActual)
+    ) {
+      throw invalidActualWorkspaceCursorError();
+    }
+    return {
+      sortBy: "revenueActual",
+      sortDirection: input.sortDirection,
+      revenueActual: payload.lastRevenueActual,
+      planId: payload.lastPlanId,
+    };
+  }
+  if (payload.sortBy === "achievementPercent") {
+    if (
+      payload.lastAchievementNullRank !== 0 &&
+      payload.lastAchievementNullRank !== 1
+    ) {
+      throw invalidActualWorkspaceCursorError();
+    }
+    if (
+      payload.lastAchievementNullRank === 0 &&
+      (typeof payload.lastAchievementPercent !== "number" ||
+        !Number.isFinite(payload.lastAchievementPercent))
+    ) {
+      throw invalidActualWorkspaceCursorError();
+    }
+    if (
+      payload.lastAchievementNullRank === 1 &&
+      payload.lastAchievementPercent !== null
+    ) {
+      throw invalidActualWorkspaceCursorError();
+    }
+    return {
+      sortBy: "achievementPercent",
+      sortDirection: input.sortDirection,
+      achievementPercent: payload.lastAchievementPercent as number | null,
+      achievementNullRank: payload.lastAchievementNullRank,
+      planId: payload.lastPlanId,
+    };
+  }
+  throw invalidActualWorkspaceCursorError();
+}
+
+function decodeActualWorkspaceCursorPayload(
+  cursor: string,
+): Record<string, unknown> {
+  const normalized = cursor.trim();
+  if (!normalized) {
+    throw invalidActualWorkspaceCursorError();
+  }
+
+  let decodedText: string;
+  try {
+    decodedText = Buffer.from(normalized, "base64url").toString("utf8");
+  } catch {
+    throw invalidActualWorkspaceCursorError();
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(decodedText);
+  } catch {
+    throw invalidActualWorkspaceCursorError();
+  }
+
+  if (!isRecord(payload)) {
+    throw invalidActualWorkspaceCursorError();
+  }
+  return payload;
+}
+
 function buildActualWorkspaceCursorQueryKey(
   input: Pick<
     NormalizedActualWorkspacePlansInput,
@@ -3814,9 +4026,10 @@ function buildActualWorkspaceCursorQueryKey(
     | "sortBy"
     | "sortDirection"
     | "allocationCoverage"
-  >,
+  > & { readonly authorityScopeKey?: string },
 ): string {
   return JSON.stringify({
+    authorityScopeKey: input.authorityScopeKey ?? null,
     periodMonth: input.periodMonth ?? null,
     groupId: input.groupId ?? null,
     subjectId: input.subjectId ?? null,
@@ -3950,9 +4163,14 @@ function normalizeSortBy(
 
 function normalizeActualWorkspaceSortBy(
   value: unknown,
-): "periodMonth" | "planCode" {
+): "periodMonth" | "planCode" | KpiActualWorkspaceDerivedSortBy {
   const text = normalizeRequiredText(value, "sortBy");
-  if (text !== "periodMonth" && text !== "planCode") {
+  if (
+    text !== "periodMonth" &&
+    text !== "planCode" &&
+    text !== "revenueActual" &&
+    text !== "achievementPercent"
+  ) {
     throw new KpiValidationError(
       `KPI actual workspace sortBy is unsupported: ${text}`,
     );
