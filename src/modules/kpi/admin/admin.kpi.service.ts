@@ -1490,11 +1490,21 @@ export class KpiAdminService {
           "correctedValue",
         );
         this.assertActualMutationPlanOpen(plan, "correct actual");
-        requireActualPolicySnapshot(plan);
+        const policy = requireActualPolicySnapshot(plan);
+        assertActualDateWithinPlan(plan, entry.actualDate);
+        assertCorrectionWindowOpen(policy, entry.actualDate, this.clock());
         const allocation = await this.requireActiveAllocation(
           plan,
           entry.allocationId,
           entry.metricCode,
+          session,
+        );
+        this.assertActualEntryMatchesAllocation(entry, allocation);
+        await this.assertNoActiveActualSlotExcuse(
+          plan.id,
+          entry.allocationId,
+          entry.metricCode,
+          entry.actualDate,
           session,
         );
         await this.assertActorCanManageAllocationCorrection(
@@ -1837,11 +1847,6 @@ export class KpiAdminService {
         "KPI actual correction requires kpi.global or kpi.managedGroup scope",
       );
     }
-    if (actor.type !== "staff") {
-      throw new KpiPermissionScopeError(
-        "KPI actual correction requires existing staff manager authority",
-      );
-    }
     await this.assertManagedGroupActualAuthority(
       actor,
       plan,
@@ -1912,6 +1917,20 @@ export class KpiAdminService {
     throw new KpiPermissionScopeError(
       `KPI actor is not an active manager for group ${groupId}`,
     );
+  }
+
+  private assertActualEntryMatchesAllocation(
+    entry: KpiActualEntry,
+    allocation: KpiAllocation,
+  ): void {
+    if (
+      entry.allocationId !== allocation.id ||
+      entry.memberTalentId !== allocation.memberTalentId
+    ) {
+      throw new KpiInvalidAllocationError(
+        `KPI actual entry ${entry.id} does not match allocation ${allocation.id}`,
+      );
+    }
   }
 
   private async resolveProgressTalentScope(
@@ -2095,25 +2114,13 @@ export class KpiAdminService {
         "KPI correction history read requires kpi.global or kpi.managedGroup scope",
       );
     }
-    if (actor.type !== "staff") {
-      throw new KpiPermissionScopeError(
-        "KPI correction history read requires admin or assigned talent-group manager authority",
-      );
-    }
-    if (plan.subjectType !== "TALENT_GROUP") {
-      throw new KpiPermissionScopeError(
-        "KPI manager-scoped correction history read is supported only for TALENT_GROUP plans",
-      );
-    }
-    const allocations = await this.repository.listAllocationsByPlanId(plan.id);
-    const allocation = allocations.find(
-      (item) => item.id === entry.allocationId,
+    assertActualDateWithinPlan(plan, entry.actualDate);
+    const allocation = await this.requireActiveAllocation(
+      plan,
+      entry.allocationId,
+      entry.metricCode,
     );
-    if (!allocation) {
-      throw new KpiInvalidAllocationError(
-        `KPI actual entry allocation is missing: ${entry.allocationId}`,
-      );
-    }
+    this.assertActualEntryMatchesAllocation(entry, allocation);
     await this.assertActorCanManageAllocationCorrection(actor, plan, allocation);
   }
 
@@ -3366,6 +3373,7 @@ export class KpiAdminService {
       `kpi-plan:${kpiPlanId}`,
       async (session) => {
         const plan = await this.requirePlan(kpiPlanId, session);
+        this.assertActualMutationPlanOpen(plan, "approve or reject allocation");
         const allocations = await this.repository.listAllocationsByPlanId(
           plan.id,
           session,
@@ -5060,6 +5068,24 @@ function assertDirectEditWindowOpen(
   }
   throw new KpiStateError(
     "KPI actual direct edit window is closed; correction is required",
+  );
+}
+
+function assertCorrectionWindowOpen(
+  policy: KpiActualPolicySnapshot,
+  actualDate: string,
+  now: number,
+): void {
+  const directEditWindowEnd = localDateTimeToUtcMs(
+    actualDate,
+    policy.entryLockLocalTime,
+    1,
+  );
+  if (now > directEditWindowEnd) {
+    return;
+  }
+  throw new KpiStateError(
+    "KPI actual correction is allowed only after the direct edit window closes; use direct edit before cutoff",
   );
 }
 

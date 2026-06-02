@@ -13,6 +13,7 @@ import { KpiAdminController } from "@modules/kpi/admin/admin.kpi.controller";
 import { KpiAdminQueryController } from "@modules/kpi/admin/admin.kpi.query.controller";
 import { KpiAdminService } from "@modules/kpi/admin/admin.kpi.service";
 import {
+  KpiActualCorrectionExposure,
   KpiActualWorkspaceExposure,
   KpiPlanListExposure,
 } from "@modules/kpi/shared/kpi.exposure";
@@ -2867,7 +2868,7 @@ test("KPI global progress remains available and excludes every nonofficial alloc
   );
 });
 
-test("KPI read-progress manager can read actual grid but not mutate actuals or correction history", async () => {
+test("KPI read-progress manager can read actual grid and managed correction history but not mutate actuals", async () => {
   const { service, managerRepository } = createHarness(
     () => MAY_5_2026_NOON_HCM,
   );
@@ -2898,13 +2899,11 @@ test("KPI read-progress manager can read actual grid but not mutate actuals or c
     actualDate: "05-05-2026",
   });
   assert.equal(grid.rows.length, 2);
-  await assert.rejects(
-    service.listKpiActualCorrections(managerActor, {
-      kpiPlanId: published.id,
-      actualEntryId: actual.actualEntry.id,
-    }),
-    KpiPermissionScopeError,
-  );
+  const history = await service.listKpiActualCorrections(managerActor, {
+    kpiPlanId: published.id,
+    actualEntryId: actual.actualEntry.id,
+  });
+  assert.deepEqual(history.items, []);
 });
 
 test("KPI V2 global list plans still works", async () => {
@@ -3365,6 +3364,290 @@ test("KPI V2 correction history returns corrections ordered by correctedAt", asy
   assert.equal(audit.records.length, auditCount);
 });
 
+test("KPI correction rejects the direct-edit window through exact cutoff and allows repeated post-cutoff audit corrections", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
+  const { service } = createHarness(() => now.value);
+  const published = await createPublishedGroupPlan(service);
+  const allocation = published.allocations[0] as KpiAllocation;
+  const created = await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 80,
+  });
+
+  await assert.rejects(
+    service.correctKpiActual(createKpiReadOnlyActor(), {
+      kpiPlanId: published.id,
+      actualEntryId: created.actualEntry.id,
+      correctedValue: 90,
+      reason: "global permission required",
+    }),
+    /Missing permission kpi.correctActual/u,
+  );
+  await assert.rejects(
+    service.correctKpiActual(createActor(), {
+      kpiPlanId: published.id,
+      actualEntryId: created.actualEntry.id,
+      correctedValue: 90,
+      reason: "too early",
+    }),
+    /only after the direct edit window closes/u,
+  );
+  now.value = MAY_6_2026_10_00_HCM;
+  await assert.rejects(
+    service.correctKpiActual(createActor(), {
+      kpiPlanId: published.id,
+      actualEntryId: created.actualEntry.id,
+      correctedValue: 90,
+      reason: "still too early",
+    }),
+    /only after the direct edit window closes/u,
+  );
+  now.value = MAY_5_2026_AFTER_LOCK_HCM;
+  await assert.rejects(
+    service.correctKpiActual(createActor(), {
+      kpiPlanId: published.id,
+      actualEntryId: created.actualEntry.id,
+      correctedValue: Number.NaN,
+      reason: "invalid numeric value",
+    }),
+    KpiValidationError,
+  );
+  const first = await service.correctKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    actualEntryId: created.actualEntry.id,
+    correctedValue: 90,
+    reason: "first post-cutoff correction",
+  });
+  const second = await service.correctKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    actualEntryId: created.actualEntry.id,
+    correctedValue: 95,
+    reason: "second post-cutoff correction",
+  });
+
+  assert.equal(first.actualEntry.actualValue, 80);
+  assert.equal(first.actualEntry.effectiveValue, 90);
+  assert.equal(second.correction.previousValue, 90);
+  assert.equal(second.actualEntry.actualValue, 80);
+  assert.equal(second.actualEntry.effectiveValue, 95);
+  assert.equal(second.actualEntry.correctionCount, 2);
+});
+
+test("KPI backoffice TEAM_MANAGER can correct and read managed history only under strict managed authority", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
+  const { service, managerRepository } = createHarness(() => now.value);
+  const published = await createPublishedGroupPlan(service);
+  const allocation = published.allocations[0] as KpiAllocation;
+  const created = await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 80,
+  });
+  now.value = MAY_5_2026_AFTER_LOCK_HCM;
+  seedManagerAssignment(managerRepository);
+  const manager = createBackofficeTeamManagerActor();
+
+  const corrected = await service.correctKpiActual(manager, {
+    kpiPlanId: published.id,
+    actualEntryId: created.actualEntry.id,
+    correctedValue: 90,
+    reason: "managed correction",
+  });
+  const managedHistory = await service.listKpiActualCorrections(manager, {
+    kpiPlanId: published.id,
+    actualEntryId: created.actualEntry.id,
+  });
+  const globalHistory = await service.listKpiActualCorrections(createActor(), {
+    kpiPlanId: published.id,
+    actualEntryId: created.actualEntry.id,
+  });
+  const exposed = KpiActualCorrectionExposure.expose(corrected.correction);
+
+  assert.deepEqual(managedHistory.items, globalHistory.items);
+  assert.equal(managedHistory.items[0]?.id, corrected.correction.id);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(exposed, "correctedByActorId"),
+    false,
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(exposed, "memberTalentId"),
+    false,
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(exposed, "memberEmploymentProfileId"),
+    false,
+  );
+
+  managerRepository.assignments.length = 0;
+  seedManagerAssignment(managerRepository, "group-2");
+  await assert.rejects(
+    service.correctKpiActual(manager, {
+      kpiPlanId: published.id,
+      actualEntryId: created.actualEntry.id,
+      correctedValue: 91,
+      reason: "unmanaged correction",
+    }),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.listKpiActualCorrections(manager, {
+      kpiPlanId: published.id,
+      actualEntryId: created.actualEntry.id,
+    }),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.correctKpiActual(
+      createScopedActor({
+        id: "manager-user",
+        permissions: [Permission.KPI_CORRECT_ACTUAL],
+      }),
+      {
+        kpiPlanId: published.id,
+        actualEntryId: created.actualEntry.id,
+        correctedValue: 91,
+        reason: "missing managed scope",
+      },
+    ),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.correctKpiActual(
+      createScopedActor({
+        id: "unlinked-manager-user",
+        permissions: [Permission.KPI_CORRECT_ACTUAL],
+        kpiScopes: ["managedGroup"],
+      }),
+      {
+        kpiPlanId: published.id,
+        actualEntryId: created.actualEntry.id,
+        correctedValue: 91,
+        reason: "missing linked profile",
+      },
+    ),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.correctKpiActual(
+      createProgressReadOnlyBackofficeTeamManagerActor(),
+      {
+        kpiPlanId: published.id,
+        actualEntryId: created.actualEntry.id,
+        correctedValue: 91,
+        reason: "missing permission",
+      },
+    ),
+    /Missing permission kpi.correctActual/u,
+  );
+});
+
+test("KPI correction rejects stale entry mismatches, invalid allocation state, and active excuse conflicts", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
+  const { service, repository, actualRepository } = createHarness(
+    () => now.value,
+  );
+  const published = await createPublishedGroupPlan(service);
+  const [allocation, otherAllocation] = published.allocations as readonly [
+    KpiAllocation,
+    KpiAllocation,
+  ];
+  const created = await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 80,
+  });
+  now.value = MAY_5_2026_AFTER_LOCK_HCM;
+  const entryIndex = actualRepository.entries.findIndex(
+    (entry) => entry.id === created.actualEntry.id,
+  );
+  const allocationIndex = repository.allocations.findIndex(
+    (item) => item.id === allocation.id,
+  );
+  assert.notEqual(entryIndex, -1);
+  assert.notEqual(allocationIndex, -1);
+  const originalEntry = actualRepository.entries[entryIndex] as KpiActualEntry;
+  const originalAllocation = repository.allocations[
+    allocationIndex
+  ] as KpiAllocation;
+  const correct = () =>
+    service.correctKpiActual(createActor(), {
+      kpiPlanId: published.id,
+      actualEntryId: created.actualEntry.id,
+      correctedValue: 90,
+      reason: "validated correction",
+    });
+
+  actualRepository.entries[entryIndex] = {
+    ...originalEntry,
+    actualDate: "01-06-2026",
+  };
+  await assert.rejects(correct(), KpiValidationError);
+  actualRepository.entries[entryIndex] = {
+    ...originalEntry,
+    memberTalentId: "talent-other",
+  };
+  await assert.rejects(correct(), KpiInvalidAllocationError);
+  actualRepository.entries[entryIndex] = {
+    ...originalEntry,
+    allocationId: otherAllocation.id,
+  };
+  await assert.rejects(correct(), KpiInvalidAllocationError);
+  actualRepository.entries[entryIndex] = {
+    ...originalEntry,
+    metricCode: "LIVE_HOURS",
+  };
+  await assert.rejects(correct(), KpiInvalidAllocationError);
+  actualRepository.entries[entryIndex] = originalEntry;
+  repository.allocations[allocationIndex] = {
+    ...originalAllocation,
+    groupId: "group-2",
+  };
+  await assert.rejects(correct(), KpiInvalidAllocationError);
+  repository.allocations[allocationIndex] = {
+    ...originalAllocation,
+    allocationStatus: "DRAFT",
+  };
+  await assert.rejects(correct(), KpiInvalidAllocationError);
+  repository.allocations[allocationIndex] = originalAllocation;
+
+  repository.actualExcuses.push({
+    id: "conflicting-excuse",
+    kpiPlanId: published.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    status: "EXCUSED",
+    reasonCode: "MEMBER_LEAVE",
+    reasonText: "Approved leave",
+    createdAt: MAY_5_2026_NOON_HCM,
+    createdByActorId: "manager-user",
+    updatedAt: MAY_5_2026_NOON_HCM,
+    updatedByActorId: "manager-user",
+    deletedAt: null,
+    deletedByActorId: null,
+  });
+  await assert.rejects(correct(), KpiConflictError);
+  repository.actualExcuses[0] = {
+    ...repository.actualExcuses[0]!,
+    status: "NOT_REQUIRED",
+    reasonCode: "NO_OPERATION_REQUIRED",
+  };
+  await assert.rejects(correct(), KpiConflictError);
+  await service.removeKpiActualExcuse(createActor(), {
+    kpiPlanId: published.id,
+    excuseId: "conflicting-excuse",
+  });
+  const corrected = await correct();
+  assert.equal(corrected.actualEntry.effectiveValue, 90);
+});
+
 test("KPI V2 list plans searches by planCode", async () => {
   const { service } = createHarness();
   const first = await service.createKpiPlan(createActor(), groupPlanCommand());
@@ -3465,10 +3748,9 @@ test("KPI V2 manual finalize rejects during closing window and allows after D+1 
   );
 });
 
-test("KPI V2 backoffice TEAM_MANAGER may create zero and direct-update managed actuals", async () => {
-  const { service, managerRepository } = createHarness(
-    () => MAY_5_2026_NOON_HCM,
-  );
+test("KPI V2 backoffice TEAM_MANAGER may create, direct-update, and post-cutoff correct managed actuals", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
+  const { service, managerRepository } = createHarness(() => now.value);
   const published = await createPublishedGroupPlan(service);
   const allocation = published.allocations[0] as KpiAllocation;
   seedManagerAssignment(managerRepository);
@@ -3495,15 +3777,15 @@ test("KPI V2 backoffice TEAM_MANAGER may create zero and direct-update managed a
   );
   assert.equal(updated.actualEntry.effectiveValue, 80);
   assert.equal(updated.actualEntry.editCount, 1);
-  await assert.rejects(
-    service.correctKpiActual(managerActor, {
-      kpiPlanId: published.id,
-      actualEntryId: result.actualEntry.id,
-      correctedValue: 90,
-      reason: "manager correction",
-    }),
-    KpiPermissionScopeError,
-  );
+  now.value = MAY_5_2026_AFTER_LOCK_HCM;
+  const corrected = await service.correctKpiActual(managerActor, {
+    kpiPlanId: published.id,
+    actualEntryId: result.actualEntry.id,
+    correctedValue: 90,
+    reason: "manager correction",
+  });
+  assert.equal(corrected.actualEntry.effectiveValue, 90);
+  assert.equal(corrected.actualEntry.actualValue, 80);
 });
 
 test("KPI managed actual entry denies cutoff, unmanaged, non-published allocation, lifecycle, and permission gaps", async () => {
@@ -3705,6 +3987,48 @@ test("KPI allocation approval foundation supports manager draft submit and admin
     audit.records.some(
       (record) => record.metadata?.mutationType === "kpi.allocation.publish",
     ),
+  );
+});
+
+test("KPI allocation approve and reject cannot mutate pending rows after plan FINALIZED", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
+  const { service, managerRepository } = createHarness(() => now.value);
+  const managerActor = createBackofficeTeamManagerActor();
+  const created = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
+  await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
+  seedManagerAssignment(managerRepository);
+  await service.upsertKpiAllocationDraft(managerActor, {
+    kpiPlanId: created.id,
+    allocations: [
+      {
+        employmentProfileId: "talent-profile-1",
+        allocationStartDate: "2026-05-01",
+        targetMetrics: [
+          { metricCode: "REVENUE_VND", targetValue: 100 },
+          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
+        ],
+      },
+    ],
+  });
+  await service.submitKpiAllocationDraft(managerActor, {
+    kpiPlanId: created.id,
+  });
+  now.value = JUNE_1_2026_NOON_HCM;
+  await service.finalizeKpiPlan(createActor(), { kpiPlanId: created.id });
+
+  await assert.rejects(
+    service.approveKpiAllocation(createActor(), { kpiPlanId: created.id }),
+    KpiStateError,
+  );
+  await assert.rejects(
+    service.rejectKpiAllocation(createActor(), {
+      kpiPlanId: created.id,
+      rejectionReason: "Must remain locked",
+    }),
+    KpiStateError,
   );
 });
 
@@ -4160,8 +4484,9 @@ for (const subjectType of ["EMPLOYMENT_PROFILE", "ORG_UNIT"] as const) {
 }
 
 test("KPI actual workspace exposes correction-aware revenue, coverage, limited missing signal, and member detail", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
   const { service, repository, actualRepository } = createHarness(
-    () => MAY_5_2026_NOON_HCM,
+    () => now.value,
   );
   const published = await createPublishedGroupPlan(service);
   const [first, second] = published.allocations as readonly [
@@ -4174,12 +4499,6 @@ test("KPI actual workspace exposes correction-aware revenue, coverage, limited m
     metricCode: "REVENUE_VND",
     actualDate: "05-05-2026",
     actualValue: 80,
-  });
-  await service.correctKpiActual(createActor(), {
-    kpiPlanId: published.id,
-    actualEntryId: created.actualEntry.id,
-    correctedValue: 90,
-    reason: "approved correction",
   });
   await service.createOrSetKpiActual(createActor(), {
     kpiPlanId: published.id,
@@ -4195,6 +4514,14 @@ test("KPI actual workspace exposes correction-aware revenue, coverage, limited m
     actualDate: "05-05-2026",
     actualValue: 1,
   });
+  now.value = MAY_5_2026_AFTER_LOCK_HCM;
+  await service.correctKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    actualEntryId: created.actualEntry.id,
+    correctedValue: 90,
+    reason: "approved correction",
+  });
+  now.value = MAY_5_2026_NOON_HCM;
 
   const persistedUnsupportedMetricCode =
     "LEGACY_UNSUPPORTED_METRIC" as unknown as KpiMetricCode;
