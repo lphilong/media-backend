@@ -17,6 +17,7 @@ import {
   KpiPlanListExposure,
 } from "@modules/kpi/shared/kpi.exposure";
 import {
+  KpiConflictError,
   KpiInvalidAllocationError,
   KpiNotFoundError,
   KpiPermissionScopeError,
@@ -47,6 +48,7 @@ import {
   KpiActualCorrection,
   KpiActualEntry,
   KpiActualPolicySnapshot,
+  KpiActualSlotExcuse,
   KpiMetricCode,
   KpiPlan,
   KpiPlanDetailView,
@@ -2114,7 +2116,80 @@ test("KPI V2 daily actual grid returns missing cells with zero effective value",
   assert.equal(grid.rows[0]?.metrics[0]?.effectiveValue, 0);
   assert.equal(grid.rows[0]?.metrics[0]?.hasEntry, false);
   assert.equal(grid.rows[0]?.metrics[0]?.editCount, 0);
+  assert.equal(grid.rows[0]?.metrics[0]?.dailyActualStatus, "DUE_OPEN");
+  assert.equal(grid.rows[0]?.metrics[0]?.actualExcuse, null);
+  assert.equal(grid.rows[0]?.metrics[0]?.canMarkExcused, true);
+  assert.equal(grid.rows[0]?.metrics[0]?.canUnmarkExcused, false);
   assert.equal(audit.records.length, auditCount);
+});
+
+test("KPI daily actual status distinguishes timing and entered values", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
+  const { service } = createHarness(() => now.value);
+  const published = await createPublishedGroupPlan(service);
+  const [first, second] = published.allocations as readonly [
+    KpiAllocation,
+    KpiAllocation,
+  ];
+
+  let grid = await service.getKpiActualDailyGrid(createActor(), {
+    kpiPlanId: published.id,
+    actualDate: "06-05-2026",
+  });
+  assert.equal(grid.rows[0]?.metrics[0]?.dailyActualStatus, "NOT_DUE");
+
+  grid = await service.getKpiActualDailyGrid(createActor(), {
+    kpiPlanId: published.id,
+    actualDate: "05-05-2026",
+  });
+  assert.equal(grid.rows[0]?.metrics[0]?.dailyActualStatus, "DUE_OPEN");
+
+  now.value = MAY_6_2026_10_00_HCM;
+  grid = await service.getKpiActualDailyGrid(createActor(), {
+    kpiPlanId: published.id,
+    actualDate: "05-05-2026",
+  });
+  assert.equal(grid.rows[0]?.metrics[0]?.dailyActualStatus, "DUE_OPEN");
+
+  now.value = MAY_5_2026_AFTER_LOCK_HCM;
+  grid = await service.getKpiActualDailyGrid(createActor(), {
+    kpiPlanId: published.id,
+    actualDate: "05-05-2026",
+  });
+  assert.equal(grid.rows[0]?.metrics[0]?.dailyActualStatus, "OVERDUE");
+
+  now.value = MAY_5_2026_NOON_HCM;
+  await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: first.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 10,
+  });
+  await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: second.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 0,
+  });
+
+  grid = await service.getKpiActualDailyGrid(createActor(), {
+    kpiPlanId: published.id,
+    actualDate: "05-05-2026",
+  });
+  assert.equal(grid.rows[0]?.metrics[0]?.dailyActualStatus, "ENTERED");
+  assert.equal(grid.rows[1]?.metrics[0]?.dailyActualStatus, "ENTERED_ZERO");
+
+  const detail = await service.getKpiActualWorkspacePlanDetail(createActor(), {
+    kpiPlanId: published.id,
+  });
+  assert.equal(detail.actualEntryStatusSummary.expectedEntryCount, 124);
+  assert.equal(detail.actualEntryStatusSummary.enteredEntryCount, 2);
+  assert.equal(detail.actualEntryStatusSummary.enteredZeroCount, 1);
+  assert.equal(detail.actualEntryStatusSummary.overdueEntryCount, 16);
+  assert.equal(detail.actualEntryStatusSummary.pendingEntryCount, 2);
+  assert.equal(detail.actualEntryStatusSummary.notDueEntryCount, 104);
 });
 
 test("KPI V2 daily actual grid returns existing actual entry identity and effective value", async () => {
@@ -2147,6 +2222,244 @@ test("KPI V2 daily actual grid returns existing actual entry identity and effect
   assert.equal(cell?.effectiveValue, 83);
   assert.equal(cell?.hasEntry, true);
   assert.equal(cell?.editCount, 1);
+  assert.equal(cell?.dailyActualStatus, "ENTERED");
+  assert.equal(cell?.canMarkExcused, false);
+});
+
+test("KPI actual excuses mark, unmark, summarize, and block ambiguous actuals", async () => {
+  const now = { value: MAY_5_2026_AFTER_LOCK_HCM };
+  const { service, repository, managerRepository, audit } = createHarness(
+    () => now.value,
+  );
+  const published = await createPublishedGroupPlan(service);
+  const [first, second] = published.allocations as readonly [
+    KpiAllocation,
+    KpiAllocation,
+  ];
+  seedManagerAssignment(managerRepository);
+  const managerActor = createBackofficeTeamManagerActor();
+
+  await service.markKpiActualExcuse(managerActor, {
+    kpiPlanId: published.id,
+    allocationId: first.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    status: "EXCUSED",
+    reasonCode: "MEMBER_LEAVE",
+    reasonText: "Approved leave",
+  });
+  await service.markKpiActualExcuse(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: second.id,
+    metricCode: "ONBOARDED_TALENT_COUNT",
+    actualDate: "05-05-2026",
+    status: "NOT_REQUIRED",
+    reasonCode: "NO_OPERATION_REQUIRED",
+    reasonText: "No onboarding scheduled",
+  });
+
+  let grid = await service.getKpiActualDailyGrid(createActor(), {
+    kpiPlanId: published.id,
+    actualDate: "05-05-2026",
+  });
+  const excusedCell = grid.rows[0]?.metrics.find(
+    (metric) => metric.metricCode === "REVENUE_VND",
+  );
+  const notRequiredCell = grid.rows[1]?.metrics.find(
+    (metric) => metric.metricCode === "ONBOARDED_TALENT_COUNT",
+  );
+  assert.equal(excusedCell?.dailyActualStatus, "EXCUSED");
+  assert.equal(excusedCell?.actualExcuse?.reasonCode, "MEMBER_LEAVE");
+  assert.equal(excusedCell?.canDirectEdit, false);
+  assert.equal(excusedCell?.canMarkExcused, false);
+  assert.equal(excusedCell?.canUnmarkExcused, true);
+  assert.equal(excusedCell?.disabledReason, "ACTUAL_EXCUSED");
+  assert.equal(notRequiredCell?.dailyActualStatus, "NOT_REQUIRED");
+  assert.equal(notRequiredCell?.actualExcuse?.reasonText, "No onboarding scheduled");
+
+  const detail = await service.getKpiActualWorkspacePlanDetail(createActor(), {
+    kpiPlanId: published.id,
+  });
+  assert.equal(detail.actualEntryStatusSummary.excusedEntryCount, 1);
+  assert.equal(detail.actualEntryStatusSummary.notRequiredEntryCount, 1);
+  assert.equal(detail.actualEntryStatusSummary.overdueEntryCount, 18);
+
+  now.value = MAY_5_2026_NOON_HCM;
+  await assert.rejects(
+    service.createOrSetKpiActual(createActor(), {
+      kpiPlanId: published.id,
+      allocationId: first.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      actualValue: 80,
+    }),
+    KpiConflictError,
+  );
+
+  const excuseId = repository.actualExcuses.find(
+    (excuse) =>
+      excuse.kpiPlanId === published.id &&
+      excuse.allocationId === first.id &&
+      excuse.metricCode === "REVENUE_VND",
+  )?.id;
+  assert.ok(excuseId);
+  await service.removeKpiActualExcuse(createActor(), {
+    kpiPlanId: published.id,
+    excuseId,
+  });
+  const created = await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: first.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 80,
+  });
+  await assert.rejects(
+    service.markKpiActualExcuse(createActor(), {
+      kpiPlanId: published.id,
+      allocationId: first.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      status: "EXCUSED",
+      reasonCode: "MEMBER_LEAVE",
+      reasonText: "Already entered",
+    }),
+    KpiConflictError,
+  );
+  assert.equal(created.actualEntry.effectiveValue, 80);
+
+  grid = await service.getKpiActualDailyGrid(createActor(), {
+    kpiPlanId: published.id,
+    actualDate: "05-05-2026",
+  });
+  assert.equal(grid.rows[0]?.metrics[0]?.dailyActualStatus, "ENTERED");
+  assert.ok(
+    audit.records.some(
+      (record) =>
+        record.permissionCode === Permission.KPI_ENTER_ACTUAL &&
+        record.resourceId === published.id &&
+        record.metadata?.mutationType === "kpi.mark-actual-excuse",
+    ),
+  );
+  assert.ok(
+    audit.records.some(
+      (record) =>
+        record.permissionCode === Permission.KPI_ENTER_ACTUAL &&
+        record.resourceId === published.id &&
+        record.metadata?.mutationType === "kpi.remove-actual-excuse",
+    ),
+  );
+});
+
+test("KPI actual excuses validate authority, slot shape, lifecycle, and body fields", async () => {
+  const { service, repository, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const draft = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const published = await createPublishedGroupPlan(service);
+  const allocation = published.allocations[0] as KpiAllocation;
+  const controller = new KpiAdminController(service) as unknown as {
+    handle(req: Request, actor: Actor, context: "ADMIN"): Promise<unknown>;
+  };
+
+  await assert.rejects(
+    service.markKpiActualExcuse(createActor(), {
+      kpiPlanId: draft.id,
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      status: "EXCUSED",
+      reasonCode: "MEMBER_LEAVE",
+      reasonText: "Draft plan",
+    }),
+    KpiStateError,
+  );
+  await assert.rejects(
+    service.markKpiActualExcuse(createBackofficeTeamManagerActor(), {
+      kpiPlanId: published.id,
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      status: "EXCUSED",
+      reasonCode: "MEMBER_LEAVE",
+      reasonText: "No assignment",
+    }),
+    KpiPermissionScopeError,
+  );
+
+  seedManagerAssignment(managerRepository);
+  await assert.rejects(
+    service.markKpiActualExcuse(createManagerActorWithoutKpiScope(), {
+      kpiPlanId: published.id,
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      status: "EXCUSED",
+      reasonCode: "MEMBER_LEAVE",
+      reasonText: "No scope",
+    }),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.markKpiActualExcuse(createActor(), {
+      kpiPlanId: published.id,
+      allocationId: allocation.id,
+      metricCode: "LIVE_HOURS",
+      actualDate: "05-05-2026",
+      status: "EXCUSED",
+      reasonCode: "MEMBER_LEAVE",
+      reasonText: "Not targeted",
+    }),
+    KpiInvalidAllocationError,
+  );
+  await assert.rejects(
+    service.markKpiActualExcuse(createActor(), {
+      kpiPlanId: published.id,
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "01-06-2026",
+      status: "EXCUSED",
+      reasonCode: "MEMBER_LEAVE",
+      reasonText: "Outside",
+    }),
+    KpiValidationError,
+  );
+
+  replacePlanAllocationStatuses(repository, published.id, ["DRAFT"]);
+  const draftAllocation = repository.allocations.find(
+    (item) => item.kpiPlanId === published.id,
+  );
+  assert.ok(draftAllocation);
+  await assert.rejects(
+    service.markKpiActualExcuse(createActor(), {
+      kpiPlanId: published.id,
+      allocationId: draftAllocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      status: "EXCUSED",
+      reasonCode: "MEMBER_LEAVE",
+      reasonText: "Draft allocation",
+    }),
+    KpiInvalidAllocationError,
+  );
+
+  const req = {
+    body: {
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      status: "EXCUSED",
+      reasonCode: "MEMBER_LEAVE",
+      reasonText: "Unknown field",
+      unsupported: true,
+    },
+    params: { kpiPlanId: published.id },
+  } as unknown as Request;
+  bindCommand(req, "KPI_ACTUAL_EXCUSE_MARK");
+  await assert.rejects(
+    controller.handle(req, createActor(), "ADMIN"),
+    KpiValidationError,
+  );
 });
 
 test("KPI V2 daily actual grid includes correction summary after correction", async () => {
@@ -3877,6 +4190,16 @@ test("KPI actual workspace exposes correction-aware revenue, coverage, limited m
     count: 121,
     semantics: "CALENDAR_DAY_METRIC_SLOT_LIMITED",
   });
+  assert.deepEqual(item.actualEntryStatusSummary, {
+    expectedEntryCount: 124,
+    enteredEntryCount: 3,
+    enteredZeroCount: 0,
+    pendingEntryCount: 1,
+    overdueEntryCount: 16,
+    excusedEntryCount: 0,
+    notRequiredEntryCount: 0,
+    notDueEntryCount: 104,
+  });
   assert.equal(item.actionHints.canReadActualGrid, true);
   assert.equal(item.actionHints.canEnterActual, true);
 
@@ -3913,6 +4236,24 @@ test("KPI actual workspace exposes correction-aware revenue, coverage, limited m
   assert.ok(exposedMember);
   assert.equal(exposedMember.allocationId, first.id);
   assert.equal(exposedMember.memberDisplayName, first.snapshotMemberDisplayName);
+  assert.deepEqual(exposedDetail.actualEntryStatusSummary, {
+    expectedEntryCount: 124,
+    enteredEntryCount: 3,
+    enteredZeroCount: 0,
+    pendingEntryCount: 1,
+    overdueEntryCount: 16,
+    excusedEntryCount: 0,
+    notRequiredEntryCount: 0,
+    notDueEntryCount: 104,
+  });
+  assert.equal(
+    (
+      exposedMember.actualEntryStatusSummary as {
+        readonly enteredEntryCount: number;
+      }
+    ).enteredEntryCount,
+    2,
+  );
   assert.equal("memberTalentId" in exposedMember, false);
   assert.equal("memberEmploymentProfileId" in exposedMember, false);
   assert.equal(
@@ -4894,6 +5235,7 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
   readonly plans: KpiPlan[] = [];
   readonly targets: KpiTargetMetric[] = [];
   readonly allocations: KpiAllocation[] = [];
+  readonly actualExcuses: KpiActualSlotExcuse[] = [];
   actualEntries: KpiActualEntry[] = [];
   countAllocationsByPlanIdsCallCount = 0;
   listAllocationsByPlanIdCallCount = 0;
@@ -5363,6 +5705,136 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
         };
       }
     }
+  }
+
+  async findActualSlotExcuseById(
+    excuseId: string,
+  ): Promise<KpiActualSlotExcuse | null> {
+    return this.actualExcuses.find((excuse) => excuse.id === excuseId) ?? null;
+  }
+
+  async findActiveActualSlotExcuseByIdentity(input: {
+    readonly kpiPlanId: string;
+    readonly allocationId: string;
+    readonly metricCode: KpiMetricCode;
+    readonly actualDate: string;
+  }): Promise<KpiActualSlotExcuse | null> {
+    return (
+      this.actualExcuses.find(
+        (excuse) =>
+          excuse.kpiPlanId === input.kpiPlanId &&
+          excuse.allocationId === input.allocationId &&
+          excuse.metricCode === input.metricCode &&
+          excuse.actualDate === input.actualDate &&
+          excuse.deletedAt === null,
+      ) ?? null
+    );
+  }
+
+  async listActualSlotExcusesByPlanIds(
+    kpiPlanIds: readonly string[],
+  ): Promise<readonly KpiActualSlotExcuse[]> {
+    const ids = new Set(kpiPlanIds);
+    return this.actualExcuses.filter(
+      (excuse) => ids.has(excuse.kpiPlanId) && excuse.deletedAt === null,
+    );
+  }
+
+  async listActualSlotExcusesByPlanIdAndActualDate(
+    kpiPlanId: string,
+    actualDate: string,
+  ): Promise<readonly KpiActualSlotExcuse[]> {
+    return this.actualExcuses.filter(
+      (excuse) =>
+        excuse.kpiPlanId === kpiPlanId &&
+        excuse.actualDate === actualDate &&
+        excuse.deletedAt === null,
+    );
+  }
+
+  async setActualSlotExcuse(input: {
+    readonly kpiPlanId: string;
+    readonly allocationId: string;
+    readonly metricCode: KpiMetricCode;
+    readonly actualDate: string;
+    readonly status: "EXCUSED" | "NOT_REQUIRED";
+    readonly reasonCode:
+      | "MEMBER_LEAVE"
+      | "SCHEDULED_OFF"
+      | "HOLIDAY_OR_CLOSURE"
+      | "NO_OPERATION_REQUIRED"
+      | "DATA_SOURCE_UNAVAILABLE"
+      | "OTHER";
+    readonly reasonText: string;
+    readonly actorId: string;
+    readonly now: number;
+  }): Promise<KpiActualSlotExcuse> {
+    const index = this.actualExcuses.findIndex(
+      (excuse) =>
+        excuse.kpiPlanId === input.kpiPlanId &&
+        excuse.allocationId === input.allocationId &&
+        excuse.metricCode === input.metricCode &&
+        excuse.actualDate === input.actualDate &&
+        excuse.deletedAt === null,
+    );
+    if (index >= 0) {
+      const current = this.actualExcuses[index] as KpiActualSlotExcuse;
+      const updated: KpiActualSlotExcuse = {
+        ...current,
+        status: input.status,
+        reasonCode: input.reasonCode,
+        reasonText: input.reasonText,
+        updatedAt: input.now,
+        updatedByActorId: input.actorId,
+      };
+      this.actualExcuses[index] = updated;
+      return updated;
+    }
+    const created: KpiActualSlotExcuse = {
+      id: `actual-excuse-${this.actualExcuses.length + 1}`,
+      kpiPlanId: input.kpiPlanId,
+      allocationId: input.allocationId,
+      metricCode: input.metricCode,
+      actualDate: input.actualDate,
+      status: input.status,
+      reasonCode: input.reasonCode,
+      reasonText: input.reasonText,
+      createdAt: input.now,
+      createdByActorId: input.actorId,
+      updatedAt: input.now,
+      updatedByActorId: input.actorId,
+      deletedAt: null,
+      deletedByActorId: null,
+    };
+    this.actualExcuses.push(created);
+    return created;
+  }
+
+  async removeActualSlotExcuse(input: {
+    readonly excuseId: string;
+    readonly kpiPlanId: string;
+    readonly actorId: string;
+    readonly now: number;
+  }): Promise<KpiActualSlotExcuse | null> {
+    const index = this.actualExcuses.findIndex(
+      (excuse) =>
+        excuse.id === input.excuseId &&
+        excuse.kpiPlanId === input.kpiPlanId &&
+        excuse.deletedAt === null,
+    );
+    if (index < 0) {
+      return null;
+    }
+    const current = this.actualExcuses[index] as KpiActualSlotExcuse;
+    const removed: KpiActualSlotExcuse = {
+      ...current,
+      updatedAt: input.now,
+      updatedByActorId: input.actorId,
+      deletedAt: input.now,
+      deletedByActorId: input.actorId,
+    };
+    this.actualExcuses[index] = removed;
+    return removed;
   }
 }
 

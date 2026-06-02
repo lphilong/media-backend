@@ -4,6 +4,8 @@ import {
   KpiActualCorrection,
   KpiActualDailyGridView,
   KpiActualEntry,
+  KpiActualSlotExcuseReasonCode,
+  KpiActualSlotExcuseStatus,
   KpiActualWorkspacePlanDetail,
   KpiActualWorkspacePlanSummary,
   KpiMetricCode,
@@ -138,6 +140,21 @@ export interface CorrectKpiActualCommand {
   readonly actualEntryId: string;
   readonly correctedValue: number;
   readonly reason: string;
+}
+
+export interface MarkKpiActualExcuseCommand {
+  readonly kpiPlanId: string;
+  readonly allocationId: string;
+  readonly metricCode: KpiMetricCode | string;
+  readonly actualDate: string;
+  readonly status: KpiActualSlotExcuseStatus | string;
+  readonly reasonCode: KpiActualSlotExcuseReasonCode | string;
+  readonly reasonText: string;
+}
+
+export interface RemoveKpiActualExcuseCommand {
+  readonly kpiPlanId: string;
+  readonly excuseId: string;
 }
 
 export interface FinalizeKpiPlanCommand {

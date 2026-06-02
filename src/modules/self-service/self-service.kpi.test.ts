@@ -24,6 +24,7 @@ import {
   KpiActualCorrection,
   KpiActualEntry,
   KpiActualPolicySnapshot,
+  KpiActualSlotExcuse,
   KpiMetricCode,
   KpiPlan,
   KpiPlanStatus,
@@ -877,6 +878,34 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
   }
 
   async activateAllocationsForPlan(): Promise<void> {
+    throw new Error("Not implemented");
+  }
+
+  async findActualSlotExcuseById(): Promise<KpiActualSlotExcuse | null> {
+    throw new Error("Not implemented");
+  }
+
+  async findActiveActualSlotExcuseByIdentity(): Promise<KpiActualSlotExcuse | null> {
+    throw new Error("Not implemented");
+  }
+
+  async listActualSlotExcusesByPlanIds(): Promise<
+    readonly KpiActualSlotExcuse[]
+  > {
+    throw new Error("Not implemented");
+  }
+
+  async listActualSlotExcusesByPlanIdAndActualDate(): Promise<
+    readonly KpiActualSlotExcuse[]
+  > {
+    throw new Error("Not implemented");
+  }
+
+  async setActualSlotExcuse(): Promise<KpiActualSlotExcuse> {
+    throw new Error("Not implemented");
+  }
+
+  async removeActualSlotExcuse(): Promise<KpiActualSlotExcuse | null> {
     throw new Error("Not implemented");
   }
 }

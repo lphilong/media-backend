@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { ClientSession, Collection, Db } from "mongodb";
 import {
   buildGeneratedBusinessCodeRegex,
@@ -8,10 +9,13 @@ import { BaseRepository } from "@infra/database/repository";
 import {
   KpiActualWorkspaceDerivedPlanSortRow,
   KpiPlanListCursor,
+  KpiActualSlotExcuseIdentityInput,
   KpiPlanRepository,
   ListKpiActualWorkspaceDerivedPlansInput,
   ListKpiPlansInput,
+  RemoveKpiActualSlotExcuseInput,
   ReplaceKpiAllocationsForPlanInput,
+  SetKpiActualSlotExcuseInput,
   TransitionKpiAllocationsForPlanInput,
   TransitionKpiPlanStatusInput,
   UpdateKpiDraftCoreInput,
@@ -21,6 +25,9 @@ import {
   KpiAllocationStatusCount,
   KpiAllocationStatus,
   KpiAllocationTargetMetric,
+  KpiActualSlotExcuse,
+  KpiActualSlotExcuseReasonCode,
+  KpiActualSlotExcuseStatus,
   KpiActualSource,
   KpiActualPolicySnapshot,
   KpiMetricCode,
@@ -104,6 +111,23 @@ interface KpiAllocationDocument {
   readonly closedAt: number | null;
 }
 
+interface KpiActualSlotExcuseDocument {
+  readonly _id: string;
+  readonly kpiPlanId: string;
+  readonly allocationId: string;
+  readonly metricCode: KpiMetricCode;
+  readonly actualDate: string;
+  readonly status: KpiActualSlotExcuseStatus;
+  readonly reasonCode: KpiActualSlotExcuseReasonCode;
+  readonly reasonText: string;
+  readonly createdAt: number;
+  readonly createdByActorId: string;
+  readonly updatedAt: number;
+  readonly updatedByActorId: string;
+  readonly deletedAt: number | null;
+  readonly deletedByActorId: string | null;
+}
+
 interface KpiActualWorkspaceDerivedPlanDocument extends KpiPlanDocument {
   readonly revenueActual: number;
   readonly achievementPercent: number | null;
@@ -116,6 +140,7 @@ export class NativeMongoKpiPlanRepository
 {
   private readonly targetMetricCollection: Collection<KpiTargetMetricDocument>;
   private readonly allocationCollection: Collection<KpiAllocationDocument>;
+  private readonly actualExcuseCollection: Collection<KpiActualSlotExcuseDocument>;
 
   constructor(db: Db) {
     super(db, "kpi_plans");
@@ -123,6 +148,8 @@ export class NativeMongoKpiPlanRepository
       db.collection<KpiTargetMetricDocument>("kpi_target_metrics");
     this.allocationCollection =
       db.collection<KpiAllocationDocument>("kpi_allocations");
+    this.actualExcuseCollection =
+      db.collection<KpiActualSlotExcuseDocument>("kpi_actual_slot_excuses");
   }
 
   async insertPlan(
@@ -874,6 +901,127 @@ export class NativeMongoKpiPlanRepository
       );
     }
   }
+
+  async findActualSlotExcuseById(
+    excuseId: string,
+    session?: ClientSession,
+  ): Promise<KpiActualSlotExcuse | null> {
+    const doc = await this.actualExcuseCollection.findOne(
+      { _id: excuseId },
+      this.withSession(session),
+    );
+    return doc ? toKpiActualSlotExcuse(doc) : null;
+  }
+
+  async findActiveActualSlotExcuseByIdentity(
+    input: KpiActualSlotExcuseIdentityInput,
+    session?: ClientSession,
+  ): Promise<KpiActualSlotExcuse | null> {
+    const doc = await this.actualExcuseCollection.findOne(
+      {
+        kpiPlanId: input.kpiPlanId,
+        allocationId: input.allocationId,
+        metricCode: input.metricCode,
+        actualDate: input.actualDate,
+        deletedAt: null,
+      },
+      this.withSession(session),
+    );
+    return doc ? toKpiActualSlotExcuse(doc) : null;
+  }
+
+  async listActualSlotExcusesByPlanIds(
+    kpiPlanIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly KpiActualSlotExcuse[]> {
+    const ids = uniqueNonEmpty(kpiPlanIds);
+    if (ids.length === 0) {
+      return [];
+    }
+    const docs = await this.actualExcuseCollection
+      .find(
+        { kpiPlanId: { $in: ids }, deletedAt: null },
+        this.withSession(session),
+      )
+      .sort({ kpiPlanId: 1, allocationId: 1, metricCode: 1, actualDate: 1 })
+      .toArray();
+    return docs.map(toKpiActualSlotExcuse);
+  }
+
+  async listActualSlotExcusesByPlanIdAndActualDate(
+    kpiPlanId: string,
+    actualDate: string,
+    session?: ClientSession,
+  ): Promise<readonly KpiActualSlotExcuse[]> {
+    const docs = await this.actualExcuseCollection
+      .find({ kpiPlanId, actualDate, deletedAt: null }, this.withSession(session))
+      .sort({ allocationId: 1, metricCode: 1, _id: 1 })
+      .toArray();
+    return docs.map(toKpiActualSlotExcuse);
+  }
+
+  async setActualSlotExcuse(
+    input: SetKpiActualSlotExcuseInput,
+    session: ClientSession,
+  ): Promise<KpiActualSlotExcuse> {
+    const updated = await this.actualExcuseCollection.findOneAndUpdate(
+      {
+        kpiPlanId: input.kpiPlanId,
+        allocationId: input.allocationId,
+        metricCode: input.metricCode,
+        actualDate: input.actualDate,
+        deletedAt: null,
+      },
+      {
+        $setOnInsert: {
+          _id: cryptoRandomId(),
+          kpiPlanId: input.kpiPlanId,
+          allocationId: input.allocationId,
+          metricCode: input.metricCode,
+          actualDate: input.actualDate,
+          createdAt: input.now,
+          createdByActorId: input.actorId,
+          deletedAt: null,
+          deletedByActorId: null,
+        },
+        $set: {
+          status: input.status,
+          reasonCode: input.reasonCode,
+          reasonText: input.reasonText,
+          updatedAt: input.now,
+          updatedByActorId: input.actorId,
+        },
+      },
+      { ...this.withSession(session), upsert: true, returnDocument: "after" },
+    );
+    if (!updated) {
+      throw new Error("KPI actual slot excuse upsert failed");
+    }
+    return toKpiActualSlotExcuse(updated);
+  }
+
+  async removeActualSlotExcuse(
+    input: RemoveKpiActualSlotExcuseInput,
+    session: ClientSession,
+  ): Promise<KpiActualSlotExcuse | null> {
+    const updated = await this.actualExcuseCollection.findOneAndUpdate(
+      {
+        _id: input.excuseId,
+        kpiPlanId: input.kpiPlanId,
+        deletedAt: null,
+      },
+      {
+        $set: {
+          deletedAt: input.now,
+          deletedByActorId: input.actorId,
+          updatedAt: input.now,
+          updatedByActorId: input.actorId,
+        },
+      },
+      { ...this.withSession(session), returnDocument: "after" },
+    );
+    return updated ? toKpiActualSlotExcuse(updated) : null;
+  }
 }
 
 function escapeRegExp(value: string): string {
@@ -1224,4 +1372,29 @@ function toKpiAllocation(doc: KpiAllocationDocument): KpiAllocation {
     publishedByActorId: doc.publishedByActorId ?? null,
     closedAt: doc.closedAt,
   };
+}
+
+function toKpiActualSlotExcuse(
+  doc: KpiActualSlotExcuseDocument,
+): KpiActualSlotExcuse {
+  return {
+    id: doc._id,
+    kpiPlanId: doc.kpiPlanId,
+    allocationId: doc.allocationId,
+    metricCode: doc.metricCode,
+    actualDate: doc.actualDate,
+    status: doc.status,
+    reasonCode: doc.reasonCode,
+    reasonText: doc.reasonText,
+    createdAt: doc.createdAt,
+    createdByActorId: doc.createdByActorId,
+    updatedAt: doc.updatedAt,
+    updatedByActorId: doc.updatedByActorId,
+    deletedAt: doc.deletedAt,
+    deletedByActorId: doc.deletedByActorId,
+  };
+}
+
+function cryptoRandomId(): string {
+  return crypto.randomUUID();
 }

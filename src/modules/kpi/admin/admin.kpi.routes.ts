@@ -105,6 +105,16 @@ export function adminKpiRoutes(
     withCommand("KPI_ACTUAL_CREATE"),
     mutationController.execute,
   );
+  router.post(
+    "/plans/:kpiPlanId/actual-excuses",
+    withCommand("KPI_ACTUAL_EXCUSE_MARK"),
+    mutationController.execute,
+  );
+  router.delete(
+    "/plans/:kpiPlanId/actual-excuses/:excuseId",
+    withCommand("KPI_ACTUAL_EXCUSE_REMOVE"),
+    mutationController.execute,
+  );
   router.patch(
     "/plans/:kpiPlanId/actuals/:actualEntryId",
     withCommand("KPI_ACTUAL_UPDATE"),

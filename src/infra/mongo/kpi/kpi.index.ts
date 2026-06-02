@@ -25,6 +25,12 @@ export const KPI_ACTUAL_ENTRY_PLAN_METRIC_INDEX_NAME =
   "idx_kpi_actual_entry_plan_metric";
 export const KPI_ACTUAL_CORRECTION_ENTRY_INDEX_NAME =
   "idx_kpi_actual_correction_entry";
+export const KPI_ACTUAL_SLOT_EXCUSE_ACTIVE_UNIQ_INDEX_NAME =
+  "uniq_kpi_actual_slot_excuse_active";
+export const KPI_ACTUAL_SLOT_EXCUSE_PLAN_DATE_INDEX_NAME =
+  "idx_kpi_actual_slot_excuse_plan_date";
+export const KPI_ACTUAL_SLOT_EXCUSE_PLAN_ALLOCATION_INDEX_NAME =
+  "idx_kpi_actual_slot_excuse_plan_allocation";
 
 export async function initKpiIndexes(db: Db): Promise<void> {
   const plans = db.collection("kpi_plans");
@@ -32,6 +38,7 @@ export async function initKpiIndexes(db: Db): Promise<void> {
   const allocations = db.collection("kpi_allocations");
   const actualEntries = db.collection("kpi_actual_entries");
   const actualCorrections = db.collection("kpi_actual_corrections");
+  const actualSlotExcuses = db.collection("kpi_actual_slot_excuses");
   const managerAssignments = db.collection(
     "talent_group_manager_assignments",
   );
@@ -94,5 +101,21 @@ export async function initKpiIndexes(db: Db): Promise<void> {
   await actualCorrections.createIndex(
     { actualEntryId: 1, correctedAt: -1, _id: 1 },
     { name: KPI_ACTUAL_CORRECTION_ENTRY_INDEX_NAME },
+  );
+  await actualSlotExcuses.createIndex(
+    { kpiPlanId: 1, allocationId: 1, metricCode: 1, actualDate: 1 },
+    {
+      name: KPI_ACTUAL_SLOT_EXCUSE_ACTIVE_UNIQ_INDEX_NAME,
+      unique: true,
+      partialFilterExpression: { deletedAt: null },
+    },
+  );
+  await actualSlotExcuses.createIndex(
+    { kpiPlanId: 1, actualDate: 1, _id: 1 },
+    { name: KPI_ACTUAL_SLOT_EXCUSE_PLAN_DATE_INDEX_NAME },
+  );
+  await actualSlotExcuses.createIndex(
+    { kpiPlanId: 1, allocationId: 1, _id: 1 },
+    { name: KPI_ACTUAL_SLOT_EXCUSE_PLAN_ALLOCATION_INDEX_NAME },
   );
 }

@@ -13,8 +13,10 @@ import {
   CorrectKpiActualCommand,
   CreateKpiPlanCommand,
   CreateKpiActualCommand,
+  MarkKpiActualExcuseCommand,
   PublishKpiAllocationCommand,
   RejectKpiAllocationCommand,
+  RemoveKpiActualExcuseCommand,
   ReplaceKpiAllocationsCommand,
   ReplaceKpiTargetMetricsCommand,
   SubmitKpiAllocationDraftCommand,
@@ -38,6 +40,8 @@ type KpiMutationCommand =
   | "KPI_PLAN_PUBLISH"
   | "KPI_PLAN_ARCHIVE"
   | "KPI_ACTUAL_CREATE"
+  | "KPI_ACTUAL_EXCUSE_MARK"
+  | "KPI_ACTUAL_EXCUSE_REMOVE"
   | "KPI_ACTUAL_UPDATE"
   | "KPI_ACTUAL_CORRECT"
   | "KPI_PLAN_FINALIZE";
@@ -80,6 +84,14 @@ const CREATE_KPI_ACTUAL_BODY_FIELDS = [
   "metricCode",
   "actualDate",
   "actualValue",
+] as const;
+const MARK_KPI_ACTUAL_EXCUSE_BODY_FIELDS = [
+  "allocationId",
+  "metricCode",
+  "actualDate",
+  "status",
+  "reasonCode",
+  "reasonText",
 ] as const;
 const UPDATE_KPI_ACTUAL_BODY_FIELDS = ["actualValue"] as const;
 const CORRECT_KPI_ACTUAL_BODY_FIELDS = ["correctedValue", "reason"] as const;
@@ -171,6 +183,21 @@ export class KpiAdminController extends SecureController {
           actor,
           parseCreateKpiActualCommand(req),
         );
+      case "KPI_ACTUAL_EXCUSE_MARK":
+        return this.service.markKpiActualExcuse(
+          actor,
+          parseMarkKpiActualExcuseCommand(req),
+        );
+      case "KPI_ACTUAL_EXCUSE_REMOVE":
+        assertNoUnexpectedFields(
+          requireRecord(req.body),
+          [],
+          "removeKpiActualExcuse",
+        );
+        return this.service.removeKpiActualExcuse(actor, {
+          kpiPlanId: req.params.kpiPlanId,
+          excuseId: req.params.excuseId,
+        } satisfies RemoveKpiActualExcuseCommand);
       case "KPI_ACTUAL_UPDATE":
         return this.service.updateKpiActualDirect(
           actor,
@@ -343,6 +370,26 @@ function parseCreateKpiActualCommand(req: Request): CreateKpiActualCommand {
     metricCode: body.metricCode as string,
     actualDate: body.actualDate as string,
     actualValue: body.actualValue as number,
+  };
+}
+
+function parseMarkKpiActualExcuseCommand(
+  req: Request,
+): MarkKpiActualExcuseCommand {
+  const body = requireRecord(req.body);
+  assertNoUnexpectedFields(
+    body,
+    MARK_KPI_ACTUAL_EXCUSE_BODY_FIELDS,
+    "markKpiActualExcuse",
+  );
+  return {
+    kpiPlanId: req.params.kpiPlanId,
+    allocationId: body.allocationId as string,
+    metricCode: body.metricCode as string,
+    actualDate: body.actualDate as string,
+    status: body.status as string,
+    reasonCode: body.reasonCode as string,
+    reasonText: body.reasonText as string,
   };
 }
 

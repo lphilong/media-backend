@@ -97,6 +97,51 @@ export const KPI_ACTUAL_CORRECTION_ALLOWED_UNTIL = ["PLAN_FINALIZED"] as const;
 export type KpiActualCorrectionAllowedUntil =
   (typeof KPI_ACTUAL_CORRECTION_ALLOWED_UNTIL)[number];
 
+export const KPI_DAILY_ACTUAL_STATUSES = [
+  "NOT_DUE",
+  "DUE_OPEN",
+  "ENTERED",
+  "ENTERED_ZERO",
+  "OVERDUE",
+  "EXCUSED",
+  "NOT_REQUIRED",
+  "BLOCKED_BY_PLAN_STATUS",
+  "BLOCKED_BY_ALLOCATION_STATUS",
+] as const;
+
+export type KpiDailyActualStatus = (typeof KPI_DAILY_ACTUAL_STATUSES)[number];
+
+export const KPI_ACTUAL_SLOT_EXCUSE_STATUSES = [
+  "EXCUSED",
+  "NOT_REQUIRED",
+] as const;
+
+export type KpiActualSlotExcuseStatus =
+  (typeof KPI_ACTUAL_SLOT_EXCUSE_STATUSES)[number];
+
+export const KPI_ACTUAL_SLOT_EXCUSE_REASON_CODES = [
+  "MEMBER_LEAVE",
+  "SCHEDULED_OFF",
+  "HOLIDAY_OR_CLOSURE",
+  "NO_OPERATION_REQUIRED",
+  "DATA_SOURCE_UNAVAILABLE",
+  "OTHER",
+] as const;
+
+export type KpiActualSlotExcuseReasonCode =
+  (typeof KPI_ACTUAL_SLOT_EXCUSE_REASON_CODES)[number];
+
+export interface KpiActualEntryStatusSummary {
+  readonly expectedEntryCount: number;
+  readonly enteredEntryCount: number;
+  readonly enteredZeroCount: number;
+  readonly pendingEntryCount: number;
+  readonly overdueEntryCount: number;
+  readonly excusedEntryCount: number;
+  readonly notRequiredEntryCount: number;
+  readonly notDueEntryCount: number;
+}
+
 export interface KpiActualPolicySnapshot {
   readonly timezone: "Asia/Ho_Chi_Minh";
   readonly entryOpenLocalTime: "00:00";
@@ -279,6 +324,34 @@ export interface KpiActualCorrection {
   readonly createdAt: number;
 }
 
+export interface KpiActualSlotExcuse {
+  readonly id: string;
+  readonly kpiPlanId: string;
+  readonly allocationId: string;
+  readonly metricCode: KpiMetricCode;
+  readonly actualDate: string;
+  readonly status: KpiActualSlotExcuseStatus;
+  readonly reasonCode: KpiActualSlotExcuseReasonCode;
+  readonly reasonText: string;
+  readonly createdAt: number;
+  readonly createdByActorId: string;
+  readonly updatedAt: number;
+  readonly updatedByActorId: string;
+  readonly deletedAt: number | null;
+  readonly deletedByActorId: string | null;
+}
+
+export interface KpiActualSlotExcuseSummary {
+  readonly id: string;
+  readonly status: KpiActualSlotExcuseStatus;
+  readonly reasonCode: KpiActualSlotExcuseReasonCode;
+  readonly reasonText: string;
+  readonly createdAt: number;
+  readonly createdByActorId: string;
+  readonly updatedAt: number;
+  readonly updatedByActorId: string;
+}
+
 export interface KpiProgressMetricTotal {
   readonly metricCode: KpiMetricCode;
   readonly targetValue: number;
@@ -343,10 +416,14 @@ export interface KpiActualGridMetricCellView {
   readonly actualValue: number | null;
   readonly effectiveValue: number;
   readonly hasEntry: boolean;
+  readonly dailyActualStatus: KpiDailyActualStatus;
+  readonly actualExcuse: KpiActualSlotExcuseSummary | null;
   readonly editCount: number;
   readonly correctionCount: number;
   readonly latestCorrectionId: string | null;
   readonly canDirectEdit: boolean;
+  readonly canMarkExcused: boolean;
+  readonly canUnmarkExcused: boolean;
   readonly requiresCorrection: boolean;
   readonly disabledReason: string | null;
 }
@@ -434,6 +511,7 @@ export interface KpiActualWorkspacePlanSummary {
   readonly allocationCoverage: KpiActualWorkspaceAllocationCoverage;
   readonly supportingMetrics: readonly KpiActualWorkspaceMetricSummary[];
   readonly missingSignal: KpiActualWorkspaceMissingSignal;
+  readonly actualEntryStatusSummary: KpiActualEntryStatusSummary;
   readonly closing: KpiActualWorkspaceClosing;
   readonly actionHints: KpiActualWorkspaceActionHints;
 }
@@ -450,6 +528,7 @@ export interface KpiActualWorkspaceMemberSummary {
   };
   readonly supportingMetrics: readonly KpiActualWorkspaceMetricSummary[];
   readonly missingSignal: KpiActualWorkspaceMissingSignal;
+  readonly actualEntryStatusSummary: KpiActualEntryStatusSummary;
   readonly actionHints: KpiActualWorkspaceActionHints;
 }
 

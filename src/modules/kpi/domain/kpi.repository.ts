@@ -4,6 +4,9 @@ import {
   KpiAllocation,
   KpiAllocationStatusCount,
   KpiAllocationStatus,
+  KpiActualSlotExcuse,
+  KpiActualSlotExcuseReasonCode,
+  KpiActualSlotExcuseStatus,
   KpiActualPolicySnapshot,
   KpiMetricCode,
   KpiPlan,
@@ -128,6 +131,29 @@ export interface TransitionKpiAllocationsForPlanInput {
   readonly publishedByActorId?: string | null;
 }
 
+export interface KpiActualSlotExcuseIdentityInput {
+  readonly kpiPlanId: string;
+  readonly allocationId: string;
+  readonly metricCode: KpiMetricCode;
+  readonly actualDate: string;
+}
+
+export interface SetKpiActualSlotExcuseInput
+  extends KpiActualSlotExcuseIdentityInput {
+  readonly status: KpiActualSlotExcuseStatus;
+  readonly reasonCode: KpiActualSlotExcuseReasonCode;
+  readonly reasonText: string;
+  readonly actorId: string;
+  readonly now: number;
+}
+
+export interface RemoveKpiActualSlotExcuseInput {
+  readonly excuseId: string;
+  readonly kpiPlanId: string;
+  readonly actorId: string;
+  readonly now: number;
+}
+
 export interface KpiPlanRepository {
   insertPlan(plan: KpiPlan, session: ClientSession): Promise<KpiPlan>;
 
@@ -242,4 +268,35 @@ export interface KpiPlanRepository {
     publishedAt: number,
     session: ClientSession,
   ): Promise<void>;
+
+  findActualSlotExcuseById(
+    excuseId: string,
+    session?: ClientSession,
+  ): Promise<KpiActualSlotExcuse | null>;
+
+  findActiveActualSlotExcuseByIdentity(
+    input: KpiActualSlotExcuseIdentityInput,
+    session?: ClientSession,
+  ): Promise<KpiActualSlotExcuse | null>;
+
+  listActualSlotExcusesByPlanIds(
+    kpiPlanIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly KpiActualSlotExcuse[]>;
+
+  listActualSlotExcusesByPlanIdAndActualDate(
+    kpiPlanId: string,
+    actualDate: string,
+    session?: ClientSession,
+  ): Promise<readonly KpiActualSlotExcuse[]>;
+
+  setActualSlotExcuse(
+    input: SetKpiActualSlotExcuseInput,
+    session: ClientSession,
+  ): Promise<KpiActualSlotExcuse>;
+
+  removeActualSlotExcuse(
+    input: RemoveKpiActualSlotExcuseInput,
+    session: ClientSession,
+  ): Promise<KpiActualSlotExcuse | null>;
 }

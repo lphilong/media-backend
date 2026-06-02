@@ -49,6 +49,8 @@ import {
   KPI_CREATE_SUBJECT_TYPES,
   KPI_EXECUTABLE_SUBJECT_TYPES,
   KPI_METRIC_CODES,
+  KPI_ACTUAL_SLOT_EXCUSE_REASON_CODES,
+  KPI_ACTUAL_SLOT_EXCUSE_STATUSES,
   KPI_PLAN_CURRENCIES,
   KPI_PLAN_STATUSES,
   KPI_SORT_DIRECTIONS,
@@ -59,10 +61,16 @@ import {
   KpiAllocationStatusCount,
   KpiAllocationWorkflowSummary,
   KpiAllocationStatus,
+  KpiActualEntryStatusSummary,
   KpiActualDailyGridView,
   KpiAllocationTargetMetric,
   KpiActualCorrection,
   KpiActualEntry,
+  KpiActualSlotExcuse,
+  KpiActualSlotExcuseReasonCode,
+  KpiActualSlotExcuseStatus,
+  KpiActualSlotExcuseSummary,
+  KpiDailyActualStatus,
   KpiActualPolicySnapshot,
   KpiActualWorkspaceActionHints,
   KpiActualWorkspaceMemberSummary,
@@ -85,6 +93,7 @@ import {
   CreateKpiPlanCommand,
   CreateKpiActualCommand,
   FinalizeKpiPlanCommand,
+  MarkKpiActualExcuseCommand,
   GetKpiPlanDetailQuery,
   GetKpiActualWorkspacePlanDetailQuery,
   GetKpiActualDailyGridQuery,
@@ -105,6 +114,7 @@ import {
   ApproveKpiAllocationCommand,
   RejectKpiAllocationCommand,
   PublishKpiAllocationCommand,
+  RemoveKpiActualExcuseCommand,
   KpiTargetMetricInput,
   ListKpiPlansQuery,
   ListKpiPlansResult,
@@ -1146,6 +1156,14 @@ export class KpiAdminService {
           );
         }
 
+        await this.assertNoActiveActualSlotExcuse(
+          plan.id,
+          allocation.id,
+          metricCode,
+          actualDate,
+          session,
+        );
+
         const now = this.clock();
         const entry: KpiActualEntry = {
           id: crypto.randomUUID(),
@@ -1190,6 +1208,192 @@ export class KpiAdminService {
       },
     );
   }
+
+  async markKpiActualExcuse(
+    actor: Actor,
+    command: MarkKpiActualExcuseCommand,
+  ): Promise<KpiPlanMutationView> {
+    const permission = this.assertContextPermission(
+      actor,
+      Permission.KPI_ENTER_ACTUAL,
+    );
+    const operation: AuthoritativeAdminMutationIdentity =
+      "kpi.mark-actual-excuse";
+
+    return this.executeMutation(
+      actor,
+      permission,
+      operation,
+      `kpi-actual-excuse:${command.kpiPlanId}`,
+      async (session) => {
+        const plan = await this.requirePlan(command.kpiPlanId, session);
+        const allocationId = normalizeRequiredText(
+          command.allocationId,
+          "allocationId",
+        );
+        const metricCode = normalizeMetricCode(command.metricCode);
+        const actualDate = normalizeActualDateText(
+          command.actualDate,
+          "actualDate",
+        );
+        const status = normalizeActualSlotExcuseStatus(command.status);
+        const reasonCode = normalizeActualSlotExcuseReasonCode(
+          command.reasonCode,
+        );
+        const reasonText = normalizeRequiredText(
+          command.reasonText,
+          "reasonText",
+        );
+
+        this.assertActualMutationPlanOpen(plan, "mark actual excuse");
+        assertActualDateWithinPlan(plan, actualDate);
+        const allocation = await this.requireActiveAllocation(
+          plan,
+          allocationId,
+          metricCode,
+          session,
+        );
+        await this.assertActorCanManageAllocationActual(
+          actor,
+          plan,
+          allocation,
+          session,
+        );
+
+        const existingActual = await this.actualRepository.findEntryByIdentity(
+          {
+            kpiPlanId: plan.id,
+            allocationId: allocation.id,
+            metricCode,
+            actualDate,
+          },
+          session,
+        );
+        if (existingActual) {
+          throw new KpiConflictError(
+            "KPI actual entry already exists for this slot; remove or correct the actual instead of marking it excused",
+          );
+        }
+
+        const now = this.clock();
+        const excuse = await this.repository.setActualSlotExcuse(
+          {
+            kpiPlanId: plan.id,
+            allocationId: allocation.id,
+            metricCode,
+            actualDate,
+            status,
+            reasonCode,
+            reasonText,
+            actorId: actor.id,
+            now,
+          },
+          session,
+        );
+
+        await this.recordAudit({
+          actor,
+          permission,
+          kpiPlanId: plan.id,
+          mutationType: operation,
+          targetId: excuse.id,
+          targetType: "kpi-actual-slot-excuse",
+          metadata: {
+            action: "mark",
+            allocationId: excuse.allocationId,
+            metricCode: excuse.metricCode,
+            actualDate: excuse.actualDate,
+            status: excuse.status,
+            reasonCode: excuse.reasonCode,
+          },
+          session,
+        });
+
+        return this.loadPlanDetail(plan.id, session);
+      },
+    );
+  }
+
+  async removeKpiActualExcuse(
+    actor: Actor,
+    command: RemoveKpiActualExcuseCommand,
+  ): Promise<KpiPlanMutationView> {
+    const permission = this.assertContextPermission(
+      actor,
+      Permission.KPI_ENTER_ACTUAL,
+    );
+    const operation: AuthoritativeAdminMutationIdentity =
+      "kpi.remove-actual-excuse";
+
+    return this.executeMutation(
+      actor,
+      permission,
+      operation,
+      `kpi-actual-excuse:${command.excuseId}`,
+      async (session) => {
+        const plan = await this.requirePlan(command.kpiPlanId, session);
+        const excuse = await this.repository.findActualSlotExcuseById(
+          normalizeRequiredText(command.excuseId, "excuseId"),
+          session,
+        );
+        if (
+          !excuse ||
+          excuse.kpiPlanId !== plan.id ||
+          excuse.deletedAt !== null
+        ) {
+          throw new KpiNotFoundError(command.excuseId);
+        }
+        this.assertActualMutationPlanOpen(plan, "remove actual excuse");
+        assertActualDateWithinPlan(plan, excuse.actualDate);
+        const allocation = await this.requireActiveAllocation(
+          plan,
+          excuse.allocationId,
+          excuse.metricCode,
+          session,
+        );
+        await this.assertActorCanManageAllocationActual(
+          actor,
+          plan,
+          allocation,
+          session,
+        );
+
+        const removed = await this.repository.removeActualSlotExcuse(
+          {
+            excuseId: excuse.id,
+            kpiPlanId: plan.id,
+            actorId: actor.id,
+            now: this.clock(),
+          },
+          session,
+        );
+        if (!removed) {
+          throw new KpiNotFoundError(command.excuseId);
+        }
+
+        await this.recordAudit({
+          actor,
+          permission,
+          kpiPlanId: plan.id,
+          mutationType: operation,
+          targetId: removed.id,
+          targetType: "kpi-actual-slot-excuse",
+          metadata: {
+            action: "remove",
+            allocationId: removed.allocationId,
+            metricCode: removed.metricCode,
+            actualDate: removed.actualDate,
+            status: removed.status,
+            reasonCode: removed.reasonCode,
+          },
+          session,
+        });
+
+        return this.loadPlanDetail(plan.id, session);
+      },
+    );
+  }
+
   async updateKpiActualDirect(
     actor: Actor,
     command: UpdateKpiActualCommand,
@@ -1231,6 +1435,13 @@ export class KpiAdminService {
           actor,
           plan,
           allocation,
+          session,
+        );
+        await this.assertNoActiveActualSlotExcuse(
+          plan.id,
+          allocation.id,
+          entry.metricCode,
+          entry.actualDate,
           session,
         );
         return {
@@ -1447,7 +1658,7 @@ export class KpiAdminService {
     const actualDate = normalizeActualDateText(query.actualDate, "actualDate");
     assertActualDateWithinPlan(plan, actualDate);
     await this.assertActorCanReadActualGrid(actor, plan);
-    return this.buildActualDailyGridView(plan, actualDate);
+    return this.buildActualDailyGridView(actor, plan, actualDate);
   }
 
   async listKpiActualCorrections(
@@ -1565,6 +1776,31 @@ export class KpiAdminService {
       );
     }
     return allocation;
+  }
+
+  private async assertNoActiveActualSlotExcuse(
+    kpiPlanId: string,
+    allocationId: string,
+    metricCode: KpiMetricCode,
+    actualDate: string,
+    session?: ClientSession,
+  ): Promise<void> {
+    const excuse =
+      await this.repository.findActiveActualSlotExcuseByIdentity(
+        {
+          kpiPlanId,
+          allocationId,
+          metricCode,
+          actualDate,
+        },
+        session,
+      );
+    if (!excuse) {
+      return;
+    }
+    throw new KpiConflictError(
+      "KPI actual slot is excused or not required; remove the excuse before entering an actual",
+    );
   }
 
   private async assertActorCanManageAllocationActual(
@@ -1880,13 +2116,18 @@ export class KpiAdminService {
   }
 
   private async buildActualDailyGridView(
+    actor: Actor,
     plan: KpiPlan,
     actualDate: string,
   ): Promise<KpiActualDailyGridView> {
-    const [targetMetrics, allocations, entries] = await Promise.all([
+    const [targetMetrics, allocations, entries, excuses] = await Promise.all([
       this.repository.listTargetMetricsByPlanId(plan.id),
       this.repository.listAllocationsByPlanId(plan.id),
       this.actualRepository.listEntriesByPlanIdAndActualDate(
+        plan.id,
+        actualDate,
+      ),
+      this.repository.listActualSlotExcusesByPlanIdAndActualDate(
         plan.id,
         actualDate,
       ),
@@ -1908,6 +2149,16 @@ export class KpiAdminService {
         entry,
       );
     }
+    const excusesByAllocationMetric = new Map<string, KpiActualSlotExcuse>();
+    for (const excuse of excuses) {
+      excusesByAllocationMetric.set(
+        `${excuse.allocationId}:${excuse.metricCode}`,
+        excuse,
+      );
+    }
+    const canEnterActual =
+      plan.status === "PUBLISHED" &&
+      actor.permissions.includes(Permission.KPI_ENTER_ACTUAL);
     return {
       kpiPlanId: plan.id,
       planCode: plan.planCode,
@@ -1937,14 +2188,31 @@ export class KpiAdminService {
           const entry = entriesByAllocationMetric.get(
             `${allocation.id}:${metric.metricCode}`,
           );
+          const excuse = excusesByAllocationMetric.get(
+            `${allocation.id}:${metric.metricCode}`,
+          );
           const entryEditLimitReached =
             entry !== undefined &&
             entry.editCount >= policy.maxDirectEditsPerEntry;
+          const planDisabledReason =
+            plan.status === "PUBLISHED" ? null : editability.disabledReason;
           const disabledReason =
-            editability.disabledReason ??
-            (entryEditLimitReached ? "DIRECT_EDIT_LIMIT_REACHED" : null);
+            planDisabledReason ??
+            (excuse !== undefined ? `ACTUAL_${excuse.status}` : null) ??
+            (entryEditLimitReached ? "DIRECT_EDIT_LIMIT_REACHED" : null) ??
+            editability.disabledReason;
           const canDirectEdit =
-            editability.isDirectEditOpen && !entryEditLimitReached;
+            editability.isDirectEditOpen &&
+            !entryEditLimitReached &&
+            excuse === undefined;
+          const dailyActualStatus = resolveDailyActualStatus({
+            plan,
+            allocation,
+            actualDate,
+            entry,
+            excuse,
+            now: this.clock(),
+          });
           return {
             metricCode: metric.metricCode,
             targetValue: metric.targetValue,
@@ -1952,10 +2220,19 @@ export class KpiAdminService {
             actualValue: entry?.actualValue ?? null,
             effectiveValue: entry?.effectiveValue ?? 0,
             hasEntry: entry !== undefined,
+            dailyActualStatus,
+            actualExcuse: excuse ? toActualSlotExcuseSummary(excuse) : null,
             editCount: entry?.editCount ?? 0,
             correctionCount: entry?.correctionCount ?? 0,
             latestCorrectionId: entry?.latestCorrectionId ?? null,
             canDirectEdit,
+            canMarkExcused:
+              canEnterActual &&
+              entry === undefined &&
+              excuse === undefined &&
+              plan.status === "PUBLISHED" &&
+              allocation.allocationStatus === "PUBLISHED",
+            canUnmarkExcused: canEnterActual && excuse !== undefined,
             requiresCorrection: entry !== undefined && !canDirectEdit,
             disabledReason,
           };
@@ -2437,11 +2714,12 @@ export class KpiAdminService {
       return [];
     }
     const planIds = plans.map((plan) => plan.id);
-    const [targetMetrics, allocations, entries, subjectRefs] =
+    const [targetMetrics, allocations, entries, excuses, subjectRefs] =
       await Promise.all([
         this.repository.listTargetMetricsByPlanIds(planIds),
         this.repository.listAllocationsByPlanIds(planIds),
         this.actualRepository.listEntriesByPlanIds(planIds),
+        this.repository.listActualSlotExcusesByPlanIds(planIds),
         this.subjectReadonlyAccess.listSubjectRefs(
           plans.map((plan) => ({
             subjectType: plan.subjectType,
@@ -2466,6 +2744,7 @@ export class KpiAdminService {
           (allocation) => allocation.kpiPlanId === plan.id,
         ),
         entries: entries.filter((entry) => entry.kpiPlanId === plan.id),
+        excuses: excuses.filter((excuse) => excuse.kpiPlanId === plan.id),
         subjectRef: subjectRefs.get(kpiSubjectRefKey(plan)) ?? null,
         actionHints:
           actionHintsByPlanId.get(plan.id) ??
@@ -3472,6 +3751,30 @@ function normalizeMetricCode(value: unknown): KpiMetricCode {
   return text as KpiMetricCode;
 }
 
+function normalizeActualSlotExcuseStatus(
+  value: unknown,
+): KpiActualSlotExcuseStatus {
+  const text = normalizeRequiredText(value, "status");
+  if (!KPI_ACTUAL_SLOT_EXCUSE_STATUSES.includes(text as never)) {
+    throw new KpiValidationError(
+      `KPI actual excuse status is unsupported: ${text}`,
+    );
+  }
+  return text as KpiActualSlotExcuseStatus;
+}
+
+function normalizeActualSlotExcuseReasonCode(
+  value: unknown,
+): KpiActualSlotExcuseReasonCode {
+  const text = normalizeRequiredText(value, "reasonCode");
+  if (!KPI_ACTUAL_SLOT_EXCUSE_REASON_CODES.includes(text as never)) {
+    throw new KpiValidationError(
+      `KPI actual excuse reasonCode is unsupported: ${text}`,
+    );
+  }
+  return text as KpiActualSlotExcuseReasonCode;
+}
+
 function normalizeSubjectType(value: unknown): KpiSubjectType {
   const text = normalizeRequiredText(value, "subjectType");
   if (!KPI_SUBJECT_TYPES.includes(text as KpiSubjectType)) {
@@ -3529,6 +3832,7 @@ function buildActualWorkspaceAggregate(input: {
   readonly targetMetrics: readonly KpiTargetMetric[];
   readonly allocations: readonly KpiAllocation[];
   readonly entries: readonly KpiActualEntry[];
+  readonly excuses: readonly KpiActualSlotExcuse[];
   readonly subjectRef: ReferenceSummary | null;
   readonly actionHints: KpiActualWorkspaceActionHints;
   readonly now: number;
@@ -3543,6 +3847,8 @@ function buildActualWorkspaceAggregate(input: {
   );
   const actualByAllocationMetric = new Map<string, number>();
   const entryCountByAllocationMetric = new Map<string, number>();
+  const entriesBySlot = new Map<string, KpiActualEntry>();
+  const excusesBySlot = new Map<string, KpiActualSlotExcuse>();
 
   for (const entry of input.entries) {
     const allocation = officialAllocationsById.get(entry.allocationId);
@@ -3568,6 +3874,32 @@ function buildActualWorkspaceAggregate(input: {
     entryCountByAllocationMetric.set(
       key,
       (entryCountByAllocationMetric.get(key) ?? 0) + 1,
+    );
+    entriesBySlot.set(
+      actualWorkspaceSlotKey(allocation.id, entry.metricCode, entry.actualDate),
+      entry,
+    );
+  }
+
+  for (const excuse of input.excuses) {
+    const allocation = officialAllocationsById.get(excuse.allocationId);
+    if (
+      !allocation ||
+      excuse.deletedAt !== null ||
+      !allocation.targetMetrics.some(
+        (metric) => metric.metricCode === excuse.metricCode,
+      ) ||
+      !isActualEntryWithinPlanPeriod(input.plan, excuse.actualDate)
+    ) {
+      continue;
+    }
+    excusesBySlot.set(
+      actualWorkspaceSlotKey(
+        allocation.id,
+        excuse.metricCode,
+        excuse.actualDate,
+      ),
+      excuse,
     );
   }
 
@@ -3607,6 +3939,13 @@ function buildActualWorkspaceAggregate(input: {
         Math.max(periodDayCount - (entryCountByAllocationMetric.get(key) ?? 0), 0)
       );
     }, 0);
+    const actualEntryStatusSummary = summarizeDailyActualStatuses({
+      plan: input.plan,
+      allocations: [allocation],
+      now: input.now,
+      entriesBySlot,
+      excusesBySlot,
+    });
 
     return {
       allocationId: allocation.id,
@@ -3622,6 +3961,7 @@ function buildActualWorkspaceAggregate(input: {
         (metric) => metric.metricCode !== "REVENUE_VND",
       ),
       missingSignal: createActualWorkspaceMissingSignal(missingCount),
+      actualEntryStatusSummary,
       actionHints: input.actionHints,
     } satisfies KpiActualWorkspaceMemberSummary;
   });
@@ -3707,6 +4047,9 @@ function buildActualWorkspaceAggregate(input: {
       missingSignal: createActualWorkspaceMissingSignal(
         members.reduce((sum, member) => sum + member.missingSignal.count, 0),
       ),
+      actualEntryStatusSummary: sumActualEntryStatusSummaries(
+        members.map((member) => member.actualEntryStatusSummary),
+      ),
       closing: resolveActualWorkspaceClosing(input.plan, input.now),
       actionHints: input.actionHints,
     },
@@ -3727,6 +4070,14 @@ function actualWorkspaceAllocationMetricKey(
   return `${allocationId}:${metricCode}`;
 }
 
+function actualWorkspaceSlotKey(
+  allocationId: string,
+  metricCode: KpiMetricCode,
+  actualDate: string,
+): string {
+  return `${allocationId}:${metricCode}:${actualDate}`;
+}
+
 function compareActualWorkspaceMetricSummary(
   left: KpiActualWorkspaceMetricSummary,
   right: KpiActualWorkspaceMetricSummary,
@@ -3741,6 +4092,180 @@ function createActualWorkspaceMissingSignal(
     count,
     semantics: "CALENDAR_DAY_METRIC_SLOT_LIMITED",
   };
+}
+
+type MutableKpiActualEntryStatusSummary = {
+  -readonly [Key in keyof KpiActualEntryStatusSummary]: KpiActualEntryStatusSummary[Key];
+};
+
+function summarizeDailyActualStatuses(input: {
+  readonly plan: KpiPlan;
+  readonly allocations: readonly KpiAllocation[];
+  readonly entriesBySlot: ReadonlyMap<string, KpiActualEntry>;
+  readonly excusesBySlot: ReadonlyMap<string, KpiActualSlotExcuse>;
+  readonly now: number;
+}): KpiActualEntryStatusSummary {
+  const summary = createEmptyActualEntryStatusSummary();
+  const actualDates = listLocalDatesInPlan(input.plan.periodMonth);
+  for (const allocation of input.allocations) {
+    const targetMetrics = allocation.targetMetrics.filter((metric) =>
+      isActualWorkspaceCatalogMetricCode(metric.metricCode),
+    );
+    for (const metric of targetMetrics) {
+      for (const actualDate of actualDates) {
+        summary.expectedEntryCount += 1;
+        const status = resolveDailyActualStatus({
+          plan: input.plan,
+          allocation,
+          actualDate,
+          entry: input.entriesBySlot.get(
+            actualWorkspaceSlotKey(allocation.id, metric.metricCode, actualDate),
+          ),
+          excuse: input.excusesBySlot.get(
+            actualWorkspaceSlotKey(allocation.id, metric.metricCode, actualDate),
+          ),
+          now: input.now,
+        });
+        applyDailyActualStatus(summary, status);
+      }
+    }
+  }
+  return summary;
+}
+
+function createEmptyActualEntryStatusSummary(): MutableKpiActualEntryStatusSummary {
+  return {
+    expectedEntryCount: 0,
+    enteredEntryCount: 0,
+    enteredZeroCount: 0,
+    pendingEntryCount: 0,
+    overdueEntryCount: 0,
+    excusedEntryCount: 0,
+    notRequiredEntryCount: 0,
+    notDueEntryCount: 0,
+  };
+}
+
+function sumActualEntryStatusSummaries(
+  summaries: readonly KpiActualEntryStatusSummary[],
+): KpiActualEntryStatusSummary {
+  const total = createEmptyActualEntryStatusSummary();
+  for (const summary of summaries) {
+    total.expectedEntryCount += summary.expectedEntryCount;
+    total.enteredEntryCount += summary.enteredEntryCount;
+    total.enteredZeroCount += summary.enteredZeroCount;
+    total.pendingEntryCount += summary.pendingEntryCount;
+    total.overdueEntryCount += summary.overdueEntryCount;
+    total.excusedEntryCount += summary.excusedEntryCount;
+    total.notRequiredEntryCount += summary.notRequiredEntryCount;
+    total.notDueEntryCount += summary.notDueEntryCount;
+  }
+  return total;
+}
+
+function applyDailyActualStatus(
+  summary: {
+    enteredEntryCount: number;
+    enteredZeroCount: number;
+    pendingEntryCount: number;
+    overdueEntryCount: number;
+    excusedEntryCount: number;
+    notRequiredEntryCount: number;
+    notDueEntryCount: number;
+  },
+  status: KpiDailyActualStatus,
+): void {
+  switch (status) {
+    case "ENTERED":
+      summary.enteredEntryCount += 1;
+      return;
+    case "ENTERED_ZERO":
+      summary.enteredEntryCount += 1;
+      summary.enteredZeroCount += 1;
+      return;
+    case "DUE_OPEN":
+      summary.pendingEntryCount += 1;
+      return;
+    case "OVERDUE":
+      summary.overdueEntryCount += 1;
+      return;
+    case "EXCUSED":
+      summary.excusedEntryCount += 1;
+      return;
+    case "NOT_REQUIRED":
+      summary.notRequiredEntryCount += 1;
+      return;
+    case "NOT_DUE":
+      summary.notDueEntryCount += 1;
+      return;
+    case "BLOCKED_BY_PLAN_STATUS":
+    case "BLOCKED_BY_ALLOCATION_STATUS":
+      return;
+  }
+}
+
+function resolveDailyActualStatus(input: {
+  readonly plan: KpiPlan;
+  readonly allocation: KpiAllocation;
+  readonly actualDate: string;
+  readonly entry?: KpiActualEntry;
+  readonly excuse?: KpiActualSlotExcuse;
+  readonly now: number;
+}): KpiDailyActualStatus {
+  if (input.plan.status !== "PUBLISHED") {
+    return "BLOCKED_BY_PLAN_STATUS";
+  }
+  if (input.allocation.allocationStatus !== "PUBLISHED") {
+    return "BLOCKED_BY_ALLOCATION_STATUS";
+  }
+  if (input.entry && numbersEqual(input.entry.actualValue, 0)) {
+    return "ENTERED_ZERO";
+  }
+  if (input.entry) {
+    return "ENTERED";
+  }
+  if (input.excuse?.status === "EXCUSED") {
+    return "EXCUSED";
+  }
+  if (input.excuse?.status === "NOT_REQUIRED") {
+    return "NOT_REQUIRED";
+  }
+  if (input.now < localDateTimeToUtcMs(input.actualDate, "00:00")) {
+    return "NOT_DUE";
+  }
+  if (
+    input.now <=
+    localDateTimeToUtcMs(input.actualDate, DEFAULT_ACTUAL_ENTRY_LOCK_LOCAL_TIME, 1)
+  ) {
+    return "DUE_OPEN";
+  }
+  return "OVERDUE";
+}
+
+function toActualSlotExcuseSummary(
+  excuse: KpiActualSlotExcuse,
+): KpiActualSlotExcuseSummary {
+  return {
+    id: excuse.id,
+    status: excuse.status,
+    reasonCode: excuse.reasonCode,
+    reasonText: excuse.reasonText,
+    createdAt: excuse.createdAt,
+    createdByActorId: excuse.createdByActorId,
+    updatedAt: excuse.updatedAt,
+    updatedByActorId: excuse.updatedByActorId,
+  };
+}
+
+function listLocalDatesInPlan(periodMonth: string): readonly string[] {
+  const [yearText, monthText] = periodMonth.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return Array.from({ length: lastDay }, (_value, index) => {
+    const day = String(index + 1).padStart(2, "0");
+    return `${day}-${monthText}-${yearText}`;
+  });
 }
 
 function createNoActualWorkspaceActionHints(): KpiActualWorkspaceActionHints {
