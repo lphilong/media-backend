@@ -65,6 +65,8 @@ const LIST_KPI_ACTUAL_WORKSPACE_PLANS_QUERY_FIELDS = [
   "sortDirection",
   "cursor",
   "allocationCoverage",
+  "hasOverdueActuals",
+  "hasPendingActuals",
 ] as const;
 const LIST_KPI_ALLOCATIONS_QUERY_FIELDS = [
   "status",
@@ -258,6 +260,8 @@ function parseListKpiActualWorkspacePlansQuery(
     sortDirection: req.query.sortDirection as string | undefined,
     cursor: req.query.cursor as string | undefined,
     allocationCoverage: req.query.allocationCoverage as string | undefined,
+    hasOverdueActuals: req.query.hasOverdueActuals as string | undefined,
+    hasPendingActuals: req.query.hasPendingActuals as string | undefined,
   };
 }
 

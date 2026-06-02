@@ -211,6 +211,8 @@ interface NormalizedActualWorkspacePlansInput
   readonly sortDirection: "ASC" | "DESC";
   readonly cursor?: string;
   readonly allocationCoverage?: KpiActualWorkspaceCoverageFilter;
+  readonly hasOverdueActuals?: boolean;
+  readonly hasPendingActuals?: boolean;
 }
 
 interface ActualWorkspaceCursorEnvelope {
@@ -2446,6 +2448,20 @@ export class KpiAdminService {
       allocationCoverage: query.allocationCoverage
         ? normalizeActualWorkspaceCoverageFilter(query.allocationCoverage)
         : undefined,
+      hasOverdueActuals:
+        query.hasOverdueActuals === undefined
+          ? undefined
+          : normalizeActualWorkspaceBooleanFilter(
+              query.hasOverdueActuals,
+              "hasOverdueActuals",
+            ),
+      hasPendingActuals:
+        query.hasPendingActuals === undefined
+          ? undefined
+          : normalizeActualWorkspaceBooleanFilter(
+              query.hasPendingActuals,
+              "hasPendingActuals",
+            ),
     };
   }
 
@@ -2578,13 +2594,62 @@ export class KpiAdminService {
     },
     queryKey: string,
   ): Promise<ActualWorkspacePlanPage> {
-    const rows = await this.repository.listActualWorkspaceDerivedPlans({
-      ...input,
-      subjectType: "TALENT_GROUP",
-      limit: input.limit + 1,
-    });
-    const hasNext = rows.length > input.limit;
-    const pageRows = hasNext ? rows.slice(0, input.limit) : rows;
+    if (!hasActualWorkspaceStatusFilters(input)) {
+      const rows = await this.repository.listActualWorkspaceDerivedPlans({
+        ...input,
+        subjectType: "TALENT_GROUP",
+        limit: input.limit + 1,
+      });
+      const hasNext = rows.length > input.limit;
+      const pageRows = hasNext ? rows.slice(0, input.limit) : rows;
+      return {
+        items: pageRows.map((row) => row.plan),
+        nextCursor:
+          hasNext && pageRows.length > 0
+            ? encodeActualWorkspaceCursor(
+                buildActualWorkspaceCursorEnvelope(
+                  pageRows[pageRows.length - 1] as KpiActualWorkspaceDerivedPlanSortRow,
+                  input,
+                  queryKey,
+                ),
+              )
+            : undefined,
+      };
+    }
+
+    let cursor = input.cursor;
+    const collected: KpiActualWorkspaceDerivedPlanSortRow[] = [];
+    let exhausted = false;
+    const scanLimit = MAX_LIST_LIMIT;
+
+    while (collected.length < input.limit + 1 && !exhausted) {
+      const batch = await this.repository.listActualWorkspaceDerivedPlans({
+        ...input,
+        subjectType: "TALENT_GROUP",
+        cursor,
+        limit: scanLimit + 1,
+      });
+      const page = batch.slice(0, scanLimit);
+      exhausted = batch.length <= scanLimit;
+      const matching = await this.filterActualWorkspaceDerivedRowsByStatus(
+        page,
+        input,
+      );
+      collected.push(...matching);
+      if (!exhausted && page.length > 0) {
+        cursor = buildActualWorkspaceDerivedCursor(
+          page[page.length - 1] as KpiActualWorkspaceDerivedPlanSortRow,
+          input.sortBy,
+          input.sortDirection,
+        );
+      }
+      if (page.length === 0) {
+        exhausted = true;
+      }
+    }
+
+    const hasNext = collected.length > input.limit;
+    const pageRows = hasNext ? collected.slice(0, input.limit) : collected;
     return {
       items: pageRows.map((row) => row.plan),
       nextCursor:
@@ -2634,7 +2699,10 @@ export class KpiAdminService {
     const collected: KpiPlan[] = [];
     let exhausted = false;
     const scanLimit =
-      input.allocationCoverage === undefined ? input.limit : MAX_LIST_LIMIT;
+      input.allocationCoverage === undefined &&
+      !hasActualWorkspaceStatusFilters(input)
+        ? input.limit
+        : MAX_LIST_LIMIT;
 
     while (collected.length < input.limit + 1 && !exhausted) {
       const batch = await this.repository.listPlans({
@@ -2645,13 +2713,17 @@ export class KpiAdminService {
       });
       const page = batch.slice(0, scanLimit);
       exhausted = batch.length <= scanLimit;
-      const matching =
+      const coverageMatching =
         input.allocationCoverage === undefined
           ? page
           : await this.filterPlansByAllocationCoverage(
               page,
               input.allocationCoverage,
             );
+      const matching = await this.filterPlansByActualWorkspaceStatus(
+        coverageMatching,
+        input,
+      );
       collected.push(...matching);
       if (!exhausted && page.length > 0) {
         cursor = buildPlanListCursor(
@@ -2704,6 +2776,57 @@ export class KpiAdminService {
         publishedAllocationCount === totalAllocationCount;
       return coverage === "complete" ? complete : !complete;
     });
+  }
+
+  private async filterActualWorkspaceDerivedRowsByStatus(
+    rows: readonly KpiActualWorkspaceDerivedPlanSortRow[],
+    input: Pick<
+      NormalizedActualWorkspacePlansInput,
+      "hasOverdueActuals" | "hasPendingActuals"
+    >,
+  ): Promise<readonly KpiActualWorkspaceDerivedPlanSortRow[]> {
+    const matchingPlanIds = new Set(
+      (
+        await this.filterPlansByActualWorkspaceStatus(
+          rows.map((row) => row.plan),
+          input,
+        )
+      ).map((plan) => plan.id),
+    );
+    return rows.filter((row) => matchingPlanIds.has(row.plan.id));
+  }
+
+  private async filterPlansByActualWorkspaceStatus(
+    plans: readonly KpiPlan[],
+    input: Pick<
+      NormalizedActualWorkspacePlansInput,
+      "hasOverdueActuals" | "hasPendingActuals"
+    >,
+  ): Promise<readonly KpiPlan[]> {
+    if (plans.length === 0 || !hasActualWorkspaceStatusFilters(input)) {
+      return plans;
+    }
+    const planIds = plans.map((plan) => plan.id);
+    const [allocations, entries, excuses] = await Promise.all([
+      this.repository.listAllocationsByPlanIds(planIds),
+      this.actualRepository.listEntriesByPlanIds(planIds),
+      this.repository.listActualSlotExcusesByPlanIds(planIds),
+    ]);
+    const now = this.clock();
+    return plans.filter((plan) =>
+      matchesActualWorkspaceStatusFilters(
+        buildActualWorkspaceStatusSummary({
+          plan,
+          allocations: allocations.filter(
+            (allocation) => allocation.kpiPlanId === plan.id,
+          ),
+          entries: entries.filter((entry) => entry.kpiPlanId === plan.id),
+          excuses: excuses.filter((excuse) => excuse.kpiPlanId === plan.id),
+          now,
+        }),
+        input,
+      ),
+    );
   }
 
   private async buildActualWorkspaceAggregates(
@@ -3827,16 +3950,12 @@ function currentMonthInDefaultTimezone(now: number): string {
   return `${year}-${month}`;
 }
 
-function buildActualWorkspaceAggregate(input: {
+function buildActualWorkspaceSlotData(input: {
   readonly plan: KpiPlan;
-  readonly targetMetrics: readonly KpiTargetMetric[];
   readonly allocations: readonly KpiAllocation[];
   readonly entries: readonly KpiActualEntry[];
   readonly excuses: readonly KpiActualSlotExcuse[];
-  readonly subjectRef: ReferenceSummary | null;
-  readonly actionHints: KpiActualWorkspaceActionHints;
-  readonly now: number;
-}): KpiActualWorkspaceAggregate {
+}) {
   const officialAllocations = input.allocations.filter(
     (allocation) =>
       isOfficialKpiAllocation(allocation) &&
@@ -3903,6 +4022,49 @@ function buildActualWorkspaceAggregate(input: {
     );
   }
 
+  return {
+    officialAllocations,
+    actualByAllocationMetric,
+    entryCountByAllocationMetric,
+    entriesBySlot,
+    excusesBySlot,
+  };
+}
+
+function buildActualWorkspaceStatusSummary(input: {
+  readonly plan: KpiPlan;
+  readonly allocations: readonly KpiAllocation[];
+  readonly entries: readonly KpiActualEntry[];
+  readonly excuses: readonly KpiActualSlotExcuse[];
+  readonly now: number;
+}): KpiActualEntryStatusSummary {
+  const slotData = buildActualWorkspaceSlotData(input);
+  return summarizeDailyActualStatuses({
+    plan: input.plan,
+    allocations: slotData.officialAllocations,
+    entriesBySlot: slotData.entriesBySlot,
+    excusesBySlot: slotData.excusesBySlot,
+    now: input.now,
+  });
+}
+
+function buildActualWorkspaceAggregate(input: {
+  readonly plan: KpiPlan;
+  readonly targetMetrics: readonly KpiTargetMetric[];
+  readonly allocations: readonly KpiAllocation[];
+  readonly entries: readonly KpiActualEntry[];
+  readonly excuses: readonly KpiActualSlotExcuse[];
+  readonly subjectRef: ReferenceSummary | null;
+  readonly actionHints: KpiActualWorkspaceActionHints;
+  readonly now: number;
+}): KpiActualWorkspaceAggregate {
+  const {
+    officialAllocations,
+    actualByAllocationMetric,
+    entryCountByAllocationMetric,
+    entriesBySlot,
+    excusesBySlot,
+  } = buildActualWorkspaceSlotData(input);
   const periodDayCount = countLocalDaysInPlan(input.plan);
   const members = officialAllocations.map((allocation) => {
     const catalogTargetMetrics = allocation.targetMetrics.filter((metric) =>
@@ -4336,6 +4498,27 @@ function buildPlanListCursor(
   };
 }
 
+function buildActualWorkspaceDerivedCursor(
+  row: KpiActualWorkspaceDerivedPlanSortRow,
+  sortBy: KpiActualWorkspaceDerivedSortBy,
+  sortDirection: "ASC" | "DESC",
+): KpiActualWorkspaceDerivedCursor {
+  return sortBy === "revenueActual"
+    ? {
+        sortBy,
+        sortDirection,
+        revenueActual: row.revenueActual,
+        planId: row.plan.id,
+      }
+    : {
+        sortBy,
+        sortDirection,
+        achievementPercent: row.achievementPercent,
+        achievementNullRank: row.achievementNullRank,
+        planId: row.plan.id,
+      };
+}
+
 function buildActualWorkspaceCursorEnvelope(
   row: KpiPlan | KpiActualWorkspaceDerivedPlanSortRow,
   input: Pick<
@@ -4551,6 +4734,8 @@ function buildActualWorkspaceCursorQueryKey(
     | "sortBy"
     | "sortDirection"
     | "allocationCoverage"
+    | "hasOverdueActuals"
+    | "hasPendingActuals"
   > & { readonly authorityScopeKey?: string },
 ): string {
   return JSON.stringify({
@@ -4562,6 +4747,8 @@ function buildActualWorkspaceCursorQueryKey(
     sortBy: input.sortBy,
     sortDirection: input.sortDirection,
     allocationCoverage: input.allocationCoverage ?? null,
+    hasOverdueActuals: input.hasOverdueActuals ?? null,
+    hasPendingActuals: input.hasPendingActuals ?? null,
   });
 }
 
@@ -4713,6 +4900,48 @@ function normalizeActualWorkspaceCoverageFilter(
     );
   }
   return text;
+}
+
+function normalizeActualWorkspaceBooleanFilter(
+  value: unknown,
+  field: "hasOverdueActuals" | "hasPendingActuals",
+): boolean {
+  if (value === true || value === "true") {
+    return true;
+  }
+  if (value === false || value === "false") {
+    return false;
+  }
+  throw new KpiValidationError(
+    `KPI actual workspace ${field} must be true or false`,
+  );
+}
+
+function hasActualWorkspaceStatusFilters(
+  input: Pick<
+    NormalizedActualWorkspacePlansInput,
+    "hasOverdueActuals" | "hasPendingActuals"
+  >,
+): boolean {
+  return (
+    input.hasOverdueActuals !== undefined ||
+    input.hasPendingActuals !== undefined
+  );
+}
+
+function matchesActualWorkspaceStatusFilters(
+  summary: KpiActualEntryStatusSummary,
+  input: Pick<
+    NormalizedActualWorkspacePlansInput,
+    "hasOverdueActuals" | "hasPendingActuals"
+  >,
+): boolean {
+  return (
+    (input.hasOverdueActuals === undefined ||
+      input.hasOverdueActuals === (summary.overdueEntryCount > 0)) &&
+    (input.hasPendingActuals === undefined ||
+      input.hasPendingActuals === (summary.pendingEntryCount > 0))
+  );
 }
 
 function normalizeSortDirection(value: unknown): "ASC" | "DESC" {

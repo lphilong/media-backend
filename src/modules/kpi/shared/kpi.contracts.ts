@@ -193,6 +193,8 @@ export interface ListKpiActualWorkspacePlansQuery {
   readonly sortDirection?: KpiSortDirection | string;
   readonly cursor?: string;
   readonly allocationCoverage?: "complete" | "incomplete" | string;
+  readonly hasOverdueActuals?: boolean | string;
+  readonly hasPendingActuals?: boolean | string;
 }
 
 export interface GetKpiActualWorkspacePlanDetailQuery {

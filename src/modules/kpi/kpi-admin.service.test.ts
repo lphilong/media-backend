@@ -588,6 +588,89 @@ function replaceStoredPlan(
   };
 }
 
+function seedOfficialActualEntriesForDates(
+  repository: InMemoryKpiPlanRepository,
+  actualRepository: InMemoryKpiActualRepository,
+  kpiPlanId: string,
+  actualDates: readonly string[],
+  actualValue = 1,
+): void {
+  const plan = repository.plans.find((item) => item.id === kpiPlanId);
+  assert.ok(plan);
+  const allocations = repository.allocations.filter(
+    (allocation) =>
+      allocation.kpiPlanId === kpiPlanId &&
+      allocation.groupId === plan.subjectId &&
+      allocation.allocationStatus === "PUBLISHED",
+  );
+  for (const allocation of allocations) {
+    for (const metric of allocation.targetMetrics) {
+      for (const actualDate of actualDates) {
+        actualRepository.entries.push({
+          id: `seed-entry:${kpiPlanId}:${allocation.id}:${metric.metricCode}:${actualDate}`,
+          kpiPlanId,
+          allocationId: allocation.id,
+          memberTalentId: allocation.memberTalentId,
+          metricCode: metric.metricCode,
+          actualDate,
+          actualValue,
+          effectiveValue: actualValue,
+          editCount: 0,
+          correctionCount: 0,
+          latestCorrectionId: null,
+          createdAt: MAY_2026_START_AT,
+          createdByActorId: "seed",
+          updatedAt: MAY_2026_START_AT,
+          updatedByActorId: "seed",
+          lastEditedAt: null,
+          lastEditedByActorId: null,
+        });
+      }
+    }
+  }
+}
+
+function seedOfficialActualExcusesForDate(
+  repository: InMemoryKpiPlanRepository,
+  kpiPlanId: string,
+  actualDate: string,
+): void {
+  const plan = repository.plans.find((item) => item.id === kpiPlanId);
+  assert.ok(plan);
+  const allocations = repository.allocations.filter(
+    (allocation) =>
+      allocation.kpiPlanId === kpiPlanId &&
+      allocation.groupId === plan.subjectId &&
+      allocation.allocationStatus === "PUBLISHED",
+  );
+  for (const [allocationIndex, allocation] of allocations.entries()) {
+    for (const [metricIndex, metric] of allocation.targetMetrics.entries()) {
+      const status =
+        (allocationIndex + metricIndex) % 2 === 0
+          ? ("EXCUSED" as const)
+          : ("NOT_REQUIRED" as const);
+      repository.actualExcuses.push({
+        id: `seed-excuse:${kpiPlanId}:${allocation.id}:${metric.metricCode}:${actualDate}`,
+        kpiPlanId,
+        allocationId: allocation.id,
+        metricCode: metric.metricCode,
+        actualDate,
+        status,
+        reasonCode:
+          status === "EXCUSED" ? "MEMBER_LEAVE" : "NO_OPERATION_REQUIRED",
+        reasonText:
+          status === "EXCUSED" ? "Approved leave" : "No operation required",
+        createdAt: MAY_2026_START_AT,
+        createdByActorId: "seed",
+        updatedAt: MAY_2026_START_AT,
+        updatedByActorId: "seed",
+        deletedAt: null,
+        deletedByActorId: null,
+      });
+    }
+  }
+}
+
 test("NativeMongoKpiSubjectReadonlyAccess derives internal group member display from linked EmploymentProfile", async () => {
   const internalTalent = {
     _id: "talent-1",
@@ -4896,6 +4979,330 @@ test("KPI managed actual workspace prevents hidden group summary and detail leak
   );
 });
 
+test("KPI actual workspace status booleans use accepted daily status AND semantics", async () => {
+  const { service, repository, actualRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const both = await createPublishedGroupPlan(service);
+  const overdueOnly = await createPublishedGroupPlan(service);
+  const pendingOnly = await createPublishedGroupPlan(service);
+  const neither = await createPublishedGroupPlan(service);
+
+  seedOfficialActualEntriesForDates(
+    repository,
+    actualRepository,
+    overdueOnly.id,
+    ["05-05-2026"],
+  );
+  seedOfficialActualEntriesForDates(
+    repository,
+    actualRepository,
+    pendingOnly.id,
+    ["01-05-2026", "02-05-2026", "03-05-2026", "04-05-2026"],
+  );
+  seedOfficialActualEntriesForDates(
+    repository,
+    actualRepository,
+    neither.id,
+    [
+      "01-05-2026",
+      "02-05-2026",
+      "03-05-2026",
+      "04-05-2026",
+      "05-05-2026",
+    ],
+    0,
+  );
+
+  const listIds = async (
+    hasOverdueActuals: boolean,
+    hasPendingActuals: boolean,
+  ) =>
+    (
+      await service.listKpiActualWorkspacePlans(createActor(), {
+        hasOverdueActuals,
+        hasPendingActuals,
+        sortBy: "planCode",
+        sortDirection: "ASC",
+      })
+    ).items.map((item) => item.planId);
+
+  assert.deepEqual(await listIds(true, true), [both.id]);
+  assert.deepEqual(await listIds(true, false), [overdueOnly.id]);
+  assert.deepEqual(await listIds(false, true), [pendingOnly.id]);
+  assert.deepEqual(await listIds(false, false), [neither.id]);
+});
+
+test("KPI actual workspace status booleans ignore future, EXCUSED, and NOT_REQUIRED slots", async () => {
+  const now = { value: MAY_5_2026_AFTER_LOCK_HCM };
+  const { service, repository, actualRepository } = createHarness(
+    () => now.value,
+  );
+  const exempted = await createPublishedGroupPlan(service);
+  const future = await createPublishedJune2026GroupPlan(service);
+  seedOfficialActualEntriesForDates(
+    repository,
+    actualRepository,
+    exempted.id,
+    ["01-05-2026", "02-05-2026", "03-05-2026", "04-05-2026"],
+  );
+  seedOfficialActualExcusesForDate(repository, exempted.id, "05-05-2026");
+  seedOfficialActualExcusesForDate(repository, exempted.id, "06-05-2026");
+
+  const neither = await service.listKpiActualWorkspacePlans(createActor(), {
+    hasOverdueActuals: false,
+    hasPendingActuals: false,
+    sortBy: "planCode",
+    sortDirection: "ASC",
+  });
+  assert.deepEqual(
+    neither.items.map((item) => item.planId),
+    [exempted.id, future.id],
+  );
+  assert.deepEqual(
+    (
+      await service.listKpiActualWorkspacePlans(createActor(), {
+        hasOverdueActuals: true,
+      })
+    ).items,
+    [],
+  );
+  assert.deepEqual(
+    (
+      await service.listKpiActualWorkspacePlans(createActor(), {
+        hasPendingActuals: true,
+      })
+    ).items,
+    [],
+  );
+});
+
+test("KPI actual workspace status booleans respect the D+1 10:00 HCM cutoff", async () => {
+  const now = { value: MAY_6_2026_10_00_HCM };
+  const { service, repository, actualRepository } = createHarness(
+    () => now.value,
+  );
+  const plan = await createPublishedGroupPlan(service);
+  seedOfficialActualEntriesForDates(
+    repository,
+    actualRepository,
+    plan.id,
+    ["01-05-2026", "02-05-2026", "03-05-2026", "04-05-2026"],
+  );
+
+  assert.deepEqual(
+    (
+      await service.listKpiActualWorkspacePlans(createActor(), {
+        hasPendingActuals: true,
+        hasOverdueActuals: false,
+      })
+    ).items.map((item) => item.planId),
+    [plan.id],
+  );
+
+  now.value = MAY_5_2026_AFTER_LOCK_HCM;
+  assert.deepEqual(
+    (
+      await service.listKpiActualWorkspacePlans(createActor(), {
+        hasOverdueActuals: true,
+      })
+    ).items.map((item) => item.planId),
+    [plan.id],
+  );
+});
+
+test("KPI actual workspace applies status booleans before pagination and validates cursor shape", async () => {
+  const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
+  const skipped = await service.createKpiPlan(createActor(), groupPlanCommand());
+  await service.publishKpiPlan(createActor(), { kpiPlanId: skipped.id });
+  const firstMatch = await createPublishedGroupPlan(service);
+  const secondMatch = await createPublishedGroupPlan(service);
+
+  const firstPage = await service.listKpiActualWorkspacePlans(createActor(), {
+    hasPendingActuals: true,
+    limit: 1,
+    sortBy: "planCode",
+    sortDirection: "ASC",
+  });
+  assert.deepEqual(
+    firstPage.items.map((item) => item.planId),
+    [firstMatch.id],
+  );
+  assert.ok(firstPage.nextCursor);
+
+  const secondPage = await service.listKpiActualWorkspacePlans(createActor(), {
+    hasPendingActuals: true,
+    limit: 1,
+    sortBy: "planCode",
+    sortDirection: "ASC",
+    cursor: firstPage.nextCursor,
+  });
+  assert.deepEqual(
+    secondPage.items.map((item) => item.planId),
+    [secondMatch.id],
+  );
+  assert.equal(secondPage.nextCursor, undefined);
+
+  await assert.rejects(
+    service.listKpiActualWorkspacePlans(createActor(), {
+      hasPendingActuals: false,
+      limit: 1,
+      sortBy: "planCode",
+      sortDirection: "ASC",
+      cursor: firstPage.nextCursor,
+    }),
+    KpiValidationError,
+  );
+});
+
+test("KPI actual workspace status booleans compose with search, coverage, and derived sorts", async () => {
+  const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
+  const plan = await createPublishedGroupPlan(service);
+
+  const queries = [
+    {
+      hasPendingActuals: true,
+      search: plan.planCode.toLowerCase(),
+    },
+    {
+      hasPendingActuals: true,
+      allocationCoverage: "complete" as const,
+    },
+    {
+      hasPendingActuals: true,
+      sortBy: "revenueActual" as const,
+    },
+    {
+      hasPendingActuals: true,
+      sortBy: "achievementPercent" as const,
+    },
+  ];
+  for (const query of queries) {
+    assert.deepEqual(
+      (
+        await service.listKpiActualWorkspacePlans(createActor(), query)
+      ).items.map((item) => item.planId),
+      [plan.id],
+    );
+  }
+});
+
+test("KPI actual workspace applies status booleans before derived-sort pagination", async () => {
+  const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
+  const skipped = await service.createKpiPlan(createActor(), groupPlanCommand());
+  await service.publishKpiPlan(createActor(), { kpiPlanId: skipped.id });
+  const matching = [
+    await createPublishedGroupPlan(service),
+    await createPublishedGroupPlan(service),
+  ];
+
+  const firstPage = await service.listKpiActualWorkspacePlans(createActor(), {
+    hasPendingActuals: true,
+    limit: 1,
+    sortBy: "revenueActual",
+    sortDirection: "ASC",
+  });
+  assert.ok(firstPage.nextCursor);
+  const secondPage = await service.listKpiActualWorkspacePlans(createActor(), {
+    hasPendingActuals: true,
+    limit: 1,
+    sortBy: "revenueActual",
+    sortDirection: "ASC",
+    cursor: firstPage.nextCursor,
+  });
+  assert.deepEqual(
+    [...firstPage.items, ...secondPage.items]
+      .map((item) => item.planId)
+      .sort(),
+    matching.map((plan) => plan.id).sort(),
+  );
+  assert.equal(secondPage.nextCursor, undefined);
+});
+
+test("KPI managed actual workspace status booleans ignore hidden group and wrong-group allocation status", async () => {
+  const { service, repository, actualRepository, managerRepository } =
+    createHarness(() => MAY_5_2026_NOON_HCM);
+  const managed = await createPublishedGroupPlan(service);
+  seedOfficialActualEntriesForDates(
+    repository,
+    actualRepository,
+    managed.id,
+    ["01-05-2026", "02-05-2026", "03-05-2026", "04-05-2026"],
+  );
+  const managedAllocations = repository.allocations.filter(
+    (allocation) => allocation.kpiPlanId === managed.id,
+  );
+  const hiddenPlan: KpiPlan = {
+    ...managed,
+    id: "hidden-status-filter-plan",
+    planCode: "KPI-HIDDEN-STATUS",
+    normalizedPlanCode: "kpi-hidden-status",
+    subjectId: "group-2",
+  };
+  repository.plans.push(hiddenPlan);
+  repository.allocations.push(
+    ...managedAllocations.map((allocation) => ({
+      ...allocation,
+      id: `hidden:${allocation.id}`,
+      kpiPlanId: hiddenPlan.id,
+      groupId: "group-2",
+    })),
+    {
+      ...(managedAllocations[0] as KpiAllocation),
+      id: "wrong-group-visible-plan-allocation",
+      groupId: "group-2",
+      memberTalentId: "hidden-talent",
+    },
+  );
+  seedManagerAssignment(managerRepository, "group-1");
+
+  const actor = createProgressReadOnlyBackofficeTeamManagerActor();
+  assert.deepEqual(
+    (
+      await service.listKpiActualWorkspacePlans(actor, {
+        hasOverdueActuals: true,
+      })
+    ).items,
+    [],
+  );
+  assert.deepEqual(
+    (
+      await service.listKpiActualWorkspacePlans(actor, {
+        hasPendingActuals: true,
+      })
+    ).items.map((item) => item.planId),
+    [managed.id],
+  );
+  assert.deepEqual(
+    (
+      await service.listKpiActualWorkspacePlans(createActor(), {
+        hasOverdueActuals: true,
+      })
+    ).items.map((item) => item.planId),
+    [hiddenPlan.id],
+  );
+});
+
+test("KPI actual workspace status boolean contract is strict", async () => {
+  const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
+  await createPublishedGroupPlan(service);
+
+  for (const value of ["", "TRUE", "1", 1]) {
+    await assert.rejects(
+      service.listKpiActualWorkspacePlans(createActor(), {
+        hasOverdueActuals: value as string,
+      }),
+      KpiValidationError,
+    );
+  }
+  for (const sortBy of ["actualEntryStatus", "overdueEntryCount"]) {
+    await assert.rejects(
+      service.listKpiActualWorkspacePlans(createActor(), { sortBy }),
+      KpiValidationError,
+    );
+  }
+});
+
 test("KPI actual workspace query controller rejects unknown list fields and reads visible detail", async () => {
   const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
   const published = await createPublishedGroupPlan(service);
@@ -4903,14 +5310,35 @@ test("KPI actual workspace query controller rejects unknown list fields and read
     handle(req: Request, actor: Actor, context: "ADMIN"): Promise<unknown>;
   };
 
-  await assert.rejects(async () => {
-    const req = {
-      query: { unsupported: "true" },
-      params: {},
-    } as unknown as Request;
-    bindCommand(req, "KPI_ACTUAL_WORKSPACE_PLAN_LIST");
-    await controller.handle(req, createActor(), "ADMIN");
-  }, KpiValidationError);
+  for (const field of [
+    "unsupported",
+    "actualEntryStatus",
+    "overdueCountMin",
+    "pendingCountMin",
+  ]) {
+    await assert.rejects(async () => {
+      const req = {
+        query: { [field]: "true" },
+        params: {},
+      } as unknown as Request;
+      bindCommand(req, "KPI_ACTUAL_WORKSPACE_PLAN_LIST");
+      await controller.handle(req, createActor(), "ADMIN");
+    }, KpiValidationError);
+  }
+
+  const listReq = {
+    query: { hasOverdueActuals: "true", hasPendingActuals: "true" },
+    params: {},
+  } as unknown as Request;
+  bindCommand(listReq, "KPI_ACTUAL_WORKSPACE_PLAN_LIST");
+  assert.deepEqual(
+    (
+      (await controller.handle(listReq, createActor(), "ADMIN")) as {
+        readonly items: readonly { readonly planId: string }[];
+      }
+    ).items.map((item) => item.planId),
+    [published.id],
+  );
 
   const req = {
     query: {},
