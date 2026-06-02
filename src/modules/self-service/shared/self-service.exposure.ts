@@ -68,13 +68,18 @@ const SELF_SERVICE_KPI_METRIC_FIELDS = [
 
 const SELF_SERVICE_KPI_ITEM_FIELDS = [
   "kpiPlanId",
+  "planCode",
   "title",
   "periodMonth",
   "periodStartAt",
   "periodEndAt",
   "officialStatus",
+  "isCurrentPeriod",
+  "isPreviousPeriod",
+  "isReadOnly",
   "lastUpdatedAt",
   "metrics",
+  "actualEntryStatusSummary",
 ] as const;
 
 const SELF_SERVICE_TALENT_GROUP_MANAGER_FIELDS = [
@@ -236,13 +241,18 @@ export const SelfServiceKpiExposure = Object.freeze({
       ExposurePolicy.expose(
         {
           kpiPlanId: input.kpiPlanId,
+          planCode: input.planCode,
           title: input.title,
           periodMonth: input.periodMonth,
           periodStartAt: input.periodStartAt,
           periodEndAt: input.periodEndAt,
           officialStatus: input.officialStatus,
+          isCurrentPeriod: input.isCurrentPeriod,
+          isPreviousPeriod: input.isPreviousPeriod,
+          isReadOnly: input.isReadOnly,
           lastUpdatedAt: input.lastUpdatedAt,
           metrics: input.metrics.map((metric) => this.exposeMetric(metric)),
+          actualEntryStatusSummary: input.actualEntryStatusSummary,
         },
         SELF_SERVICE_KPI_ITEM_FIELDS,
       ),
@@ -259,7 +269,14 @@ export const SelfServiceKpiExposure = Object.freeze({
   } {
     return {
       data: toPlainObject(
-        { items: this.exposeMany(input.items) },
+        {
+          items: this.exposeMany(input.items),
+          current: input.current ? this.expose(input.current) : null,
+          latestPrevious: input.latestPrevious
+            ? this.expose(input.latestPrevious)
+            : null,
+          history: this.exposeMany(input.history),
+        },
         "SelfServiceKpiList exposure",
       ),
     };

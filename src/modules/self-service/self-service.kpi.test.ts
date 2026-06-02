@@ -41,6 +41,10 @@ import {
   TalentRecord,
 } from "@modules/talent/domain/talent.types";
 
+const MARCH_2026_START_AT = Date.UTC(2026, 2, 1, -7, 0, 0, 0);
+const MARCH_2026_END_AT = Date.UTC(2026, 3, 1, -7, 0, 0, 0) - 1;
+const APRIL_2026_START_AT = Date.UTC(2026, 3, 1, -7, 0, 0, 0);
+const APRIL_2026_END_AT = Date.UTC(2026, 4, 1, -7, 0, 0, 0) - 1;
 const MAY_2026_START_AT = Date.UTC(2026, 4, 1, -7, 0, 0, 0);
 const MAY_2026_END_AT = Date.UTC(2026, 5, 1, -7, 0, 0, 0) - 1;
 const JUNE_2026_START_AT = Date.UTC(2026, 5, 1, -7, 0, 0, 0);
@@ -99,12 +103,16 @@ test("GET /self-service/kpi returns only current staff own PUBLISHED KPI", async
     assert.deepEqual(body.data.items, [
       {
         kpiPlanId: "plan-official",
+        planCode: "KPI-000001",
         title: "Official own KPI",
         periodMonth: "2026-05",
         periodStartAt: MAY_2026_START_AT,
         periodEndAt: MAY_2026_END_AT,
         officialStatus: "OFFICIAL_PUBLISHED",
-        lastUpdatedAt: 30,
+        isCurrentPeriod: true,
+        isPreviousPeriod: false,
+        isReadOnly: true,
+        lastUpdatedAt: 31,
         metrics: [
           {
             metricCode: "REVENUE_VND",
@@ -121,8 +129,51 @@ test("GET /self-service/kpi returns only current staff own PUBLISHED KPI", async
             progressPercent: 40,
           },
         ],
+        actualEntryStatusSummary: {
+          expectedEntryCount: 62,
+          enteredEntryCount: 3,
+          enteredZeroCount: 1,
+          pendingEntryCount: 2,
+          overdueEntryCount: 23,
+          excusedEntryCount: 1,
+          notRequiredEntryCount: 1,
+          notDueEntryCount: 32,
+        },
       },
     ]);
+    assert.deepEqual(body.data.current, body.data.items[0]);
+    assert.equal(body.data.latestPrevious.kpiPlanId, "plan-previous-published");
+    assert.equal(body.data.latestPrevious.isCurrentPeriod, false);
+    assert.equal(body.data.latestPrevious.isPreviousPeriod, true);
+    assert.deepEqual(body.data.latestPrevious.actualEntryStatusSummary, {
+      expectedEntryCount: 60,
+      enteredEntryCount: 1,
+      enteredZeroCount: 0,
+      pendingEntryCount: 0,
+      overdueEntryCount: 58,
+      excusedEntryCount: 1,
+      notRequiredEntryCount: 0,
+      notDueEntryCount: 0,
+    });
+    assert.deepEqual(
+      body.data.history.map((item: { kpiPlanId: string }) => item.kpiPlanId),
+      ["plan-previous-published", "plan-previous-finalized"],
+    );
+    const finalizedHistoryItem = body.data.history.find(
+      (item: { kpiPlanId: string }) =>
+        item.kpiPlanId === "plan-previous-finalized",
+    );
+    assert.equal(finalizedHistoryItem?.officialStatus, "OFFICIAL_FINALIZED");
+    assert.deepEqual(finalizedHistoryItem?.actualEntryStatusSummary, {
+      expectedEntryCount: 62,
+      enteredEntryCount: 1,
+      enteredZeroCount: 1,
+      pendingEntryCount: 0,
+      overdueEntryCount: 61,
+      excusedEntryCount: 0,
+      notRequiredEntryCount: 0,
+      notDueEntryCount: 0,
+    });
     assert.deepEqual(harness.kpi.listInputs, [
       {
         status: "PUBLISHED",
@@ -132,11 +183,22 @@ test("GET /self-service/kpi returns only current staff own PUBLISHED KPI", async
       },
     ]);
     assert.deepEqual(harness.kpi.listPlanByIdsInputs, [
-      ["plan-official", "plan-future"],
+      [
+        "plan-official",
+        "plan-previous-published",
+        "plan-previous-finalized",
+        "plan-future",
+        "plan-draft",
+      ],
     ]);
     assert.deepEqual(harness.kpi.findPlanByIdInputs, []);
     assert.deepEqual(harness.actuals.listPlanIdInputs, []);
-    assert.deepEqual(harness.actuals.listPlanIdsInputs, [["plan-official"]]);
+    assert.deepEqual(harness.actuals.listPlanIdsInputs, [
+      ["plan-official", "plan-previous-published", "plan-previous-finalized"],
+    ]);
+    assert.deepEqual(harness.kpi.listActualSlotExcusePlanIdsInputs, [
+      ["plan-official", "plan-previous-published", "plan-previous-finalized"],
+    ]);
 
     for (const forbidden of [
       "plan-draft",
@@ -164,6 +226,13 @@ test("GET /self-service/kpi returns only current staff own PUBLISHED KPI", async
       "approvedByActorId",
       "rejectedByActorId",
       "publishedByActorId",
+      "createdByActorId",
+      "updatedByActorId",
+      "manager-secret",
+      "canMarkExcused",
+      "canUnmarkExcused",
+      "canDirectEdit",
+      "canEnterActual",
       "payroll",
       "bonus",
       "commission",
@@ -172,6 +241,39 @@ test("GET /self-service/kpi returns only current staff own PUBLISHED KPI", async
     ]) {
       assert.equal(serialized.includes(forbidden), false, forbidden);
     }
+  } finally {
+    await close(server);
+  }
+});
+
+test("GET /self-service/kpi keeps items empty when current period is missing but returns latest previous", async () => {
+  const harness = createHarness();
+  const { server, baseUrl } = await listen(
+    createSelfServiceKpiTestApp(
+      harness,
+      createStaffActor("user-staff"),
+      () => Date.UTC(2026, 5, 2, 12, 0, 0, 0),
+    ),
+  );
+
+  try {
+    const response = await fetch(`${baseUrl}/self-service/kpi`);
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.data.items, []);
+    assert.equal(body.data.current, null);
+    assert.equal(body.data.latestPrevious.kpiPlanId, "plan-official");
+    assert.equal(body.data.latestPrevious.isCurrentPeriod, false);
+    assert.equal(body.data.latestPrevious.isPreviousPeriod, true);
+    assert.deepEqual(
+      body.data.history.map((item: { kpiPlanId: string }) => item.kpiPlanId),
+      [
+        "plan-official",
+        "plan-previous-published",
+        "plan-previous-finalized",
+      ],
+    );
   } finally {
     await close(server);
   }
@@ -188,7 +290,12 @@ test("GET /self-service/kpi returns safe empty result without linked internal Ta
     const body = await response.json();
 
     assert.equal(response.status, 200);
-    assert.deepEqual(body.data.items, []);
+    assert.deepEqual(body.data, {
+      items: [],
+      current: null,
+      latestPrevious: null,
+      history: [],
+    });
     assert.deepEqual(harness.kpi.listInputs, []);
   } finally {
     await close(server);
@@ -282,6 +389,7 @@ test("self-service KPI endpoint is GET/read-only and does not change role templa
 function createSelfServiceKpiTestApp(
   harness: SelfServiceKpiHarness,
   actor: Actor,
+  clock: () => number = () => CURRENT_KPI_NOW,
 ): express.Express {
   const app = express();
   const identityResolver = new SelfServiceIdentityResolver(
@@ -293,7 +401,7 @@ function createSelfServiceKpiTestApp(
       identityResolver,
       harness.kpi,
       harness.actuals,
-      () => CURRENT_KPI_NOW,
+      clock,
     ),
   );
 
@@ -362,14 +470,32 @@ function createHarness(): SelfServiceKpiHarness {
   const kpi = new InMemoryKpiPlanRepository(
     [
       kpiPlan({ id: "plan-official", title: "Official own KPI" }),
-      kpiPlan({ id: "plan-draft", title: "Draft own KPI" }),
+      kpiPlan({ id: "plan-draft", title: "Draft own KPI", status: "DRAFT" }),
       kpiPlan({ id: "plan-pending", title: "Pending own KPI" }),
       kpiPlan({ id: "plan-approved", title: "Approved own KPI" }),
       kpiPlan({ id: "plan-rejected", title: "Rejected own KPI" }),
       kpiPlan({ id: "plan-active", title: "Legacy active own KPI" }),
       kpiPlan({
+        id: "plan-previous-published",
+        title: "Previous published KPI",
+        periodMonth: "2026-04",
+        periodStartAt: APRIL_2026_START_AT,
+        periodEndAt: APRIL_2026_END_AT,
+      }),
+      kpiPlan({
+        id: "plan-previous-finalized",
+        title: "Previous finalized KPI",
+        status: "FINALIZED",
+        periodMonth: "2026-03",
+        periodStartAt: MARCH_2026_START_AT,
+        periodEndAt: MARCH_2026_END_AT,
+        finalizedAt: APRIL_2026_END_AT + 1,
+        finalizedByActorId: "admin",
+      }),
+      kpiPlan({
         id: "plan-future",
         title: "Future own KPI",
+        status: "DRAFT",
         periodMonth: "2026-06",
         periodStartAt: JUNE_2026_START_AT,
         periodEndAt: JUNE_2026_END_AT,
@@ -406,8 +532,22 @@ function createHarness(): SelfServiceKpiHarness {
         allocationStatus: "ACTIVE",
       }),
       allocation({
+        id: "alloc-previous-published",
+        kpiPlanId: "plan-previous-published",
+        allocationStartDate: "2026-04-01",
+      }),
+      allocation({
+        id: "alloc-previous-finalized",
+        kpiPlanId: "plan-previous-finalized",
+        allocationStartDate: "2026-03-01",
+      }),
+      allocation({
         id: "alloc-future",
         kpiPlanId: "plan-future",
+      }),
+      allocation({
+        id: "alloc-published-draft-plan",
+        kpiPlanId: "plan-draft",
       }),
       allocation({
         id: "alloc-other-member",
@@ -445,6 +585,32 @@ function createHarness(): SelfServiceKpiHarness {
       updatedAt: 29,
     }),
     actualEntry({
+      id: "actual-zero",
+      allocationId: "alloc-official",
+      metricCode: "LIVE_HOURS",
+      actualDate: "04-05-2026",
+      actualValue: 0,
+      effectiveValue: 0,
+      updatedAt: 31,
+    }),
+    actualEntry({
+      id: "actual-previous-published",
+      kpiPlanId: "plan-previous-published",
+      allocationId: "alloc-previous-published",
+      actualDate: "01-04-2026",
+      effectiveValue: 12,
+      updatedAt: 28,
+    }),
+    actualEntry({
+      id: "actual-previous-finalized-zero",
+      kpiPlanId: "plan-previous-finalized",
+      allocationId: "alloc-previous-finalized",
+      actualDate: "01-03-2026",
+      actualValue: 0,
+      effectiveValue: 0,
+      updatedAt: 27,
+    }),
+    actualEntry({
       id: "actual-other",
       allocationId: "alloc-other-member",
       memberTalentId: "talent-other",
@@ -453,6 +619,32 @@ function createHarness(): SelfServiceKpiHarness {
       createdByActorId: "other talent actual",
     }),
   ]);
+  kpi.actualExcuses.push(
+    actualSlotExcuse({
+      id: "excuse-current-excused",
+      kpiPlanId: "plan-official",
+      allocationId: "alloc-official",
+      metricCode: "REVENUE_VND",
+      actualDate: "02-05-2026",
+      status: "EXCUSED",
+    }),
+    actualSlotExcuse({
+      id: "excuse-current-not-required",
+      kpiPlanId: "plan-official",
+      allocationId: "alloc-official",
+      metricCode: "LIVE_HOURS",
+      actualDate: "03-05-2026",
+      status: "NOT_REQUIRED",
+    }),
+    actualSlotExcuse({
+      id: "excuse-previous",
+      kpiPlanId: "plan-previous-published",
+      allocationId: "alloc-previous-published",
+      metricCode: "LIVE_HOURS",
+      actualDate: "02-04-2026",
+      status: "EXCUSED",
+    }),
+  );
 
   return {
     employmentProfiles,
@@ -619,6 +811,28 @@ function actualEntry(overrides: Partial<KpiActualEntry>): KpiActualEntry {
   };
 }
 
+function actualSlotExcuse(
+  overrides: Partial<KpiActualSlotExcuse>,
+): KpiActualSlotExcuse {
+  return {
+    id: "excuse-1",
+    kpiPlanId: "plan-official",
+    allocationId: "alloc-official",
+    metricCode: "REVENUE_VND",
+    actualDate: "02-05-2026",
+    status: "EXCUSED",
+    reasonCode: "MEMBER_LEAVE",
+    reasonText: "Safe self-service status summary source",
+    createdAt: 1,
+    createdByActorId: "manager-secret",
+    updatedAt: 2,
+    updatedByActorId: "manager-secret",
+    deletedAt: null,
+    deletedByActorId: null,
+    ...overrides,
+  };
+}
+
 class InMemoryEmploymentProfileRepository
   implements EmploymentProfileRepository
 {
@@ -752,6 +966,8 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
   }> = [];
   readonly listPlanByIdsInputs: string[][] = [];
   readonly findPlanByIdInputs: string[] = [];
+  readonly listActualSlotExcusePlanIdsInputs: string[][] = [];
+  readonly actualExcuses: KpiActualSlotExcuse[] = [];
 
   constructor(
     private readonly plans: KpiPlan[],
@@ -762,6 +978,7 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     return {
       plans: this.plans.map((plan) => ({ ...plan })),
       allocations: this.allocations.map((item) => ({ ...item })),
+      actualExcuses: this.actualExcuses.map((item) => ({ ...item })),
     };
   }
 
@@ -889,10 +1106,14 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     throw new Error("Not implemented");
   }
 
-  async listActualSlotExcusesByPlanIds(): Promise<
-    readonly KpiActualSlotExcuse[]
-  > {
-    throw new Error("Not implemented");
+  async listActualSlotExcusesByPlanIds(
+    kpiPlanIds: readonly string[],
+  ): Promise<readonly KpiActualSlotExcuse[]> {
+    this.listActualSlotExcusePlanIdsInputs.push([...kpiPlanIds]);
+    const ids = new Set(kpiPlanIds);
+    return this.actualExcuses.filter(
+      (excuse) => ids.has(excuse.kpiPlanId) && excuse.deletedAt === null,
+    );
   }
 
   async listActualSlotExcusesByPlanIdAndActualDate(): Promise<

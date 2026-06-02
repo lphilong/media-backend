@@ -5,7 +5,11 @@ import {
   EventStatus,
 } from "@modules/event-assignment/domain/event-assignment.types";
 import { UserAccountStatus } from "@modules/user/domain/user.types";
-import { KpiMetricCode, KpiMetricUnit } from "@modules/kpi/domain/kpi.types";
+import {
+  KpiActualEntryStatusSummary,
+  KpiMetricCode,
+  KpiMetricUnit,
+} from "@modules/kpi/domain/kpi.types";
 import { TalentOrigin } from "@modules/talent/domain/talent.types";
 import {
   WorkShiftSourceType,
@@ -104,17 +108,25 @@ export interface SelfServiceKpiMetricView {
 
 export interface SelfServiceKpiItemView {
   readonly kpiPlanId: string;
+  readonly planCode: string;
   readonly title: string;
   readonly periodMonth: string;
   readonly periodStartAt: number;
   readonly periodEndAt: number;
-  readonly officialStatus: "OFFICIAL_PUBLISHED";
+  readonly officialStatus: "OFFICIAL_PUBLISHED" | "OFFICIAL_FINALIZED";
+  readonly isCurrentPeriod: boolean;
+  readonly isPreviousPeriod: boolean;
+  readonly isReadOnly: true;
   readonly lastUpdatedAt: number;
   readonly metrics: readonly SelfServiceKpiMetricView[];
+  readonly actualEntryStatusSummary: KpiActualEntryStatusSummary;
 }
 
 export interface SelfServiceKpiListView {
   readonly items: readonly SelfServiceKpiItemView[];
+  readonly current: SelfServiceKpiItemView | null;
+  readonly latestPrevious: SelfServiceKpiItemView | null;
+  readonly history: readonly SelfServiceKpiItemView[];
 }
 
 export interface SelfServiceTalentGroupManagerView {
