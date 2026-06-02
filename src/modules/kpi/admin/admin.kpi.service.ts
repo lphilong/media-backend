@@ -77,6 +77,7 @@ import {
   KpiActualWorkspaceMetricSummary,
   KpiActualWorkspacePlanDetail,
   KpiActualWorkspacePlanSummary,
+  KpiFinalResultSnapshot,
   KpiMetricCode,
   KpiPlan,
   KpiPlanDetailView,
@@ -307,6 +308,7 @@ export class KpiAdminService {
           publishedByActorId: null,
           finalizedAt: null,
           finalizedByActorId: null,
+          finalResult: null,
           archivedAt: null,
           archivedByActorId: null,
           createdAt: now,
@@ -1596,6 +1598,11 @@ export class KpiAdminService {
         assertFinalizeEligible(current, policy, this.clock());
 
         const now = this.clock();
+        const finalResult = await this.buildFinalResultSnapshot(
+          actor,
+          current,
+          now,
+        );
         const finalized = await this.repository.transitionStatus(
           {
             kpiPlanId: current.id,
@@ -1603,6 +1610,7 @@ export class KpiAdminService {
             toStatus: "FINALIZED",
             finalizedAt: now,
             finalizedByActorId: actor.id,
+            finalResult,
             updatedAt: now,
             updatedByActorId: actor.id,
           },
@@ -1623,6 +1631,9 @@ export class KpiAdminService {
             previousStatus: current.status,
             nextStatus: finalized.status,
             finalizedAt: now,
+            finalResultSnapshotVersion: finalResult.snapshotVersion,
+            revenueActualValue: finalResult.revenue.actualValue,
+            revenueAchievementPercent: finalResult.revenue.achievementPercent,
           },
           session,
         });
@@ -2882,6 +2893,50 @@ export class KpiAdminService {
         now: this.clock(),
       }),
     );
+  }
+
+  private async buildFinalResultSnapshot(
+    actor: Actor,
+    plan: KpiPlan,
+    finalizedAt: number,
+  ): Promise<KpiFinalResultSnapshot> {
+    const [aggregate] = await this.buildActualWorkspaceAggregates(actor, [plan]);
+    if (!aggregate) {
+      throw new KpiStateError(
+        `KPI plan ${plan.id} cannot build final result snapshot`,
+      );
+    }
+    const { summary, members } = aggregate;
+
+    return {
+      snapshotVersion: 1,
+      planId: plan.id,
+      planCode: plan.planCode,
+      periodMonth: plan.periodMonth,
+      subjectType: plan.subjectType,
+      subjectId: plan.subjectId,
+      finalizedAt,
+      finalizedByActorId: actor.id,
+      revenue: {
+        metricCode: "REVENUE_VND",
+        planTargetValue: summary.revenue.planTargetValue,
+        operationalTargetValue: summary.revenue.operationalTargetValue,
+        actualValue: summary.revenue.actualValue,
+        achievementPercent: summary.revenue.achievementPercent,
+        targetMismatch: summary.revenue.targetMismatch,
+      },
+      allocationCoverage: summary.allocationCoverage,
+      actualEntryStatusSummary: summary.actualEntryStatusSummary,
+      supportingMetrics: summary.supportingMetrics,
+      members: members.map((member) => ({
+        allocationId: member.allocationId,
+        memberDisplayName: member.memberDisplayName,
+        allocationStatus: member.allocationStatus,
+        revenue: member.revenue,
+        supportingMetrics: member.supportingMetrics,
+        actualEntryStatusSummary: member.actualEntryStatusSummary,
+      })),
+    };
   }
 
   private actualWorkspaceActionHints(

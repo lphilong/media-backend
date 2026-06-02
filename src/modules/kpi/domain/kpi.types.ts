@@ -142,6 +142,47 @@ export interface KpiActualEntryStatusSummary {
   readonly notDueEntryCount: number;
 }
 
+export interface KpiFinalResultRevenueSnapshot {
+  readonly metricCode: "REVENUE_VND";
+  readonly planTargetValue: number | null;
+  readonly operationalTargetValue: number;
+  readonly actualValue: number;
+  readonly achievementPercent: number | null;
+  readonly targetMismatch: boolean;
+}
+
+export interface KpiFinalResultMemberRevenueSnapshot {
+  readonly metricCode: "REVENUE_VND";
+  readonly targetValue: number;
+  readonly actualValue: number;
+  readonly achievementPercent: number | null;
+}
+
+export interface KpiFinalResultMemberSnapshot {
+  readonly allocationId: string;
+  readonly memberDisplayName: string | null;
+  readonly allocationStatus: "PUBLISHED";
+  readonly revenue: KpiFinalResultMemberRevenueSnapshot;
+  readonly supportingMetrics: readonly KpiActualWorkspaceMetricSummary[];
+  readonly actualEntryStatusSummary: KpiActualEntryStatusSummary;
+}
+
+export interface KpiFinalResultSnapshot {
+  readonly snapshotVersion: 1;
+  readonly planId: string;
+  readonly planCode: string;
+  readonly periodMonth: string;
+  readonly subjectType: KpiSubjectType;
+  readonly subjectId: string;
+  readonly finalizedAt: number;
+  readonly finalizedByActorId: string;
+  readonly revenue: KpiFinalResultRevenueSnapshot;
+  readonly allocationCoverage: KpiActualWorkspaceAllocationCoverage;
+  readonly actualEntryStatusSummary: KpiActualEntryStatusSummary;
+  readonly supportingMetrics: readonly KpiActualWorkspaceMetricSummary[];
+  readonly members: readonly KpiFinalResultMemberSnapshot[];
+}
+
 export interface KpiActualPolicySnapshot {
   readonly timezone: "Asia/Ho_Chi_Minh";
   readonly entryOpenLocalTime: "00:00";
@@ -203,6 +244,7 @@ export interface KpiPlan {
   readonly publishedByActorId: string | null;
   readonly finalizedAt: number | null;
   readonly finalizedByActorId: string | null;
+  readonly finalResult?: KpiFinalResultSnapshot | null;
   readonly archivedAt: number | null;
   readonly archivedByActorId: string | null;
   readonly createdAt: number;

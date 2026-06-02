@@ -8,6 +8,7 @@ import {
   KpiActualSlotExcuseReasonCode,
   KpiActualSlotExcuseStatus,
   KpiActualPolicySnapshot,
+  KpiFinalResultSnapshot,
   KpiMetricCode,
   KpiPlan,
   KpiPlanStatus,
@@ -39,6 +40,7 @@ export interface TransitionKpiPlanStatusInput {
   readonly actualPolicySnapshot?: KpiActualPolicySnapshot | null;
   readonly finalizedAt?: number | null;
   readonly finalizedByActorId?: string | null;
+  readonly finalResult?: KpiFinalResultSnapshot | null;
   readonly archivedAt?: number | null;
   readonly archivedByActorId?: string | null;
   readonly updatedAt: number;

@@ -30,6 +30,7 @@ import {
   KpiActualSlotExcuseStatus,
   KpiActualSource,
   KpiActualPolicySnapshot,
+  KpiFinalResultSnapshot,
   KpiMetricCode,
   KpiMetricUnit,
   KpiPlan,
@@ -60,6 +61,7 @@ interface KpiPlanDocument {
   readonly publishedByActorId: string | null;
   readonly finalizedAt: number | null;
   readonly finalizedByActorId: string | null;
+  readonly finalResult?: KpiFinalResultSnapshot | null;
   readonly archivedAt: number | null;
   readonly archivedByActorId: string | null;
   readonly createdAt: number;
@@ -259,6 +261,7 @@ export class NativeMongoKpiPlanRepository
     assignIfDefined(set, "actualPolicySnapshot", input.actualPolicySnapshot);
     assignIfDefined(set, "finalizedAt", input.finalizedAt);
     assignIfDefined(set, "finalizedByActorId", input.finalizedByActorId);
+    assignIfDefined(set, "finalResult", input.finalResult);
     assignIfDefined(set, "archivedAt", input.archivedAt);
     assignIfDefined(set, "archivedByActorId", input.archivedByActorId);
 
@@ -1231,6 +1234,7 @@ function toKpiPlanDocument(input: KpiPlan): KpiPlanDocument {
     publishedByActorId: input.publishedByActorId,
     finalizedAt: input.finalizedAt,
     finalizedByActorId: input.finalizedByActorId,
+    finalResult: input.finalResult ?? null,
     archivedAt: input.archivedAt,
     archivedByActorId: input.archivedByActorId,
     createdAt: input.createdAt,
@@ -1262,6 +1266,7 @@ function toKpiPlan(doc: KpiPlanDocument): KpiPlan {
     publishedByActorId: doc.publishedByActorId,
     finalizedAt: doc.finalizedAt,
     finalizedByActorId: doc.finalizedByActorId,
+    finalResult: doc.finalResult ?? null,
     archivedAt: doc.archivedAt,
     archivedByActorId: doc.archivedByActorId,
     createdAt: doc.createdAt,

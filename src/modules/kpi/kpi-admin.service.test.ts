@@ -15,6 +15,7 @@ import { KpiAdminService } from "@modules/kpi/admin/admin.kpi.service";
 import {
   KpiActualCorrectionExposure,
   KpiActualWorkspaceExposure,
+  KpiPlanDetailExposure,
   KpiPlanListExposure,
 } from "@modules/kpi/shared/kpi.exposure";
 import {
@@ -3748,6 +3749,263 @@ test("KPI V2 manual finalize rejects during closing window and allows after D+1 
   );
 });
 
+test("KPI V2 finalize persists operational final result snapshot", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
+  const { service, repository, actualRepository } = createHarness(
+    () => now.value,
+  );
+  const published = await createPublishedGroupPlan(service);
+  const firstIndex = repository.allocations.findIndex(
+    (allocation) =>
+      allocation.kpiPlanId === published.id &&
+      allocation.memberTalentId === "talent-1",
+  );
+  const secondAllocation = repository.allocations.find(
+    (allocation) =>
+      allocation.kpiPlanId === published.id &&
+      allocation.memberTalentId === "talent-2",
+  );
+  assert.notEqual(firstIndex, -1);
+  const firstAllocation = repository.allocations[firstIndex] as KpiAllocation;
+  assert.ok(secondAllocation);
+  repository.allocations[firstIndex] = {
+    ...firstAllocation,
+    targetMetrics: firstAllocation.targetMetrics.map((metric) =>
+      metric.metricCode === "REVENUE_VND"
+        ? { ...metric, targetValue: 150 }
+        : metric,
+    ),
+  };
+  const updatedFirstAllocation = repository.allocations[
+    firstIndex
+  ] as KpiAllocation;
+
+  const created = await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: updatedFirstAllocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 80,
+  });
+  await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: secondAllocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 0,
+  });
+
+  now.value = MAY_5_2026_AFTER_LOCK_HCM;
+  await service.correctKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    actualEntryId: created.actualEntry.id,
+    correctedValue: 90,
+    reason: "final close correction",
+  });
+  await service.markKpiActualExcuse(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: updatedFirstAllocation.id,
+    metricCode: "ONBOARDED_TALENT_COUNT",
+    actualDate: "06-05-2026",
+    status: "EXCUSED",
+    reasonCode: "MEMBER_LEAVE",
+    reasonText: "Approved leave before close",
+  });
+  await service.markKpiActualExcuse(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: secondAllocation.id,
+    metricCode: "ONBOARDED_TALENT_COUNT",
+    actualDate: "06-05-2026",
+    status: "NOT_REQUIRED",
+    reasonCode: "NO_OPERATION_REQUIRED",
+    reasonText: "No operation required before close",
+  });
+
+  const nonPublishedAllocation: KpiAllocation = {
+    ...updatedFirstAllocation,
+    id: "allocation-non-published-final-snapshot",
+    allocationStatus: "APPROVED",
+    targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 700 }],
+  };
+  const wrongGroupAllocation: KpiAllocation = {
+    ...updatedFirstAllocation,
+    id: "allocation-wrong-group-final-snapshot",
+    groupId: "group-other",
+    targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 500 }],
+  };
+  repository.allocations.push(nonPublishedAllocation, wrongGroupAllocation);
+  actualRepository.entries.push(
+    {
+      ...created.actualEntry,
+      id: "actual-non-published-final-snapshot",
+      allocationId: nonPublishedAllocation.id,
+      memberTalentId: nonPublishedAllocation.memberTalentId,
+      actualDate: "05-05-2026",
+      actualValue: 700,
+      effectiveValue: 700,
+    },
+    {
+      ...created.actualEntry,
+      id: "actual-wrong-group-final-snapshot",
+      allocationId: wrongGroupAllocation.id,
+      memberTalentId: wrongGroupAllocation.memberTalentId,
+      actualDate: "05-05-2026",
+      actualValue: 500,
+      effectiveValue: 500,
+    },
+    {
+      ...created.actualEntry,
+      id: "actual-out-of-period-final-snapshot",
+      actualDate: "01-06-2026",
+      actualValue: 999,
+      effectiveValue: 999,
+    },
+    {
+      ...created.actualEntry,
+      id: "actual-unsupported-final-snapshot",
+      metricCode: "UNSUPPORTED_METRIC" as KpiMetricCode,
+      actualValue: 999,
+      effectiveValue: 999,
+    },
+  );
+
+  now.value = JUNE_1_2026_NOON_HCM;
+  const finalized = await service.finalizeKpiPlan(createActor(), {
+    kpiPlanId: published.id,
+  });
+  const stored = await repository.findPlanById(published.id);
+  const snapshot = stored?.finalResult;
+
+  assert.equal(finalized.status, "FINALIZED");
+  assert.ok(snapshot);
+  assert.equal(snapshot.snapshotVersion, 1);
+  assert.equal(snapshot.planId, published.id);
+  assert.equal(snapshot.planCode, published.planCode);
+  assert.equal(snapshot.periodMonth, "2026-05");
+  assert.equal(snapshot.subjectType, "TALENT_GROUP");
+  assert.equal(snapshot.subjectId, "group-1");
+  assert.equal(snapshot.finalizedAt, JUNE_1_2026_NOON_HCM);
+  assert.equal(snapshot.finalizedByActorId, "admin-1");
+  assert.deepEqual(snapshot.revenue, {
+    metricCode: "REVENUE_VND",
+    planTargetValue: 300,
+    operationalTargetValue: 350,
+    actualValue: 90,
+    achievementPercent: (90 / 350) * 100,
+    targetMismatch: true,
+  });
+  assert.deepEqual(snapshot.allocationCoverage, {
+    publishedAllocationCount: 3,
+    totalAllocationCount: 4,
+    isAllExistingAllocationsPublished: false,
+  });
+  assert.deepEqual(snapshot.actualEntryStatusSummary, {
+    expectedEntryCount: 124,
+    enteredEntryCount: 2,
+    enteredZeroCount: 1,
+    pendingEntryCount: 0,
+    overdueEntryCount: 120,
+    excusedEntryCount: 1,
+    notRequiredEntryCount: 1,
+    notDueEntryCount: 0,
+  });
+  assert.deepEqual(snapshot.supportingMetrics, [
+    {
+      metricCode: "ONBOARDED_TALENT_COUNT",
+      targetValue: 3,
+      actualValue: 0,
+      achievementPercent: 0,
+    },
+  ]);
+  assert.equal(snapshot.members.length, 2);
+  assert.deepEqual(
+    snapshot.members.map((member) => ({
+      allocationId: member.allocationId,
+      memberDisplayName: member.memberDisplayName,
+      allocationStatus: member.allocationStatus,
+      revenue: member.revenue,
+      actualEntryStatusSummary: member.actualEntryStatusSummary,
+    })),
+    [
+      {
+        allocationId: updatedFirstAllocation.id,
+        memberDisplayName: "talent-profile-1",
+        allocationStatus: "PUBLISHED",
+        revenue: {
+          metricCode: "REVENUE_VND",
+          targetValue: 150,
+          actualValue: 90,
+          achievementPercent: 60,
+        },
+        actualEntryStatusSummary: {
+          expectedEntryCount: 62,
+          enteredEntryCount: 1,
+          enteredZeroCount: 0,
+          pendingEntryCount: 0,
+          overdueEntryCount: 60,
+          excusedEntryCount: 1,
+          notRequiredEntryCount: 0,
+          notDueEntryCount: 0,
+        },
+      },
+      {
+        allocationId: secondAllocation.id,
+        memberDisplayName: "talent-profile-2",
+        allocationStatus: "PUBLISHED",
+        revenue: {
+          metricCode: "REVENUE_VND",
+          targetValue: 200,
+          actualValue: 0,
+          achievementPercent: 0,
+        },
+        actualEntryStatusSummary: {
+          expectedEntryCount: 62,
+          enteredEntryCount: 1,
+          enteredZeroCount: 1,
+          pendingEntryCount: 0,
+          overdueEntryCount: 60,
+          excusedEntryCount: 0,
+          notRequiredEntryCount: 1,
+          notDueEntryCount: 0,
+        },
+      },
+    ],
+  );
+
+  const serializedSnapshot = JSON.stringify(snapshot);
+  for (const forbidden of [
+    "finalScore",
+    "rank",
+    "payroll",
+    "payout",
+    "settlement",
+    "commission",
+    "accounting",
+    "tax",
+    "ERP",
+    "memberTalentId",
+    "memberEmploymentProfileId",
+  ]) {
+    assert.equal(serializedSnapshot.includes(forbidden), false, forbidden);
+  }
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      KpiPlanDetailExposure.expose(finalized),
+      "finalResult",
+    ),
+    false,
+  );
+
+  await assert.rejects(
+    service.finalizeKpiPlan(createActor(), { kpiPlanId: published.id }),
+    KpiStateError,
+  );
+  assert.deepEqual(
+    (await repository.findPlanById(published.id))?.finalResult,
+    snapshot,
+  );
+});
+
 test("KPI V2 backoffice TEAM_MANAGER may create, direct-update, and post-cutoff correct managed actuals", async () => {
   const now = { value: MAY_5_2026_NOON_HCM };
   const { service, managerRepository } = createHarness(() => now.value);
@@ -6073,6 +6331,7 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     readonly actualPolicySnapshot?: KpiActualPolicySnapshot | null;
     readonly finalizedAt?: number | null;
     readonly finalizedByActorId?: string | null;
+    readonly finalResult?: KpiPlan["finalResult"];
     readonly archivedAt?: number | null;
     readonly archivedByActorId?: string | null;
     readonly updatedAt: number;
@@ -6109,6 +6368,10 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
         input.finalizedByActorId === undefined
           ? current.finalizedByActorId
           : input.finalizedByActorId,
+      finalResult:
+        input.finalResult === undefined
+          ? current.finalResult
+          : input.finalResult,
       archivedAt:
         input.archivedAt === undefined ? current.archivedAt : input.archivedAt,
       archivedByActorId:
