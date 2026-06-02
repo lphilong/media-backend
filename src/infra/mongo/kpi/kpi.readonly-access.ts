@@ -177,6 +177,35 @@ export class NativeMongoKpiSubjectReadonlyAccess
     return refs;
   }
 
+  async listTalentGroupIdsByCodeOrName(
+    input: { readonly search: string; readonly groupIds?: readonly string[] },
+    session?: ClientSession,
+  ): Promise<readonly string[]> {
+    const search = readText(input.search);
+    if (!search) {
+      return [];
+    }
+    const groupIds = uniqueTextValues(input.groupIds ?? []);
+    if (input.groupIds !== undefined && groupIds.length === 0) {
+      return [];
+    }
+    const pattern = new RegExp(escapeRegExp(search), "i");
+    const docs = await this.groupCollection
+      .find(
+        {
+          ...(input.groupIds !== undefined ? { _id: { $in: groupIds } } : {}),
+          $or: [{ groupCode: pattern }, { name: pattern }],
+        },
+        {
+          ...this.withSession(session),
+          projection: { _id: 1 },
+        },
+      )
+      .sort({ groupCode: 1, _id: 1 })
+      .toArray();
+    return docs.map((doc) => doc._id);
+  }
+
   async hasActiveTalent(
     talentId: string,
     session?: ClientSession,
@@ -423,12 +452,17 @@ function uniqueSubjectIds(
   subjects: readonly KpiSubjectReferenceLookup[],
   subjectType: KpiSubjectReferenceLookup["subjectType"],
 ): readonly string[] {
+  return uniqueTextValues(
+    subjects
+      .filter((subject) => subject.subjectType === subjectType)
+      .map((subject) => subject.subjectId),
+  );
+}
+
+function uniqueTextValues(values: readonly string[]): readonly string[] {
   return [
     ...new Set(
-      subjects
-        .filter((subject) => subject.subjectType === subjectType)
-        .map((subject) => subject.subjectId.trim())
-        .filter((subjectId) => subjectId.length > 0),
+      values.map((value) => value.trim()).filter((value) => value.length > 0),
     ),
   ];
 }
@@ -440,4 +474,8 @@ function toTalentOrigin(value: string | undefined): TalentOrigin | null {
 function readText(value: string | null | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

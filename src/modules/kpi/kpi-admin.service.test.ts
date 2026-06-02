@@ -24,7 +24,11 @@ import {
   KpiValidationError,
 } from "@modules/kpi/domain/kpi.errors";
 import { KpiActualRepository } from "@modules/kpi/domain/kpi-actual.repository";
-import { KpiPlanRepository } from "@modules/kpi/domain/kpi.repository";
+import {
+  ListKpiPlansInput,
+  KpiPlanListCursor,
+  KpiPlanRepository,
+} from "@modules/kpi/domain/kpi.repository";
 import {
   KpiGroupMemberLookup,
   KpiManagedMemberLookup,
@@ -563,6 +567,19 @@ function replacePlanAllocationStatuses(
       };
     }),
   );
+}
+
+function replaceStoredPlan(
+  repository: InMemoryKpiPlanRepository,
+  currentPlanId: string,
+  replacement: Pick<KpiPlan, "id" | "planCode" | "normalizedPlanCode">,
+): void {
+  const index = repository.plans.findIndex((plan) => plan.id === currentPlanId);
+  assert.notEqual(index, -1);
+  repository.plans[index] = {
+    ...(repository.plans[index] as KpiPlan),
+    ...replacement,
+  };
 }
 
 test("NativeMongoKpiSubjectReadonlyAccess derives internal group member display from linked EmploymentProfile", async () => {
@@ -2504,6 +2521,37 @@ test("KPI V2 global list plans still works", async () => {
   assert.equal(detail.status, "DRAFT");
 });
 
+test("KPI V2 global list preserves same-period planCode ordering", async () => {
+  const { service, repository } = createHarness();
+  const alpha = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const zulu = await service.createKpiPlan(createActor(), {
+    ...groupPlanCommand(),
+    title: "May group KPI zulu",
+  });
+
+  replaceStoredPlan(repository, alpha.id, {
+    id: "same-period-id-b",
+    planCode: "KPI-ALPHA",
+    normalizedPlanCode: "kpi-alpha",
+  });
+  replaceStoredPlan(repository, zulu.id, {
+    id: "same-period-id-a",
+    planCode: "KPI-ZULU",
+    normalizedPlanCode: "kpi-zulu",
+  });
+
+  const result = await service.listKpiPlans(createActor(), {
+    periodMonth: "2026-05",
+    sortBy: "periodMonth",
+    sortDirection: "DESC",
+  });
+
+  assert.deepEqual(
+    result.items.map((item) => item.id),
+    ["same-period-id-b", "same-period-id-a"],
+  );
+});
+
 test("KPI V2 global list includes allocation workflow summaries from batched allocation counts", async () => {
   const { service, repository } = createHarness(() => MAY_5_2026_NOON_HCM);
   const zeroAllocationPlan = await service.createKpiPlan(
@@ -3920,6 +3968,282 @@ test("KPI actual workspace supports base plan search and periodMonth/planCode so
     }),
     KpiValidationError,
   );
+  await assert.rejects(
+    service.listKpiActualWorkspacePlans(createActor(), {
+      sortBy: "revenueActual",
+    }),
+    KpiValidationError,
+  );
+  await assert.rejects(
+    service.listKpiActualWorkspacePlans(createActor(), {
+      sortBy: "missingSignal",
+    }),
+    KpiValidationError,
+  );
+});
+
+test("KPI actual workspace cursor pages periodMonth sort with planId tiebreaker", async () => {
+  const { service } = createHarness();
+  const plans = [
+    await service.createKpiPlan(createActor(), groupPlanCommand()),
+    await service.createKpiPlan(createActor(), {
+      ...groupPlanCommand(),
+      title: "May group KPI B",
+    }),
+    await service.createKpiPlan(createActor(), {
+      ...groupPlanCommand(),
+      title: "May group KPI C",
+    }),
+  ];
+  const expected = [...plans]
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((plan) => plan.id);
+
+  const firstPage = await service.listKpiActualWorkspacePlans(createActor(), {
+    limit: 2,
+    sortBy: "periodMonth",
+    sortDirection: "ASC",
+  });
+  assert.deepEqual(
+    firstPage.items.map((item) => item.planId),
+    expected.slice(0, 2),
+  );
+  assert.ok(firstPage.nextCursor);
+
+  const secondPage = await service.listKpiActualWorkspacePlans(createActor(), {
+    limit: 2,
+    sortBy: "periodMonth",
+    sortDirection: "ASC",
+    cursor: firstPage.nextCursor,
+  });
+  assert.deepEqual(
+    secondPage.items.map((item) => item.planId),
+    expected.slice(2),
+  );
+  assert.equal(secondPage.nextCursor, undefined);
+});
+
+test("KPI actual workspace cursor pages planCode sort with planId tiebreaker", async () => {
+  const { service, repository } = createHarness();
+  const plans = [
+    await service.createKpiPlan(createActor(), groupPlanCommand()),
+    await service.createKpiPlan(createActor(), {
+      ...groupPlanCommand(),
+      title: "May group KPI B",
+    }),
+    await service.createKpiPlan(createActor(), {
+      ...groupPlanCommand(),
+      title: "May group KPI C",
+    }),
+  ];
+  for (const plan of plans) {
+    const index = repository.plans.findIndex((item) => item.id === plan.id);
+    assert.notEqual(index, -1);
+    repository.plans[index] = {
+      ...(repository.plans[index] as KpiPlan),
+      planCode: "KPI-TIE",
+      normalizedPlanCode: "kpi-tie",
+    };
+  }
+  const expected = [...plans]
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((plan) => plan.id);
+
+  const firstPage = await service.listKpiActualWorkspacePlans(createActor(), {
+    limit: 1,
+    sortBy: "planCode",
+    sortDirection: "ASC",
+  });
+  const secondPage = await service.listKpiActualWorkspacePlans(createActor(), {
+    limit: 2,
+    sortBy: "planCode",
+    sortDirection: "ASC",
+    cursor: firstPage.nextCursor,
+  });
+
+  assert.ok(firstPage.nextCursor);
+  assert.deepEqual(
+    [...firstPage.items, ...secondPage.items].map((item) => item.planId),
+    expected,
+  );
+});
+
+test("KPI actual workspace rejects malformed and mismatched cursors", async () => {
+  const { service } = createHarness();
+  await service.createKpiPlan(createActor(), groupPlanCommand());
+  await service.createKpiPlan(createActor(), {
+    ...groupPlanCommand(),
+    title: "May group KPI B",
+  });
+
+  await assert.rejects(
+    service.listKpiActualWorkspacePlans(createActor(), {
+      cursor: "not-a-valid-cursor",
+    }),
+    KpiValidationError,
+  );
+
+  const firstPage = await service.listKpiActualWorkspacePlans(createActor(), {
+    limit: 1,
+    sortBy: "planCode",
+    sortDirection: "ASC",
+  });
+  assert.ok(firstPage.nextCursor);
+  await assert.rejects(
+    service.listKpiActualWorkspacePlans(createActor(), {
+      limit: 1,
+      sortBy: "periodMonth",
+      sortDirection: "ASC",
+      cursor: firstPage.nextCursor,
+    }),
+    KpiValidationError,
+  );
+  const unsupportedSortCursor = Buffer.from(
+    JSON.stringify({
+      version: 1,
+      queryKey: "{}",
+      sortBy: "createdAt",
+      sortDirection: "ASC",
+      lastPlanCode: "KPI-000001",
+      lastPlanId: "plan-1",
+    }),
+    "utf8",
+  ).toString("base64url");
+  await assert.rejects(
+    service.listKpiActualWorkspacePlans(createActor(), {
+      cursor: unsupportedSortCursor,
+    }),
+    KpiValidationError,
+  );
+});
+
+test("KPI actual workspace searches authorized group code and name before pagination", async () => {
+  const { service, repository } = createHarness();
+  const groupPlan = await service.createKpiPlan(createActor(), {
+    ...groupPlanCommand(),
+    title: "No textual match",
+  });
+  const titlePlan = await service.createKpiPlan(createActor(), {
+    ...groupPlanCommand(),
+    title: "Hidden launch title",
+  });
+  const hiddenGroupPlan: KpiPlan = {
+    ...titlePlan,
+    id: "hidden-group-search-plan",
+    planCode: "KPI-HIDDEN-GROUP-SEARCH",
+    normalizedPlanCode: "kpi-hidden-group-search",
+    title: "No title match either",
+    normalizedTitle: "no title match either",
+    subjectId: "group-2",
+  };
+  repository.plans.push(hiddenGroupPlan);
+
+  const byCode = await service.listKpiActualWorkspacePlans(createActor(), {
+    search: "tg-000001",
+  });
+  assert.ok(byCode.items.some((item) => item.planId === groupPlan.id));
+
+  const byName = await service.listKpiActualWorkspacePlans(createActor(), {
+    search: "creator team",
+  });
+  assert.ok(byName.items.some((item) => item.planId === groupPlan.id));
+
+  const combined = await service.listKpiActualWorkspacePlans(createActor(), {
+    search: "hidden",
+    sortBy: "planCode",
+    sortDirection: "ASC",
+  });
+  assert.ok(combined.items.some((item) => item.planId === titlePlan.id));
+  assert.ok(combined.items.some((item) => item.planId === hiddenGroupPlan.id));
+});
+
+test("KPI managed actual workspace group search does not leak unmanaged group matches", async () => {
+  const { service, repository, managerRepository } = createHarness();
+  const managed = await createPublishedGroupPlan(service);
+  const hiddenPlan: KpiPlan = {
+    ...managed,
+    id: "hidden-group-search-plan",
+    planCode: "KPI-HIDDEN-GROUP-SEARCH",
+    normalizedPlanCode: "kpi-hidden-group-search",
+    title: "No hidden title match",
+    normalizedTitle: "no hidden title match",
+    subjectId: "group-2",
+  };
+  repository.plans.push(hiddenPlan);
+  seedManagerAssignment(managerRepository, "group-1");
+
+  const result = await service.listKpiActualWorkspacePlans(
+    createProgressReadOnlyBackofficeTeamManagerActor(),
+    { search: "hidden team" },
+  );
+
+  assert.deepEqual(result.items, []);
+  assert.equal(JSON.stringify(result).includes(hiddenPlan.id), false);
+});
+
+test("KPI actual workspace allocation-row coverage filter applies before page finalization", async () => {
+  const { service } = createHarness();
+  const zeroAllocationPlan = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
+  await service.publishKpiPlan(createActor(), {
+    kpiPlanId: zeroAllocationPlan.id,
+  });
+  const completePlan = await createPublishedGroupPlan(service);
+
+  const complete = await service.listKpiActualWorkspacePlans(createActor(), {
+    allocationCoverage: "complete",
+    limit: 1,
+    sortBy: "planCode",
+    sortDirection: "ASC",
+  });
+  assert.deepEqual(
+    complete.items.map((item) => item.planId),
+    [completePlan.id],
+  );
+
+  const incomplete = await service.listKpiActualWorkspacePlans(createActor(), {
+    allocationCoverage: "incomplete",
+    sortBy: "planCode",
+    sortDirection: "ASC",
+  });
+  assert.ok(
+    incomplete.items.some((item) => item.planId === zeroAllocationPlan.id),
+  );
+  assert.equal(
+    incomplete.items.some((item) => item.planId === completePlan.id),
+    false,
+  );
+
+  await assert.rejects(
+    service.listKpiActualWorkspacePlans(createActor(), {
+      allocationCoverage: "achievement",
+    }),
+    KpiValidationError,
+  );
+});
+
+test("KPI managed actual workspace coverage filter does not leak hidden plans", async () => {
+  const { service, repository, managerRepository } = createHarness();
+  const managed = await createPublishedGroupPlan(service);
+  const hiddenIncomplete: KpiPlan = {
+    ...managed,
+    id: "hidden-incomplete-coverage-plan",
+    planCode: "KPI-HIDDEN-INCOMPLETE",
+    normalizedPlanCode: "kpi-hidden-incomplete",
+    subjectId: "group-2",
+  };
+  repository.plans.push(hiddenIncomplete);
+  seedManagerAssignment(managerRepository, "group-1");
+
+  const result = await service.listKpiActualWorkspacePlans(
+    createProgressReadOnlyBackofficeTeamManagerActor(),
+    { allocationCoverage: "incomplete" },
+  );
+
+  assert.deepEqual(result.items, []);
+  assert.equal(JSON.stringify(result).includes(hiddenIncomplete.id), false);
 });
 
 test("KPI managed actual workspace prevents hidden group summary and detail leakage", async () => {
@@ -4209,6 +4533,25 @@ class InMemoryKpiSubjectReadonlyAccess implements KpiSubjectReadonlyAccess {
     return refs;
   }
 
+  async listTalentGroupIdsByCodeOrName(input: {
+    readonly search: string;
+    readonly groupIds?: readonly string[];
+  }): Promise<readonly string[]> {
+    const search = input.search.trim().toLocaleLowerCase("en-US");
+    const allowed = input.groupIds ? new Set(input.groupIds) : null;
+    return [
+      { id: "group-1", code: "TG-000001", name: "Creator Team" },
+      { id: "group-2", code: "TG-000002", name: "Hidden Team" },
+    ]
+      .filter((group) => !allowed || allowed.has(group.id))
+      .filter((group) =>
+        `${group.code} ${group.name}`.toLocaleLowerCase("en-US").includes(
+          search,
+        ),
+      )
+      .map((group) => group.id);
+  }
+
   async hasActiveTalent(talentId: string): Promise<boolean> {
     return talentId === "talent-1" || talentId === "talent-2";
   }
@@ -4452,27 +4795,17 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     return updated;
   }
 
-  async listPlans(input: {
-    readonly subjectType?: KpiSubjectType;
-    readonly subjectId?: string;
-    readonly groupId?: string;
-    readonly periodMonth?: string;
-    readonly status?: KpiPlanStatus;
-    readonly metricCode?: KpiMetricCode;
-    readonly search?: string;
-    readonly limit: number;
-    readonly sortBy?: "periodMonth" | "planCode" | "createdAt";
-    readonly sortDirection?: "ASC" | "DESC";
-  }): Promise<readonly KpiPlan[]> {
+  async listPlans(input: ListKpiPlansInput): Promise<readonly KpiPlan[]> {
+    const subjectIds = normalizeTestSubjectIdFilter(input);
+    if (subjectIds === null) {
+      return [];
+    }
     return this.plans
       .filter((plan) => {
         if (input.subjectType && plan.subjectType !== input.subjectType) {
           return false;
         }
-        if (input.subjectId && plan.subjectId !== input.subjectId) {
-          return false;
-        }
-        if (input.groupId && plan.subjectId !== input.groupId) {
+        if (subjectIds !== undefined && !subjectIds.includes(plan.subjectId)) {
           return false;
         }
         if (input.periodMonth && plan.periodMonth !== input.periodMonth) {
@@ -4492,10 +4825,17 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
           return false;
         }
         if (
-          input.search &&
-          !plan.normalizedPlanCode.includes(input.search) &&
-          !plan.normalizedTitle.includes(input.search)
+          (input.search || input.searchSubjectIds) &&
+          !(
+            (input.search &&
+              (plan.normalizedPlanCode.includes(input.search) ||
+                plan.normalizedTitle.includes(input.search))) ||
+            (input.searchSubjectIds ?? []).includes(plan.subjectId)
+          )
         ) {
+          return false;
+        }
+        if (input.cursor && !isAfterTestPlanCursor(plan, input.cursor)) {
           return false;
         }
         return true;
@@ -4505,7 +4845,18 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
         const direction = input.sortDirection === "ASC" ? 1 : -1;
         const leftValue = String(left[field]);
         const rightValue = String(right[field]);
-        return leftValue.localeCompare(rightValue) * direction;
+        const fieldDiff = leftValue.localeCompare(rightValue) * direction;
+        if (
+          field === "periodMonth" &&
+          input.actualWorkspaceCursorOrder !== true
+        ) {
+          return (
+            fieldDiff ||
+            left.planCode.localeCompare(right.planCode) ||
+            left.id.localeCompare(right.id)
+          );
+        }
+        return fieldDiff || left.id.localeCompare(right.id);
       })
       .slice(0, input.limit);
   }
@@ -4970,4 +5321,48 @@ function removeMatching<T>(items: T[], predicate: (item: T) => boolean): void {
       items.splice(index, 1);
     }
   }
+}
+
+function normalizeTestSubjectIdFilter(input: {
+  readonly subjectId?: string;
+  readonly subjectIds?: readonly string[];
+  readonly groupId?: string;
+}): readonly string[] | undefined | null {
+  const requestedIds = [
+    ...new Set(
+      [input.subjectId, input.groupId].filter(
+        (value): value is string =>
+          typeof value === "string" && value.length > 0,
+      ),
+    ),
+  ];
+  const scopedIds = [...new Set(input.subjectIds ?? [])];
+  if (input.subjectIds !== undefined && scopedIds.length === 0) {
+    return null;
+  }
+  if (requestedIds.length > 1) {
+    return null;
+  }
+  if (requestedIds.length === 1 && scopedIds.length > 0) {
+    return scopedIds.includes(requestedIds[0] as string) ? requestedIds : null;
+  }
+  if (requestedIds.length === 1) {
+    return requestedIds;
+  }
+  return scopedIds.length > 0 ? scopedIds : undefined;
+}
+
+function isAfterTestPlanCursor(
+  plan: KpiPlan,
+  cursor: KpiPlanListCursor,
+): boolean {
+  const value = cursor.sortBy === "planCode" ? plan.planCode : plan.periodMonth;
+  const valueDiff = value.localeCompare(cursor.value);
+  if (cursor.sortDirection === "ASC" && valueDiff > 0) {
+    return true;
+  }
+  if (cursor.sortDirection === "DESC" && valueDiff < 0) {
+    return true;
+  }
+  return valueDiff === 0 && plan.id.localeCompare(cursor.planId) > 0;
 }

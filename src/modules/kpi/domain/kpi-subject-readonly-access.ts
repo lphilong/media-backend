@@ -36,6 +36,13 @@ export interface KpiSubjectReadonlyAccess {
     subjects: readonly KpiSubjectReferenceLookup[],
     session?: ClientSession,
   ): Promise<Map<string, ReferenceSummary>>;
+  listTalentGroupIdsByCodeOrName(
+    input: {
+      readonly search: string;
+      readonly groupIds?: readonly string[];
+    },
+    session?: ClientSession,
+  ): Promise<readonly string[]>;
   hasActiveTalent(talentId: string, session?: ClientSession): Promise<boolean>;
   hasActiveTalentGroup(
     groupId: string,

@@ -45,14 +45,25 @@ export interface TransitionKpiPlanStatusInput {
 export interface ListKpiPlansInput {
   readonly subjectType?: KpiSubjectType;
   readonly subjectId?: string;
+  readonly subjectIds?: readonly string[];
   readonly groupId?: string;
   readonly periodMonth?: string;
   readonly status?: KpiPlanStatus;
   readonly metricCode?: KpiMetricCode;
   readonly search?: string;
+  readonly searchSubjectIds?: readonly string[];
   readonly limit: number;
   readonly sortBy?: "periodMonth" | "planCode" | "createdAt";
   readonly sortDirection?: "ASC" | "DESC";
+  readonly cursor?: KpiPlanListCursor;
+  readonly actualWorkspaceCursorOrder?: boolean;
+}
+
+export interface KpiPlanListCursor {
+  readonly sortBy: "periodMonth" | "planCode";
+  readonly sortDirection: "ASC" | "DESC";
+  readonly value: string;
+  readonly planId: string;
 }
 
 export interface ReplaceKpiAllocationsForPlanInput {

@@ -6,6 +6,7 @@ import {
 } from "@core/business-code/business-code-sequence.repository";
 import { BaseRepository } from "@infra/database/repository";
 import {
+  KpiPlanListCursor,
   KpiPlanRepository,
   ListKpiPlansInput,
   ReplaceKpiAllocationsForPlanInput,
@@ -238,14 +239,21 @@ export class NativeMongoKpiPlanRepository
   }
 
   async listPlans(input: ListKpiPlansInput): Promise<readonly KpiPlan[]> {
+    const filters: Record<string, unknown>[] = [];
     const query: Record<string, unknown> = {};
     assignIfDefined(query, "subjectType", input.subjectType);
-    assignIfDefined(query, "subjectId", input.subjectId);
     assignIfDefined(query, "periodMonth", input.periodMonth);
     assignIfDefined(query, "status", input.status);
-    if (input.groupId !== undefined) {
+    const subjectIds = normalizeSubjectIdFilter(input);
+    if (subjectIds === null) {
+      return [];
+    }
+    if (input.groupId !== undefined || input.subjectIds !== undefined) {
       query.subjectType = "TALENT_GROUP";
-      query.subjectId = input.groupId;
+    }
+    if (subjectIds !== undefined) {
+      query.subjectId =
+        subjectIds.length === 1 ? subjectIds[0] : { $in: subjectIds };
     }
     if (input.metricCode !== undefined) {
       const planIds = await this.targetMetricCollection
@@ -256,12 +264,24 @@ export class NativeMongoKpiPlanRepository
         .toArray();
       query._id = { $in: planIds.map((doc) => doc.kpiPlanId) };
     }
-    if (input.search !== undefined) {
-      const pattern = new RegExp(escapeRegExp(input.search), "i");
-      query.$or = [
-        { normalizedPlanCode: pattern },
-        { normalizedTitle: pattern },
-      ];
+    filters.push(query);
+    if (input.search !== undefined || input.searchSubjectIds !== undefined) {
+      const searchFilters: Record<string, unknown>[] = [];
+      if (input.search !== undefined) {
+        const pattern = new RegExp(escapeRegExp(input.search), "i");
+        searchFilters.push(
+          { normalizedPlanCode: pattern },
+          { normalizedTitle: pattern },
+        );
+      }
+      const searchSubjectIds = uniqueNonEmpty(input.searchSubjectIds ?? []);
+      if (searchSubjectIds.length > 0) {
+        searchFilters.push({ subjectId: { $in: searchSubjectIds } });
+      }
+      if (searchFilters.length === 0) {
+        return [];
+      }
+      filters.push({ $or: searchFilters });
     }
     const sortDirection: 1 | -1 =
       input.sortDirection === "ASC" ? 1 : -1;
@@ -271,11 +291,16 @@ export class NativeMongoKpiPlanRepository
       sort = { planCode: sortDirection, _id: 1 };
     } else if (sortField === "createdAt") {
       sort = { createdAt: sortDirection, _id: 1 };
+    } else if (input.actualWorkspaceCursorOrder === true) {
+      sort = { periodMonth: sortDirection, _id: 1 };
     } else {
       sort = { periodMonth: sortDirection, planCode: 1, _id: 1 };
     }
+    if (input.cursor !== undefined) {
+      filters.push(buildKpiPlanCursorFilter(input.cursor));
+    }
     const docs = await this.collection
-      .find(query)
+      .find(buildQuery(filters))
       .sort(sort)
       .limit(input.limit)
       .toArray();
@@ -588,6 +613,61 @@ function assignIfDefined(
   if (value !== undefined) {
     target[field] = value;
   }
+}
+
+function buildQuery(filters: readonly Record<string, unknown>[]): Record<string, unknown> {
+  const nonEmpty = filters.filter((filter) => Object.keys(filter).length > 0);
+  if (nonEmpty.length === 0) {
+    return {};
+  }
+  if (nonEmpty.length === 1) {
+    return nonEmpty[0] as Record<string, unknown>;
+  }
+  return { $and: nonEmpty };
+}
+
+function normalizeSubjectIdFilter(
+  input: Pick<ListKpiPlansInput, "subjectId" | "subjectIds" | "groupId">,
+): readonly string[] | undefined | null {
+  const requested = [
+    ...(input.subjectId !== undefined ? [input.subjectId] : []),
+    ...(input.groupId !== undefined ? [input.groupId] : []),
+  ];
+  const requestedIds = uniqueNonEmpty(requested);
+  const scopedIds = uniqueNonEmpty(input.subjectIds ?? []);
+  if (input.subjectIds !== undefined && scopedIds.length === 0) {
+    return null;
+  }
+  if (requestedIds.length > 1) {
+    return null;
+  }
+  if (requestedIds.length === 1 && scopedIds.length > 0) {
+    return scopedIds.includes(requestedIds[0] as string) ? requestedIds : null;
+  }
+  if (requestedIds.length === 1) {
+    return requestedIds;
+  }
+  return scopedIds.length > 0 ? scopedIds : undefined;
+}
+
+function buildKpiPlanCursorFilter(
+  cursor: KpiPlanListCursor,
+): Record<string, unknown> {
+  const field = cursor.sortBy === "planCode" ? "planCode" : "periodMonth";
+  const comparisonOperator = cursor.sortDirection === "ASC" ? "$gt" : "$lt";
+  return {
+    $or: [
+      {
+        [field]: {
+          [comparisonOperator]: cursor.value,
+        },
+      },
+      {
+        [field]: cursor.value,
+        _id: { $gt: cursor.planId },
+      },
+    ],
+  };
 }
 
 function uniqueNonEmpty(values: readonly string[]): readonly string[] {

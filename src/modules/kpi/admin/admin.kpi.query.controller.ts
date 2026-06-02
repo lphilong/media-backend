@@ -63,6 +63,8 @@ const LIST_KPI_ACTUAL_WORKSPACE_PLANS_QUERY_FIELDS = [
   "limit",
   "sortBy",
   "sortDirection",
+  "cursor",
+  "allocationCoverage",
 ] as const;
 const LIST_KPI_ALLOCATIONS_QUERY_FIELDS = [
   "status",
@@ -172,7 +174,12 @@ export class KpiAdminQueryController extends SecureController {
       const input = result as Awaited<
         ReturnType<KpiAdminService["listKpiActualWorkspacePlans"]>
       >;
-      return { data: KpiActualWorkspaceExposure.exposeMany(input.items) };
+      return {
+        data: KpiActualWorkspaceExposure.exposeMany(input.items),
+        ...(input.nextCursor
+          ? { meta: { nextCursor: input.nextCursor } }
+          : {}),
+      };
     }
     if (command === "KPI_ACTUAL_WORKSPACE_PLAN_GET_DETAIL") {
       return {
@@ -249,6 +256,8 @@ function parseListKpiActualWorkspacePlansQuery(
     limit: req.query.limit as string | undefined,
     sortBy: req.query.sortBy as string | undefined,
     sortDirection: req.query.sortDirection as string | undefined,
+    cursor: req.query.cursor as string | undefined,
+    allocationCoverage: req.query.allocationCoverage as string | undefined,
   };
 }
 

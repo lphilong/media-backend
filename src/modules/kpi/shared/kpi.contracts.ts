@@ -169,6 +169,8 @@ export interface ListKpiActualWorkspacePlansQuery {
   readonly limit?: number | string;
   readonly sortBy?: "periodMonth" | "planCode" | string;
   readonly sortDirection?: KpiSortDirection | string;
+  readonly cursor?: string;
+  readonly allocationCoverage?: "complete" | "incomplete" | string;
 }
 
 export interface GetKpiActualWorkspacePlanDetailQuery {
@@ -226,6 +228,7 @@ export interface ListKpiPlansResult {
 
 export interface ListKpiActualWorkspacePlansResult {
   readonly items: readonly KpiActualWorkspacePlanSummary[];
+  readonly nextCursor?: string;
 }
 
 export type GetKpiActualWorkspacePlanDetailResult =

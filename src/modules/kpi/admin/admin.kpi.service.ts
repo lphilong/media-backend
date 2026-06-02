@@ -32,6 +32,7 @@ import {
   KpiValidationError,
 } from "@modules/kpi/domain/kpi.errors";
 import {
+  KpiPlanListCursor,
   KpiPlanRepository,
   ListKpiPlansInput,
 } from "@modules/kpi/domain/kpi.repository";
@@ -186,6 +187,31 @@ interface KpiActualWorkspaceAggregate {
   readonly members: readonly KpiActualWorkspaceMemberSummary[];
 }
 
+type KpiActualWorkspaceCoverageFilter = "complete" | "incomplete";
+
+interface NormalizedActualWorkspacePlansInput
+  extends Omit<ListKpiPlansInput, "sortBy" | "sortDirection" | "cursor"> {
+  readonly sortBy: "periodMonth" | "planCode";
+  readonly sortDirection: "ASC" | "DESC";
+  readonly cursor?: string;
+  readonly allocationCoverage?: KpiActualWorkspaceCoverageFilter;
+}
+
+interface ActualWorkspaceCursorEnvelope {
+  readonly version: 1;
+  readonly queryKey: string;
+  readonly sortBy: "periodMonth" | "planCode";
+  readonly sortDirection: "ASC" | "DESC";
+  readonly lastPeriodMonth?: string;
+  readonly lastPlanCode?: string;
+  readonly lastPlanId: string;
+}
+
+interface ActualWorkspacePlanPage {
+  readonly items: readonly KpiPlan[];
+  readonly nextCursor?: string;
+}
+
 export class KpiAdminService {
   constructor(
     private readonly repository: KpiPlanRepository,
@@ -332,11 +358,17 @@ export class KpiAdminService {
       return { items: [] };
     }
 
-    const plans = this.hasKpiGlobalScope(actor)
-      ? await this.repository.listPlans(input)
+    const page = this.hasKpiGlobalScope(actor)
+      ? await this.listActualWorkspacePlanPage(input)
       : await this.listManagedGroupActualWorkspacePlans(actor, input);
-    const aggregates = await this.buildActualWorkspaceAggregates(actor, plans);
-    return { items: aggregates.map((aggregate) => aggregate.summary) };
+    const aggregates = await this.buildActualWorkspaceAggregates(
+      actor,
+      page.items,
+    );
+    return {
+      items: aggregates.map((aggregate) => aggregate.summary),
+      nextCursor: page.nextCursor,
+    };
   }
 
   async getKpiActualWorkspacePlanDetail(
@@ -2103,7 +2135,13 @@ export class KpiAdminService {
 
   private toListActualWorkspacePlansInput(
     query: ListKpiActualWorkspacePlansQuery,
-  ): ListKpiPlansInput {
+  ): NormalizedActualWorkspacePlansInput {
+    const sortBy = query.sortBy
+      ? normalizeActualWorkspaceSortBy(query.sortBy)
+      : "periodMonth";
+    const sortDirection = query.sortDirection
+      ? normalizeSortDirection(query.sortDirection)
+      : "DESC";
     return {
       subjectType: "TALENT_GROUP",
       subjectId: normalizeOptionalText(query.subjectId),
@@ -2113,19 +2151,38 @@ export class KpiAdminService {
         : undefined,
       search: normalizeOptionalSearch(query.search),
       limit: normalizeLimit(query.limit),
-      sortBy: query.sortBy
-        ? normalizeActualWorkspaceSortBy(query.sortBy)
-        : undefined,
-      sortDirection: query.sortDirection
-        ? normalizeSortDirection(query.sortDirection)
+      sortBy,
+      sortDirection,
+      cursor: normalizeOptionalText(query.cursor),
+      allocationCoverage: query.allocationCoverage
+        ? normalizeActualWorkspaceCoverageFilter(query.allocationCoverage)
         : undefined,
     };
   }
 
+  private async listActualWorkspacePlanPage(
+    input: NormalizedActualWorkspacePlansInput,
+  ): Promise<ActualWorkspacePlanPage> {
+    const groupIds = await this.resolveActualWorkspaceSearchGroupIds(input);
+    const queryKey = buildActualWorkspaceCursorQueryKey(input);
+    const cursor =
+      input.cursor === undefined
+        ? undefined
+        : decodeActualWorkspaceCursor(input.cursor, input, queryKey);
+    return this.collectActualWorkspacePlanPage(
+      {
+        ...input,
+        searchSubjectIds: groupIds,
+        cursor,
+      },
+      queryKey,
+    );
+  }
+
   private async listManagedGroupActualWorkspacePlans(
     actor: Actor,
-    input: ListKpiPlansInput,
-  ): Promise<readonly KpiPlan[]> {
+    input: NormalizedActualWorkspacePlansInput,
+  ): Promise<ActualWorkspacePlanPage> {
     if (
       actor.context !== "ADMIN" ||
       (actor.type !== "admin" && actor.type !== "staff")
@@ -2141,33 +2198,144 @@ export class KpiAdminService {
     }
 
     const managedGroupIds = await this.resolveManagedTalentGroupIds(actor);
+    if (managedGroupIds.length === 0) {
+      return { items: [] };
+    }
     const requestedGroupId = input.groupId ?? input.subjectId;
     const candidateGroupIds =
       requestedGroupId === undefined ? managedGroupIds : [requestedGroupId];
     if (
       candidateGroupIds.some((groupId) => !managedGroupIds.includes(groupId))
     ) {
-      return [];
+      return { items: [] };
     }
 
-    const perGroupResults = await Promise.all(
-      candidateGroupIds.map((groupId) =>
-        this.repository.listPlans({
-          ...input,
-          subjectType: "TALENT_GROUP",
-          subjectId: undefined,
-          groupId,
-          status: "PUBLISHED",
-        }),
+    const groupIds = await this.resolveActualWorkspaceSearchGroupIds(
+      input,
+      candidateGroupIds,
+    );
+    const queryKey = buildActualWorkspaceCursorQueryKey(input);
+    const cursor =
+      input.cursor === undefined
+        ? undefined
+        : decodeActualWorkspaceCursor(input.cursor, input, queryKey);
+    return this.collectActualWorkspacePlanPage(
+      {
+        ...input,
+        subjectId: undefined,
+        groupId: undefined,
+        subjectIds: candidateGroupIds,
+        searchSubjectIds: groupIds,
+        status: "PUBLISHED",
+        cursor,
+      },
+      queryKey,
+    );
+  }
+
+  private async resolveActualWorkspaceSearchGroupIds(
+    input: NormalizedActualWorkspacePlansInput,
+    visibleGroupIds?: readonly string[],
+  ): Promise<readonly string[] | undefined> {
+    if (input.search === undefined) {
+      return undefined;
+    }
+    const requestedGroupId = input.groupId ?? input.subjectId;
+    const groupIds =
+      requestedGroupId !== undefined
+        ? [requestedGroupId]
+        : visibleGroupIds !== undefined
+          ? visibleGroupIds
+          : undefined;
+    return this.subjectReadonlyAccess.listTalentGroupIdsByCodeOrName({
+      search: input.search,
+      ...(groupIds !== undefined ? { groupIds } : {}),
+    });
+  }
+
+  private async collectActualWorkspacePlanPage(
+    input: Omit<NormalizedActualWorkspacePlansInput, "cursor"> & {
+      readonly subjectIds?: readonly string[];
+      readonly searchSubjectIds?: readonly string[];
+      readonly status?: KpiPlanStatus;
+      readonly cursor?: KpiPlanListCursor;
+    },
+    queryKey: string,
+  ): Promise<ActualWorkspacePlanPage> {
+    let cursor = input.cursor;
+    const collected: KpiPlan[] = [];
+    let exhausted = false;
+    const scanLimit =
+      input.allocationCoverage === undefined ? input.limit : MAX_LIST_LIMIT;
+
+    while (collected.length < input.limit + 1 && !exhausted) {
+      const batch = await this.repository.listPlans({
+        ...input,
+        cursor,
+        actualWorkspaceCursorOrder: true,
+        limit: scanLimit + 1,
+      });
+      const page = batch.slice(0, scanLimit);
+      exhausted = batch.length <= scanLimit;
+      const matching =
+        input.allocationCoverage === undefined
+          ? page
+          : await this.filterPlansByAllocationCoverage(
+              page,
+              input.allocationCoverage,
+            );
+      collected.push(...matching);
+      if (!exhausted && page.length > 0) {
+        cursor = buildPlanListCursor(
+          page[page.length - 1] as KpiPlan,
+          input.sortBy,
+          input.sortDirection,
+        );
+      }
+      if (page.length === 0) {
+        exhausted = true;
+      }
+    }
+
+    const hasNext = collected.length > input.limit;
+    const items = hasNext ? collected.slice(0, input.limit) : collected;
+    return {
+      items,
+      nextCursor:
+        hasNext && items.length > 0
+          ? encodeActualWorkspaceCursor(
+              buildActualWorkspaceCursorEnvelope(
+                items[items.length - 1] as KpiPlan,
+                input,
+                queryKey,
+              ),
+            )
+          : undefined,
+    };
+  }
+
+  private async filterPlansByAllocationCoverage(
+    plans: readonly KpiPlan[],
+    coverage: KpiActualWorkspaceCoverageFilter,
+  ): Promise<readonly KpiPlan[]> {
+    if (plans.length === 0) {
+      return [];
+    }
+    const counts = buildAllocationWorkflowSummaries(
+      await this.repository.countAllocationsByPlanIds(
+        plans.map((plan) => plan.id),
       ),
     );
-    const itemsById = new Map<string, KpiPlan>();
-    for (const item of perGroupResults.flat()) {
-      itemsById.set(item.id, item);
-    }
-    return Array.from(itemsById.values())
-      .sort((left, right) => compareKpiPlanListItems(left, right, input))
-      .slice(0, input.limit);
+    return plans.filter((plan) => {
+      const summary =
+        counts.get(plan.id) ?? createZeroAllocationWorkflowSummary();
+      const publishedAllocationCount = summary.officialPublishedCount;
+      const totalAllocationCount = summary.total;
+      const complete =
+        totalAllocationCount > 0 &&
+        publishedAllocationCount === totalAllocationCount;
+      return coverage === "complete" ? complete : !complete;
+    });
   }
 
   private async buildActualWorkspaceAggregates(
@@ -3539,6 +3707,134 @@ function compareKpiPlanListItems(
   );
 }
 
+function buildPlanListCursor(
+  plan: KpiPlan,
+  sortBy: "periodMonth" | "planCode",
+  sortDirection: "ASC" | "DESC",
+): KpiPlanListCursor {
+  return {
+    sortBy,
+    sortDirection,
+    value: sortBy === "planCode" ? plan.planCode : plan.periodMonth,
+    planId: plan.id,
+  };
+}
+
+function buildActualWorkspaceCursorEnvelope(
+  plan: KpiPlan,
+  input: Pick<
+    NormalizedActualWorkspacePlansInput,
+    "sortBy" | "sortDirection"
+  >,
+  queryKey: string,
+): ActualWorkspaceCursorEnvelope {
+  return {
+    version: 1,
+    queryKey,
+    sortBy: input.sortBy,
+    sortDirection: input.sortDirection,
+    ...(input.sortBy === "planCode"
+      ? { lastPlanCode: plan.planCode }
+      : { lastPeriodMonth: plan.periodMonth }),
+    lastPlanId: plan.id,
+  };
+}
+
+function encodeActualWorkspaceCursor(
+  cursor: ActualWorkspaceCursorEnvelope,
+): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeActualWorkspaceCursor(
+  cursor: string,
+  input: Pick<
+    NormalizedActualWorkspacePlansInput,
+    "sortBy" | "sortDirection"
+  >,
+  expectedQueryKey: string,
+): KpiPlanListCursor {
+  const normalized = cursor.trim();
+  if (!normalized) {
+    throw invalidActualWorkspaceCursorError();
+  }
+
+  let decodedText: string;
+  try {
+    decodedText = Buffer.from(normalized, "base64url").toString("utf8");
+  } catch {
+    throw invalidActualWorkspaceCursorError();
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(decodedText);
+  } catch {
+    throw invalidActualWorkspaceCursorError();
+  }
+
+  if (!isRecord(payload)) {
+    throw invalidActualWorkspaceCursorError();
+  }
+  if (
+    payload.version !== 1 ||
+    payload.queryKey !== expectedQueryKey ||
+    payload.sortBy !== input.sortBy ||
+    payload.sortDirection !== input.sortDirection ||
+    typeof payload.lastPlanId !== "string" ||
+    payload.lastPlanId.trim().length === 0
+  ) {
+    throw invalidActualWorkspaceCursorError();
+  }
+  if (payload.sortBy !== "periodMonth" && payload.sortBy !== "planCode") {
+    throw invalidActualWorkspaceCursorError();
+  }
+  const value =
+    payload.sortBy === "planCode"
+      ? payload.lastPlanCode
+      : payload.lastPeriodMonth;
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw invalidActualWorkspaceCursorError();
+  }
+  return {
+    sortBy: input.sortBy,
+    sortDirection: input.sortDirection,
+    value,
+    planId: payload.lastPlanId,
+  };
+}
+
+function buildActualWorkspaceCursorQueryKey(
+  input: Pick<
+    NormalizedActualWorkspacePlansInput,
+    | "periodMonth"
+    | "groupId"
+    | "subjectId"
+    | "search"
+    | "sortBy"
+    | "sortDirection"
+    | "allocationCoverage"
+  >,
+): string {
+  return JSON.stringify({
+    periodMonth: input.periodMonth ?? null,
+    groupId: input.groupId ?? null,
+    subjectId: input.subjectId ?? null,
+    search: input.search ?? null,
+    sortBy: input.sortBy,
+    sortDirection: input.sortDirection,
+    allocationCoverage: input.allocationCoverage ?? null,
+  });
+}
+
+function invalidActualWorkspaceCursorError(): KpiValidationError {
+  return new KpiValidationError("KPI actual workspace cursor is invalid");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function buildAllocationWorkflowSummaries(
   counts: readonly KpiAllocationStatusCount[],
 ): Map<string, KpiAllocationWorkflowSummary> {
@@ -3659,6 +3955,18 @@ function normalizeActualWorkspaceSortBy(
   if (text !== "periodMonth" && text !== "planCode") {
     throw new KpiValidationError(
       `KPI actual workspace sortBy is unsupported: ${text}`,
+    );
+  }
+  return text;
+}
+
+function normalizeActualWorkspaceCoverageFilter(
+  value: unknown,
+): KpiActualWorkspaceCoverageFilter {
+  const text = normalizeRequiredText(value, "allocationCoverage");
+  if (text !== "complete" && text !== "incomplete") {
+    throw new KpiValidationError(
+      `KPI actual workspace allocationCoverage is unsupported: ${text}`,
     );
   }
   return text;
