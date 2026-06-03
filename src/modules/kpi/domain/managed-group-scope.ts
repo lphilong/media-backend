@@ -2,6 +2,7 @@ import { ClientSession } from "mongodb";
 import { Actor } from "@core/actor/actor";
 import { SystemInvariantError } from "@core/error/system-error";
 import { KpiSubjectReadonlyAccess } from "./kpi-subject-readonly-access";
+import { OrgUnitManagerAssignmentRepository } from "./org-unit-manager-assignment.repository";
 import { TalentGroupManagerAssignmentRepository } from "./talent-group-manager-assignment.repository";
 import {
   ManagedUnitAuthorityDependencies,
@@ -18,6 +19,10 @@ export interface ManagedGroupScopeDependencies {
   readonly managerAssignmentRepository: Pick<
     TalentGroupManagerAssignmentRepository,
     "listActiveAssignmentsByManagerEmploymentProfile"
+  >;
+  readonly orgUnitManagerAssignmentRepository?: Pick<
+    OrgUnitManagerAssignmentRepository,
+    "listActiveByManagerEmploymentProfileId"
   >;
 }
 

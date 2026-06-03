@@ -212,6 +212,23 @@ export const TALENT_GROUP_MANAGER_ASSIGNMENT_STATUSES = [
 export type TalentGroupManagerAssignmentStatus =
   (typeof TALENT_GROUP_MANAGER_ASSIGNMENT_STATUSES)[number];
 
+export const ORG_UNIT_MANAGER_ROLES = [
+  "DEPARTMENT_OWNER",
+  "UNIT_MANAGER",
+  "UNIT_OPERATOR",
+] as const;
+
+export type OrgUnitManagerRole = (typeof ORG_UNIT_MANAGER_ROLES)[number];
+
+export const ORG_UNIT_MANAGER_ASSIGNMENT_STATUSES = [
+  "ACTIVE",
+  "INACTIVE",
+  "REMOVED",
+] as const;
+
+export type OrgUnitManagerAssignmentStatus =
+  (typeof ORG_UNIT_MANAGER_ASSIGNMENT_STATUSES)[number];
+
 export const KPI_SORT_FIELDS = [
   "periodMonth",
   "planCode",
@@ -309,6 +326,23 @@ export interface TalentGroupManagerAssignment {
   readonly effectiveFrom: number;
   readonly effectiveTo: number | null;
   readonly status: TalentGroupManagerAssignmentStatus;
+  readonly isPrimary: boolean;
+  readonly createdAt: number;
+  readonly createdByActorId: string;
+  readonly updatedAt: number;
+  readonly updatedByActorId: string;
+}
+
+export interface OrgUnitManagerAssignment {
+  readonly id: string;
+  readonly orgUnitId: string;
+  readonly managerEmploymentProfileId: string;
+  readonly role: OrgUnitManagerRole;
+  readonly includeDescendants: boolean;
+  readonly actionMask: readonly string[];
+  readonly effectiveFrom: number;
+  readonly effectiveTo: number | null;
+  readonly status: OrgUnitManagerAssignmentStatus;
   readonly isPrimary: boolean;
   readonly createdAt: number;
   readonly createdByActorId: string;

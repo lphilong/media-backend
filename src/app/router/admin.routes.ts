@@ -379,6 +379,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     kpiBusinessCodeSequenceRepository,
     kpiSubjectReadonlyAccess,
     talentGroupManagerAssignmentRepository,
+    orgUnitManagerAssignmentRepository,
   } = createKpiInfra(infra.primaryDb);
   const {
     commissionRepository,
@@ -807,6 +808,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     kpiBusinessCodeSequenceRepository,
     kpiSubjectReadonlyAccess,
     talentGroupManagerAssignmentRepository,
+    orgUnitManagerAssignmentRepository,
     authoritativeAuditGuard,
     adminMutationBridge,
   );

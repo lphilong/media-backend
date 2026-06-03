@@ -3,6 +3,7 @@ import { NativeMongoBusinessCodeSequenceRepository } from "@infra/mongo/business
 import { NativeMongoKpiPlanRepository } from "@infra/mongo/kpi/kpi.repository";
 import { NativeMongoKpiActualRepository } from "@infra/mongo/kpi/kpi-actual.repository";
 import { NativeMongoKpiSubjectReadonlyAccess } from "@infra/mongo/kpi/kpi.readonly-access";
+import { NativeMongoOrgUnitManagerAssignmentRepository } from "@infra/mongo/kpi/org-unit-manager-assignment.repository";
 import { NativeMongoTalentGroupManagerAssignmentRepository } from "@infra/mongo/kpi/talent-group-manager-assignment.repository";
 
 export interface KpiInfra {
@@ -11,6 +12,7 @@ export interface KpiInfra {
   readonly kpiBusinessCodeSequenceRepository: NativeMongoBusinessCodeSequenceRepository;
   readonly kpiSubjectReadonlyAccess: NativeMongoKpiSubjectReadonlyAccess;
   readonly talentGroupManagerAssignmentRepository: NativeMongoTalentGroupManagerAssignmentRepository;
+  readonly orgUnitManagerAssignmentRepository: NativeMongoOrgUnitManagerAssignmentRepository;
 }
 
 export function createKpiInfra(db: Db): KpiInfra {
@@ -22,5 +24,7 @@ export function createKpiInfra(db: Db): KpiInfra {
     kpiSubjectReadonlyAccess: new NativeMongoKpiSubjectReadonlyAccess(db),
     talentGroupManagerAssignmentRepository:
       new NativeMongoTalentGroupManagerAssignmentRepository(db),
+    orgUnitManagerAssignmentRepository:
+      new NativeMongoOrgUnitManagerAssignmentRepository(db),
   };
 }

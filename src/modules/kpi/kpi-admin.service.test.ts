@@ -9,6 +9,7 @@ import { AuditGuard } from "@core/audit/audit.guard";
 import { BusinessCodeSequenceRepository } from "@core/business-code/business-code-sequence.repository";
 import { Permission } from "@core/permission/permission.enum";
 import { NativeMongoKpiSubjectReadonlyAccess } from "@infra/mongo/kpi/kpi.readonly-access";
+import { NativeMongoOrgUnitManagerAssignmentRepository } from "@infra/mongo/kpi/org-unit-manager-assignment.repository";
 import { KpiAdminController } from "@modules/kpi/admin/admin.kpi.controller";
 import { KpiAdminQueryController } from "@modules/kpi/admin/admin.kpi.query.controller";
 import { KpiAdminService } from "@modules/kpi/admin/admin.kpi.service";
@@ -42,6 +43,7 @@ import {
   kpiSubjectRefKey,
 } from "@modules/kpi/domain/kpi-subject-readonly-access";
 import { ReferenceSummary } from "@modules/reference-summary";
+import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
 import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import { resolveManagedUnitAuthority } from "@modules/kpi/domain/managed-unit-authority";
 import {
@@ -58,6 +60,7 @@ import {
   KpiPlanStatus,
   KpiSubjectType,
   KpiTargetMetric,
+  OrgUnitManagerAssignment,
   TalentGroupManagerAssignment,
 } from "@modules/kpi/domain/kpi.types";
 
@@ -251,6 +254,7 @@ function createHarness(clock: () => number = fixedClock()): {
   readonly actualRepository: InMemoryKpiActualRepository;
   readonly subjectAccess: InMemoryKpiSubjectReadonlyAccess;
   readonly managerRepository: InMemoryManagerAssignmentRepository;
+  readonly orgUnitManagerRepository: InMemoryOrgUnitManagerAssignmentRepository;
   readonly audit: RecordingAuditGuard;
 } {
   const repository = new InMemoryKpiPlanRepository();
@@ -258,6 +262,7 @@ function createHarness(clock: () => number = fixedClock()): {
   repository.actualEntries = actualRepository.entries;
   const subjectAccess = new InMemoryKpiSubjectReadonlyAccess();
   const managerRepository = new InMemoryManagerAssignmentRepository();
+  const orgUnitManagerRepository = new InMemoryOrgUnitManagerAssignmentRepository();
   const audit = new RecordingAuditGuard();
   const service = new KpiAdminService(
     repository,
@@ -265,6 +270,7 @@ function createHarness(clock: () => number = fixedClock()): {
     new InMemoryBusinessCodeSequenceRepository(),
     subjectAccess,
     managerRepository,
+    orgUnitManagerRepository,
     audit as unknown as AuditGuard,
     new ImmediateMutationBridge(),
     clock,
@@ -275,6 +281,7 @@ function createHarness(clock: () => number = fixedClock()): {
     actualRepository,
     subjectAccess,
     managerRepository,
+    orgUnitManagerRepository,
     audit,
   };
 }
@@ -566,7 +573,325 @@ function seedManagerAssignment(
   });
 }
 
-test("KPI managed unit authority adapter preserves active TalentGroup assignments and disables OrgUnit authority", async () => {
+function orgUnitManagerAssignment(
+  overrides: Partial<OrgUnitManagerAssignment>,
+): OrgUnitManagerAssignment {
+  return {
+    id: "org-unit-assignment-1",
+    orgUnitId: "org-unit-1",
+    managerEmploymentProfileId: "manager-profile-1",
+    role: "UNIT_MANAGER",
+    includeDescendants: false,
+    actionMask: [],
+    effectiveFrom: MAY_2026_START_AT,
+    effectiveTo: null,
+    status: "ACTIVE",
+    isPrimary: true,
+    createdAt: MAY_2026_START_AT,
+    createdByActorId: "seed",
+    updatedAt: MAY_2026_START_AT,
+    updatedByActorId: "seed",
+    ...overrides,
+  };
+}
+
+type OrgUnitManagerAssignmentTestDocument = Omit<
+  OrgUnitManagerAssignment,
+  "id"
+> & {
+  readonly _id: string;
+};
+
+function orgUnitManagerAssignmentDocument(
+  overrides: Partial<OrgUnitManagerAssignmentTestDocument>,
+): OrgUnitManagerAssignmentTestDocument {
+  return {
+    _id: "org-unit-assignment-1",
+    orgUnitId: "org-unit-1",
+    managerEmploymentProfileId: "manager-profile-1",
+    role: "UNIT_MANAGER",
+    includeDescendants: false,
+    actionMask: [],
+    effectiveFrom: MAY_2026_START_AT,
+    effectiveTo: null,
+    status: "ACTIVE",
+    isPrimary: true,
+    createdAt: MAY_2026_START_AT,
+    createdByActorId: "seed",
+    updatedAt: MAY_2026_START_AT,
+    updatedByActorId: "seed",
+    ...overrides,
+  };
+}
+
+test("KPI managed unit authority adapter resolves active TalentGroup and OrgUnit assignments", async () => {
+  const { subjectAccess, managerRepository, orgUnitManagerRepository } =
+    createHarness(() => MAY_5_2026_NOON_HCM);
+  seedManagerAssignment(managerRepository, "group-1");
+  seedManagerAssignment(managerRepository, "group-2");
+  seedManagerAssignment(managerRepository, "group-2");
+  orgUnitManagerRepository.assignments.push(
+    orgUnitManagerAssignment({
+      id: "org-unit-assignment-1",
+      orgUnitId: "org-unit-1",
+      role: "DEPARTMENT_OWNER",
+      includeDescendants: true,
+      actionMask: ["READ_PROGRESS"],
+    }),
+    orgUnitManagerAssignment({
+      id: "org-unit-assignment-2",
+      orgUnitId: "org-unit-2",
+      role: "UNIT_MANAGER",
+    }),
+    orgUnitManagerAssignment({
+      id: "org-unit-assignment-duplicate",
+      orgUnitId: "org-unit-2",
+      role: "UNIT_OPERATOR",
+      actionMask: ["ENTER_ACTUAL"],
+    }),
+  );
+
+  const authority = await resolveManagedUnitAuthority(
+    createManagerActor(),
+    {
+      subjectReadonlyAccess: subjectAccess,
+      managerAssignmentRepository: managerRepository,
+      orgUnitManagerAssignmentRepository: orgUnitManagerRepository,
+    },
+    { asOf: MAY_5_2026_NOON_HCM },
+  );
+  const unscopedAuthority = await resolveManagedUnitAuthority(
+    createManagerActorWithoutKpiScope(),
+    {
+      subjectReadonlyAccess: subjectAccess,
+      managerAssignmentRepository: managerRepository,
+      orgUnitManagerAssignmentRepository: orgUnitManagerRepository,
+    },
+    { asOf: MAY_5_2026_NOON_HCM },
+  );
+
+  const orgUnitAssignments =
+    await orgUnitManagerRepository.listActiveByManagerEmploymentProfileId(
+      "manager-profile-1",
+      MAY_5_2026_NOON_HCM,
+    );
+
+  assert.deepEqual(authority?.scope.talentGroupIds, ["group-1", "group-2"]);
+  assert.deepEqual(authority?.scope.orgUnitIds, ["org-unit-1", "org-unit-2"]);
+  assert.equal(authority?.actorEmploymentProfileId, "manager-profile-1");
+  assert.equal(unscopedAuthority, null);
+  assert.equal(orgUnitAssignments[0]?.includeDescendants, true);
+  assert.deepEqual(orgUnitAssignments[0]?.actionMask, ["READ_PROGRESS"]);
+  assert.deepEqual(
+    orgUnitAssignments.map((assignment) => assignment.role),
+    ["DEPARTMENT_OWNER", "UNIT_MANAGER", "UNIT_OPERATOR"],
+  );
+});
+
+test("KPI managed unit authority adapter ignores inactive, expired, future, and wrong-manager OrgUnit assignments", async () => {
+  const { subjectAccess, managerRepository, orgUnitManagerRepository } =
+    createHarness(() => MAY_5_2026_NOON_HCM);
+  seedManagerAssignment(managerRepository, "group-1");
+  orgUnitManagerRepository.assignments.push(
+    orgUnitManagerAssignment({ id: "active", orgUnitId: "org-unit-active" }),
+    orgUnitManagerAssignment({
+      id: "inactive",
+      orgUnitId: "org-unit-inactive",
+      status: "INACTIVE",
+    }),
+    orgUnitManagerAssignment({
+      id: "expired",
+      orgUnitId: "org-unit-expired",
+      effectiveTo: MAY_5_2026_START_HCM,
+    }),
+    orgUnitManagerAssignment({
+      id: "future",
+      orgUnitId: "org-unit-future",
+      effectiveFrom: JUNE_2026_START_AT,
+    }),
+    orgUnitManagerAssignment({
+      id: "other-manager",
+      orgUnitId: "org-unit-other-manager",
+      managerEmploymentProfileId: "other-manager-profile",
+    }),
+  );
+
+  const authority = await resolveManagedUnitAuthority(
+    createManagerActor(),
+    {
+      subjectReadonlyAccess: subjectAccess,
+      managerAssignmentRepository: managerRepository,
+      orgUnitManagerAssignmentRepository: orgUnitManagerRepository,
+    },
+    { asOf: MAY_5_2026_NOON_HCM },
+  );
+
+  assert.deepEqual(authority?.scope.talentGroupIds, ["group-1"]);
+  assert.deepEqual(authority?.scope.orgUnitIds, ["org-unit-active"]);
+});
+
+test("NativeMongo OrgUnit manager assignment repository filters active manager-role assignments", async () => {
+  const asOf = MAY_5_2026_NOON_HCM;
+  const documents = [
+    orgUnitManagerAssignmentDocument({
+      _id: "department-owner",
+      orgUnitId: "org-department-owner",
+      role: "DEPARTMENT_OWNER",
+      includeDescendants: true,
+      actionMask: ["READ_PROGRESS"],
+    }),
+    orgUnitManagerAssignmentDocument({
+      _id: "unit-manager",
+      orgUnitId: "org-unit-manager",
+      role: "UNIT_MANAGER",
+      actionMask: ["ALLOCATE"],
+    }),
+    orgUnitManagerAssignmentDocument({
+      _id: "unit-operator",
+      orgUnitId: "org-unit-operator",
+      role: "UNIT_OPERATOR",
+      includeDescendants: true,
+      actionMask: ["ENTER_ACTUAL"],
+    }),
+    orgUnitManagerAssignmentDocument({
+      _id: "same-manager-different-role",
+      orgUnitId: "org-wrong-role",
+      role: "UNIT_OPERATOR",
+    }),
+    orgUnitManagerAssignmentDocument({
+      _id: "different-manager-same-role",
+      orgUnitId: "org-wrong-manager",
+      managerEmploymentProfileId: "other-manager-profile",
+      role: "DEPARTMENT_OWNER",
+    }),
+    orgUnitManagerAssignmentDocument({
+      _id: "inactive",
+      orgUnitId: "org-inactive",
+      role: "DEPARTMENT_OWNER",
+      status: "INACTIVE",
+    }),
+    orgUnitManagerAssignmentDocument({
+      _id: "removed",
+      orgUnitId: "org-removed",
+      role: "DEPARTMENT_OWNER",
+      status: "REMOVED",
+    }),
+    orgUnitManagerAssignmentDocument({
+      _id: "expired",
+      orgUnitId: "org-expired",
+      role: "DEPARTMENT_OWNER",
+      effectiveTo: MAY_5_2026_START_HCM,
+    }),
+    orgUnitManagerAssignmentDocument({
+      _id: "future",
+      orgUnitId: "org-future",
+      role: "DEPARTMENT_OWNER",
+      effectiveFrom: JUNE_2026_START_AT,
+    }),
+    orgUnitManagerAssignmentDocument({
+      _id: "defaults",
+      orgUnitId: "org-defaults",
+      role: "DEPARTMENT_OWNER",
+      includeDescendants: undefined,
+      actionMask: undefined,
+      isPrimary: undefined,
+    }),
+  ];
+  const queries: Record<string, unknown>[] = [];
+  const repository = new NativeMongoOrgUnitManagerAssignmentRepository({
+    collection(name: string) {
+      assert.equal(name, "org_unit_manager_assignments");
+      return {
+        find(query: Record<string, unknown>) {
+          queries.push(query);
+          return {
+            sort() {
+              return {
+                toArray() {
+                  return Promise.resolve(
+                    documents.filter((document) =>
+                      matchesMongoActiveQuery(document, query),
+                    ),
+                  );
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  } as never);
+
+  const departmentOwners =
+    await repository.listActiveByManagerEmploymentProfileIdAndRole(
+      "manager-profile-1",
+      "DEPARTMENT_OWNER",
+      asOf,
+    );
+  const unitManagers =
+    await repository.listActiveByManagerEmploymentProfileIdAndRole(
+      "manager-profile-1",
+      "UNIT_MANAGER",
+      asOf,
+    );
+  const unitOperators =
+    await repository.listActiveByManagerEmploymentProfileIdAndRole(
+      "manager-profile-1",
+      "UNIT_OPERATOR",
+      asOf,
+    );
+
+  assert.deepEqual(
+    queries.map((query) => ({
+      managerEmploymentProfileId: query.managerEmploymentProfileId,
+      role: query.role,
+      status: query.status,
+      effectiveFrom: query.effectiveFrom,
+      effectiveTo: query.$or,
+    })),
+    [
+      {
+        managerEmploymentProfileId: "manager-profile-1",
+        role: "DEPARTMENT_OWNER",
+        status: "ACTIVE",
+        effectiveFrom: { $lte: asOf },
+        effectiveTo: [{ effectiveTo: null }, { effectiveTo: { $gte: asOf } }],
+      },
+      {
+        managerEmploymentProfileId: "manager-profile-1",
+        role: "UNIT_MANAGER",
+        status: "ACTIVE",
+        effectiveFrom: { $lte: asOf },
+        effectiveTo: [{ effectiveTo: null }, { effectiveTo: { $gte: asOf } }],
+      },
+      {
+        managerEmploymentProfileId: "manager-profile-1",
+        role: "UNIT_OPERATOR",
+        status: "ACTIVE",
+        effectiveFrom: { $lte: asOf },
+        effectiveTo: [{ effectiveTo: null }, { effectiveTo: { $gte: asOf } }],
+      },
+    ],
+  );
+  assert.deepEqual(
+    departmentOwners.map((assignment) => assignment.id),
+    ["department-owner", "defaults"],
+  );
+  assert.deepEqual(unitManagers.map((assignment) => assignment.id), [
+    "unit-manager",
+  ]);
+  assert.deepEqual(unitOperators.map((assignment) => assignment.id), [
+    "unit-operator",
+    "same-manager-different-role",
+  ]);
+  assert.equal(departmentOwners[0]?.includeDescendants, true);
+  assert.deepEqual(departmentOwners[0]?.actionMask, ["READ_PROGRESS"]);
+  assert.equal(departmentOwners[1]?.includeDescendants, false);
+  assert.deepEqual(departmentOwners[1]?.actionMask, []);
+  assert.equal(departmentOwners[1]?.isPrimary, false);
+});
+
+test("KPI managed unit authority adapter preserves active TalentGroup assignments when OrgUnit repository is absent", async () => {
   const { subjectAccess, managerRepository } = createHarness(
     () => MAY_5_2026_NOON_HCM,
   );
@@ -1838,12 +2163,21 @@ test("KPI V2 ORG_UNIT forced execution entry points reject before execution work
 });
 
 test("KPI V2 manager-scoped access does not reveal ORG_UNIT plans", async () => {
-  const { service, managerRepository } = createHarness();
+  const { service, managerRepository, orgUnitManagerRepository } =
+    createHarness();
   const created = await service.createKpiPlan(
     createActor(),
     orgUnitPlanCommand("org-department-active"),
   );
   seedManagerAssignment(managerRepository, "group-1");
+  orgUnitManagerRepository.assignments.push(
+    orgUnitManagerAssignment({
+      id: "org-unit-active-manager-assignment",
+      orgUnitId: "org-department-active",
+      role: "DEPARTMENT_OWNER",
+      includeDescendants: true,
+    }),
+  );
 
   const list = await service.listKpiPlans(createBackofficeTeamManagerActor(), {
     subjectType: "ORG_UNIT",
@@ -1855,6 +2189,25 @@ test("KPI V2 manager-scoped access does not reveal ORG_UNIT plans", async () => 
       kpiPlanId: created.id,
     }),
     KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.getKpiProgress(createBackofficeTeamManagerActor(), {
+      kpiPlanId: created.id,
+    }),
+    /Org Unit KPI execution is not enabled yet/,
+  );
+  await assert.rejects(
+    service.getKpiActualWorkspacePlanDetail(createBackofficeTeamManagerActor(), {
+      kpiPlanId: created.id,
+    }),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.getKpiActualDailyGrid(createBackofficeTeamManagerActor(), {
+      kpiPlanId: created.id,
+      actualDate: "05-05-2026",
+    }),
+    /KPI actual grid supports only TALENT_GROUP plans/,
   );
 });
 
@@ -7719,8 +8072,73 @@ class InMemoryManagerAssignmentRepository implements TalentGroupManagerAssignmen
   }
 }
 
+class InMemoryOrgUnitManagerAssignmentRepository
+  implements OrgUnitManagerAssignmentRepository
+{
+  readonly assignments: OrgUnitManagerAssignment[] = [];
+
+  async listActiveByManagerEmploymentProfileId(
+    managerEmploymentProfileId: string,
+    asOf: number,
+  ): Promise<readonly OrgUnitManagerAssignment[]> {
+    return this.assignments.filter(
+      (assignment) =>
+        assignment.managerEmploymentProfileId ===
+          managerEmploymentProfileId && isActiveAt(assignment, asOf),
+    );
+  }
+
+  async listActiveByManagerEmploymentProfileIdAndRole(
+    managerEmploymentProfileId: string,
+    role: OrgUnitManagerAssignment["role"],
+    asOf: number,
+  ): Promise<readonly OrgUnitManagerAssignment[]> {
+    return this.assignments.filter(
+      (assignment) =>
+        assignment.managerEmploymentProfileId ===
+          managerEmploymentProfileId &&
+        assignment.role === role &&
+        isActiveAt(assignment, asOf),
+    );
+  }
+
+  async listActiveByOrgUnitId(
+    orgUnitId: string,
+    asOf: number,
+  ): Promise<readonly OrgUnitManagerAssignment[]> {
+    return this.assignments.filter(
+      (assignment) =>
+        assignment.orgUnitId === orgUnitId && isActiveAt(assignment, asOf),
+    );
+  }
+}
+
+function matchesMongoActiveQuery(
+  assignment: OrgUnitManagerAssignmentTestDocument,
+  query: Record<string, unknown>,
+): boolean {
+  const effectiveFrom = query.effectiveFrom as { readonly $lte: number };
+  const effectiveToOr = query.$or as readonly [
+    { readonly effectiveTo: null },
+    { readonly effectiveTo: { readonly $gte: number } },
+  ];
+  return (
+    assignment.managerEmploymentProfileId ===
+      query.managerEmploymentProfileId &&
+    assignment.role === query.role &&
+    assignment.status === query.status &&
+    assignment.effectiveFrom <= effectiveFrom.$lte &&
+    (assignment.effectiveTo === effectiveToOr[0].effectiveTo ||
+      (assignment.effectiveTo !== null &&
+        assignment.effectiveTo >= effectiveToOr[1].effectiveTo.$gte))
+  );
+}
+
 function isActiveAt(
-  assignment: TalentGroupManagerAssignment,
+  assignment: Pick<
+    TalentGroupManagerAssignment | OrgUnitManagerAssignment,
+    "status" | "effectiveFrom" | "effectiveTo"
+  >,
   asOf: number,
 ): boolean {
   return (

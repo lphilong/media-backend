@@ -3,6 +3,7 @@ import { Actor } from "@core/actor/actor";
 import { SystemInvariantError } from "@core/error/system-error";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { KpiSubjectReadonlyAccess } from "./kpi-subject-readonly-access";
+import { OrgUnitManagerAssignmentRepository } from "./org-unit-manager-assignment.repository";
 import { TalentGroupManagerAssignmentRepository } from "./talent-group-manager-assignment.repository";
 
 export const MANAGED_UNIT_KINDS = ["TALENT_GROUP", "ORG_UNIT"] as const;
@@ -27,6 +28,10 @@ export interface ManagedUnitAuthorityDependencies {
   readonly managerAssignmentRepository: Pick<
     TalentGroupManagerAssignmentRepository,
     "listActiveAssignmentsByManagerEmploymentProfile"
+  >;
+  readonly orgUnitManagerAssignmentRepository?: Pick<
+    OrgUnitManagerAssignmentRepository,
+    "listActiveByManagerEmploymentProfileId"
   >;
 }
 
@@ -69,17 +74,23 @@ export async function resolveManagedUnitAuthority(
     return createManagedUnitAuthority(null, [], []);
   }
 
-  const assignments =
+  const talentGroupAssignments =
     await dependencies.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
       employmentProfile.employmentProfileId,
       options.asOf ?? Date.now(),
       options.session,
     );
+  const orgUnitAssignments =
+    (await dependencies.orgUnitManagerAssignmentRepository?.listActiveByManagerEmploymentProfileId(
+      employmentProfile.employmentProfileId,
+      options.asOf ?? Date.now(),
+      options.session,
+    )) ?? [];
 
   return createManagedUnitAuthority(
     employmentProfile.employmentProfileId,
-    assignments.map((assignment) => assignment.groupId),
-    [],
+    talentGroupAssignments.map((assignment) => assignment.groupId),
+    orgUnitAssignments.map((assignment) => assignment.orgUnitId),
   );
 }
 

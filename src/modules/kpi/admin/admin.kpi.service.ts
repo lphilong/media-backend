@@ -44,6 +44,7 @@ import {
   KpiSubjectReadonlyAccess,
   kpiSubjectRefKey,
 } from "@modules/kpi/domain/kpi-subject-readonly-access";
+import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
 import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import {
   KPI_CREATE_SUBJECT_TYPES,
@@ -240,6 +241,9 @@ export class KpiAdminService {
     private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
     private readonly subjectReadonlyAccess: KpiSubjectReadonlyAccess,
     private readonly managerAssignmentRepository: TalentGroupManagerAssignmentRepository,
+    private readonly orgUnitManagerAssignmentRepository:
+      | OrgUnitManagerAssignmentRepository
+      | undefined,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
     private readonly clock: () => number = Date.now,
@@ -3028,6 +3032,8 @@ export class KpiAdminService {
       {
         subjectReadonlyAccess: this.subjectReadonlyAccess,
         managerAssignmentRepository: this.managerAssignmentRepository,
+        orgUnitManagerAssignmentRepository:
+          this.orgUnitManagerAssignmentRepository,
       },
       this.clock(),
       session,
