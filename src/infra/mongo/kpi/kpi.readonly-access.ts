@@ -38,6 +38,7 @@ interface OrgUnitDocument {
   readonly name?: string;
   readonly type?: string;
   readonly status?: string;
+  readonly ancestorChain?: readonly string[];
 }
 
 interface TalentGroupMemberDocument {
@@ -247,6 +248,73 @@ export class NativeMongoKpiSubjectReadonlyAccess
     return docs.map((doc) => doc._id);
   }
 
+  async listActiveOrgUnitIdsByIds(
+    orgUnitIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly string[]> {
+    const ids = uniqueTextValues(orgUnitIds);
+    if (ids.length === 0) {
+      return [];
+    }
+    const docs = await this.orgUnitCollection
+      .find(activeSupportedOrgUnitQuery({ _id: { $in: ids } }), {
+        ...this.withSession(session),
+        projection: { _id: 1 },
+      })
+      .sort({ _id: 1 })
+      .toArray();
+    return docs.map((doc) => doc._id);
+  }
+
+  async listActiveOrgUnitDescendantIds(
+    ancestorOrgUnitIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly string[]> {
+    const ids = uniqueTextValues(ancestorOrgUnitIds);
+    if (ids.length === 0) {
+      return [];
+    }
+    const docs = await this.orgUnitCollection
+      .find(activeSupportedOrgUnitQuery({ ancestorChain: { $in: ids } }), {
+        ...this.withSession(session),
+        projection: { _id: 1 },
+      })
+      .sort({ _id: 1 })
+      .toArray();
+    return docs.map((doc) => doc._id);
+  }
+
+  async listActiveOrgUnitIdsByCodeOrName(
+    input: { readonly search: string; readonly orgUnitIds?: readonly string[] },
+    session?: ClientSession,
+  ): Promise<readonly string[]> {
+    const search = readText(input.search);
+    if (!search) {
+      return [];
+    }
+    const orgUnitIds = uniqueTextValues(input.orgUnitIds ?? []);
+    if (input.orgUnitIds !== undefined && orgUnitIds.length === 0) {
+      return [];
+    }
+    const pattern = new RegExp(escapeRegExp(search), "i");
+    const docs = await this.orgUnitCollection
+      .find(
+        activeSupportedOrgUnitQuery({
+          ...(input.orgUnitIds !== undefined
+            ? { _id: { $in: orgUnitIds } }
+            : {}),
+          $or: [{ code: pattern }, { name: pattern }],
+        }),
+        {
+          ...this.withSession(session),
+          projection: { _id: 1 },
+        },
+      )
+      .sort({ code: 1, _id: 1 })
+      .toArray();
+    return docs.map((doc) => doc._id);
+  }
+
   async hasActiveTalent(
     talentId: string,
     session?: ClientSession,
@@ -274,11 +342,7 @@ export class NativeMongoKpiSubjectReadonlyAccess
     session?: ClientSession,
   ): Promise<boolean> {
     const doc = await this.orgUnitCollection.findOne(
-      {
-        _id: orgUnitId,
-        status: "ACTIVE",
-        type: { $in: ["DEPARTMENT", "TEAM", "BUSINESS_UNIT", "SUPPORT_UNIT"] },
-      },
+      activeSupportedOrgUnitQuery({ _id: orgUnitId }),
       { ...this.withSession(session), projection: { _id: 1 } },
     );
     return doc !== null;
@@ -534,4 +598,14 @@ function readText(value: string | null | undefined): string | undefined {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function activeSupportedOrgUnitQuery(
+  extra: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...extra,
+    status: "ACTIVE",
+    type: { $in: ["DEPARTMENT", "TEAM", "BUSINESS_UNIT", "SUPPORT_UNIT"] },
+  };
 }

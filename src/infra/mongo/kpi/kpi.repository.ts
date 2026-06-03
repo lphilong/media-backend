@@ -286,7 +286,7 @@ export class NativeMongoKpiPlanRepository
     if (subjectIds === null) {
       return [];
     }
-    if (input.groupId !== undefined || input.subjectIds !== undefined) {
+    if (input.groupId !== undefined) {
       query.subjectType = "TALENT_GROUP";
     }
     if (subjectIds !== undefined) {
@@ -357,7 +357,7 @@ export class NativeMongoKpiPlanRepository
     if (subjectIds === null) {
       return [{ _id: { $in: [] } }];
     }
-    if (input.groupId !== undefined || input.subjectIds !== undefined) {
+    if (input.groupId !== undefined) {
       query.subjectType = "TALENT_GROUP";
     }
     if (subjectIds !== undefined) {

@@ -5,14 +5,23 @@ import { PermissionGuard } from "@core/permission/permission.guard";
 import { KpiSubjectReadonlyAccess } from "./kpi-subject-readonly-access";
 import { OrgUnitManagerAssignmentRepository } from "./org-unit-manager-assignment.repository";
 import { TalentGroupManagerAssignmentRepository } from "./talent-group-manager-assignment.repository";
+import { OrgUnitManagerAssignment, OrgUnitManagerRole } from "./kpi.types";
 
 export const MANAGED_UNIT_KINDS = ["TALENT_GROUP", "ORG_UNIT"] as const;
 
 export type ManagedUnitKind = (typeof MANAGED_UNIT_KINDS)[number];
 
+export interface ManagedOrgUnitScope {
+  readonly orgUnitId: string;
+  readonly role: OrgUnitManagerRole;
+  readonly includeDescendants: boolean;
+  readonly actionMask: readonly string[];
+}
+
 export interface ManagedUnitScope {
   readonly talentGroupIds: readonly string[];
   readonly orgUnitIds: readonly string[];
+  readonly orgUnitScopes: readonly ManagedOrgUnitScope[];
 }
 
 export interface ManagedUnitAuthority {
@@ -90,7 +99,7 @@ export async function resolveManagedUnitAuthority(
   return createManagedUnitAuthority(
     employmentProfile.employmentProfileId,
     talentGroupAssignments.map((assignment) => assignment.groupId),
-    orgUnitAssignments.map((assignment) => assignment.orgUnitId),
+    orgUnitAssignments,
   );
 }
 
@@ -107,13 +116,15 @@ export function managedUnitScopeIncludes(
 function createManagedUnitAuthority(
   actorEmploymentProfileId: string | null,
   talentGroupIds: readonly string[],
-  orgUnitIds: readonly string[],
+  orgUnitAssignments: readonly OrgUnitManagerAssignment[],
 ): ManagedUnitAuthority {
+  const orgUnitScopes = uniqueOrgUnitScopes(orgUnitAssignments);
   return {
     actorEmploymentProfileId,
     scope: {
       talentGroupIds: uniqueNonEmpty(talentGroupIds),
-      orgUnitIds: uniqueNonEmpty(orgUnitIds),
+      orgUnitIds: uniqueNonEmpty(orgUnitScopes.map((scope) => scope.orgUnitId)),
+      orgUnitScopes,
     },
   };
 }
@@ -124,4 +135,31 @@ function uniqueNonEmpty(values: readonly string[]): readonly string[] {
       values.map((value) => value.trim()).filter((value) => value.length > 0),
     ),
   ];
+}
+
+function uniqueOrgUnitScopes(
+  assignments: readonly OrgUnitManagerAssignment[],
+): readonly ManagedOrgUnitScope[] {
+  const scopes = new Map<string, ManagedOrgUnitScope>();
+  for (const assignment of assignments) {
+    const orgUnitId = assignment.orgUnitId.trim();
+    if (!orgUnitId) {
+      continue;
+    }
+    const key = [
+      orgUnitId,
+      assignment.role,
+      assignment.includeDescendants ? "desc" : "direct",
+      [...assignment.actionMask].sort().join(","),
+    ].join(":");
+    if (!scopes.has(key)) {
+      scopes.set(key, {
+        orgUnitId,
+        role: assignment.role,
+        includeDescendants: assignment.includeDescendants,
+        actionMask: uniqueNonEmpty(assignment.actionMask),
+      });
+    }
+  }
+  return [...scopes.values()];
 }

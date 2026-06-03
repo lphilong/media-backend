@@ -23,6 +23,10 @@ import {
 } from "@modules/kpi/domain/kpi-metric-catalog";
 import { resolveManagedTalentGroupIds } from "@modules/kpi/domain/managed-group-scope";
 import {
+  ManagedUnitAuthority,
+  resolveManagedUnitAuthority,
+} from "@modules/kpi/domain/managed-unit-authority";
+import {
   KpiConflictError,
   KpiInvalidAllocationError,
   KpiInvalidSubjectReferenceError,
@@ -367,7 +371,7 @@ export class KpiAdminService {
       );
     }
 
-    return this.listManagedGroupKpiPlans(actor, input);
+    return this.listManagedUnitKpiPlans(actor, input);
   }
 
   async listKpiActualWorkspacePlans(
@@ -445,19 +449,31 @@ export class KpiAdminService {
         "KPI manager-scoped detail is supported only for PUBLISHED plans",
       );
     }
-    if (plan.subjectType !== "TALENT_GROUP") {
+    if (plan.subjectType !== "TALENT_GROUP" && plan.subjectType !== "ORG_UNIT") {
       throw new KpiPermissionScopeError(
-        "KPI manager-scoped detail is supported only for TALENT_GROUP plans",
+        "KPI manager-scoped detail is supported only for TALENT_GROUP or ORG_UNIT plans",
       );
     }
-    const managedGroupIds = await this.resolveManagedTalentGroupIds(actor);
-    if (!managedGroupIds.includes(plan.subjectId)) {
+    if (plan.subjectType === "TALENT_GROUP") {
+      const managedGroupIds = await this.resolveManagedTalentGroupIds(actor);
+      if (!managedGroupIds.includes(plan.subjectId)) {
+        throw new KpiPermissionScopeError(
+          `KPI actor is not an active manager for group ${plan.subjectId}`,
+        );
+      }
+
+      return this.loadPlanDetail(plan.id);
+    }
+
+    const managedOrgUnitIds = await this.resolveManagedOrgUnitIds(actor);
+    if (!managedOrgUnitIds.includes(plan.subjectId)) {
       throw new KpiPermissionScopeError(
-        `KPI actor is not an active manager for group ${plan.subjectId}`,
+        `KPI actor is not an active manager for org unit ${plan.subjectId}`,
       );
     }
 
-    return this.loadPlanDetail(plan.id);
+    const detail = await this.loadPlanDetail(plan.id);
+    return { ...detail, allocations: [] };
   }
 
   async updateKpiDraftCore(
@@ -985,7 +1001,7 @@ export class KpiAdminService {
       `kpi-plan:${command.kpiPlanId}`,
       async (session) => {
         const current = await this.requirePlan(command.kpiPlanId, session);
-        assertExecutableSubjectType(current.subjectType);
+        assertPublishSubjectType(current.subjectType);
         this.assertDraft(current, "publish");
         const targetMetrics = await this.repository.listTargetMetricsByPlanId(
           current.id,
@@ -997,6 +1013,10 @@ export class KpiAdminService {
             "KPI publish requires at least one target metric",
           );
         }
+        assertTargetMetricsAllowedForSubject(
+          targetMetrics,
+          current.subjectType,
+        );
         validateTargetMetricValues(targetMetrics, "targetMetrics");
 
         const now = this.clock();
@@ -2964,11 +2984,15 @@ export class KpiAdminService {
     };
   }
 
-  private async listManagedGroupKpiPlans(
+  private async listManagedUnitKpiPlans(
     actor: Actor,
     input: ListKpiPlansInput,
   ): Promise<ListKpiPlansResult> {
-    if (input.subjectType && input.subjectType !== "TALENT_GROUP") {
+    if (
+      input.subjectType &&
+      input.subjectType !== "TALENT_GROUP" &&
+      input.subjectType !== "ORG_UNIT"
+    ) {
       return { items: [] };
     }
     if (input.status && input.status !== "PUBLISHED") {
@@ -2983,9 +3007,34 @@ export class KpiAdminService {
       return { items: [] };
     }
 
+    const results = await Promise.all([
+      input.subjectType === undefined || input.subjectType === "TALENT_GROUP"
+        ? this.listManagedTalentGroupKpiPlans(actor, input)
+        : Promise.resolve([]),
+      input.subjectType === undefined || input.subjectType === "ORG_UNIT"
+        ? this.listManagedOrgUnitKpiPlans(actor, input)
+        : Promise.resolve([]),
+    ]);
+    const itemsById = new Map<string, KpiPlan>();
+    for (const item of results.flat()) {
+      itemsById.set(item.id, item);
+    }
+    const visibleItems = Array.from(itemsById.values())
+      .sort((left, right) => compareKpiPlanListItems(left, right, input))
+      .slice(0, input.limit);
+
+    return {
+      items: await this.withAllocationWorkflowSummaries(visibleItems),
+    };
+  }
+
+  private async listManagedTalentGroupKpiPlans(
+    actor: Actor,
+    input: ListKpiPlansInput,
+  ): Promise<readonly KpiPlan[]> {
     const managedGroupIds = await this.resolveManagedTalentGroupIds(actor);
     if (managedGroupIds.length === 0) {
-      return { items: [] };
+      return [];
     }
 
     const requestedGroupId = input.groupId ?? input.subjectId;
@@ -2995,7 +3044,7 @@ export class KpiAdminService {
     if (
       candidateGroupIds.some((groupId) => !managedGroupIds.includes(groupId))
     ) {
-      return { items: [] };
+      return [];
     }
 
     const perGroupResults = await Promise.all(
@@ -3014,13 +3063,49 @@ export class KpiAdminService {
       itemsById.set(item.id, item);
     }
 
-    const visibleItems = Array.from(itemsById.values())
+    return Array.from(itemsById.values())
       .sort((left, right) => compareKpiPlanListItems(left, right, input))
       .slice(0, input.limit);
+  }
 
-    return {
-      items: await this.withAllocationWorkflowSummaries(visibleItems),
-    };
+  private async listManagedOrgUnitKpiPlans(
+    actor: Actor,
+    input: ListKpiPlansInput,
+  ): Promise<readonly KpiPlan[]> {
+    if (input.groupId !== undefined) {
+      return [];
+    }
+    const managedOrgUnitIds = await this.resolveManagedOrgUnitIds(actor);
+    if (managedOrgUnitIds.length === 0) {
+      return [];
+    }
+
+    const candidateOrgUnitIds =
+      input.subjectId === undefined ? managedOrgUnitIds : [input.subjectId];
+    if (
+      candidateOrgUnitIds.some(
+        (orgUnitId) => !managedOrgUnitIds.includes(orgUnitId),
+      )
+    ) {
+      return [];
+    }
+    const searchSubjectIds =
+      input.search === undefined
+        ? undefined
+        : await this.subjectReadonlyAccess.listActiveOrgUnitIdsByCodeOrName({
+            search: input.search,
+            orgUnitIds: candidateOrgUnitIds,
+          });
+
+    return this.repository.listPlans({
+      ...input,
+      subjectType: "ORG_UNIT",
+      subjectId: undefined,
+      groupId: undefined,
+      subjectIds: candidateOrgUnitIds,
+      searchSubjectIds,
+      status: "PUBLISHED",
+    });
   }
 
   private async resolveManagedTalentGroupIds(
@@ -3039,6 +3124,54 @@ export class KpiAdminService {
       session,
     );
     return groupIds ?? [];
+  }
+
+  private async resolveManagedOrgUnitIds(
+    actor: Actor,
+    session?: ClientSession,
+  ): Promise<readonly string[]> {
+    const authority = await this.resolveManagedUnitAuthority(actor, session);
+    const scopes = authority?.scope.orgUnitScopes ?? [];
+    if (scopes.length === 0) {
+      return [];
+    }
+    const directIds = uniqueTextValues(scopes.map((scope) => scope.orgUnitId));
+    const activeDirectIds =
+      await this.subjectReadonlyAccess.listActiveOrgUnitIdsByIds(
+        directIds,
+        session,
+      );
+    const activeDirectSet = new Set(activeDirectIds);
+    const descendantSourceIds = uniqueTextValues(
+      scopes
+        .filter(
+          (scope) =>
+            scope.includeDescendants && activeDirectSet.has(scope.orgUnitId),
+        )
+        .map((scope) => scope.orgUnitId),
+    );
+    const descendantIds =
+      await this.subjectReadonlyAccess.listActiveOrgUnitDescendantIds(
+        descendantSourceIds,
+        session,
+      );
+    return uniqueTextValues([...activeDirectIds, ...descendantIds]);
+  }
+
+  private async resolveManagedUnitAuthority(
+    actor: Actor,
+    session?: ClientSession,
+  ): Promise<ManagedUnitAuthority | null> {
+    return resolveManagedUnitAuthority(
+      actor,
+      {
+        subjectReadonlyAccess: this.subjectReadonlyAccess,
+        managerAssignmentRepository: this.managerAssignmentRepository,
+        orgUnitManagerAssignmentRepository:
+          this.orgUnitManagerAssignmentRepository,
+      },
+      { asOf: this.clock(), session },
+    );
   }
 
   private assertActualMutationPlanOpen(plan: KpiPlan, operation: string): void {
@@ -3631,6 +3764,20 @@ function normalizeTargetMetrics(
   });
 }
 
+function assertTargetMetricsAllowedForSubject(
+  targetMetrics: readonly Pick<KpiTargetMetric, "metricCode">[],
+  subjectType: KpiSubjectType,
+): void {
+  for (const metric of targetMetrics) {
+    const catalog = KPI_METRIC_CATALOG[metric.metricCode];
+    if (!catalog || !catalog.allowedSubjectTypes.includes(subjectType)) {
+      throw new KpiValidationError(
+        `KPI metric ${metric.metricCode} is not allowed for subjectType ${subjectType}`,
+      );
+    }
+  }
+}
+
 function buildTargetMetricRecords(
   kpiPlanId: string,
   input: readonly NormalizedTargetMetric[],
@@ -3970,6 +4117,16 @@ function assertExecutableSubjectType(subjectType: KpiSubjectType): void {
     subjectType === "ORG_UNIT"
       ? "Org Unit KPI execution is not enabled yet"
       : `KPI subjectType ${subjectType} is future-compatible but not executable in Phase 4-C.2`,
+  );
+}
+
+function assertPublishSubjectType(subjectType: KpiSubjectType): void {
+  if (subjectType === "TALENT_GROUP" || subjectType === "ORG_UNIT") {
+    return;
+  }
+
+  throw new KpiValidationError(
+    `KPI subjectType ${subjectType} is not supported for KPI publish`,
   );
 }
 
@@ -5339,6 +5496,14 @@ function normalizeNullableText(value: unknown): string | null {
 
 function normalizeSearchToken(value: unknown): string {
   return normalizeRequiredText(value, "searchToken").toLocaleLowerCase("en-US");
+}
+
+function uniqueTextValues(values: readonly string[]): readonly string[] {
+  return [
+    ...new Set(
+      values.map((value) => value.trim()).filter((value) => value.length > 0),
+    ),
+  ];
 }
 
 function normalizeDateText(value: unknown, field: string): string {

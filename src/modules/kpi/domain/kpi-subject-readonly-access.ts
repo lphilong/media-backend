@@ -43,6 +43,21 @@ export interface KpiSubjectReadonlyAccess {
     },
     session?: ClientSession,
   ): Promise<readonly string[]>;
+  listActiveOrgUnitIdsByIds(
+    orgUnitIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly string[]>;
+  listActiveOrgUnitDescendantIds(
+    ancestorOrgUnitIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly string[]>;
+  listActiveOrgUnitIdsByCodeOrName(
+    input: {
+      readonly search: string;
+      readonly orgUnitIds?: readonly string[];
+    },
+    session?: ClientSession,
+  ): Promise<readonly string[]>;
   hasActiveTalent(talentId: string, session?: ClientSession): Promise<boolean>;
   hasActiveTalentGroup(
     groupId: string,

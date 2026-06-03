@@ -51,7 +51,7 @@ export function assertManagedScopeIncludesGroup(
   if (
     managedGroupIds === null ||
     managedUnitScopeIncludes(
-      { talentGroupIds: managedGroupIds, orgUnitIds: [] },
+      { talentGroupIds: managedGroupIds, orgUnitIds: [], orgUnitScopes: [] },
       "TALENT_GROUP",
       groupId,
     )
