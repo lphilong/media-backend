@@ -30,6 +30,7 @@ export const KPI_METRIC_CODES = [
   "LIVE_HOURS",
   "EVENT_COMPLETION_COUNT",
   "ONBOARDED_TALENT_COUNT",
+  "TIKTOK_DIAMOND",
 ] as const;
 
 export type KpiMetricCode = (typeof KPI_METRIC_CODES)[number];

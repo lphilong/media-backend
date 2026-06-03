@@ -48,6 +48,12 @@ export const KPI_METRIC_CATALOG: Readonly<
     rollupMethod: "SUM",
     allowedSubjectTypes: ["TALENT_GROUP"],
   },
+  TIKTOK_DIAMOND: {
+    code: "TIKTOK_DIAMOND",
+    unit: "COUNT",
+    rollupMethod: "SUM",
+    allowedSubjectTypes: ["TALENT_GROUP"],
+  },
 });
 
 export function getKpiMetricCatalogEntry(

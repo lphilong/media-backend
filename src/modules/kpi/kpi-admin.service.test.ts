@@ -439,6 +439,57 @@ async function createPublishedGroupPlan(
   });
 }
 
+async function createPublishedDiamondGroupPlan(
+  service: KpiAdminService,
+): Promise<
+  ReturnType<KpiAdminService["publishKpiAllocation"]> extends Promise<infer T>
+    ? T
+    : never
+> {
+  const created = await service.createKpiPlan(createActor(), {
+    ...groupPlanCommand(),
+    targetMetrics: [
+      { metricCode: "REVENUE_VND", targetValue: 300 },
+      { metricCode: "TIKTOK_DIAMOND", targetValue: 1000 },
+    ],
+  });
+  const publishedPlan = await service.publishKpiPlan(createActor(), {
+    kpiPlanId: created.id,
+  });
+  await withEphemeralManagerAssignment(service, "group-1", async () => {
+    await service.upsertKpiAllocationDraft(createManagerActor(), {
+      kpiPlanId: created.id,
+      allocations: [
+        {
+          employmentProfileId: "talent-profile-1",
+          allocationStartDate: "2026-05-01",
+          targetMetrics: [
+            { metricCode: "REVENUE_VND", targetValue: 100 },
+            { metricCode: "TIKTOK_DIAMOND", targetValue: 600 },
+          ],
+        },
+        {
+          employmentProfileId: "talent-profile-2",
+          allocationStartDate: "2026-05-01",
+          targetMetrics: [
+            { metricCode: "REVENUE_VND", targetValue: 200 },
+            { metricCode: "TIKTOK_DIAMOND", targetValue: 400 },
+          ],
+        },
+      ],
+    });
+    await service.submitKpiAllocationDraft(createManagerActor(), {
+      kpiPlanId: created.id,
+    });
+  });
+  await service.approveKpiAllocation(createActor(), {
+    kpiPlanId: created.id,
+  });
+  return service.publishKpiAllocation(createActor(), {
+    kpiPlanId: publishedPlan.id,
+  });
+}
+
 test("KPI allocation storage preserves TALENT_GROUP member identity", async () => {
   const { service, repository } = createHarness(() => MAY_5_2026_NOON_HCM);
   const published = await createPublishedGroupPlan(service);
@@ -1729,6 +1780,31 @@ test("KPI V2 creates TALENT_GROUP draft plan with valid metrics and no allocatio
   assert.equal(result.allocations.length, 0);
 });
 
+test("KPI V2 creates and publishes TALENT_GROUP TikTok Diamond target metrics", async () => {
+  const { service } = createHarness();
+
+  const created = await service.createKpiPlan(createActor(), {
+    ...groupPlanCommand(),
+    targetMetrics: [{ metricCode: "TIKTOK_DIAMOND", targetValue: 1000 }],
+  });
+  const published = await service.publishKpiPlan(createActor(), {
+    kpiPlanId: created.id,
+  });
+
+  assert.equal(created.status, "DRAFT");
+  assert.equal(created.subjectType, "TALENT_GROUP");
+  assert.deepEqual(
+    created.targetMetrics.map((metric) => ({
+      metricCode: metric.metricCode,
+      targetValue: metric.targetValue,
+      unit: metric.unit,
+    })),
+    [{ metricCode: "TIKTOK_DIAMOND", targetValue: 1000, unit: "COUNT" }],
+  );
+  assert.equal(published.status, "PUBLISHED");
+  assert.equal(published.targetMetrics[0]?.metricCode, "TIKTOK_DIAMOND");
+});
+
 test("KPI V2 creates ORG_UNIT draft plans for active supported Org Unit types", async () => {
   const { service } = createHarness();
 
@@ -1910,6 +1986,7 @@ test("KPI V2 ORG_UNIT metric allowlist permits REVENUE_VND and rejects talent-sp
     "LIVE_HOURS",
     "EVENT_COMPLETION_COUNT",
     "ONBOARDED_TALENT_COUNT",
+    "TIKTOK_DIAMOND",
   ]) {
     await assert.rejects(
       service.createKpiPlan(
@@ -1921,6 +1998,14 @@ test("KPI V2 ORG_UNIT metric allowlist permits REVENUE_VND and rejects talent-sp
       ),
     );
   }
+
+  await assert.rejects(
+    service.replaceKpiTargetMetrics(createActor(), {
+      kpiPlanId: created.id,
+      targetMetrics: [{ metricCode: "TIKTOK_DIAMOND", targetValue: 1 }],
+    }),
+    /KPI metric TIKTOK_DIAMOND is not allowed for subjectType ORG_UNIT/,
+  );
 });
 
 test("KPI V2 publish rejects forged ORG_UNIT draft with disallowed target metric", async () => {
@@ -1938,13 +2023,13 @@ test("KPI V2 publish rejects forged ORG_UNIT draft with disallowed target metric
   const originalTarget = repository.targets[targetIndex] as KpiTargetMetric;
   repository.targets[targetIndex] = {
     ...originalTarget,
-    metricCode: "CONTENT_OUTPUT_COUNT",
+    metricCode: "TIKTOK_DIAMOND",
     targetValue: 10,
   };
 
   await assert.rejects(
     service.publishKpiPlan(createActor(), { kpiPlanId: created.id }),
-    /KPI metric CONTENT_OUTPUT_COUNT is not allowed for subjectType ORG_UNIT/,
+    /KPI metric TIKTOK_DIAMOND is not allowed for subjectType ORG_UNIT/,
   );
 
   const persisted = repository.plans.find((plan) => plan.id === created.id);
@@ -2012,6 +2097,13 @@ test("KPI V2 rejects decimal count plan target", async () => {
       targetMetrics: [{ metricCode: "CONTENT_OUTPUT_COUNT", targetValue: 1.5 }],
     }),
     /CONTENT_OUTPUT_COUNT requires an integer target value/,
+  );
+  await assert.rejects(
+    service.createKpiPlan(createActor(), {
+      ...groupPlanCommand(),
+      targetMetrics: [{ metricCode: "TIKTOK_DIAMOND", targetValue: 1.5 }],
+    }),
+    /TIKTOK_DIAMOND requires an integer target value/,
   );
 });
 
@@ -2167,6 +2259,24 @@ test("KPI V2 rejects decimal count allocation target", async () => {
       ],
     }),
     /ONBOARDED_TALENT_COUNT requires an integer target value/,
+  );
+
+  const diamondPlan = await service.createKpiPlan(createActor(), {
+    ...groupPlanCommand(),
+    targetMetrics: [{ metricCode: "TIKTOK_DIAMOND", targetValue: 10 }],
+  });
+  await assert.rejects(
+    service.replaceKpiAllocations(createActor(), {
+      kpiPlanId: diamondPlan.id,
+      allocations: [
+        {
+          memberTalentId: "talent-1",
+          allocationStartDate: "2026-05-01",
+          targetMetrics: [{ metricCode: "TIKTOK_DIAMOND", targetValue: 1.5 }],
+        },
+      ],
+    }),
+    /TIKTOK_DIAMOND requires an integer target value/,
   );
 });
 
@@ -3985,6 +4095,105 @@ test("KPI V2 progress sums effective values, can exceed 100%, and tracks missing
   assert.equal(revenueTotal?.progressPercent, (400 / 300) * 100);
   assert.equal(progress.memberProgress[0]?.actualEntryCount, 1);
   assert.equal(progress.memberProgress[0]?.missingEntryCount, 30);
+});
+
+test("KPI V2 treats TikTok Diamond as supporting operational count, not revenue", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
+  const { service, repository } = createHarness(() => now.value);
+  const published = await createPublishedDiamondGroupPlan(service);
+  const [first, second] = published.allocations as readonly KpiAllocation[];
+
+  await assert.rejects(
+    service.createOrSetKpiActual(createActor(), {
+      kpiPlanId: published.id,
+      allocationId: first.id,
+      metricCode: "TIKTOK_DIAMOND",
+      actualDate: "05-05-2026",
+      actualValue: 1.5,
+    }),
+    /TIKTOK_DIAMOND requires an integer actual value/,
+  );
+
+  const firstActual = await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: first.id,
+    metricCode: "TIKTOK_DIAMOND",
+    actualDate: "05-05-2026",
+    actualValue: 500,
+  });
+  await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: second.id,
+    metricCode: "TIKTOK_DIAMOND",
+    actualDate: "05-05-2026",
+    actualValue: 300,
+  });
+
+  now.value = MAY_5_2026_AFTER_LOCK_HCM;
+  await assert.rejects(
+    service.correctKpiActual(createActor(), {
+      kpiPlanId: published.id,
+      actualEntryId: firstActual.actualEntry.id,
+      correctedValue: 540.5,
+      reason: "Diamond correction must stay integer",
+    }),
+    /TIKTOK_DIAMOND requires an integer actual value/,
+  );
+  await service.correctKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    actualEntryId: firstActual.actualEntry.id,
+    correctedValue: 540,
+    reason: "Diamond operational correction",
+  });
+
+  const progress = await service.getKpiProgress(createActor(), {
+    kpiPlanId: published.id,
+  });
+  const diamondTotal = progress.groupTotals.find(
+    (metric) => metric.metricCode === "TIKTOK_DIAMOND",
+  );
+  assert.equal(diamondTotal?.targetValue, 1000);
+  assert.equal(diamondTotal?.actualValue, 840);
+  assert.equal(diamondTotal?.progressPercent, 84);
+
+  const workspaceDetail = await service.getKpiActualWorkspacePlanDetail(
+    createActor(),
+    { kpiPlanId: published.id },
+  );
+  assert.equal(workspaceDetail.revenue.metricCode, "REVENUE_VND");
+  assert.equal(workspaceDetail.revenue.actualValue, 0);
+  assert.deepEqual(workspaceDetail.supportingMetrics, [
+    {
+      metricCode: "TIKTOK_DIAMOND",
+      targetValue: 1000,
+      actualValue: 840,
+      achievementPercent: 84,
+    },
+  ]);
+
+  now.value = JUNE_1_2026_NOON_HCM;
+  await service.finalizeKpiPlan(createActor(), { kpiPlanId: published.id });
+  const snapshot = (await repository.findPlanById(published.id))?.finalResult;
+  assert.ok(snapshot);
+  assert.equal(snapshot.revenue.metricCode, "REVENUE_VND");
+  assert.equal(snapshot.revenue.actualValue, 0);
+  assert.deepEqual(snapshot.supportingMetrics, [
+    {
+      metricCode: "TIKTOK_DIAMOND",
+      targetValue: 1000,
+      actualValue: 840,
+      achievementPercent: 84,
+    },
+  ]);
+  assert.equal(
+    snapshot.members[0]?.supportingMetrics.some(
+      (metric) => metric.metricCode === "TIKTOK_DIAMOND",
+    ),
+    true,
+  );
+  for (const forbidden of ["payroll", "payout", "commission", "settlement"]) {
+    assert.equal(JSON.stringify(snapshot).includes(forbidden), false);
+  }
 });
 
 test("KPI V2 daily actual grid rejects missing actualDate", async () => {
@@ -7368,6 +7577,20 @@ test("KPI managed actual workspace prevents hidden group summary and detail leak
     (allocation) => allocation.kpiPlanId === managed.id,
   );
   assert.ok(templateAllocation);
+  const visibleAllocationIndex = repository.allocations.findIndex(
+    (allocation) => allocation.id === templateAllocation.id,
+  );
+  assert.notEqual(visibleAllocationIndex, -1);
+  repository.allocations[visibleAllocationIndex] = {
+    ...templateAllocation,
+    targetMetrics: [
+      ...templateAllocation.targetMetrics,
+      { metricCode: "TIKTOK_DIAMOND", targetValue: 999 },
+    ],
+  };
+  const visibleAllocation = repository.allocations[
+    visibleAllocationIndex
+  ] as KpiAllocation;
   const hiddenPlan: KpiPlan = {
     ...managed,
     id: "hidden-workspace-plan",
@@ -7391,25 +7614,46 @@ test("KPI managed actual workspace prevents hidden group summary and detail leak
     groupId: hiddenPlan.subjectId,
     snapshotMemberDisplayName: "hidden cross-group member",
   });
-  actualRepository.entries.push({
-    id: "hidden-workspace-actual",
-    kpiPlanId: hiddenPlan.id,
-    allocationId: "hidden-workspace-allocation",
-    memberTalentId: requireTestAllocationMemberTalentId(templateAllocation),
-    metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
-    actualValue: 999,
-    effectiveValue: 999,
-    editCount: 0,
-    correctionCount: 0,
-    latestCorrectionId: null,
-    createdAt: MAY_5_2026_NOON_HCM,
-    createdByActorId: "hidden",
-    updatedAt: MAY_5_2026_NOON_HCM,
-    updatedByActorId: "hidden",
-    lastEditedAt: null,
-    lastEditedByActorId: null,
-  });
+  actualRepository.entries.push(
+    {
+      id: "visible-workspace-diamond-actual",
+      kpiPlanId: managed.id,
+      allocationId: visibleAllocation.id,
+      memberTalentId: requireTestAllocationMemberTalentId(visibleAllocation),
+      metricCode: "TIKTOK_DIAMOND",
+      actualDate: "05-05-2026",
+      actualValue: 999,
+      effectiveValue: 999,
+      editCount: 0,
+      correctionCount: 0,
+      latestCorrectionId: null,
+      createdAt: MAY_5_2026_NOON_HCM,
+      createdByActorId: "manager-user",
+      updatedAt: MAY_5_2026_NOON_HCM,
+      updatedByActorId: "manager-user",
+      lastEditedAt: null,
+      lastEditedByActorId: null,
+    },
+    {
+      id: "hidden-workspace-actual",
+      kpiPlanId: hiddenPlan.id,
+      allocationId: "hidden-workspace-allocation",
+      memberTalentId: requireTestAllocationMemberTalentId(templateAllocation),
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      actualValue: 999,
+      effectiveValue: 999,
+      editCount: 0,
+      correctionCount: 0,
+      latestCorrectionId: null,
+      createdAt: MAY_5_2026_NOON_HCM,
+      createdByActorId: "hidden",
+      updatedAt: MAY_5_2026_NOON_HCM,
+      updatedByActorId: "hidden",
+      lastEditedAt: null,
+      lastEditedByActorId: null,
+    },
+  );
   seedManagerAssignment(managerRepository, "group-1");
 
   const result = await service.listKpiActualWorkspacePlans(
@@ -7420,19 +7664,44 @@ test("KPI managed actual workspace prevents hidden group summary and detail leak
     result.items.map((item) => item.planId),
     [managed.id],
   );
-  assert.equal(JSON.stringify(result).includes("999"), false);
+  const serializedResult = JSON.stringify(result);
+  assert.equal(serializedResult.includes("999"), true);
+  for (const hiddenValue of [
+    hiddenPlan.id,
+    hiddenPlan.planCode,
+    hiddenPlan.subjectId,
+    "TG-000002",
+    "Hidden Team",
+    "hidden-workspace-allocation",
+    "hidden-workspace-actual",
+    "hidden cross-group member",
+  ]) {
+    assert.equal(serializedResult.includes(hiddenValue), false, hiddenValue);
+  }
   const detail = await service.getKpiActualWorkspacePlanDetail(
     createProgressReadOnlyBackofficeTeamManagerActor(),
     { kpiPlanId: managed.id },
   );
+  const serializedDetail = JSON.stringify(detail);
+  assert.equal(serializedDetail.includes("999"), true);
   assert.equal(
-    JSON.stringify(detail).includes("cross-group-workspace-allocation"),
+    detail.members.some(
+      (member) => member.allocationId === "cross-group-workspace-allocation",
+    ),
     false,
   );
-  assert.equal(
-    JSON.stringify(detail).includes("hidden cross-group member"),
-    false,
-  );
+  for (const hiddenValue of [
+    hiddenPlan.id,
+    hiddenPlan.planCode,
+    hiddenPlan.subjectId,
+    "TG-000002",
+    "Hidden Team",
+    "hidden-workspace-allocation",
+    "hidden-workspace-actual",
+    "hidden cross-group member",
+  ]) {
+    assert.equal(serializedDetail.includes(hiddenValue), false, hiddenValue);
+  }
   await assert.rejects(
     service.getKpiActualWorkspacePlanDetail(
       createProgressReadOnlyBackofficeTeamManagerActor(),
