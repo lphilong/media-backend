@@ -43,6 +43,7 @@ import {
 } from "@modules/kpi/domain/kpi-subject-readonly-access";
 import { ReferenceSummary } from "@modules/reference-summary";
 import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
+import { resolveManagedUnitAuthority } from "@modules/kpi/domain/managed-unit-authority";
 import {
   KpiAllocation,
   KpiAllocationStatus,
@@ -564,6 +565,90 @@ function seedManagerAssignment(
     updatedByActorId: "seed",
   });
 }
+
+test("KPI managed unit authority adapter preserves active TalentGroup assignments and disables OrgUnit authority", async () => {
+  const { subjectAccess, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  seedManagerAssignment(managerRepository, "group-1");
+  seedManagerAssignment(managerRepository, "group-2");
+  seedManagerAssignment(managerRepository, "group-2");
+
+  const authority = await resolveManagedUnitAuthority(
+    createManagerActor(),
+    {
+      subjectReadonlyAccess: subjectAccess,
+      managerAssignmentRepository: managerRepository,
+    },
+    { asOf: MAY_5_2026_NOON_HCM },
+  );
+  const unscopedAuthority = await resolveManagedUnitAuthority(
+    createManagerActorWithoutKpiScope(),
+    {
+      subjectReadonlyAccess: subjectAccess,
+      managerAssignmentRepository: managerRepository,
+    },
+    { asOf: MAY_5_2026_NOON_HCM },
+  );
+
+  assert.deepEqual(authority?.scope.talentGroupIds, ["group-1", "group-2"]);
+  assert.deepEqual(authority?.scope.orgUnitIds, []);
+  assert.equal(authority?.actorEmploymentProfileId, "manager-profile-1");
+  assert.equal(unscopedAuthority, null);
+});
+
+test("KPI managed unit authority adapter ignores missing profile and inactive or expired TalentGroup assignments", async () => {
+  const { service, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  await createPublishedGroupPlan(service);
+  managerRepository.assignments.push(
+    {
+      id: "inactive-assignment",
+      groupId: "group-1",
+      managerEmploymentProfileId: "manager-profile-1",
+      role: "MANAGER",
+      effectiveFrom: MAY_2026_START_AT,
+      effectiveTo: null,
+      status: "INACTIVE",
+      isPrimary: true,
+      createdAt: MAY_2026_START_AT,
+      createdByActorId: "seed",
+      updatedAt: MAY_2026_START_AT,
+      updatedByActorId: "seed",
+    },
+    {
+      id: "expired-assignment",
+      groupId: "group-1",
+      managerEmploymentProfileId: "manager-profile-1",
+      role: "MANAGER",
+      effectiveFrom: MAY_2026_START_AT,
+      effectiveTo: MAY_5_2026_START_HCM,
+      status: "ACTIVE",
+      isPrimary: false,
+      createdAt: MAY_2026_START_AT,
+      createdByActorId: "seed",
+      updatedAt: MAY_2026_START_AT,
+      updatedByActorId: "seed",
+    },
+  );
+
+  const inactiveOrExpiredResult = await service.listKpiPlans(
+    createManagerActor(),
+    {},
+  );
+  const unlinkedResult = await service.listKpiPlans(
+    createScopedActor({
+      id: "unlinked-manager-user",
+      permissions: [Permission.KPI_READ],
+      kpiScopes: ["managedGroup"],
+    }),
+    {},
+  );
+
+  assert.deepEqual(inactiveOrExpiredResult.items, []);
+  assert.deepEqual(unlinkedResult.items, []);
+});
 
 function replacePlanAllocationStatuses(
   repository: InMemoryKpiPlanRepository,

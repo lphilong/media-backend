@@ -1,0 +1,116 @@
+import { ClientSession } from "mongodb";
+import { Actor } from "@core/actor/actor";
+import { SystemInvariantError } from "@core/error/system-error";
+import { PermissionGuard } from "@core/permission/permission.guard";
+import { KpiSubjectReadonlyAccess } from "./kpi-subject-readonly-access";
+import { TalentGroupManagerAssignmentRepository } from "./talent-group-manager-assignment.repository";
+
+export const MANAGED_UNIT_KINDS = ["TALENT_GROUP", "ORG_UNIT"] as const;
+
+export type ManagedUnitKind = (typeof MANAGED_UNIT_KINDS)[number];
+
+export interface ManagedUnitScope {
+  readonly talentGroupIds: readonly string[];
+  readonly orgUnitIds: readonly string[];
+}
+
+export interface ManagedUnitAuthority {
+  readonly actorEmploymentProfileId: string | null;
+  readonly scope: ManagedUnitScope;
+}
+
+export interface ManagedUnitAuthorityDependencies {
+  readonly subjectReadonlyAccess: Pick<
+    KpiSubjectReadonlyAccess,
+    "findActiveEmploymentProfileByLinkedUserId"
+  >;
+  readonly managerAssignmentRepository: Pick<
+    TalentGroupManagerAssignmentRepository,
+    "listActiveAssignmentsByManagerEmploymentProfile"
+  >;
+}
+
+export interface ResolveManagedUnitAuthorityOptions {
+  readonly asOf?: number;
+  readonly session?: ClientSession;
+}
+
+export function requiresManagedUnitAuthority(actor: Actor): boolean {
+  if (PermissionGuard.hasKpiScopeGrant(actor, "global")) {
+    return false;
+  }
+
+  return PermissionGuard.hasKpiScopeGrant(actor, "managedGroup");
+}
+
+export async function resolveManagedUnitAuthority(
+  actor: Actor,
+  dependencies: ManagedUnitAuthorityDependencies | undefined,
+  options: ResolveManagedUnitAuthorityOptions = {},
+): Promise<ManagedUnitAuthority | null> {
+  if (!requiresManagedUnitAuthority(actor)) {
+    return null;
+  }
+
+  if (!dependencies) {
+    throw new SystemInvariantError(
+      "SYSTEM_INVARIANT_VIOLATION",
+      "Managed unit authority dependencies are not configured",
+    );
+  }
+
+  const employmentProfile =
+    await dependencies.subjectReadonlyAccess.findActiveEmploymentProfileByLinkedUserId(
+      actor.id,
+      options.session,
+    );
+
+  if (!employmentProfile) {
+    return createManagedUnitAuthority(null, [], []);
+  }
+
+  const assignments =
+    await dependencies.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
+      employmentProfile.employmentProfileId,
+      options.asOf ?? Date.now(),
+      options.session,
+    );
+
+  return createManagedUnitAuthority(
+    employmentProfile.employmentProfileId,
+    assignments.map((assignment) => assignment.groupId),
+    [],
+  );
+}
+
+export function managedUnitScopeIncludes(
+  scope: ManagedUnitScope,
+  kind: ManagedUnitKind,
+  unitId: string,
+): boolean {
+  return kind === "TALENT_GROUP"
+    ? scope.talentGroupIds.includes(unitId)
+    : scope.orgUnitIds.includes(unitId);
+}
+
+function createManagedUnitAuthority(
+  actorEmploymentProfileId: string | null,
+  talentGroupIds: readonly string[],
+  orgUnitIds: readonly string[],
+): ManagedUnitAuthority {
+  return {
+    actorEmploymentProfileId,
+    scope: {
+      talentGroupIds: uniqueNonEmpty(talentGroupIds),
+      orgUnitIds: uniqueNonEmpty(orgUnitIds),
+    },
+  };
+}
+
+function uniqueNonEmpty(values: readonly string[]): readonly string[] {
+  return [
+    ...new Set(
+      values.map((value) => value.trim()).filter((value) => value.length > 0),
+    ),
+  ];
+}

@@ -1924,23 +1924,11 @@ export class KpiAdminService {
         `${operation} allocation is outside plan group ${plan.subjectId}`,
       );
     }
-    const employmentProfile =
-      await this.subjectReadonlyAccess.findActiveEmploymentProfileByLinkedUserId(
-        actor.id,
-        session,
-      );
-    if (!employmentProfile) {
-      throw new KpiPermissionScopeError(
-        `${operation} requires actor-to-employment-profile mapping`,
-      );
-    }
-    const assignments =
-      await this.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-        employmentProfile.employmentProfileId,
-        this.clock(),
-        session,
-      );
-    if (assignments.some((assignment) => assignment.groupId === groupId)) {
+    const managedGroupIds = await this.resolveManagedTalentGroupIds(
+      actor,
+      session,
+    );
+    if (managedGroupIds.includes(groupId)) {
       return;
     }
     throw new KpiPermissionScopeError(
@@ -2037,23 +2025,8 @@ export class KpiAdminService {
         "KPI manager-scoped progress read is supported only for TALENT_GROUP plans",
       );
     }
-    const employmentProfile =
-      await this.subjectReadonlyAccess.findActiveEmploymentProfileByLinkedUserId(
-        actor.id,
-      );
-    if (!employmentProfile) {
-      throw new KpiPermissionScopeError(
-        "KPI managed-group progress read requires actor-to-employment-profile mapping",
-      );
-    }
-    const assignments =
-      await this.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-        employmentProfile.employmentProfileId,
-        this.clock(),
-      );
-    if (
-      assignments.some((assignment) => assignment.groupId === plan.subjectId)
-    ) {
+    const managedGroupIds = await this.resolveManagedTalentGroupIds(actor);
+    if (managedGroupIds.includes(plan.subjectId)) {
       return;
     }
     throw new KpiPermissionScopeError(
@@ -2106,23 +2079,8 @@ export class KpiAdminService {
         "KPI manager-scoped actual grid read is supported only for TALENT_GROUP plans",
       );
     }
-    const employmentProfile =
-      await this.subjectReadonlyAccess.findActiveEmploymentProfileByLinkedUserId(
-        actor.id,
-      );
-    if (!employmentProfile) {
-      throw new KpiPermissionScopeError(
-        "KPI actual grid read requires actor-to-employment-profile mapping",
-      );
-    }
-    const assignments =
-      await this.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-        employmentProfile.employmentProfileId,
-        this.clock(),
-      );
-    if (
-      assignments.some((assignment) => assignment.groupId === plan.subjectId)
-    ) {
+    const managedGroupIds = await this.resolveManagedTalentGroupIds(actor);
+    if (managedGroupIds.includes(plan.subjectId)) {
       return;
     }
     throw new KpiPermissionScopeError(
@@ -3063,6 +3021,7 @@ export class KpiAdminService {
 
   private async resolveManagedTalentGroupIds(
     actor: Actor,
+    session?: ClientSession,
   ): Promise<readonly string[]> {
     const groupIds = await resolveManagedTalentGroupIds(
       actor,
@@ -3071,6 +3030,7 @@ export class KpiAdminService {
         managerAssignmentRepository: this.managerAssignmentRepository,
       },
       this.clock(),
+      session,
     );
     return groupIds ?? [];
   }
@@ -3420,25 +3380,11 @@ export class KpiAdminService {
         "KPI allocation draft requires a PUBLISHED group KPI plan",
       );
     }
-    const employmentProfile =
-      await this.subjectReadonlyAccess.findActiveEmploymentProfileByLinkedUserId(
-        actor.id,
-        session,
-      );
-    if (!employmentProfile) {
-      throw new KpiPermissionScopeError(
-        "KPI allocation draft requires actor-to-employment-profile mapping",
-      );
-    }
-    const assignments =
-      await this.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-        employmentProfile.employmentProfileId,
-        this.clock(),
-        session,
-      );
-    if (
-      assignments.some((assignment) => assignment.groupId === plan.subjectId)
-    ) {
+    const managedGroupIds = await this.resolveManagedTalentGroupIds(
+      actor,
+      session,
+    );
+    if (managedGroupIds.includes(plan.subjectId)) {
       return;
     }
     throw new KpiPermissionScopeError(

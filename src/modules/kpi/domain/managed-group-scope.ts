@@ -1,8 +1,14 @@
+import { ClientSession } from "mongodb";
 import { Actor } from "@core/actor/actor";
 import { SystemInvariantError } from "@core/error/system-error";
-import { PermissionGuard } from "@core/permission/permission.guard";
 import { KpiSubjectReadonlyAccess } from "./kpi-subject-readonly-access";
 import { TalentGroupManagerAssignmentRepository } from "./talent-group-manager-assignment.repository";
+import {
+  ManagedUnitAuthorityDependencies,
+  managedUnitScopeIncludes,
+  requiresManagedUnitAuthority,
+  resolveManagedUnitAuthority,
+} from "./managed-unit-authority";
 
 export interface ManagedGroupScopeDependencies {
   readonly subjectReadonlyAccess: Pick<
@@ -16,52 +22,35 @@ export interface ManagedGroupScopeDependencies {
 }
 
 export function requiresManagedGroupScope(actor: Actor): boolean {
-  if (PermissionGuard.hasKpiScopeGrant(actor, "global")) {
-    return false;
-  }
-
-  return PermissionGuard.hasKpiScopeGrant(actor, "managedGroup");
+  return requiresManagedUnitAuthority(actor);
 }
 
 export async function resolveManagedTalentGroupIds(
   actor: Actor,
   dependencies: ManagedGroupScopeDependencies | undefined,
   asOf = Date.now(),
+  session?: ClientSession,
 ): Promise<readonly string[] | null> {
-  if (!requiresManagedGroupScope(actor)) {
-    return null;
-  }
-
-  if (!dependencies) {
-    throw new SystemInvariantError(
-      "SYSTEM_INVARIANT_VIOLATION",
-      "Managed group scope dependencies are not configured",
-    );
-  }
-
-  const employmentProfile =
-    await dependencies.subjectReadonlyAccess.findActiveEmploymentProfileByLinkedUserId(
-      actor.id,
-    );
-
-  if (!employmentProfile) {
-    return [];
-  }
-
-  const assignments =
-    await dependencies.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-      employmentProfile.employmentProfileId,
-      asOf,
-    );
-
-  return [...new Set(assignments.map((assignment) => assignment.groupId))];
+  const authority = await resolveManagedUnitAuthority(
+    actor,
+    dependencies as ManagedUnitAuthorityDependencies | undefined,
+    { asOf, session },
+  );
+  return authority?.scope.talentGroupIds ?? null;
 }
 
 export function assertManagedScopeIncludesGroup(
   managedGroupIds: readonly string[] | null,
   groupId: string,
 ): void {
-  if (managedGroupIds === null || managedGroupIds.includes(groupId)) {
+  if (
+    managedGroupIds === null ||
+    managedUnitScopeIncludes(
+      { talentGroupIds: managedGroupIds, orgUnitIds: [] },
+      "TALENT_GROUP",
+      groupId,
+    )
+  ) {
     return;
   }
 
