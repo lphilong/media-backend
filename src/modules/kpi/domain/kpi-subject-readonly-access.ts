@@ -23,6 +23,13 @@ export interface KpiManagedMemberLookup {
   readonly groupId: string;
 }
 
+export interface KpiOrgUnitMemberLookup {
+  readonly employmentProfileId: string;
+  readonly employeeCode: string | null;
+  readonly displayName: string;
+  readonly orgUnitId: string;
+}
+
 export interface KpiActorEmploymentProfileLookup {
   readonly employmentProfileId: string;
 }
@@ -85,6 +92,19 @@ export interface KpiSubjectReadonlyAccess {
     },
     session?: ClientSession,
   ): Promise<readonly KpiManagedMemberLookup[]>;
+  findActiveOrgUnitMemberByEmploymentProfile(
+    orgUnitId: string,
+    employmentProfileId: string,
+    session?: ClientSession,
+  ): Promise<KpiOrgUnitMemberLookup | null>;
+  listActiveOrgUnitMembers(
+    orgUnitId: string,
+    input: {
+      readonly search?: string;
+      readonly limit: number;
+    },
+    session?: ClientSession,
+  ): Promise<readonly KpiOrgUnitMemberLookup[]>;
   findActiveEmploymentProfileByLinkedUserId(
     linkedUserId: string,
     session?: ClientSession,

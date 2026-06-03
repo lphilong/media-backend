@@ -111,10 +111,14 @@ import {
   KpiActualCorrectionResult,
   KpiActualMutationResult,
   KpiAllocationInput,
+  KpiOrgUnitAllocationItem,
   ListKpiAllocationsQuery,
   ListKpiAllocationsResult,
   ListKpiManagedMembersQuery,
   ListKpiManagedMembersResult,
+  ListKpiOrgUnitAllocationsQuery,
+  ListKpiOrgUnitAllocationsResult,
+  ListKpiOrgUnitManagedMembersResult,
   UpsertKpiAllocationDraftCommand,
   SubmitKpiAllocationDraftCommand,
   ApproveKpiAllocationCommand,
@@ -700,18 +704,27 @@ export class KpiAdminService {
       query.status === undefined
         ? undefined
         : normalizeAllocationStatus(query.status);
+    const subjectType =
+      query.subjectType === undefined
+        ? "TALENT_GROUP"
+        : normalizeAllocationSubjectType(query.subjectType);
     const kpiPlanId = normalizeOptionalText(query.kpiPlanId);
     const groupId = normalizeOptionalText(query.groupId);
     const limit = normalizeLimit(query.limit);
 
+    if (subjectType !== "TALENT_GROUP") {
+      return { items: [] };
+    }
+
     if (this.hasKpiGlobalScope(actor)) {
+      const items = await this.repository.listAllocations({
+        status,
+        kpiPlanId,
+        groupId,
+        limit,
+      });
       return {
-        items: await this.repository.listAllocations({
-          status,
-          kpiPlanId,
-          groupId,
-          limit,
-        }),
+        items: items.filter(isTalentGroupCompatibleAllocation),
       };
     }
 
@@ -736,7 +749,51 @@ export class KpiAdminService {
         }),
       ),
     );
-    return { items: results.flat().slice(0, limit) };
+    return {
+      items: results
+        .flat()
+        .filter(isTalentGroupCompatibleAllocation)
+        .slice(0, limit),
+    };
+  }
+
+  async listKpiOrgUnitAllocations(
+    actor: Actor,
+    query: ListKpiOrgUnitAllocationsQuery,
+  ): Promise<ListKpiOrgUnitAllocationsResult> {
+    this.assertContextPermission(actor, Permission.KPI_READ);
+    const status =
+      query.status === undefined
+        ? undefined
+        : normalizeAllocationStatus(query.status);
+    const kpiPlanId = normalizeOptionalText(query.kpiPlanId);
+    const orgUnitId = normalizeOptionalText(query.orgUnitId);
+    const limit = normalizeLimit(query.limit);
+    const planIds = await this.resolveVisibleOrgUnitAllocationPlanIds(
+      actor,
+      kpiPlanId,
+      orgUnitId,
+      limit,
+    );
+    if (planIds.length === 0) {
+      return { items: [] };
+    }
+    const results = await Promise.all(
+      planIds.map((planId) =>
+        this.repository.listAllocations({
+          status,
+          kpiPlanId: planId,
+          limit,
+        }),
+      ),
+    );
+    return {
+      items: results
+        .flat()
+        .filter(isOrgUnitAllocation)
+        .map(toOrgUnitAllocationItem)
+        .slice(0, limit),
+    };
   }
 
   async listKpiManagedMembers(
@@ -746,6 +803,11 @@ export class KpiAdminService {
     this.assertContextPermission(actor, Permission.KPI_ENTER_ACTUAL);
     const plan = await this.requirePlan(query.kpiPlanId);
     await this.assertActorCanDraftAllocation(actor, plan);
+    if (plan.subjectType !== "TALENT_GROUP") {
+      throw new KpiInvalidAllocationError(
+        "KPI managed member picker is supported only for TALENT_GROUP plans",
+      );
+    }
     const items =
       await this.subjectReadonlyAccess.listActiveInternalGroupMembers(
         plan.subjectId,
@@ -754,6 +816,28 @@ export class KpiAdminService {
           limit: normalizeLimit(query.limit),
         },
       );
+    return { items };
+  }
+
+  async listKpiOrgUnitManagedMembers(
+    actor: Actor,
+    query: ListKpiManagedMembersQuery,
+  ): Promise<ListKpiOrgUnitManagedMembersResult> {
+    this.assertContextPermission(actor, Permission.KPI_ENTER_ACTUAL);
+    const plan = await this.requirePlan(query.kpiPlanId);
+    await this.assertActorCanDraftAllocation(actor, plan);
+    if (plan.subjectType !== "ORG_UNIT") {
+      throw new KpiInvalidAllocationError(
+        "KPI Org Unit member picker is supported only for ORG_UNIT plans",
+      );
+    }
+    const items = await this.subjectReadonlyAccess.listActiveOrgUnitMembers(
+      plan.subjectId,
+      {
+        search: normalizeOptionalText(query.search),
+        limit: normalizeLimit(query.limit),
+      },
+    );
     return { items };
   }
 
@@ -940,7 +1024,7 @@ export class KpiAdminService {
       `kpi-plan:${command.kpiPlanId}`,
       async (session) => {
         const plan = await this.requirePlan(command.kpiPlanId, session);
-        assertExecutableSubjectType(plan.subjectType);
+        assertAllocatableSubjectType(plan.subjectType);
         if (plan.status !== "PUBLISHED") {
           throw new KpiStateError(
             "KPI allocation can be published only after the KPI plan is PUBLISHED",
@@ -950,7 +1034,7 @@ export class KpiAdminService {
           this.repository.listTargetMetricsByPlanId(plan.id, session),
           this.repository.listAllocationsByPlanId(plan.id, session),
         ]);
-        await this.validateGroupAllocationsForTransition(
+        await this.validateAllocationsForTransition(
           plan,
           targetMetrics,
           allocations,
@@ -3448,9 +3532,9 @@ export class KpiAdminService {
         "KPI allocation draft requires at least one member",
       );
     }
-    if (plan.subjectType !== "TALENT_GROUP") {
+    if (plan.subjectType !== "TALENT_GROUP" && plan.subjectType !== "ORG_UNIT") {
       throw new KpiInvalidAllocationError(
-        "KPI allocation drafts are allowed only for TALENT_GROUP plans",
+        "KPI allocation drafts are allowed only for TALENT_GROUP or ORG_UNIT plans",
       );
     }
     const planMetricCodes = new Set(
@@ -3459,14 +3543,22 @@ export class KpiAdminService {
     const allocations: KpiAllocation[] = [];
     for (const input of inputs) {
       const member =
-        await this.subjectReadonlyAccess.findActiveGroupMemberByEmploymentProfile(
-          plan.subjectId,
-          input.employmentProfileId,
-          session,
-        );
+        plan.subjectType === "TALENT_GROUP"
+          ? await this.subjectReadonlyAccess.findActiveGroupMemberByEmploymentProfile(
+              plan.subjectId,
+              input.employmentProfileId,
+              session,
+            )
+          : await this.subjectReadonlyAccess.findActiveOrgUnitMemberByEmploymentProfile(
+              plan.subjectId,
+              input.employmentProfileId,
+              session,
+            );
       if (!member) {
         throw new KpiInvalidAllocationError(
-          `KPI allocation target must be an active internal EmploymentProfile member of group ${plan.subjectId}: ${input.employmentProfileId}`,
+          plan.subjectType === "TALENT_GROUP"
+            ? `KPI allocation target must be an active internal EmploymentProfile member of group ${plan.subjectId}: ${input.employmentProfileId}`
+            : `KPI allocation target must be an active EmploymentProfile member of org unit ${plan.subjectId}: ${input.employmentProfileId}`,
         );
       }
       for (const target of input.targetMetrics) {
@@ -3476,15 +3568,23 @@ export class KpiAdminService {
           );
         }
       }
+      const memberTalentId =
+        plan.subjectType === "TALENT_GROUP" && "talentId" in member
+          ? member.talentId
+          : null;
+      const membershipId =
+        plan.subjectType === "TALENT_GROUP" && "membershipId" in member
+          ? member.membershipId
+          : null;
       allocations.push({
         id: crypto.randomUUID(),
         kpiPlanId: plan.id,
-        subjectType: "TALENT_GROUP",
+        subjectType: plan.subjectType,
         subjectId: plan.subjectId,
-        groupId: plan.subjectId,
+        groupId: plan.subjectType === "TALENT_GROUP" ? plan.subjectId : null,
         memberEmploymentProfileId: input.employmentProfileId,
-        memberTalentId: member.talentId,
-        membershipId: member.membershipId,
+        memberTalentId,
+        membershipId,
         allocationStatus: "DRAFT",
         allocationStartDate: input.allocationStartDate,
         allocationEndDate: input.allocationEndDate,
@@ -3524,20 +3624,27 @@ export class KpiAdminService {
         "KPI allocation draft requires ADMIN manager authority",
       );
     }
+    if (plan.subjectType !== "TALENT_GROUP" && plan.subjectType !== "ORG_UNIT") {
+      throw new KpiInvalidAllocationError(
+        "KPI allocation draft is supported only for TALENT_GROUP or ORG_UNIT plans",
+      );
+    }
+    if (plan.status !== "PUBLISHED") {
+      throw new KpiStateError(
+        "KPI allocation draft requires a PUBLISHED KPI plan",
+      );
+    }
+    if (plan.subjectType === "ORG_UNIT" && this.hasKpiGlobalScope(actor)) {
+      return;
+    }
     if (!this.hasKpiManagedGroupScope(actor)) {
       throw new KpiPermissionScopeError(
         "KPI allocation draft requires kpi.managedGroup scope",
       );
     }
-    if (plan.subjectType !== "TALENT_GROUP") {
-      throw new KpiInvalidAllocationError(
-        "KPI allocation draft is supported only for TALENT_GROUP plans",
-      );
-    }
-    if (plan.status !== "PUBLISHED") {
-      throw new KpiStateError(
-        "KPI allocation draft requires a PUBLISHED group KPI plan",
-      );
+    if (plan.subjectType === "ORG_UNIT") {
+      await this.assertDirectUnitManagerAllocationWrite(actor, plan, session);
+      return;
     }
     const managedGroupIds = await this.resolveManagedTalentGroupIds(
       actor,
@@ -3548,6 +3655,83 @@ export class KpiAdminService {
     }
     throw new KpiPermissionScopeError(
       `KPI actor is not an active manager for group ${plan.subjectId}`,
+    );
+  }
+
+  private async assertDirectUnitManagerAllocationWrite(
+    actor: Actor,
+    plan: KpiPlan,
+    session?: ClientSession,
+  ): Promise<void> {
+    const authority = await this.resolveManagedUnitAuthority(actor, session);
+    if (!authority?.actorEmploymentProfileId) {
+      throw new KpiPermissionScopeError(
+        "KPI Org Unit allocation requires linked active EmploymentProfile",
+      );
+    }
+    const directUnitManager = authority.scope.orgUnitScopes.some(
+      (scope) =>
+        scope.role === "UNIT_MANAGER" &&
+        scope.orgUnitId === plan.subjectId,
+    );
+    if (directUnitManager) {
+      return;
+    }
+    throw new KpiPermissionScopeError(
+      `KPI actor is not a direct UNIT_MANAGER for org unit ${plan.subjectId}`,
+    );
+  }
+
+  private async resolveVisibleOrgUnitAllocationPlanIds(
+    actor: Actor,
+    kpiPlanId: string | undefined,
+    orgUnitId: string | undefined,
+    limit: number,
+  ): Promise<readonly string[]> {
+    if (kpiPlanId) {
+      const plan = await this.requirePlan(kpiPlanId);
+      if (plan.subjectType !== "ORG_UNIT") {
+        return [];
+      }
+      if (orgUnitId && plan.subjectId !== orgUnitId) {
+        return [];
+      }
+      if (this.hasKpiGlobalScope(actor)) {
+        return [plan.id];
+      }
+      await this.assertDirectUnitManagerAllocationWrite(actor, plan);
+      return [plan.id];
+    }
+
+    const subjectIds = orgUnitId
+      ? [orgUnitId]
+      : this.hasKpiGlobalScope(actor)
+        ? undefined
+        : await this.resolveDirectUnitManagerOrgUnitIds(actor);
+    if (subjectIds !== undefined && subjectIds.length === 0) {
+      return [];
+    }
+    const plans = await this.repository.listPlans({
+      subjectType: "ORG_UNIT",
+      subjectIds,
+      status: "PUBLISHED",
+      limit,
+    });
+    return plans.map((plan) => plan.id);
+  }
+
+  private async resolveDirectUnitManagerOrgUnitIds(
+    actor: Actor,
+    session?: ClientSession,
+  ): Promise<readonly string[]> {
+    const authority = await this.resolveManagedUnitAuthority(actor, session);
+    if (!authority?.actorEmploymentProfileId) {
+      return [];
+    }
+    return uniqueTextValues(
+      authority.scope.orgUnitScopes
+        .filter((scope) => scope.role === "UNIT_MANAGER")
+        .map((scope) => scope.orgUnitId),
     );
   }
 
@@ -3572,7 +3756,7 @@ export class KpiAdminService {
       `kpi-plan:${kpiPlanId}`,
       async (session) => {
         const plan = await this.requirePlan(kpiPlanId, session);
-        assertExecutableSubjectType(plan.subjectType);
+        assertAllocatableSubjectType(plan.subjectType);
         this.assertActualMutationPlanOpen(plan, "approve or reject allocation");
         const allocations = await this.repository.listAllocationsByPlanId(
           plan.id,
@@ -3629,7 +3813,7 @@ export class KpiAdminService {
     );
   }
 
-  private async validateGroupAllocationsForTransition(
+  private async validateAllocationsForTransition(
     plan: KpiPlan,
     targetMetrics: readonly KpiTargetMetric[],
     allocations: readonly KpiAllocation[],
@@ -3650,12 +3834,28 @@ export class KpiAdminService {
         `KPI allocation rows must all be ${expectedStatus}`,
       );
     }
-    await this.validateGroupAllocationsForPublish(
-      plan,
-      targetMetrics,
-      allocations,
-      session,
-      expectedStatus,
+    if (plan.subjectType === "TALENT_GROUP") {
+      await this.validateGroupAllocationsForPublish(
+        plan,
+        targetMetrics,
+        allocations,
+        session,
+        expectedStatus,
+      );
+      return;
+    }
+    if (plan.subjectType === "ORG_UNIT") {
+      await this.validateOrgUnitAllocationsForPublish(
+        plan,
+        targetMetrics,
+        allocations,
+        session,
+        expectedStatus,
+      );
+      return;
+    }
+    throw new KpiInvalidAllocationError(
+      `KPI allocation transition is not supported for subjectType ${plan.subjectType}`,
     );
   }
 
@@ -3695,6 +3895,82 @@ export class KpiAdminService {
       if (!member) {
         throw new KpiInvalidAllocationError(
           `KPI allocation memberTalentId must still be an active member at publish: ${memberTalentId}`,
+        );
+      }
+      for (const metric of allocation.targetMetrics) {
+        normalizeTargetValue(
+          metric.targetValue,
+          metric.metricCode,
+          `allocations[].targetMetrics[].targetValue`,
+        );
+        if (!totals.has(metric.metricCode)) {
+          throw new KpiInvalidAllocationError(
+            `KPI allocation metricCode ${metric.metricCode} is not in plan target metrics`,
+          );
+        }
+        totals.set(
+          metric.metricCode,
+          (totals.get(metric.metricCode) ?? 0) + metric.targetValue,
+        );
+      }
+    }
+
+    for (const target of targetMetrics) {
+      const total = totals.get(target.metricCode) ?? 0;
+      if (!numbersEqual(total, target.targetValue)) {
+        throw new KpiInvalidAllocationError(
+          `KPI allocation total for ${target.metricCode} must equal plan target ${target.targetValue}; received ${total}`,
+        );
+      }
+    }
+  }
+
+  private async validateOrgUnitAllocationsForPublish(
+    plan: KpiPlan,
+    targetMetrics: readonly KpiTargetMetric[],
+    allocations: readonly KpiAllocation[],
+    session: ClientSession,
+    expectedStatus: KpiAllocationStatus = "DRAFT",
+  ): Promise<void> {
+    if (allocations.length === 0) {
+      throw new KpiInvalidAllocationError(
+        "KPI ORG_UNIT publish requires allocation rows",
+      );
+    }
+
+    const totals = new Map<KpiMetricCode, number>();
+    for (const target of targetMetrics) {
+      totals.set(target.metricCode, 0);
+    }
+
+    for (const allocation of allocations) {
+      if (
+        allocation.subjectType !== "ORG_UNIT" ||
+        allocation.subjectId !== plan.subjectId
+      ) {
+        throw new KpiInvalidAllocationError(
+          `KPI allocation ${allocation.id} is outside ORG_UNIT plan subject ${plan.subjectId}`,
+        );
+      }
+      if (allocation.allocationStatus !== expectedStatus) {
+        throw new KpiInvalidAllocationError(
+          `KPI allocation ${allocation.id} must be ${expectedStatus} before publish`,
+        );
+      }
+      const memberEmploymentProfileId =
+        requireAllocationMemberEmploymentProfileId(
+          allocation,
+          "publish allocation",
+        );
+      const member =
+        await this.subjectReadonlyAccess.findActiveOrgUnitMemberByEmploymentProfile(
+          plan.subjectId,
+          memberEmploymentProfileId,
+          session,
+        );
+      if (!member) {
+        throw new KpiInvalidAllocationError(
+          `KPI allocation memberEmploymentProfileId must still belong to plan org unit at publish: ${memberEmploymentProfileId}`,
         );
       }
       for (const metric of allocation.targetMetrics) {
@@ -4132,6 +4408,18 @@ function normalizeSubjectType(value: unknown): KpiSubjectType {
   return text as KpiSubjectType;
 }
 
+function normalizeAllocationSubjectType(
+  value: unknown,
+): "TALENT_GROUP" | "ORG_UNIT" {
+  const subjectType = normalizeSubjectType(value);
+  if (subjectType === "TALENT_GROUP" || subjectType === "ORG_UNIT") {
+    return subjectType;
+  }
+  throw new KpiValidationError(
+    `KPI allocation subjectType is unsupported: ${subjectType}`,
+  );
+}
+
 function assertExecutableSubjectType(subjectType: KpiSubjectType): void {
   if (KPI_EXECUTABLE_SUBJECT_TYPES.includes(subjectType as never)) {
     return;
@@ -4141,6 +4429,16 @@ function assertExecutableSubjectType(subjectType: KpiSubjectType): void {
     subjectType === "ORG_UNIT"
       ? "Org Unit KPI execution is not enabled yet"
       : `KPI subjectType ${subjectType} is future-compatible but not executable in Phase 4-C.2`,
+  );
+}
+
+function assertAllocatableSubjectType(subjectType: KpiSubjectType): void {
+  if (subjectType === "TALENT_GROUP" || subjectType === "ORG_UNIT") {
+    return;
+  }
+
+  throw new KpiValidationError(
+    `KPI subjectType ${subjectType} is not supported for KPI allocation`,
   );
 }
 
@@ -5111,6 +5409,67 @@ function isOfficialKpiAllocation(allocation: KpiAllocation): boolean {
   return allocation.allocationStatus === "PUBLISHED";
 }
 
+function isTalentGroupCompatibleAllocation(
+  allocation: KpiAllocation,
+): boolean {
+  return (
+    allocation.subjectType === "TALENT_GROUP" &&
+    typeof allocation.groupId === "string" &&
+    allocation.groupId.trim().length > 0 &&
+    typeof allocation.memberTalentId === "string" &&
+    allocation.memberTalentId.trim().length > 0
+  );
+}
+
+function isOrgUnitAllocation(
+  allocation: KpiAllocation,
+): allocation is KpiAllocation & {
+  readonly subjectType: "ORG_UNIT";
+  readonly memberEmploymentProfileId: string;
+} {
+  return (
+    allocation.subjectType === "ORG_UNIT" &&
+    typeof allocation.memberEmploymentProfileId === "string" &&
+    allocation.memberEmploymentProfileId.trim().length > 0
+  );
+}
+
+function toOrgUnitAllocationItem(
+  allocation: KpiAllocation & {
+    readonly subjectType: "ORG_UNIT";
+    readonly memberEmploymentProfileId: string;
+  },
+): KpiOrgUnitAllocationItem {
+  return {
+    id: allocation.id,
+    kpiPlanId: allocation.kpiPlanId,
+    memberEmploymentProfileId: allocation.memberEmploymentProfileId,
+    memberTalentId: allocation.memberTalentId,
+    groupId: allocation.groupId,
+    allocationStatus: allocation.allocationStatus,
+    allocationStartDate: allocation.allocationStartDate,
+    allocationEndDate: allocation.allocationEndDate,
+    targetMetrics: allocation.targetMetrics,
+    snapshotMemberDisplayName: allocation.snapshotMemberDisplayName,
+    note: allocation.note,
+    createdAt: allocation.createdAt,
+    createdByActorId: allocation.createdByActorId,
+    updatedAt: allocation.updatedAt,
+    updatedByActorId: allocation.updatedByActorId,
+    submittedAt: allocation.submittedAt,
+    submittedByActorId: allocation.submittedByActorId,
+    approvedAt: allocation.approvedAt,
+    approvedByActorId: allocation.approvedByActorId,
+    approvalNote: allocation.approvalNote,
+    rejectedAt: allocation.rejectedAt,
+    rejectedByActorId: allocation.rejectedByActorId,
+    rejectionReason: allocation.rejectionReason,
+    publishedAt: allocation.publishedAt,
+    publishedByActorId: allocation.publishedByActorId,
+    closedAt: allocation.closedAt,
+  };
+}
+
 function requireAllocationMemberTalentId(
   allocation: KpiAllocation,
   operation: string,
@@ -5125,6 +5484,23 @@ function requireAllocationMemberTalentId(
 
   throw new KpiInvalidAllocationError(
     `KPI ${operation} requires TALENT_GROUP allocation memberTalentId`,
+  );
+}
+
+function requireAllocationMemberEmploymentProfileId(
+  allocation: KpiAllocation,
+  operation: string,
+): string {
+  if (
+    allocation.subjectType === "ORG_UNIT" &&
+    typeof allocation.memberEmploymentProfileId === "string" &&
+    allocation.memberEmploymentProfileId.trim().length > 0
+  ) {
+    return allocation.memberEmploymentProfileId;
+  }
+
+  throw new KpiInvalidAllocationError(
+    `KPI ${operation} requires ORG_UNIT allocation memberEmploymentProfileId`,
   );
 }
 

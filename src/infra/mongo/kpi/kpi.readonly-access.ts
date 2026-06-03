@@ -6,6 +6,7 @@ import {
   KpiActorTalentLookup,
   KpiGroupMemberLookup,
   KpiManagedMemberLookup,
+  KpiOrgUnitMemberLookup,
   KpiSubjectReferenceLookup,
   KpiSubjectReadonlyAccess,
   kpiSubjectRefKey,
@@ -54,6 +55,7 @@ interface EmploymentProfileDocument {
   readonly linkedUserId: string | null;
   readonly employmentStatus: string;
   readonly displayName?: string;
+  readonly orgUnitId?: string;
 }
 
 export class NativeMongoKpiSubjectReadonlyAccess
@@ -539,6 +541,76 @@ export class NativeMongoKpiSubjectReadonlyAccess
       .slice(0, input.limit);
   }
 
+  async findActiveOrgUnitMemberByEmploymentProfile(
+    orgUnitId: string,
+    employmentProfileId: string,
+    session?: ClientSession,
+  ): Promise<KpiOrgUnitMemberLookup | null> {
+    const profile = await this.employmentProfileCollection.findOne(
+      {
+        _id: employmentProfileId,
+        orgUnitId,
+        employmentStatus: { $in: ["ACTIVE", "ON_LEAVE"] },
+      },
+      {
+        ...this.withSession(session),
+        projection: {
+          _id: 1,
+          employeeCode: 1,
+          displayName: 1,
+          orgUnitId: 1,
+        },
+      },
+    );
+    return profile ? toOrgUnitMemberLookup(profile, orgUnitId) : null;
+  }
+
+  async listActiveOrgUnitMembers(
+    orgUnitId: string,
+    input: { readonly search?: string; readonly limit: number },
+    session?: ClientSession,
+  ): Promise<readonly KpiOrgUnitMemberLookup[]> {
+    const profiles = await this.employmentProfileCollection
+      .find(
+        {
+          orgUnitId,
+          employmentStatus: { $in: ["ACTIVE", "ON_LEAVE"] },
+        },
+        {
+          ...this.withSession(session),
+          projection: {
+            _id: 1,
+            employeeCode: 1,
+            displayName: 1,
+            orgUnitId: 1,
+          },
+        },
+      )
+      .toArray();
+    const normalizedSearch = input.search?.trim().toLocaleLowerCase("en-US");
+
+    return profiles
+      .map((profile) => toOrgUnitMemberLookup(profile, orgUnitId))
+      .filter((row): row is KpiOrgUnitMemberLookup => row !== null)
+      .filter((row) => {
+        if (!normalizedSearch) {
+          return true;
+        }
+        const haystack = [
+          row.displayName,
+          row.employeeCode,
+          row.employmentProfileId,
+          row.orgUnitId,
+        ]
+          .filter((value): value is string => Boolean(value))
+          .join(" ")
+          .toLocaleLowerCase("en-US");
+        return haystack.includes(normalizedSearch);
+      })
+      .sort((left, right) => left.displayName.localeCompare(right.displayName))
+      .slice(0, input.limit);
+  }
+
   async findActiveEmploymentProfileByLinkedUserId(
     linkedUserId: string,
     session?: ClientSession,
@@ -594,6 +666,25 @@ function toTalentOrigin(value: string | undefined): TalentOrigin | null {
 function readText(value: string | null | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function toOrgUnitMemberLookup(
+  profile: EmploymentProfileDocument,
+  orgUnitId: string,
+): KpiOrgUnitMemberLookup | null {
+  if (profile.orgUnitId !== orgUnitId) {
+    return null;
+  }
+  const displayName =
+    profile.displayName?.trim() ||
+    profile.employeeCode?.trim() ||
+    profile._id;
+  return {
+    employmentProfileId: profile._id,
+    employeeCode: profile.employeeCode ?? null,
+    displayName,
+    orgUnitId,
+  };
 }
 
 function escapeRegExp(value: string): string {

@@ -107,9 +107,17 @@ export interface PublishKpiAllocationCommand {
 }
 
 export interface ListKpiAllocationsQuery {
+  readonly subjectType?: Extract<KpiSubjectType, "TALENT_GROUP" | "ORG_UNIT"> | string;
   readonly status?: KpiAllocationStatus | string;
   readonly kpiPlanId?: string;
   readonly groupId?: string;
+  readonly limit?: number | string;
+}
+
+export interface ListKpiOrgUnitAllocationsQuery {
+  readonly status?: KpiAllocationStatus | string;
+  readonly kpiPlanId?: string;
+  readonly orgUnitId?: string;
   readonly limit?: number | string;
 }
 
@@ -273,6 +281,53 @@ export interface KpiManagedMemberPickerItem {
 
 export interface ListKpiManagedMembersResult {
   readonly items: readonly KpiManagedMemberPickerItem[];
+}
+
+export interface KpiOrgUnitManagedMemberPickerItem {
+  readonly employmentProfileId: string;
+  readonly employeeCode: string | null;
+  readonly displayName: string;
+  readonly orgUnitId: string;
+}
+
+export interface ListKpiOrgUnitManagedMembersResult {
+  readonly items: readonly KpiOrgUnitManagedMemberPickerItem[];
+}
+
+export interface KpiOrgUnitAllocationItem {
+  readonly id: string;
+  readonly kpiPlanId: string;
+  readonly memberEmploymentProfileId: string;
+  readonly memberTalentId: string | null;
+  readonly groupId: string | null;
+  readonly allocationStatus: KpiAllocationStatus;
+  readonly allocationStartDate: string;
+  readonly allocationEndDate: string | null;
+  readonly targetMetrics: readonly {
+    readonly metricCode: KpiMetricCode;
+    readonly targetValue: number;
+  }[];
+  readonly snapshotMemberDisplayName: string | null;
+  readonly note: string | null;
+  readonly createdAt: number;
+  readonly createdByActorId: string | null;
+  readonly updatedAt: number;
+  readonly updatedByActorId: string | null;
+  readonly submittedAt: number | null;
+  readonly submittedByActorId: string | null;
+  readonly approvedAt: number | null;
+  readonly approvedByActorId: string | null;
+  readonly approvalNote: string | null;
+  readonly rejectedAt: number | null;
+  readonly rejectedByActorId: string | null;
+  readonly rejectionReason: string | null;
+  readonly publishedAt: number | null;
+  readonly publishedByActorId: string | null;
+  readonly closedAt: number | null;
+}
+
+export interface ListKpiOrgUnitAllocationsResult {
+  readonly items: readonly KpiOrgUnitAllocationItem[];
 }
 
 export interface ReplaceKpiAllocationsResult {

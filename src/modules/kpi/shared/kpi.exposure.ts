@@ -17,7 +17,11 @@ import {
   KpiProgressView,
   KpiTargetMetric,
 } from "@modules/kpi/domain/kpi.types";
-import { KpiManagedMemberPickerItem } from "./kpi.contracts";
+import {
+  KpiManagedMemberPickerItem,
+  KpiOrgUnitAllocationItem,
+  KpiOrgUnitManagedMemberPickerItem,
+} from "./kpi.contracts";
 
 const KPI_TARGET_METRIC_FIELDS = [
   "id",
@@ -177,6 +181,42 @@ const KPI_MANAGED_MEMBER_PICKER_FIELDS = [
   "groupId",
 ] as const;
 
+const KPI_ORG_UNIT_MEMBER_PICKER_FIELDS = [
+  "employmentProfileId",
+  "employeeCode",
+  "displayName",
+  "orgUnitId",
+] as const;
+
+const KPI_ORG_UNIT_ALLOCATION_FIELDS = [
+  "id",
+  "kpiPlanId",
+  "memberEmploymentProfileId",
+  "memberTalentId",
+  "groupId",
+  "allocationStatus",
+  "allocationStartDate",
+  "allocationEndDate",
+  "targetMetrics",
+  "snapshotMemberDisplayName",
+  "note",
+  "createdAt",
+  "createdByActorId",
+  "updatedAt",
+  "updatedByActorId",
+  "submittedAt",
+  "submittedByActorId",
+  "approvedAt",
+  "approvedByActorId",
+  "approvalNote",
+  "rejectedAt",
+  "rejectedByActorId",
+  "rejectionReason",
+  "publishedAt",
+  "publishedByActorId",
+  "closedAt",
+] as const;
+
 export const KpiTargetMetricExposure = Object.freeze({
   expose(input: KpiTargetMetric): PlainObject {
     return toPlainObject(
@@ -246,6 +286,54 @@ export const KpiAllocationExposure = Object.freeze({
   },
 
   exposeMany(items: readonly KpiAllocation[]): readonly PlainObject[] {
+    return items
+      .filter(isTalentGroupCompatibleAllocation)
+      .map((item) => this.expose(item));
+  },
+});
+
+export const KpiOrgUnitAllocationExposure = Object.freeze({
+  expose(input: KpiOrgUnitAllocationItem): PlainObject {
+    return toPlainObject(
+      ExposurePolicy.expose(
+        {
+          id: input.id,
+          kpiPlanId: input.kpiPlanId,
+          memberEmploymentProfileId: input.memberEmploymentProfileId,
+          memberTalentId: input.memberTalentId,
+          groupId: input.groupId,
+          allocationStatus: input.allocationStatus,
+          allocationStartDate: input.allocationStartDate,
+          allocationEndDate: input.allocationEndDate,
+          targetMetrics: input.targetMetrics.map((metric) => ({
+            metricCode: metric.metricCode,
+            targetValue: metric.targetValue,
+          })),
+          snapshotMemberDisplayName: input.snapshotMemberDisplayName,
+          note: input.note,
+          createdAt: input.createdAt,
+          createdByActorId: input.createdByActorId,
+          updatedAt: input.updatedAt,
+          updatedByActorId: input.updatedByActorId,
+          submittedAt: input.submittedAt,
+          submittedByActorId: input.submittedByActorId,
+          approvedAt: input.approvedAt,
+          approvedByActorId: input.approvedByActorId,
+          approvalNote: input.approvalNote,
+          rejectedAt: input.rejectedAt,
+          rejectedByActorId: input.rejectedByActorId,
+          rejectionReason: input.rejectionReason,
+          publishedAt: input.publishedAt,
+          publishedByActorId: input.publishedByActorId,
+          closedAt: input.closedAt,
+        },
+        KPI_ORG_UNIT_ALLOCATION_FIELDS,
+      ),
+      "KpiOrgUnitAllocation exposure",
+    );
+  },
+
+  exposeMany(items: readonly KpiOrgUnitAllocationItem[]): readonly PlainObject[] {
     return items.map((item) => this.expose(item));
   },
 });
@@ -513,6 +601,29 @@ export const KpiManagedMemberPickerExposure = Object.freeze({
   },
 });
 
+export const KpiOrgUnitManagedMemberPickerExposure = Object.freeze({
+  expose(input: KpiOrgUnitManagedMemberPickerItem): PlainObject {
+    return toPlainObject(
+      ExposurePolicy.expose(
+        {
+          employmentProfileId: input.employmentProfileId,
+          employeeCode: input.employeeCode,
+          displayName: input.displayName,
+          orgUnitId: input.orgUnitId,
+        },
+        KPI_ORG_UNIT_MEMBER_PICKER_FIELDS,
+      ),
+      "KpiOrgUnitManagedMemberPicker exposure",
+    );
+  },
+
+  exposeMany(
+    items: readonly KpiOrgUnitManagedMemberPickerItem[],
+  ): readonly PlainObject[] {
+    return items.map((item) => this.expose(item));
+  },
+});
+
 export const KpiActualWorkspaceExposure = Object.freeze({
   exposeSummary(input: KpiActualWorkspacePlanSummary): PlainObject {
     return toPlainObject(
@@ -594,5 +705,15 @@ function exposeKpiFinalResult(
       })),
     },
     "KpiFinalResult exposure",
+  );
+}
+
+function isTalentGroupCompatibleAllocation(input: KpiAllocation): boolean {
+  return (
+    input.subjectType === "TALENT_GROUP" &&
+    typeof input.groupId === "string" &&
+    input.groupId.trim().length > 0 &&
+    typeof input.memberTalentId === "string" &&
+    input.memberTalentId.trim().length > 0
   );
 }
