@@ -6,6 +6,7 @@ import {
   parseGeneratedBusinessCodeSequence,
 } from "@core/business-code/business-code-sequence.repository";
 import { BaseRepository } from "@infra/database/repository";
+import { KpiInvalidAllocationError } from "@modules/kpi/domain/kpi.errors";
 import {
   KpiActualWorkspaceDerivedPlanSortRow,
   KpiPlanListCursor,
@@ -86,9 +87,11 @@ interface KpiTargetMetricDocument {
 interface KpiAllocationDocument {
   readonly _id: string;
   readonly kpiPlanId: string;
-  readonly groupId: string;
+  readonly subjectType?: "TALENT_GROUP" | "ORG_UNIT";
+  readonly subjectId?: string;
+  readonly groupId?: string | null;
   readonly memberEmploymentProfileId?: string | null;
-  readonly memberTalentId: string;
+  readonly memberTalentId?: string | null;
   readonly membershipId: string | null;
   readonly allocationStatus: KpiAllocationStatus;
   readonly allocationStartDate: string;
@@ -683,6 +686,7 @@ export class NativeMongoKpiPlanRepository
     session: ClientSession,
   ): Promise<readonly KpiAllocation[]> {
     for (const allocation of allocations) {
+      assertValidAllocationIdentity(allocation);
       await this.allocationCollection.insertOne(
         toKpiAllocationDocument(allocation),
         this.withSession(session),
@@ -815,6 +819,9 @@ export class NativeMongoKpiPlanRepository
     input: ReplaceKpiAllocationsForPlanInput,
     session: ClientSession,
   ): Promise<void> {
+    for (const allocation of input.allocations) {
+      assertValidAllocationIdentity(allocation);
+    }
     const existing = await this.allocationCollection
       .find({ kpiPlanId: input.kpiPlanId }, this.withSession(session))
       .toArray();
@@ -1313,6 +1320,8 @@ function toKpiAllocationDocument(
   return {
     _id: input.id,
     kpiPlanId: input.kpiPlanId,
+    subjectType: input.subjectType,
+    subjectId: input.subjectId,
     groupId: input.groupId,
     memberEmploymentProfileId: input.memberEmploymentProfileId,
     memberTalentId: input.memberTalentId,
@@ -1345,12 +1354,16 @@ function toKpiAllocationDocument(
 }
 
 function toKpiAllocation(doc: KpiAllocationDocument): KpiAllocation {
+  const subjectType = doc.subjectType ?? "TALENT_GROUP";
+  const subjectId = doc.subjectId ?? doc.groupId ?? "";
   return {
     id: doc._id,
     kpiPlanId: doc.kpiPlanId,
-    groupId: doc.groupId,
+    subjectType,
+    subjectId,
+    groupId: doc.groupId ?? (subjectType === "TALENT_GROUP" ? subjectId : null),
     memberEmploymentProfileId: doc.memberEmploymentProfileId ?? null,
-    memberTalentId: doc.memberTalentId,
+    memberTalentId: doc.memberTalentId ?? null,
     membershipId: doc.membershipId,
     allocationStatus: doc.allocationStatus,
     allocationStartDate: doc.allocationStartDate,
@@ -1377,6 +1390,56 @@ function toKpiAllocation(doc: KpiAllocationDocument): KpiAllocation {
     publishedByActorId: doc.publishedByActorId ?? null,
     closedAt: doc.closedAt,
   };
+}
+
+function assertValidAllocationIdentity(input: KpiAllocation): void {
+  const subjectId = readNonEmptyText(input.subjectId);
+  const memberTalentId = readNonEmptyText(input.memberTalentId);
+  const memberEmploymentProfileId = readNonEmptyText(
+    input.memberEmploymentProfileId,
+  );
+
+  if (!subjectId) {
+    throw new KpiInvalidAllocationError("KPI allocation subjectId is required");
+  }
+
+  if (!memberTalentId && !memberEmploymentProfileId) {
+    throw new KpiInvalidAllocationError(
+      "KPI allocation requires memberTalentId or memberEmploymentProfileId",
+    );
+  }
+
+  if (input.subjectType === "TALENT_GROUP") {
+    if (!memberTalentId) {
+      throw new KpiInvalidAllocationError(
+        "KPI TALENT_GROUP allocation requires memberTalentId",
+      );
+    }
+    if (input.groupId !== input.subjectId) {
+      throw new KpiInvalidAllocationError(
+        "KPI TALENT_GROUP allocation groupId must match subjectId",
+      );
+    }
+    return;
+  }
+
+  if (input.subjectType === "ORG_UNIT") {
+    if (!memberEmploymentProfileId) {
+      throw new KpiInvalidAllocationError(
+        "KPI ORG_UNIT allocation requires memberEmploymentProfileId",
+      );
+    }
+    return;
+  }
+
+  throw new KpiInvalidAllocationError(
+    `KPI allocation subjectType is unsupported: ${input.subjectType}`,
+  );
+}
+
+function readNonEmptyText(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : null;
 }
 
 function toKpiActualSlotExcuse(

@@ -291,9 +291,11 @@ export interface KpiAllocationTargetMetric {
 export interface KpiAllocation {
   readonly id: string;
   readonly kpiPlanId: string;
-  readonly groupId: string;
+  readonly subjectType: Extract<KpiSubjectType, "TALENT_GROUP" | "ORG_UNIT">;
+  readonly subjectId: string;
+  readonly groupId: string | null;
   readonly memberEmploymentProfileId: string | null;
-  readonly memberTalentId: string;
+  readonly memberTalentId: string | null;
   readonly membershipId: string | null;
   readonly allocationStatus: KpiAllocationStatus;
   readonly allocationStartDate: string;

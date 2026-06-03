@@ -1202,12 +1202,16 @@ export class KpiAdminService {
           session,
         );
 
+        const memberTalentId = requireAllocationMemberTalentId(
+          allocation,
+          "enter actual",
+        );
         const now = this.clock();
         const entry: KpiActualEntry = {
           id: crypto.randomUUID(),
           kpiPlanId: plan.id,
           allocationId: allocation.id,
-          memberTalentId: allocation.memberTalentId,
+          memberTalentId,
           metricCode,
           actualDate,
           actualValue,
@@ -1884,7 +1888,7 @@ export class KpiAdminService {
     await this.assertManagedGroupActualAuthority(
       actor,
       plan,
-      allocation.groupId,
+      requireTalentGroupAllocationGroupId(allocation, "KPI actual entry"),
       "KPI actual entry",
       session,
     );
@@ -1907,7 +1911,7 @@ export class KpiAdminService {
     await this.assertManagedGroupActualAuthority(
       actor,
       plan,
-      allocation.groupId,
+      requireTalentGroupAllocationGroupId(allocation, "KPI actual correction"),
       "KPI actual correction",
       session,
     );
@@ -1964,9 +1968,13 @@ export class KpiAdminService {
     entry: KpiActualEntry,
     allocation: KpiAllocation,
   ): void {
+    const memberTalentId = requireAllocationMemberTalentId(
+      allocation,
+      "match actual entry",
+    );
     if (
       entry.allocationId !== allocation.id ||
-      entry.memberTalentId !== allocation.memberTalentId
+      entry.memberTalentId !== memberTalentId
     ) {
       throw new KpiInvalidAllocationError(
         `KPI actual entry ${entry.id} does not match allocation ${allocation.id}`,
@@ -2205,7 +2213,10 @@ export class KpiAdminService {
       })),
       rows: allocations.filter(isOfficialKpiAllocation).map((allocation) => ({
         allocationId: allocation.id,
-        memberTalentId: allocation.memberTalentId,
+        memberTalentId: requireAllocationMemberTalentId(
+          allocation,
+          "build actual grid",
+        ),
         memberDisplayName: allocation.snapshotMemberDisplayName,
         allocationStatus: allocation.allocationStatus,
         metrics: allocation.targetMetrics.map((metric) => {
@@ -2280,7 +2291,9 @@ export class KpiAdminService {
     );
     const relevantAllocations = allowedTalentIds
       ? officialAllocations.filter((allocation) =>
-          allowedTalentIds.has(allocation.memberTalentId),
+          allowedTalentIds.has(
+            requireAllocationMemberTalentId(allocation, "build progress"),
+          ),
         )
       : officialAllocations;
     const entryKey = (
@@ -2314,7 +2327,10 @@ export class KpiAdminService {
         const actualValue = actualByAllocationMetric.get(key) ?? 0;
         return {
           allocationId: allocation.id,
-          memberTalentId: allocation.memberTalentId,
+          memberTalentId: requireAllocationMemberTalentId(
+            allocation,
+            "build progress",
+          ),
           metricCode: metric.metricCode,
           targetValue: metric.targetValue,
           actualValue,
@@ -3385,6 +3401,8 @@ export class KpiAdminService {
       allocations.push({
         id: crypto.randomUUID(),
         kpiPlanId: plan.id,
+        subjectType: "TALENT_GROUP",
+        subjectId: plan.subjectId,
         groupId: plan.subjectId,
         memberEmploymentProfileId: member.employmentProfileId,
         memberTalentId: input.memberTalentId,
@@ -3461,6 +3479,8 @@ export class KpiAdminService {
       allocations.push({
         id: crypto.randomUUID(),
         kpiPlanId: plan.id,
+        subjectType: "TALENT_GROUP",
+        subjectId: plan.subjectId,
         groupId: plan.subjectId,
         memberEmploymentProfileId: input.employmentProfileId,
         memberTalentId: member.talentId,
@@ -3663,14 +3683,18 @@ export class KpiAdminService {
           `KPI allocation ${allocation.id} must be ${expectedStatus} before publish`,
         );
       }
+      const memberTalentId = requireAllocationMemberTalentId(
+        allocation,
+        "publish allocation",
+      );
       const member = await this.subjectReadonlyAccess.findActiveGroupMember(
         plan.subjectId,
-        allocation.memberTalentId,
+        memberTalentId,
         session,
       );
       if (!member) {
         throw new KpiInvalidAllocationError(
-          `KPI allocation memberTalentId must still be an active member at publish: ${allocation.memberTalentId}`,
+          `KPI allocation memberTalentId must still be an active member at publish: ${memberTalentId}`,
         );
       }
       for (const metric of allocation.targetMetrics) {
@@ -4175,6 +4199,7 @@ function buildActualWorkspaceSlotData(input: {
   const officialAllocations = input.allocations.filter(
     (allocation) =>
       isOfficialKpiAllocation(allocation) &&
+      allocation.subjectType === "TALENT_GROUP" &&
       allocation.groupId === input.plan.subjectId,
   );
   const officialAllocationsById = new Map(
@@ -4191,6 +4216,7 @@ function buildActualWorkspaceSlotData(input: {
       !allocation ||
       !isActualWorkspaceCatalogMetricCode(entry.metricCode) ||
       entry.memberTalentId !== allocation.memberTalentId ||
+      allocation.memberTalentId === null ||
       !allocation.targetMetrics.some(
         (metric) => metric.metricCode === entry.metricCode,
       ) ||
@@ -5083,6 +5109,40 @@ function normalizeAllocationStatus(value: unknown): KpiAllocationStatus {
 
 function isOfficialKpiAllocation(allocation: KpiAllocation): boolean {
   return allocation.allocationStatus === "PUBLISHED";
+}
+
+function requireAllocationMemberTalentId(
+  allocation: KpiAllocation,
+  operation: string,
+): string {
+  if (
+    allocation.subjectType === "TALENT_GROUP" &&
+    typeof allocation.memberTalentId === "string" &&
+    allocation.memberTalentId.trim().length > 0
+  ) {
+    return allocation.memberTalentId;
+  }
+
+  throw new KpiInvalidAllocationError(
+    `KPI ${operation} requires TALENT_GROUP allocation memberTalentId`,
+  );
+}
+
+function requireTalentGroupAllocationGroupId(
+  allocation: KpiAllocation,
+  operation: string,
+): string {
+  if (
+    allocation.subjectType === "TALENT_GROUP" &&
+    typeof allocation.groupId === "string" &&
+    allocation.groupId.trim().length > 0
+  ) {
+    return allocation.groupId;
+  }
+
+  throw new KpiInvalidAllocationError(
+    `${operation} requires TALENT_GROUP allocation groupId`,
+  );
 }
 
 function normalizeSortBy(

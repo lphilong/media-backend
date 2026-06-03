@@ -9,8 +9,10 @@ export const KPI_TARGET_PLAN_METRIC_UNIQ_INDEX_NAME =
   "uniq_kpi_target_plan_metric";
 export const KPI_TARGET_METRIC_PLAN_INDEX_NAME =
   "idx_kpi_target_metric_plan";
-export const KPI_ALLOCATION_PLAN_MEMBER_UNIQ_INDEX_NAME =
-  "uniq_kpi_allocation_plan_member";
+export const KPI_ALLOCATION_TALENT_GROUP_PLAN_MEMBER_UNIQ_INDEX_NAME =
+  "uniq_kpi_allocation_talent_group_plan_member";
+export const KPI_ALLOCATION_ORG_UNIT_PLAN_PROFILE_UNIQ_INDEX_NAME =
+  "uniq_kpi_allocation_org_unit_plan_profile";
 export const KPI_ALLOCATION_GROUP_MEMBER_INDEX_NAME =
   "idx_kpi_allocation_group_member";
 export const TALENT_GROUP_MANAGER_ASSIGNMENT_GROUP_ACTIVE_INDEX_NAME =
@@ -74,7 +76,22 @@ export async function initKpiIndexes(db: Db): Promise<void> {
   );
   await allocations.createIndex(
     { kpiPlanId: 1, memberTalentId: 1 },
-    { name: KPI_ALLOCATION_PLAN_MEMBER_UNIQ_INDEX_NAME, unique: true },
+    {
+      name: KPI_ALLOCATION_TALENT_GROUP_PLAN_MEMBER_UNIQ_INDEX_NAME,
+      unique: true,
+      partialFilterExpression: { memberTalentId: { $type: "string" } },
+    },
+  );
+  await allocations.createIndex(
+    { kpiPlanId: 1, memberEmploymentProfileId: 1 },
+    {
+      name: KPI_ALLOCATION_ORG_UNIT_PLAN_PROFILE_UNIQ_INDEX_NAME,
+      unique: true,
+      partialFilterExpression: {
+        subjectType: "ORG_UNIT",
+        memberEmploymentProfileId: { $type: "string" },
+      },
+    },
   );
   await allocations.createIndex(
     { groupId: 1, memberTalentId: 1, allocationStatus: 1 },

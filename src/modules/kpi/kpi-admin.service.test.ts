@@ -8,6 +8,12 @@ import { AuthoritativeAdminMutationBridge } from "@core/application/authoritativ
 import { AuditGuard } from "@core/audit/audit.guard";
 import { BusinessCodeSequenceRepository } from "@core/business-code/business-code-sequence.repository";
 import { Permission } from "@core/permission/permission.enum";
+import {
+  KPI_ALLOCATION_ORG_UNIT_PLAN_PROFILE_UNIQ_INDEX_NAME,
+  KPI_ALLOCATION_TALENT_GROUP_PLAN_MEMBER_UNIQ_INDEX_NAME,
+  initKpiIndexes,
+} from "@infra/mongo/kpi/kpi.index";
+import { NativeMongoKpiPlanRepository } from "@infra/mongo/kpi/kpi.repository";
 import { NativeMongoKpiSubjectReadonlyAccess } from "@infra/mongo/kpi/kpi.readonly-access";
 import { NativeMongoOrgUnitManagerAssignmentRepository } from "@infra/mongo/kpi/org-unit-manager-assignment.repository";
 import { KpiAdminController } from "@modules/kpi/admin/admin.kpi.controller";
@@ -334,6 +340,43 @@ function orgUnitPlanCommand(
   };
 }
 
+function buildAllocationFixture(
+  overrides: Partial<KpiAllocation> = {},
+): KpiAllocation {
+  return {
+    id: "allocation-storage-fixture",
+    kpiPlanId: "kpi-plan-storage-fixture",
+    subjectType: "TALENT_GROUP",
+    subjectId: "group-1",
+    groupId: "group-1",
+    memberEmploymentProfileId: "talent-profile-1",
+    memberTalentId: "talent-1",
+    membershipId: "membership-talent-1",
+    allocationStatus: "PUBLISHED",
+    allocationStartDate: "2026-05-01",
+    allocationEndDate: null,
+    targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 100 }],
+    snapshotMemberDisplayName: "Talent Profile 1",
+    note: null,
+    createdAt: MAY_2026_START_AT,
+    createdByActorId: "seed",
+    updatedAt: MAY_2026_START_AT,
+    updatedByActorId: "seed",
+    submittedAt: MAY_2026_START_AT,
+    submittedByActorId: "seed",
+    approvedAt: MAY_2026_START_AT,
+    approvedByActorId: "seed",
+    approvalNote: null,
+    rejectedAt: null,
+    rejectedByActorId: null,
+    rejectionReason: null,
+    publishedAt: MAY_2026_START_AT,
+    publishedByActorId: "seed",
+    closedAt: null,
+    ...overrides,
+  };
+}
+
 async function createPublishedGroupPlan(
   service: KpiAdminService,
 ): Promise<
@@ -381,6 +424,214 @@ async function createPublishedGroupPlan(
     kpiPlanId: publishedPlan.id,
   });
 }
+
+test("KPI allocation storage preserves TALENT_GROUP member identity", async () => {
+  const { service, repository } = createHarness(() => MAY_5_2026_NOON_HCM);
+  const published = await createPublishedGroupPlan(service);
+  const allocation = published.allocations[0] as KpiAllocation;
+  const stored = repository.allocations.find((item) => item.id === allocation.id);
+
+  assert.ok(stored);
+  assert.equal(stored.subjectType, "TALENT_GROUP");
+  assert.equal(stored.subjectId, "group-1");
+  assert.equal(stored.groupId, "group-1");
+  assert.equal(stored.memberTalentId, "talent-1");
+  assert.equal(stored.memberEmploymentProfileId, "talent-profile-1");
+});
+
+test("KPI allocation storage rejects unsafe TALENT_GROUP member identity", async () => {
+  const { repository } = createHarness();
+
+  await assert.rejects(
+    repository.insertAllocations([
+      buildAllocationFixture({ memberTalentId: null }),
+    ]),
+    KpiInvalidAllocationError,
+  );
+  await assert.rejects(
+    repository.insertAllocations([
+      buildAllocationFixture({
+        memberTalentId: null,
+        memberEmploymentProfileId: null,
+      }),
+    ]),
+    KpiInvalidAllocationError,
+  );
+});
+
+test("KPI allocation storage supports ORG_UNIT EmploymentProfile identity without Talent", async () => {
+  const { repository } = createHarness();
+  const allocation = buildAllocationFixture({
+    id: "org-unit-allocation-storage",
+    kpiPlanId: "org-unit-plan-storage",
+    subjectType: "ORG_UNIT",
+    subjectId: "org-department-active",
+    groupId: null,
+    memberEmploymentProfileId: "employee-profile-1",
+    memberTalentId: null,
+    membershipId: null,
+    snapshotMemberDisplayName: "Employee Profile 1",
+  });
+
+  await repository.insertAllocations([allocation]);
+  const stored = await repository.listAllocationsByPlanId(
+    "org-unit-plan-storage",
+  );
+
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0]?.subjectType, "ORG_UNIT");
+  assert.equal(stored[0]?.subjectId, "org-department-active");
+  assert.equal(stored[0]?.groupId, null);
+  assert.equal(stored[0]?.memberEmploymentProfileId, "employee-profile-1");
+  assert.equal(stored[0]?.memberTalentId, null);
+});
+
+test("KPI allocation storage hydrates legacy rows without subject identity as TALENT_GROUP", async () => {
+  const repository = new NativeMongoKpiPlanRepository({
+    collection(name: string) {
+      if (name !== "kpi_allocations") {
+        return {};
+      }
+      return {
+        find: () => ({
+          sort: () => ({
+            toArray: async () => [
+              {
+                _id: "legacy-allocation",
+                kpiPlanId: "legacy-plan",
+                groupId: "legacy-group",
+                memberEmploymentProfileId: "legacy-profile",
+                memberTalentId: "legacy-talent",
+                membershipId: "legacy-membership",
+                allocationStatus: "PUBLISHED",
+                allocationStartDate: "2026-05-01",
+                allocationEndDate: null,
+                targetMetrics: [
+                  { metricCode: "REVENUE_VND", targetValue: 100 },
+                ],
+                snapshotMemberDisplayName: "Legacy Talent",
+                note: null,
+                createdAt: MAY_2026_START_AT,
+                createdByActorId: "seed",
+                updatedAt: MAY_2026_START_AT,
+                updatedByActorId: "seed",
+                submittedAt: MAY_2026_START_AT,
+                submittedByActorId: "seed",
+                approvedAt: MAY_2026_START_AT,
+                approvedByActorId: "seed",
+                approvalNote: null,
+                rejectedAt: null,
+                rejectedByActorId: null,
+                rejectionReason: null,
+                publishedAt: MAY_2026_START_AT,
+                publishedByActorId: "seed",
+                closedAt: null,
+              },
+            ],
+          }),
+        }),
+      };
+    },
+  } as never);
+
+  const allocations = await repository.listAllocationsByPlanId("legacy-plan");
+
+  assert.equal(allocations.length, 1);
+  assert.equal(allocations[0]?.subjectType, "TALENT_GROUP");
+  assert.equal(allocations[0]?.subjectId, "legacy-group");
+  assert.equal(allocations[0]?.groupId, "legacy-group");
+  assert.equal(allocations[0]?.memberTalentId, "legacy-talent");
+  assert.equal(allocations[0]?.memberEmploymentProfileId, "legacy-profile");
+});
+
+test("KPI allocation storage rejects ORG_UNIT without EmploymentProfile identity", async () => {
+  const { repository } = createHarness();
+
+  await assert.rejects(
+    repository.insertAllocations([
+      buildAllocationFixture({
+        subjectType: "ORG_UNIT",
+        subjectId: "org-department-active",
+        groupId: null,
+        memberEmploymentProfileId: null,
+        memberTalentId: null,
+        membershipId: null,
+      }),
+    ]),
+    KpiInvalidAllocationError,
+  );
+});
+
+test("KPI allocation index source definitions use partial unique identities", async () => {
+  const captured = new Map<
+    string,
+    {
+      readonly key: unknown;
+      readonly options: {
+        readonly name?: string;
+        readonly unique?: boolean;
+        readonly partialFilterExpression?: unknown;
+      };
+    }[]
+  >();
+  const db = {
+    collection(name: string) {
+      return {
+        createIndex: async (
+          key: unknown,
+          options: {
+            readonly name?: string;
+            readonly unique?: boolean;
+            readonly partialFilterExpression?: unknown;
+          },
+        ) => {
+          const current = captured.get(name) ?? [];
+          current.push({ key, options });
+          captured.set(name, current);
+          return options.name ?? "";
+        },
+      };
+    },
+  };
+
+  await initKpiIndexes(db as never);
+  const allocationIndexes = captured.get("kpi_allocations") ?? [];
+  const talentGroupIndex = allocationIndexes.find(
+    (index) =>
+      index.options.name ===
+      KPI_ALLOCATION_TALENT_GROUP_PLAN_MEMBER_UNIQ_INDEX_NAME,
+  );
+  const orgUnitIndex = allocationIndexes.find(
+    (index) =>
+      index.options.name === KPI_ALLOCATION_ORG_UNIT_PLAN_PROFILE_UNIQ_INDEX_NAME,
+  );
+
+  assert.ok(talentGroupIndex);
+  assert.deepEqual(talentGroupIndex.key, {
+    kpiPlanId: 1,
+    memberTalentId: 1,
+  });
+  assert.equal(talentGroupIndex.options.unique, true);
+  assert.deepEqual(talentGroupIndex.options.partialFilterExpression, {
+    memberTalentId: { $type: "string" },
+  });
+  assert.ok(orgUnitIndex);
+  assert.deepEqual(orgUnitIndex.key, {
+    kpiPlanId: 1,
+    memberEmploymentProfileId: 1,
+  });
+  assert.equal(orgUnitIndex.options.unique, true);
+  assert.deepEqual(orgUnitIndex.options.partialFilterExpression, {
+    subjectType: "ORG_UNIT",
+    memberEmploymentProfileId: { $type: "string" },
+  });
+  assert.equal(
+    allocationIndexes.some(
+      (index) => index.options.name === "uniq_kpi_allocation_plan_member",
+    ),
+    false,
+  );
+});
 
 async function createPublishedFebruary2028GroupPlan(
   service: KpiAdminService,
@@ -1050,17 +1301,19 @@ function seedOfficialActualEntriesForDates(
   const allocations = repository.allocations.filter(
     (allocation) =>
       allocation.kpiPlanId === kpiPlanId &&
+      allocation.subjectType === "TALENT_GROUP" &&
       allocation.groupId === plan.subjectId &&
       allocation.allocationStatus === "PUBLISHED",
   );
   for (const allocation of allocations) {
+    const memberTalentId = requireTestAllocationMemberTalentId(allocation);
     for (const metric of allocation.targetMetrics) {
       for (const actualDate of actualDates) {
         actualRepository.entries.push({
           id: `seed-entry:${kpiPlanId}:${allocation.id}:${metric.metricCode}:${actualDate}`,
           kpiPlanId,
           allocationId: allocation.id,
-          memberTalentId: allocation.memberTalentId,
+          memberTalentId,
           metricCode: metric.metricCode,
           actualDate,
           actualValue,
@@ -1090,6 +1343,7 @@ function seedOfficialActualExcusesForDate(
   const allocations = repository.allocations.filter(
     (allocation) =>
       allocation.kpiPlanId === kpiPlanId &&
+      allocation.subjectType === "TALENT_GROUP" &&
       allocation.groupId === plan.subjectId &&
       allocation.allocationStatus === "PUBLISHED",
   );
@@ -1119,6 +1373,19 @@ function seedOfficialActualExcusesForDate(
       });
     }
   }
+}
+
+function requireTestAllocationMemberTalentId(allocation: KpiAllocation): string {
+  if (
+    allocation.subjectType === "TALENT_GROUP" &&
+    typeof allocation.memberTalentId === "string" &&
+    allocation.memberTalentId.length > 0
+  ) {
+    return allocation.memberTalentId;
+  }
+  throw new KpiInvalidAllocationError(
+    "KPI test fixture requires TALENT_GROUP allocation memberTalentId",
+  );
 }
 
 test("NativeMongoKpiSubjectReadonlyAccess derives internal group member display from linked EmploymentProfile", async () => {
@@ -2097,10 +2364,12 @@ test("KPI V2 ORG_UNIT forced execution entry points reject before execution work
   const forcedAllocation: KpiAllocation = {
     id: "forced-org-unit-allocation",
     kpiPlanId: forcedPlan.id,
-    groupId: forcedPlan.subjectId,
+    subjectType: "ORG_UNIT",
+    subjectId: forcedPlan.subjectId,
+    groupId: null,
     memberEmploymentProfileId: "talent-profile-1",
-    memberTalentId: "talent-1",
-    membershipId: "membership-talent-1",
+    memberTalentId: null,
+    membershipId: null,
     allocationStatus: "PUBLISHED",
     allocationStartDate: "2026-05-01",
     allocationEndDate: null,
@@ -2127,7 +2396,7 @@ test("KPI V2 ORG_UNIT forced execution entry points reject before execution work
     id: "forced-org-unit-actual",
     kpiPlanId: forcedPlan.id,
     allocationId: forcedAllocation.id,
-    memberTalentId: forcedAllocation.memberTalentId,
+    memberTalentId: "forced-legacy-talent",
     metricCode: "REVENUE_VND",
     actualDate: "05-05-2026",
     actualValue: 80,
@@ -4182,6 +4451,7 @@ test("KPI V2 managedGroup list summarizes only visible plans without member deta
     ...templateAllocation,
     id: "hidden-summary-allocation",
     kpiPlanId: hiddenPlan.id,
+    subjectId: hiddenPlan.subjectId,
     groupId: hiddenPlan.subjectId,
     allocationStatus: "REJECTED",
   });
@@ -4895,6 +5165,7 @@ test("KPI V2 finalize persists operational final result snapshot", async () => {
   const wrongGroupAllocation: KpiAllocation = {
     ...updatedFirstAllocation,
     id: "allocation-wrong-group-final-snapshot",
+    subjectId: "group-other",
     groupId: "group-other",
     targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 500 }],
   };
@@ -4904,7 +5175,9 @@ test("KPI V2 finalize persists operational final result snapshot", async () => {
       ...created.actualEntry,
       id: "actual-non-published-final-snapshot",
       allocationId: nonPublishedAllocation.id,
-      memberTalentId: nonPublishedAllocation.memberTalentId,
+      memberTalentId: requireTestAllocationMemberTalentId(
+        nonPublishedAllocation,
+      ),
       actualDate: "05-05-2026",
       actualValue: 700,
       effectiveValue: 700,
@@ -4913,7 +5186,9 @@ test("KPI V2 finalize persists operational final result snapshot", async () => {
       ...created.actualEntry,
       id: "actual-wrong-group-final-snapshot",
       allocationId: wrongGroupAllocation.id,
-      memberTalentId: wrongGroupAllocation.memberTalentId,
+      memberTalentId: requireTestAllocationMemberTalentId(
+        wrongGroupAllocation,
+      ),
       actualDate: "05-05-2026",
       actualValue: 500,
       effectiveValue: 500,
@@ -6250,6 +6525,7 @@ test("KPI managed actual workspace derived sort does not leak hidden plans or cu
     ...managedAllocation,
     id: "hidden-derived-sort-allocation",
     kpiPlanId: hidden.id,
+    subjectId: hidden.subjectId,
     groupId: hidden.subjectId,
     targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 100 }],
   });
@@ -6584,6 +6860,7 @@ test("KPI managed actual workspace prevents hidden group summary and detail leak
     ...templateAllocation,
     id: "hidden-workspace-allocation",
     kpiPlanId: hiddenPlan.id,
+    subjectId: hiddenPlan.subjectId,
     groupId: hiddenPlan.subjectId,
     targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 999 }],
   });
@@ -6591,6 +6868,7 @@ test("KPI managed actual workspace prevents hidden group summary and detail leak
     ...templateAllocation,
     id: "cross-group-workspace-allocation",
     kpiPlanId: managed.id,
+    subjectId: hiddenPlan.subjectId,
     groupId: hiddenPlan.subjectId,
     snapshotMemberDisplayName: "hidden cross-group member",
   });
@@ -6598,7 +6876,7 @@ test("KPI managed actual workspace prevents hidden group summary and detail leak
     id: "hidden-workspace-actual",
     kpiPlanId: hiddenPlan.id,
     allocationId: "hidden-workspace-allocation",
-    memberTalentId: templateAllocation.memberTalentId,
+    memberTalentId: requireTestAllocationMemberTalentId(templateAllocation),
     metricCode: "REVENUE_VND",
     actualDate: "05-05-2026",
     actualValue: 999,
@@ -6909,11 +7187,13 @@ test("KPI managed actual workspace status booleans ignore hidden group and wrong
       ...allocation,
       id: `hidden:${allocation.id}`,
       kpiPlanId: hiddenPlan.id,
+      subjectId: "group-2",
       groupId: "group-2",
     })),
     {
       ...(managedAllocations[0] as KpiAllocation),
       id: "wrong-group-visible-plan-allocation",
+      subjectId: "group-2",
       groupId: "group-2",
       memberTalentId: "hidden-talent",
     },
@@ -7759,6 +8039,9 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
   async insertAllocations(
     allocations: readonly KpiAllocation[],
   ): Promise<readonly KpiAllocation[]> {
+    for (const allocation of allocations) {
+      assertValidTestAllocationIdentity(allocation);
+    }
     this.allocations.push(...allocations);
     return allocations;
   }
@@ -7769,6 +8052,9 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
   ): Promise<void> {
     const plan = this.plans.find((item) => item.id === kpiPlanId);
     assert.equal(plan?.status, "DRAFT");
+    for (const allocation of allocations) {
+      assertValidTestAllocationIdentity(allocation);
+    }
     removeMatching(
       this.allocations,
       (allocation) => allocation.kpiPlanId === kpiPlanId,
@@ -7821,6 +8107,8 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     readonly status?: KpiAllocation["allocationStatus"];
     readonly kpiPlanId?: string;
     readonly groupId?: string;
+    readonly memberTalentId?: string;
+    readonly memberEmploymentProfileId?: string;
     readonly limit: number;
   }): Promise<readonly KpiAllocation[]> {
     return this.allocations
@@ -7834,6 +8122,19 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
         if (input.groupId && allocation.groupId !== input.groupId) {
           return false;
         }
+        if (
+          input.memberTalentId &&
+          allocation.memberTalentId !== input.memberTalentId
+        ) {
+          return false;
+        }
+        if (
+          input.memberEmploymentProfileId &&
+          allocation.memberEmploymentProfileId !==
+            input.memberEmploymentProfileId
+        ) {
+          return false;
+        }
         return true;
       })
       .slice(0, input.limit);
@@ -7844,6 +8145,9 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     readonly allowedCurrentStatuses: readonly KpiAllocation["allocationStatus"][];
     readonly allocations: readonly KpiAllocation[];
   }): Promise<void> {
+    for (const allocation of input.allocations) {
+      assertValidTestAllocationIdentity(allocation);
+    }
     if (
       this.allocations.some(
         (allocation) =>
@@ -8393,6 +8697,53 @@ function removeMatching<T>(items: T[], predicate: (item: T) => boolean): void {
       items.splice(index, 1);
     }
   }
+}
+
+function assertValidTestAllocationIdentity(allocation: KpiAllocation): void {
+  if (allocation.subjectId.trim().length === 0) {
+    throw new KpiInvalidAllocationError(
+      "KPI allocation subjectId is required",
+    );
+  }
+  const memberTalentId =
+    typeof allocation.memberTalentId === "string" &&
+    allocation.memberTalentId.trim().length > 0
+      ? allocation.memberTalentId
+      : null;
+  const memberEmploymentProfileId =
+    typeof allocation.memberEmploymentProfileId === "string" &&
+    allocation.memberEmploymentProfileId.trim().length > 0
+      ? allocation.memberEmploymentProfileId
+      : null;
+  if (!memberTalentId && !memberEmploymentProfileId) {
+    throw new KpiInvalidAllocationError(
+      "KPI allocation requires a member identity",
+    );
+  }
+  if (allocation.subjectType === "TALENT_GROUP") {
+    if (!memberTalentId) {
+      throw new KpiInvalidAllocationError(
+        "KPI TALENT_GROUP allocation requires memberTalentId",
+      );
+    }
+    if (allocation.groupId !== allocation.subjectId) {
+      throw new KpiInvalidAllocationError(
+        "KPI TALENT_GROUP allocation requires groupId to match subjectId",
+      );
+    }
+    return;
+  }
+  if (allocation.subjectType === "ORG_UNIT") {
+    if (!memberEmploymentProfileId) {
+      throw new KpiInvalidAllocationError(
+        "KPI ORG_UNIT allocation requires memberEmploymentProfileId",
+      );
+    }
+    return;
+  }
+  throw new KpiInvalidAllocationError(
+    `KPI allocation subjectType is unsupported: ${allocation.subjectType}`,
+  );
 }
 
 function normalizeTestSubjectIdFilter(input: {

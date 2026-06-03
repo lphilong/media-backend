@@ -2,7 +2,8 @@ import { Db } from "mongodb";
 import { SystemInvariantError } from "@core/error/system-error";
 import {
   KPI_ALLOCATION_GROUP_MEMBER_INDEX_NAME,
-  KPI_ALLOCATION_PLAN_MEMBER_UNIQ_INDEX_NAME,
+  KPI_ALLOCATION_ORG_UNIT_PLAN_PROFILE_UNIQ_INDEX_NAME,
+  KPI_ALLOCATION_TALENT_GROUP_PLAN_MEMBER_UNIQ_INDEX_NAME,
   KPI_ACTUAL_CORRECTION_ENTRY_INDEX_NAME,
   KPI_ACTUAL_ENTRY_LOOKUP_INDEX_NAME,
   KPI_ACTUAL_ENTRY_PLAN_METRIC_INDEX_NAME,
@@ -25,6 +26,7 @@ import type { BootstrapRegistrar } from "@bootstrap/module-registrar";
 interface IndexMetadata {
   readonly key?: unknown;
   readonly unique?: unknown;
+  readonly partialFilterExpression?: unknown;
 }
 
 export function createKpiBootstrapRegistrar(): BootstrapRegistrar {
@@ -68,8 +70,19 @@ export function createKpiBootstrapRegistrar(): BootstrapRegistrar {
       await assertRequiredUniqueIndex(
         db,
         "kpi_allocations",
-        KPI_ALLOCATION_PLAN_MEMBER_UNIQ_INDEX_NAME,
+        KPI_ALLOCATION_TALENT_GROUP_PLAN_MEMBER_UNIQ_INDEX_NAME,
         { kpiPlanId: 1, memberTalentId: 1 },
+        { memberTalentId: { $type: "string" } },
+      );
+      await assertRequiredUniqueIndex(
+        db,
+        "kpi_allocations",
+        KPI_ALLOCATION_ORG_UNIT_PLAN_PROFILE_UNIQ_INDEX_NAME,
+        { kpiPlanId: 1, memberEmploymentProfileId: 1 },
+        {
+          subjectType: "ORG_UNIT",
+          memberEmploymentProfileId: { $type: "string" },
+        },
       );
       await assertRequiredIndex(
         db,
@@ -162,6 +175,7 @@ async function assertRequiredUniqueIndex(
   collectionName: string,
   indexName: string,
   expectedKey: Record<string, number>,
+  expectedPartialFilterExpression?: Record<string, unknown>,
 ): Promise<void> {
   const matched = await assertRequiredIndex(
     db,
@@ -173,6 +187,18 @@ async function assertRequiredUniqueIndex(
     throw new SystemInvariantError(
       "SYSTEM_INVARIANT_VIOLATION",
       `Required index ${indexName} on ${collectionName} must be unique`,
+    );
+  }
+  if (
+    expectedPartialFilterExpression !== undefined &&
+    !hasDeepExactShape(
+      matched.partialFilterExpression,
+      expectedPartialFilterExpression,
+    )
+  ) {
+    throw new SystemInvariantError(
+      "SYSTEM_INVARIANT_VIOLATION",
+      `Required index ${indexName} on ${collectionName} has unexpected partial filter`,
     );
   }
 }
