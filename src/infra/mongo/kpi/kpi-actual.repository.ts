@@ -16,7 +16,8 @@ interface KpiActualEntryDocument {
   readonly _id: string;
   readonly kpiPlanId: string;
   readonly allocationId: string;
-  readonly memberTalentId: string;
+  readonly memberEmploymentProfileId?: string | null;
+  readonly memberTalentId?: string | null;
   readonly metricCode: KpiMetricCode;
   readonly actualDate: string;
   readonly actualValue: number;
@@ -37,7 +38,8 @@ interface KpiActualCorrectionDocument {
   readonly actualEntryId: string;
   readonly kpiPlanId: string;
   readonly allocationId: string;
-  readonly memberTalentId: string;
+  readonly memberEmploymentProfileId?: string | null;
+  readonly memberTalentId?: string | null;
   readonly metricCode: KpiMetricCode;
   readonly actualDate: string;
   readonly previousValue: number;
@@ -204,6 +206,7 @@ function toEntryDocument(input: KpiActualEntry): KpiActualEntryDocument {
     _id: input.id,
     kpiPlanId: input.kpiPlanId,
     allocationId: input.allocationId,
+    memberEmploymentProfileId: input.memberEmploymentProfileId,
     memberTalentId: input.memberTalentId,
     metricCode: input.metricCode,
     actualDate: input.actualDate,
@@ -236,7 +239,8 @@ function toEntryDomain(doc: KpiActualEntryDocument): KpiActualEntry {
     id: doc._id,
     kpiPlanId: doc.kpiPlanId,
     allocationId: doc.allocationId,
-    memberTalentId: doc.memberTalentId,
+    memberEmploymentProfileId: doc.memberEmploymentProfileId ?? null,
+    memberTalentId: doc.memberTalentId ?? null,
     metricCode: doc.metricCode,
     actualDate: doc.actualDate,
     actualValue: doc.actualValue,
@@ -261,6 +265,7 @@ function toCorrectionDocument(
     actualEntryId: input.actualEntryId,
     kpiPlanId: input.kpiPlanId,
     allocationId: input.allocationId,
+    memberEmploymentProfileId: input.memberEmploymentProfileId,
     memberTalentId: input.memberTalentId,
     metricCode: input.metricCode,
     actualDate: input.actualDate,
@@ -281,7 +286,8 @@ function toCorrectionDomain(
     actualEntryId: doc.actualEntryId,
     kpiPlanId: doc.kpiPlanId,
     allocationId: doc.allocationId,
-    memberTalentId: doc.memberTalentId,
+    memberEmploymentProfileId: doc.memberEmploymentProfileId ?? null,
+    memberTalentId: doc.memberTalentId ?? null,
     metricCode: doc.metricCode,
     actualDate: doc.actualDate,
     previousValue: doc.previousValue,

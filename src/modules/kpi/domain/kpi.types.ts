@@ -9,7 +9,11 @@ export const KPI_SUBJECT_TYPES = [
 
 export type KpiSubjectType = (typeof KPI_SUBJECT_TYPES)[number];
 
-export const KPI_EXECUTABLE_SUBJECT_TYPES = ["TALENT", "TALENT_GROUP"] as const;
+export const KPI_EXECUTABLE_SUBJECT_TYPES = [
+  "TALENT",
+  "TALENT_GROUP",
+  "ORG_UNIT",
+] as const;
 export const KPI_CREATE_SUBJECT_TYPES = ["TALENT_GROUP", "ORG_UNIT"] as const;
 
 export type KpiExecutableSubjectType =
@@ -371,7 +375,8 @@ export interface KpiActualEntry {
   readonly id: string;
   readonly kpiPlanId: string;
   readonly allocationId: string;
-  readonly memberTalentId: string;
+  readonly memberEmploymentProfileId: string | null;
+  readonly memberTalentId: string | null;
   readonly metricCode: KpiMetricCode;
   readonly actualDate: string;
   readonly actualValue: number;
@@ -392,7 +397,8 @@ export interface KpiActualCorrection {
   readonly actualEntryId: string;
   readonly kpiPlanId: string;
   readonly allocationId: string;
-  readonly memberTalentId: string;
+  readonly memberEmploymentProfileId: string | null;
+  readonly memberTalentId: string | null;
   readonly metricCode: KpiMetricCode;
   readonly actualDate: string;
   readonly previousValue: number;
@@ -440,7 +446,8 @@ export interface KpiProgressMetricTotal {
 
 export interface KpiMemberMetricProgress {
   readonly allocationId: string;
-  readonly memberTalentId: string;
+  readonly memberEmploymentProfileId: string | null;
+  readonly memberTalentId: string | null;
   readonly metricCode: KpiMetricCode;
   readonly targetValue: number;
   readonly actualValue: number;
@@ -509,7 +516,8 @@ export interface KpiActualGridMetricCellView {
 
 export interface KpiActualGridRowView {
   readonly allocationId: string;
-  readonly memberTalentId: string;
+  readonly memberEmploymentProfileId: string | null;
+  readonly memberTalentId: string | null;
   readonly memberDisplayName: string | null;
   readonly allocationStatus: KpiAllocationStatus;
   readonly metrics: readonly KpiActualGridMetricCellView[];
@@ -582,7 +590,7 @@ export interface KpiActualWorkspacePlanSummary {
   readonly planCode: string;
   readonly title: string;
   readonly periodMonth: string;
-  readonly subjectType: "TALENT_GROUP";
+  readonly subjectType: Extract<KpiSubjectType, "TALENT_GROUP" | "ORG_UNIT">;
   readonly subjectId: string;
   readonly subjectRef: ReferenceSummary | null;
   readonly planStatus: KpiPlanStatus;

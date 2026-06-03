@@ -903,6 +903,7 @@ function actualEntry(overrides: Partial<KpiActualEntry>): KpiActualEntry {
     id: "actual-1",
     kpiPlanId: "plan-official",
     allocationId: "alloc-official",
+    memberEmploymentProfileId: "ep-staff",
     memberTalentId: "talent-staff",
     metricCode: "REVENUE_VND",
     actualDate: "01-05-2026",
