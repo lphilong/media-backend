@@ -11,6 +11,8 @@ import {
   KpiMetricCode,
   KpiPlan,
 } from "@modules/kpi/domain/kpi.types";
+import { EmploymentProfileRecord } from "@modules/employment-profile/domain/employment-profile.types";
+import { SelfServiceCurrentPersonNotLinkedError } from "@modules/self-service/domain/self-service.errors";
 import {
   SelfServiceKpiItemView,
   SelfServiceKpiListView,
@@ -31,41 +33,75 @@ export class SelfServiceKpiService {
   ) {}
 
   async listCurrentKpi(actor: Actor): Promise<SelfServiceKpiListView> {
-    const { employmentProfile, linkedInternalTalent } =
-      await this.identityResolver.resolveEmploymentProfileWithLinkedInternalTalent(
-        actor,
-      );
+    let resolved:
+      | Awaited<
+          ReturnType<
+            SelfServiceIdentityResolver["resolveEmploymentProfileWithLinkedInternalTalent"]
+          >
+        >
+      | null = null;
 
-    if (!linkedInternalTalent) {
-      return {
-        items: [],
-        current: null,
-        latestPrevious: null,
-        history: [],
-      };
+    try {
+      resolved =
+        await this.identityResolver.resolveEmploymentProfileWithLinkedInternalTalent(
+          actor,
+        );
+    } catch (error) {
+      if (error instanceof SelfServiceCurrentPersonNotLinkedError) {
+        return emptySelfServiceKpiList();
+      }
+
+      throw error;
     }
 
-    const allocations = (
-      await this.kpiPlanRepository.listAllocations({
+    if (!resolved || !isSelfServiceEmploymentProfileAllowed(resolved.employmentProfile)) {
+      return emptySelfServiceKpiList();
+    }
+
+    const { employmentProfile, linkedInternalTalent } = resolved;
+    const allocationResults = await Promise.all([
+      linkedInternalTalent
+        ? this.kpiPlanRepository.listAllocations({
+            status: "PUBLISHED",
+            memberTalentId: linkedInternalTalent.id,
+            memberEmploymentProfileId: employmentProfile.id,
+            limit: MAX_SELF_SERVICE_KPI_ALLOCATIONS,
+          })
+        : Promise.resolve([]),
+      this.kpiPlanRepository.listAllocations({
         status: "PUBLISHED",
-        memberTalentId: linkedInternalTalent.id,
         memberEmploymentProfileId: employmentProfile.id,
         limit: MAX_SELF_SERVICE_KPI_ALLOCATIONS,
-      })
-    ).filter(
+      }),
+    ]);
+    const allocations = uniqueAllocations(allocationResults.flat()).filter(
       (allocation) =>
-        allocation.allocationStatus === "PUBLISHED" &&
-        allocation.memberTalentId === linkedInternalTalent.id &&
-        allocation.memberEmploymentProfileId === employmentProfile.id,
+        isSelfServiceAllocationCandidate({
+          allocation,
+          employmentProfile,
+          linkedInternalTalentId: linkedInternalTalent?.id ?? null,
+        }),
     );
 
     const planIds = uniqueNonEmpty(
       allocations.map((allocation) => allocation.kpiPlanId),
     );
     const plans = await this.kpiPlanRepository.listPlansByIds(planIds);
+    const planById = new Map(plans.map((plan) => [plan.id, plan]));
+    const officialAllocations = allocations.filter((allocation) =>
+      isSelfServiceAllocationOfficialForPlan({
+        allocation,
+        plan: planById.get(allocation.kpiPlanId),
+        employmentProfile,
+      }),
+    );
+    const officialPlanIds = new Set(
+      officialAllocations.map((allocation) => allocation.kpiPlanId),
+    );
     const now = this.clock();
     const currentPublishedPlans = plans.filter(
       (plan) =>
+        officialPlanIds.has(plan.id) &&
         isSelfServiceKpiSubjectSupported(plan) &&
         plan.status === "PUBLISHED" &&
         plan.periodStartAt <= now &&
@@ -74,6 +110,7 @@ export class SelfServiceKpiService {
     const previousOfficialPlans = plans
       .filter(
         (plan) =>
+          officialPlanIds.has(plan.id) &&
           isSelfServiceKpiSubjectSupported(plan) &&
           isOfficialSelfServiceHistoryPlan(plan) && plan.periodEndAt < now,
       )
@@ -87,10 +124,10 @@ export class SelfServiceKpiService {
     const exposedPlanIds = uniqueNonEmpty(
       [...currentPlanIds, ...historyPlanIds],
     );
-    const currentAllocations = allocations.filter((allocation) =>
+    const currentAllocations = officialAllocations.filter((allocation) =>
       currentPlanIds.has(allocation.kpiPlanId),
     );
-    const historyAllocations = allocations.filter((allocation) =>
+    const historyAllocations = officialAllocations.filter((allocation) =>
       historyPlanIds.has(allocation.kpiPlanId),
     );
     const [entries, excuses] = await Promise.all([
@@ -100,8 +137,6 @@ export class SelfServiceKpiService {
     const entriesByAllocation = groupEntriesByAllocation(entries);
     const entriesBySlot = groupEntriesBySlot(entries);
     const excusesBySlot = groupExcusesBySlot(excuses);
-    const planById = new Map(plans.map((plan) => [plan.id, plan]));
-
     const currentItems = currentAllocations
       .map((allocation) =>
         toSelfServiceKpiItem({
@@ -137,6 +172,98 @@ export class SelfServiceKpiService {
       history: historyItems,
     };
   }
+}
+
+function emptySelfServiceKpiList(): SelfServiceKpiListView {
+  return {
+    items: [],
+    current: null,
+    latestPrevious: null,
+    history: [],
+  };
+}
+
+function uniqueAllocations(
+  allocations: readonly KpiAllocation[],
+): readonly KpiAllocation[] {
+  const seen = new Set<string>();
+  const unique: KpiAllocation[] = [];
+
+  for (const allocation of allocations) {
+    if (seen.has(allocation.id)) {
+      continue;
+    }
+    seen.add(allocation.id);
+    unique.push(allocation);
+  }
+
+  return unique;
+}
+
+function isSelfServiceEmploymentProfileAllowed(
+  employmentProfile: EmploymentProfileRecord,
+): boolean {
+  return (
+    employmentProfile.employmentStatus === "ACTIVE" ||
+    employmentProfile.employmentStatus === "ON_LEAVE"
+  );
+}
+
+function isSelfServiceAllocationCandidate(input: {
+  readonly allocation: KpiAllocation;
+  readonly employmentProfile: EmploymentProfileRecord;
+  readonly linkedInternalTalentId: string | null;
+}): boolean {
+  const { allocation, employmentProfile, linkedInternalTalentId } = input;
+
+  if (
+    allocation.allocationStatus !== "PUBLISHED" ||
+    allocation.memberEmploymentProfileId !== employmentProfile.id
+  ) {
+    return false;
+  }
+
+  if (allocation.subjectType === "ORG_UNIT") {
+    return allocation.subjectId === employmentProfile.orgUnitId;
+  }
+
+  if (allocation.subjectType === "TALENT_GROUP") {
+    return (
+      linkedInternalTalentId !== null &&
+      allocation.memberTalentId === linkedInternalTalentId
+    );
+  }
+
+  return false;
+}
+
+function isSelfServiceAllocationOfficialForPlan(input: {
+  readonly allocation: KpiAllocation;
+  readonly plan: KpiPlan | undefined;
+  readonly employmentProfile: EmploymentProfileRecord;
+}): boolean {
+  const { allocation, plan, employmentProfile } = input;
+
+  if (!plan || !isSelfServiceKpiSubjectSupported(plan)) {
+    return false;
+  }
+
+  if (
+    allocation.subjectType !== plan.subjectType ||
+    allocation.subjectId !== plan.subjectId
+  ) {
+    return false;
+  }
+
+  if (plan.subjectType === "ORG_UNIT") {
+    return (
+      allocation.subjectType === "ORG_UNIT" &&
+      allocation.subjectId === employmentProfile.orgUnitId &&
+      allocation.memberEmploymentProfileId === employmentProfile.id
+    );
+  }
+
+  return allocation.subjectType === "TALENT_GROUP";
 }
 
 function toSelfServiceKpiItem(input: {
@@ -265,7 +392,7 @@ function isOfficialSelfServiceHistoryPlan(plan: KpiPlan): boolean {
 function isSelfServiceKpiSubjectSupported(
   plan: Pick<KpiPlan, "subjectType">,
 ): boolean {
-  return plan.subjectType === "TALENT_GROUP";
+  return plan.subjectType === "TALENT_GROUP" || plan.subjectType === "ORG_UNIT";
 }
 
 function resolveLastUpdatedAt(

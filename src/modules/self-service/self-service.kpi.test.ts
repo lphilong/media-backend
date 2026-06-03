@@ -181,6 +181,11 @@ test("GET /self-service/kpi returns only current staff own PUBLISHED KPI", async
         memberEmploymentProfileId: "ep-staff",
         limit: 100,
       },
+      {
+        status: "PUBLISHED",
+        memberEmploymentProfileId: "ep-staff",
+        limit: 100,
+      },
     ]);
     assert.deepEqual(harness.kpi.listPlanByIdsInputs, [
       [
@@ -284,12 +289,157 @@ test("GET /self-service/kpi excludes forged ORG_UNIT plans from current and hist
     assert.equal(allExposedIds.includes("plan-forged-org-current"), false);
     assert.equal(allExposedIds.includes("plan-forged-org-previous"), false);
     assert.equal(allExposedIds.includes("plan-forged-org-finalized"), false);
+    assert.equal(
+      allExposedIds.includes("plan-org-profile-current"),
+      false,
+    );
     assert.deepEqual(harness.actuals.listPlanIdsInputs, [
       ["plan-official", "plan-previous-published", "plan-previous-finalized"],
     ]);
     assert.deepEqual(harness.kpi.listActualSlotExcusePlanIdsInputs, [
       ["plan-official", "plan-previous-published", "plan-previous-finalized"],
     ]);
+  } finally {
+    await close(server);
+  }
+});
+
+test("GET /self-service/kpi returns profile-first ORG_UNIT KPI without linked internal Talent", async () => {
+  const harness = createHarness();
+  const { server, baseUrl } = await listen(
+    createSelfServiceKpiTestApp(harness, createStaffActor("user-no-talent")),
+  );
+
+  try {
+    const response = await fetch(`${baseUrl}/self-service/kpi`);
+    const body = await response.json();
+    const serialized = JSON.stringify(body);
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.data.items, [
+      {
+        kpiPlanId: "plan-org-profile-current",
+        planCode: "KPI-000001",
+        title: "Official own Org Unit KPI",
+        periodMonth: "2026-05",
+        periodStartAt: MAY_2026_START_AT,
+        periodEndAt: MAY_2026_END_AT,
+        officialStatus: "OFFICIAL_PUBLISHED",
+        isCurrentPeriod: true,
+        isPreviousPeriod: false,
+        isReadOnly: true,
+        lastUpdatedAt: 55,
+        metrics: [
+          {
+            metricCode: "REVENUE_VND",
+            unit: "VND",
+            targetValue: 200,
+            actualValue: 50,
+            progressPercent: 25,
+          },
+        ],
+        actualEntryStatusSummary: {
+          expectedEntryCount: 31,
+          enteredEntryCount: 2,
+          enteredZeroCount: 1,
+          pendingEntryCount: 1,
+          overdueEntryCount: 10,
+          excusedEntryCount: 1,
+          notRequiredEntryCount: 1,
+          notDueEntryCount: 16,
+        },
+      },
+    ]);
+    assert.deepEqual(body.data.current, body.data.items[0]);
+    assert.equal(
+      body.data.latestPrevious.kpiPlanId,
+      "plan-org-profile-previous-published",
+    );
+    assert.deepEqual(
+      body.data.history.map((item: { kpiPlanId: string }) => item.kpiPlanId),
+      [
+        "plan-org-profile-previous-published",
+        "plan-org-profile-previous-finalized",
+      ],
+    );
+    assert.equal(
+      body.data.history.find(
+        (item: { kpiPlanId: string }) =>
+          item.kpiPlanId === "plan-org-profile-previous-finalized",
+      )?.officialStatus,
+      "OFFICIAL_FINALIZED",
+    );
+    assert.deepEqual(harness.kpi.listInputs, [
+      {
+        status: "PUBLISHED",
+        memberEmploymentProfileId: "ep-no-talent",
+        limit: 100,
+      },
+    ]);
+    assert.deepEqual(harness.kpi.listPlanByIdsInputs, [
+      [
+        "plan-org-profile-current",
+        "plan-org-profile-previous-published",
+        "plan-org-profile-previous-finalized",
+        "plan-org-draft",
+      ],
+    ]);
+    assert.deepEqual(harness.actuals.listPlanIdsInputs, [
+      [
+        "plan-org-profile-current",
+        "plan-org-profile-previous-published",
+        "plan-org-profile-previous-finalized",
+      ],
+    ]);
+    assert.deepEqual(Object.keys(body.data.items[0]).sort(), [
+      "actualEntryStatusSummary",
+      "isCurrentPeriod",
+      "isPreviousPeriod",
+      "isReadOnly",
+      "kpiPlanId",
+      "lastUpdatedAt",
+      "metrics",
+      "officialStatus",
+      "periodEndAt",
+      "periodMonth",
+      "periodStartAt",
+      "planCode",
+      "title",
+    ]);
+
+    for (const forbidden of [
+      "memberEmploymentProfileId",
+      "memberTalentId",
+      "subjectId",
+      "subjectType",
+      "subjectRef",
+      "orgUnitId",
+      "managerEmploymentProfileId",
+      "finalResult",
+      "members",
+      "allocationId",
+      "actualEntryId",
+      "correction",
+      "correctedByActorId",
+      "createdByActorId",
+      "updatedByActorId",
+      "plan-org-draft",
+      "plan-org-other-unit",
+      "plan-org-other-member",
+      "plan-org-pending",
+      "plan-org-rejected",
+      "Other Org Unit",
+      "Other member Org Unit",
+      "manager note",
+      "payroll",
+      "commission",
+      "canEnterActual",
+      "canDirectEdit",
+      "canMarkExcused",
+      "canUnmarkExcused",
+    ]) {
+      assert.equal(serialized.includes(forbidden), false, forbidden);
+    }
   } finally {
     await close(server);
   }
@@ -328,10 +478,39 @@ test("GET /self-service/kpi keeps items empty when current period is missing but
   }
 });
 
-test("GET /self-service/kpi returns safe empty result without linked internal Talent", async () => {
+test("GET /self-service/kpi returns safe empty result without linked internal Talent or KPI allocations", async () => {
   const harness = createHarness();
   const { server, baseUrl } = await listen(
-    createSelfServiceKpiTestApp(harness, createStaffActor("user-no-talent")),
+    createSelfServiceKpiTestApp(harness, createStaffActor("user-empty-profile")),
+  );
+
+  try {
+    const response = await fetch(`${baseUrl}/self-service/kpi`);
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.data, {
+      items: [],
+      current: null,
+      latestPrevious: null,
+      history: [],
+    });
+    assert.deepEqual(harness.kpi.listInputs, [
+      {
+        status: "PUBLISHED",
+        memberEmploymentProfileId: "ep-empty-profile",
+        limit: 100,
+      },
+    ]);
+  } finally {
+    await close(server);
+  }
+});
+
+test("GET /self-service/kpi returns a safe empty result when actor is not linked", async () => {
+  const harness = createHarness();
+  const { server, baseUrl } = await listen(
+    createSelfServiceKpiTestApp(harness, createStaffActor("user-unlinked")),
   );
 
   try {
@@ -351,26 +530,57 @@ test("GET /self-service/kpi returns safe empty result without linked internal Ta
   }
 });
 
-test("GET /self-service/kpi returns a safe error when actor is not linked", async () => {
-  const harness = createHarness();
-  const { server, baseUrl } = await listen(
-    createSelfServiceKpiTestApp(harness, createStaffActor("user-unlinked")),
+test("GET /self-service/kpi allows on-leave EmploymentProfile and denies terminated EmploymentProfile", async () => {
+  const onLeaveHarness = createHarness();
+  const { server: onLeaveServer, baseUrl: onLeaveBaseUrl } = await listen(
+    createSelfServiceKpiTestApp(
+      onLeaveHarness,
+      createStaffActor("user-on-leave"),
+    ),
   );
 
   try {
-    const response = await fetch(`${baseUrl}/self-service/kpi`);
+    const response = await fetch(`${onLeaveBaseUrl}/self-service/kpi`);
     const body = await response.json();
 
-    assert.equal(response.status, 404);
-    assert.deepEqual(body, {
-      error: {
-        code: "SELF_SERVICE_CURRENT_PERSON_NOT_LINKED",
-        message: "No linked Employment Profile",
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      body.data.items.map((item: { kpiPlanId: string }) => item.kpiPlanId),
+      ["plan-org-on-leave-current"],
+    );
+    assert.deepEqual(onLeaveHarness.kpi.listInputs, [
+      {
+        status: "PUBLISHED",
+        memberEmploymentProfileId: "ep-on-leave",
+        limit: 100,
       },
-    });
-    assert.deepEqual(harness.kpi.listInputs, []);
+    ]);
   } finally {
-    await close(server);
+    await close(onLeaveServer);
+  }
+
+  const terminatedHarness = createHarness();
+  const { server: terminatedServer, baseUrl: terminatedBaseUrl } = await listen(
+    createSelfServiceKpiTestApp(
+      terminatedHarness,
+      createStaffActor("user-terminated"),
+    ),
+  );
+
+  try {
+    const response = await fetch(`${terminatedBaseUrl}/self-service/kpi`);
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.data, {
+      items: [],
+      current: null,
+      latestPrevious: null,
+      history: [],
+    });
+    assert.deepEqual(terminatedHarness.kpi.listInputs, []);
+  } finally {
+    await close(terminatedServer);
   }
 });
 
@@ -502,6 +712,21 @@ function createHarness(): SelfServiceKpiHarness {
       linkedUserId: "user-no-talent",
     }),
     employmentProfileRecord({
+      id: "ep-empty-profile",
+      linkedUserId: "user-empty-profile",
+      orgUnitId: "ou-empty",
+    }),
+    employmentProfileRecord({
+      id: "ep-on-leave",
+      linkedUserId: "user-on-leave",
+      employmentStatus: "ON_LEAVE",
+    }),
+    employmentProfileRecord({
+      id: "ep-terminated",
+      linkedUserId: "user-terminated",
+      employmentStatus: "TERMINATED",
+    }),
+    employmentProfileRecord({
       id: "ep-other",
       linkedUserId: "user-other",
     }),
@@ -581,6 +806,76 @@ function createHarness(): SelfServiceKpiHarness {
         periodEndAt: MARCH_2026_END_AT,
         finalizedAt: APRIL_2026_END_AT + 1,
         finalizedByActorId: "admin",
+      }),
+      kpiPlan({
+        id: "plan-org-profile-current",
+        title: "Official own Org Unit KPI",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
+      }),
+      kpiPlan({
+        id: "plan-org-profile-previous-published",
+        title: "Previous Org Unit KPI",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
+        periodMonth: "2026-04",
+        periodStartAt: APRIL_2026_START_AT,
+        periodEndAt: APRIL_2026_END_AT,
+      }),
+      kpiPlan({
+        id: "plan-org-profile-previous-finalized",
+        title: "Finalized Org Unit KPI",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
+        status: "FINALIZED",
+        periodMonth: "2026-03",
+        periodStartAt: MARCH_2026_START_AT,
+        periodEndAt: MARCH_2026_END_AT,
+        finalizedAt: APRIL_2026_END_AT + 1,
+        finalizedByActorId: "admin",
+      }),
+      kpiPlan({
+        id: "plan-org-draft",
+        title: "Draft Org Unit KPI",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
+        status: "DRAFT",
+      }),
+      kpiPlan({
+        id: "plan-org-other-unit",
+        title: "Other Org Unit KPI",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-other",
+      }),
+      kpiPlan({
+        id: "plan-org-other-member",
+        title: "Other member Org Unit KPI",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
+      }),
+      kpiPlan({
+        id: "plan-org-pending",
+        title: "Pending Org Unit KPI",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
+      }),
+      kpiPlan({
+        id: "plan-org-rejected",
+        title: "Rejected Org Unit KPI",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
+      }),
+      kpiPlan({
+        id: "plan-org-on-leave-current",
+        title: "On leave Org Unit KPI",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
+      }),
+      kpiPlan({
+        id: "plan-org-terminated-current",
+        title: "Terminated Org Unit KPI",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
       }),
     ],
     [
@@ -675,6 +970,122 @@ function createHarness(): SelfServiceKpiHarness {
         allocationStartDate: "2026-03-01",
         targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 100 }],
       }),
+      allocation({
+        id: "alloc-org-profile-current",
+        kpiPlanId: "plan-org-profile-current",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
+        groupId: null,
+        memberEmploymentProfileId: "ep-no-talent",
+        memberTalentId: null,
+        membershipId: null,
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 200 }],
+        updatedAt: 50,
+        publishedAt: 55,
+      }),
+      allocation({
+        id: "alloc-org-profile-previous-published",
+        kpiPlanId: "plan-org-profile-previous-published",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
+        groupId: null,
+        memberEmploymentProfileId: "ep-no-talent",
+        memberTalentId: null,
+        membershipId: null,
+        allocationStartDate: "2026-04-01",
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 150 }],
+      }),
+      allocation({
+        id: "alloc-org-profile-previous-finalized",
+        kpiPlanId: "plan-org-profile-previous-finalized",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
+        groupId: null,
+        memberEmploymentProfileId: "ep-no-talent",
+        memberTalentId: null,
+        membershipId: null,
+        allocationStartDate: "2026-03-01",
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 120 }],
+      }),
+      allocation({
+        id: "alloc-org-draft-plan",
+        kpiPlanId: "plan-org-draft",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
+        groupId: null,
+        memberEmploymentProfileId: "ep-no-talent",
+        memberTalentId: null,
+        membershipId: null,
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 100 }],
+      }),
+      allocation({
+        id: "alloc-org-other-unit",
+        kpiPlanId: "plan-org-other-unit",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-other",
+        groupId: null,
+        memberEmploymentProfileId: "ep-no-talent",
+        memberTalentId: null,
+        membershipId: null,
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 100 }],
+      }),
+      allocation({
+        id: "alloc-org-other-member",
+        kpiPlanId: "plan-org-other-member",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
+        groupId: null,
+        memberEmploymentProfileId: "ep-other",
+        memberTalentId: null,
+        membershipId: null,
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 100 }],
+      }),
+      allocation({
+        id: "alloc-org-pending",
+        kpiPlanId: "plan-org-pending",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
+        groupId: null,
+        memberEmploymentProfileId: "ep-no-talent",
+        memberTalentId: null,
+        membershipId: null,
+        allocationStatus: "PENDING_APPROVAL",
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 100 }],
+      }),
+      allocation({
+        id: "alloc-org-rejected",
+        kpiPlanId: "plan-org-rejected",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
+        groupId: null,
+        memberEmploymentProfileId: "ep-no-talent",
+        memberTalentId: null,
+        membershipId: null,
+        allocationStatus: "REJECTED",
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 100 }],
+      }),
+      allocation({
+        id: "alloc-org-on-leave-current",
+        kpiPlanId: "plan-org-on-leave-current",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
+        groupId: null,
+        memberEmploymentProfileId: "ep-on-leave",
+        memberTalentId: null,
+        membershipId: null,
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 80 }],
+      }),
+      allocation({
+        id: "alloc-org-terminated-current",
+        kpiPlanId: "plan-org-terminated-current",
+        subjectType: "ORG_UNIT",
+        subjectId: "ou-1",
+        groupId: null,
+        memberEmploymentProfileId: "ep-terminated",
+        memberTalentId: null,
+        membershipId: null,
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 80 }],
+      }),
     ],
   );
   const actuals = new InMemoryKpiActualRepository([
@@ -726,6 +1137,57 @@ function createHarness(): SelfServiceKpiHarness {
       effectiveValue: 999,
       createdByActorId: "other talent actual",
     }),
+    actualEntry({
+      id: "actual-org-revenue",
+      kpiPlanId: "plan-org-profile-current",
+      allocationId: "alloc-org-profile-current",
+      memberEmploymentProfileId: "ep-no-talent",
+      memberTalentId: null,
+      metricCode: "REVENUE_VND",
+      actualDate: "01-05-2026",
+      actualValue: 50,
+      effectiveValue: 50,
+      correctionCount: 1,
+      latestCorrectionId: "correction-hidden",
+      updatedAt: 54,
+      updatedByActorId: "manager note",
+    }),
+    actualEntry({
+      id: "actual-org-zero",
+      kpiPlanId: "plan-org-profile-current",
+      allocationId: "alloc-org-profile-current",
+      memberEmploymentProfileId: "ep-no-talent",
+      memberTalentId: null,
+      metricCode: "REVENUE_VND",
+      actualDate: "04-05-2026",
+      actualValue: 0,
+      effectiveValue: 0,
+      updatedAt: 53,
+    }),
+    actualEntry({
+      id: "actual-org-previous-published",
+      kpiPlanId: "plan-org-profile-previous-published",
+      allocationId: "alloc-org-profile-previous-published",
+      memberEmploymentProfileId: "ep-no-talent",
+      memberTalentId: null,
+      metricCode: "REVENUE_VND",
+      actualDate: "01-04-2026",
+      actualValue: 90,
+      effectiveValue: 90,
+      updatedAt: 52,
+    }),
+    actualEntry({
+      id: "actual-org-previous-finalized",
+      kpiPlanId: "plan-org-profile-previous-finalized",
+      allocationId: "alloc-org-profile-previous-finalized",
+      memberEmploymentProfileId: "ep-no-talent",
+      memberTalentId: null,
+      metricCode: "REVENUE_VND",
+      actualDate: "01-03-2026",
+      actualValue: 120,
+      effectiveValue: 120,
+      updatedAt: 51,
+    }),
   ]);
   kpi.actualExcuses.push(
     actualSlotExcuse({
@@ -751,6 +1213,22 @@ function createHarness(): SelfServiceKpiHarness {
       metricCode: "LIVE_HOURS",
       actualDate: "02-04-2026",
       status: "EXCUSED",
+    }),
+    actualSlotExcuse({
+      id: "excuse-org-current-excused",
+      kpiPlanId: "plan-org-profile-current",
+      allocationId: "alloc-org-profile-current",
+      metricCode: "REVENUE_VND",
+      actualDate: "02-05-2026",
+      status: "EXCUSED",
+    }),
+    actualSlotExcuse({
+      id: "excuse-org-current-not-required",
+      kpiPlanId: "plan-org-profile-current",
+      allocationId: "alloc-org-profile-current",
+      metricCode: "REVENUE_VND",
+      actualDate: "03-05-2026",
+      status: "NOT_REQUIRED",
     }),
   );
 
