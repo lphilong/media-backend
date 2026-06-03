@@ -10,7 +10,7 @@ export const KPI_SUBJECT_TYPES = [
 export type KpiSubjectType = (typeof KPI_SUBJECT_TYPES)[number];
 
 export const KPI_EXECUTABLE_SUBJECT_TYPES = ["TALENT", "TALENT_GROUP"] as const;
-export const KPI_CREATE_SUBJECT_TYPES = ["TALENT_GROUP"] as const;
+export const KPI_CREATE_SUBJECT_TYPES = ["TALENT_GROUP", "ORG_UNIT"] as const;
 
 export type KpiExecutableSubjectType =
   (typeof KPI_EXECUTABLE_SUBJECT_TYPES)[number];
@@ -564,7 +564,10 @@ export interface KpiActualWorkspaceMemberSummary {
   readonly memberDisplayName: string | null;
   readonly revenue: Omit<
     KpiActualWorkspaceRevenueSummary,
-    "operationalTargetValue" | "planTargetValue" | "targetSource" | "targetMismatch"
+    | "operationalTargetValue"
+    | "planTargetValue"
+    | "targetSource"
+    | "targetMismatch"
   > & {
     readonly targetValue: number;
   };
@@ -574,8 +577,7 @@ export interface KpiActualWorkspaceMemberSummary {
   readonly actionHints: KpiActualWorkspaceActionHints;
 }
 
-export interface KpiActualWorkspacePlanDetail
-  extends KpiActualWorkspacePlanSummary {
+export interface KpiActualWorkspacePlanDetail extends KpiActualWorkspacePlanSummary {
   readonly finalResult?: KpiFinalResultSnapshot | null;
   readonly members: readonly KpiActualWorkspaceMemberSummary[];
 }

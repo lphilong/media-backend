@@ -308,6 +308,24 @@ function groupPlanCommand() {
   };
 }
 
+function orgUnitPlanCommand(
+  subjectId = "org-department-active",
+  targetMetrics: readonly {
+    readonly metricCode: string;
+    readonly targetValue: number;
+  }[] = [{ metricCode: "REVENUE_VND", targetValue: 300 }],
+) {
+  return {
+    title: "May org unit KPI",
+    subjectType: "ORG_UNIT",
+    subjectId,
+    periodMonth: "2026-05",
+    periodStartAt: MAY_2026_START_AT,
+    periodEndAt: MAY_2026_END_AT,
+    targetMetrics,
+  };
+}
+
 async function createPublishedGroupPlan(
   service: KpiAdminService,
 ): Promise<
@@ -1000,6 +1018,109 @@ test("KPI V2 creates TALENT_GROUP draft plan with valid metrics and no allocatio
   assert.equal(result.allocations.length, 0);
 });
 
+test("KPI V2 creates ORG_UNIT draft plans for active supported Org Unit types", async () => {
+  const { service } = createHarness();
+
+  const cases = [
+    {
+      subjectId: "org-department-active",
+      expectedRef: {
+        id: "org-department-active",
+        code: "OU-DEP-001",
+        name: "HR Department",
+        displayName: "HR Department",
+        status: "ACTIVE",
+      },
+    },
+    {
+      subjectId: "org-team-active",
+      expectedRef: {
+        id: "org-team-active",
+        code: "OU-TEAM-001",
+        name: "Ops Team",
+        displayName: "Ops Team",
+        status: "ACTIVE",
+      },
+    },
+    {
+      subjectId: "org-business-active",
+      expectedRef: {
+        id: "org-business-active",
+        code: "OU-BU-001",
+        name: "Business Unit",
+        displayName: "Business Unit",
+        status: "ACTIVE",
+      },
+    },
+    {
+      subjectId: "org-support-active",
+      expectedRef: {
+        id: "org-support-active",
+        code: "OU-SUP-001",
+        name: "Support Unit",
+        displayName: "Support Unit",
+        status: "ACTIVE",
+      },
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    const result = await service.createKpiPlan(
+      createActor(),
+      orgUnitPlanCommand(testCase.subjectId),
+    );
+
+    assert.equal(result.status, "DRAFT");
+    assert.equal(result.subjectType, "ORG_UNIT");
+    assert.equal(result.subjectId, testCase.subjectId);
+    assert.deepEqual(result.subjectRef, testCase.expectedRef);
+    assert.equal(result.targetMetrics.length, 1);
+    assert.equal(result.targetMetrics[0]?.metricCode, "REVENUE_VND");
+    assert.equal(result.allocations.length, 0);
+  }
+});
+
+test("KPI V2 global list and detail return safe ORG_UNIT subjectRef without internals", async () => {
+  const { service } = createHarness();
+  const created = await service.createKpiPlan(
+    createActor(),
+    orgUnitPlanCommand("org-department-active"),
+  );
+
+  const list = await service.listKpiPlans(createActor(), {
+    subjectType: "ORG_UNIT",
+  });
+  const detail = await service.getKpiPlanDetail(createActor(), {
+    kpiPlanId: created.id,
+  });
+  const item = list.items.find((row) => row.id === created.id);
+
+  assert.ok(item);
+  assert.deepEqual(item.subjectRef, {
+    id: "org-department-active",
+    code: "OU-DEP-001",
+    name: "HR Department",
+    displayName: "HR Department",
+    status: "ACTIVE",
+  });
+  assert.deepEqual(detail.subjectRef, item.subjectRef);
+  const serialized = JSON.stringify({
+    listSubjectRef: item.subjectRef,
+    detailSubjectRef: detail.subjectRef,
+  });
+  for (const forbidden of [
+    "parentOrgUnitId",
+    "ancestorChain",
+    "hierarchy",
+    "externalRef",
+    "managerEmploymentProfileIds",
+    "memberEmploymentProfileIds",
+    "description",
+  ]) {
+    assert.equal(serialized.includes(forbidden), false);
+  }
+});
+
 test("KPI V2 rejects create-time allocations", async () => {
   const { service } = createHarness();
 
@@ -1045,6 +1166,50 @@ test("KPI V2 rejects future-compatible subject types on create", async () => {
     }),
     KpiValidationError,
   );
+});
+
+test("KPI V2 rejects missing, inactive, and unsupported ORG_UNIT references", async () => {
+  const { service } = createHarness();
+
+  for (const subjectId of [
+    "missing-org-unit",
+    "org-inactive",
+    "org-unsupported-type",
+  ]) {
+    await assert.rejects(
+      service.createKpiPlan(createActor(), orgUnitPlanCommand(subjectId)),
+      /KPI ORG_UNIT subject must reference an active supported Org Unit/,
+    );
+  }
+});
+
+test("KPI V2 ORG_UNIT metric allowlist permits REVENUE_VND and rejects talent-specific metrics", async () => {
+  const { service } = createHarness();
+
+  const created = await service.createKpiPlan(
+    createActor(),
+    orgUnitPlanCommand("org-team-active", [
+      { metricCode: "REVENUE_VND", targetValue: 300 },
+    ]),
+  );
+
+  assert.equal(created.targetMetrics[0]?.metricCode, "REVENUE_VND");
+  for (const metricCode of [
+    "CONTENT_OUTPUT_COUNT",
+    "LIVE_HOURS",
+    "EVENT_COMPLETION_COUNT",
+    "ONBOARDED_TALENT_COUNT",
+  ]) {
+    await assert.rejects(
+      service.createKpiPlan(
+        createActor(),
+        orgUnitPlanCommand("org-team-active", [{ metricCode, targetValue: 1 }]),
+      ),
+      new RegExp(
+        `KPI metric ${metricCode} is not allowed for subjectType ORG_UNIT`,
+      ),
+    );
+  }
 });
 
 test("KPI V2 rejects ATTENDANCE_RATE and unknown metrics", async () => {
@@ -1325,6 +1490,289 @@ test("KPI V2 group allocations are allowed only for TALENT_GROUP plans", async (
   );
 });
 
+test("KPI V2 ORG_UNIT draft core, target replacement, and draft archive are planning-only", async () => {
+  const { service } = createHarness();
+  const created = await service.createKpiPlan(
+    createActor(),
+    orgUnitPlanCommand("org-department-active"),
+  );
+
+  const updated = await service.updateKpiDraftCore(createActor(), {
+    kpiPlanId: created.id,
+    title: "Updated org unit KPI",
+    description: "Draft planning update",
+  });
+  const retargeted = await service.replaceKpiTargetMetrics(createActor(), {
+    kpiPlanId: created.id,
+    targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 450 }],
+  });
+  const archived = await service.archiveKpiPlan(createActor(), {
+    kpiPlanId: created.id,
+  });
+
+  assert.equal(updated.title, "Updated org unit KPI");
+  assert.equal(retargeted.targetMetrics[0]?.targetValue, 450);
+  assert.equal(archived.status, "ARCHIVED");
+  assert.equal(archived.subjectType, "ORG_UNIT");
+});
+
+test("KPI V2 ORG_UNIT execution, allocation, publish, and finalize fail closed", async () => {
+  const { service, repository } = createHarness();
+  const created = await service.createKpiPlan(
+    createActor(),
+    orgUnitPlanCommand("org-department-active"),
+  );
+
+  await assert.rejects(
+    service.publishKpiPlan(createActor(), { kpiPlanId: created.id }),
+    /Org Unit KPI execution is not enabled yet/,
+  );
+  await assert.rejects(
+    service.replaceKpiAllocations(createActor(), {
+      kpiPlanId: created.id,
+      allocations: [],
+    }),
+    /KPI allocations are allowed only for TALENT_GROUP plans/,
+  );
+  await assert.rejects(
+    service.upsertKpiAllocationDraft(createBackofficeTeamManagerActor(), {
+      kpiPlanId: created.id,
+      allocations: [],
+    }),
+    /KPI allocation draft is supported only for TALENT_GROUP plans/,
+  );
+  await assert.rejects(
+    service.getKpiActualDailyGrid(createActor(), {
+      kpiPlanId: created.id,
+      actualDate: "01-05-2026",
+    }),
+    /KPI actual grid supports only TALENT_GROUP plans/,
+  );
+  await assert.rejects(
+    service.getKpiProgress(createActor(), {
+      kpiPlanId: created.id,
+    }),
+    /Org Unit KPI execution is not enabled yet/,
+  );
+
+  const forcedPublishedOrgUnit: KpiPlan = {
+    ...(repository.plans.find((plan) => plan.id === created.id) as KpiPlan),
+    id: "forced-published-org-unit",
+    planCode: "KPI-FORCED-ORG",
+    normalizedPlanCode: "kpi-forced-org",
+    status: "PUBLISHED",
+    actualPolicySnapshot: null,
+    publishedAt: MAY_2026_START_AT,
+    publishedByActorId: "seed",
+  };
+  repository.plans.push(forcedPublishedOrgUnit);
+
+  const workspace = await service.listKpiActualWorkspacePlans(
+    createActor(),
+    {},
+  );
+  assert.equal(
+    workspace.items.some((item) => item.planId === forcedPublishedOrgUnit.id),
+    false,
+  );
+  for (const operation of [
+    () =>
+      service.approveKpiAllocation(createActor(), {
+        kpiPlanId: forcedPublishedOrgUnit.id,
+      }),
+    () =>
+      service.publishKpiAllocation(createActor(), {
+        kpiPlanId: forcedPublishedOrgUnit.id,
+      }),
+    () =>
+      service.finalizeKpiPlan(createActor(), {
+        kpiPlanId: forcedPublishedOrgUnit.id,
+      }),
+  ]) {
+    await assert.rejects(
+      operation(),
+      /Org Unit KPI execution is not enabled yet/,
+    );
+  }
+});
+
+test("KPI V2 ORG_UNIT forced execution entry points reject before execution work", async () => {
+  const { service, repository, actualRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const created = await service.createKpiPlan(
+    createActor(),
+    orgUnitPlanCommand("org-department-active"),
+  );
+  const forcedPlan: KpiPlan = {
+    ...(repository.plans.find((plan) => plan.id === created.id) as KpiPlan),
+    id: "forced-org-unit-execution-plan",
+    planCode: "KPI-FORCED-ORG-EXEC",
+    normalizedPlanCode: "kpi-forced-org-exec",
+    status: "PUBLISHED",
+    actualPolicySnapshot: null,
+    publishedAt: MAY_2026_START_AT,
+    publishedByActorId: "seed",
+  };
+  const forcedAllocation: KpiAllocation = {
+    id: "forced-org-unit-allocation",
+    kpiPlanId: forcedPlan.id,
+    groupId: forcedPlan.subjectId,
+    memberEmploymentProfileId: "talent-profile-1",
+    memberTalentId: "talent-1",
+    membershipId: "membership-talent-1",
+    allocationStatus: "PUBLISHED",
+    allocationStartDate: "2026-05-01",
+    allocationEndDate: null,
+    targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 100 }],
+    snapshotMemberDisplayName: "Talent Profile 1",
+    note: null,
+    createdAt: MAY_2026_START_AT,
+    createdByActorId: "seed",
+    updatedAt: MAY_2026_START_AT,
+    updatedByActorId: "seed",
+    submittedAt: MAY_2026_START_AT,
+    submittedByActorId: "seed",
+    approvedAt: MAY_2026_START_AT,
+    approvedByActorId: "seed",
+    approvalNote: null,
+    rejectedAt: null,
+    rejectedByActorId: null,
+    rejectionReason: null,
+    publishedAt: MAY_2026_START_AT,
+    publishedByActorId: "seed",
+    closedAt: null,
+  };
+  const forcedEntry: KpiActualEntry = {
+    id: "forced-org-unit-actual",
+    kpiPlanId: forcedPlan.id,
+    allocationId: forcedAllocation.id,
+    memberTalentId: forcedAllocation.memberTalentId,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 80,
+    effectiveValue: 80,
+    editCount: 0,
+    correctionCount: 0,
+    latestCorrectionId: null,
+    createdAt: MAY_2026_START_AT,
+    createdByActorId: "seed",
+    updatedAt: MAY_2026_START_AT,
+    updatedByActorId: "seed",
+    lastEditedAt: null,
+    lastEditedByActorId: null,
+  };
+  const forcedExcuse: KpiActualSlotExcuse = {
+    id: "forced-org-unit-excuse",
+    kpiPlanId: forcedPlan.id,
+    allocationId: forcedAllocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    status: "EXCUSED",
+    reasonCode: "MEMBER_LEAVE",
+    reasonText: "Forced fixture",
+    createdAt: MAY_2026_START_AT,
+    createdByActorId: "seed",
+    updatedAt: MAY_2026_START_AT,
+    updatedByActorId: "seed",
+    deletedAt: null,
+    deletedByActorId: null,
+  };
+  repository.plans.push(forcedPlan);
+  repository.allocations.push(forcedAllocation);
+  repository.actualExcuses.push(forcedExcuse);
+  actualRepository.entries.push(forcedEntry);
+
+  repository.listAllocationsByPlanIdCallCount = 0;
+  await assert.rejects(
+    service.getMyKpiProgress(createTalentActor(), {
+      kpiPlanId: forcedPlan.id,
+    }),
+    /Org Unit KPI execution is not enabled yet/,
+  );
+  await assert.rejects(
+    service.getKpiProgress(createActor(), {
+      kpiPlanId: forcedPlan.id,
+    }),
+    /Org Unit KPI execution is not enabled yet/,
+  );
+  assert.equal(repository.listAllocationsByPlanIdCallCount, 0);
+
+  for (const operation of [
+    () =>
+      service.createOrSetKpiActual(createActor(), {
+        kpiPlanId: forcedPlan.id,
+        allocationId: forcedAllocation.id,
+        metricCode: "REVENUE_VND",
+        actualDate: "05-05-2026",
+        actualValue: 90,
+      }),
+    () =>
+      service.updateKpiActualDirect(createActor(), {
+        kpiPlanId: forcedPlan.id,
+        actualEntryId: forcedEntry.id,
+        actualValue: 90,
+      }),
+    () =>
+      service.correctKpiActual(createActor(), {
+        kpiPlanId: forcedPlan.id,
+        actualEntryId: forcedEntry.id,
+        correctedValue: 90,
+        reason: "forced correction",
+      }),
+    () =>
+      service.listKpiActualCorrections(createActor(), {
+        kpiPlanId: forcedPlan.id,
+        actualEntryId: forcedEntry.id,
+      }),
+    () =>
+      service.markKpiActualExcuse(createActor(), {
+        kpiPlanId: forcedPlan.id,
+        allocationId: forcedAllocation.id,
+        metricCode: "REVENUE_VND",
+        actualDate: "05-05-2026",
+        status: "NOT_REQUIRED",
+        reasonCode: "NO_OPERATION_REQUIRED",
+        reasonText: "Forced fixture",
+      }),
+    () =>
+      service.removeKpiActualExcuse(createActor(), {
+        kpiPlanId: forcedPlan.id,
+        excuseId: forcedExcuse.id,
+      }),
+  ]) {
+    await assert.rejects(
+      operation(),
+      /Org Unit KPI execution is not enabled yet/,
+    );
+  }
+
+  assert.equal(actualRepository.entries.length, 1);
+  assert.equal(actualRepository.corrections.length, 0);
+  assert.equal(repository.actualExcuses[0]?.deletedAt, null);
+});
+
+test("KPI V2 manager-scoped access does not reveal ORG_UNIT plans", async () => {
+  const { service, managerRepository } = createHarness();
+  const created = await service.createKpiPlan(
+    createActor(),
+    orgUnitPlanCommand("org-department-active"),
+  );
+  seedManagerAssignment(managerRepository, "group-1");
+
+  const list = await service.listKpiPlans(createBackofficeTeamManagerActor(), {
+    subjectType: "ORG_UNIT",
+  });
+
+  assert.deepEqual(list.items, []);
+  await assert.rejects(
+    service.getKpiPlanDetail(createBackofficeTeamManagerActor(), {
+      kpiPlanId: created.id,
+    }),
+    KpiPermissionScopeError,
+  );
+});
+
 test("KPI V2 global read remains compatible with existing TALENT plan", async () => {
   const { service, repository } = createHarness();
   repository.plans.push(buildFutureSubjectDraftPlan("TALENT"));
@@ -1346,9 +1794,7 @@ test("KPI V2 global read remains compatible with existing TALENT plan", async ()
 });
 
 test("KPI V2 global list and detail return safe TALENT_GROUP subjectRef", async () => {
-  const { service, subjectAccess } = createHarness(
-    () => MAY_5_2026_NOON_HCM,
-  );
+  const { service, subjectAccess } = createHarness(() => MAY_5_2026_NOON_HCM);
   const plan = await createPublishedGroupPlan(service);
   subjectAccess.listSubjectRefsCallCount = 0;
   subjectAccess.listSubjectRefsSubjects.length = 0;
@@ -1640,11 +2086,14 @@ test("KPI managed member picker denies unmanaged, non-group, non-published, and 
     publishedAt: MAY_5_2026_NOON_HCM,
     publishedByActorId: "admin-1",
   };
-  repository.plans.push({
-    ...published,
-    id: "unmanaged-group-plan",
-    subjectId: "group-2",
-  }, talentPlan);
+  repository.plans.push(
+    {
+      ...published,
+      id: "unmanaged-group-plan",
+      subjectId: "group-2",
+    },
+    talentPlan,
+  );
 
   await assert.rejects(
     service.listKpiManagedMembers(createManagerActorWithoutKpiScope(), {
@@ -1952,10 +2401,7 @@ test("KPI V2 direct actual window allows D 00:00 through D+1 10:00 inclusive", a
   });
   assert.equal(created.actualEntry.effectiveValue, 80);
 
-  for (const allowedNow of [
-    MAY_6_2026_09_59_HCM,
-    MAY_6_2026_10_00_HCM,
-  ]) {
+  for (const allowedNow of [MAY_6_2026_09_59_HCM, MAY_6_2026_10_00_HCM]) {
     now.value = allowedNow;
     const retry = await service.createOrSetKpiActual(createActor(), {
       kpiPlanId: published.id,
@@ -2360,7 +2806,10 @@ test("KPI actual excuses mark, unmark, summarize, and block ambiguous actuals", 
   assert.equal(excusedCell?.canUnmarkExcused, true);
   assert.equal(excusedCell?.disabledReason, "ACTUAL_EXCUSED");
   assert.equal(notRequiredCell?.dailyActualStatus, "NOT_REQUIRED");
-  assert.equal(notRequiredCell?.actualExcuse?.reasonText, "No onboarding scheduled");
+  assert.equal(
+    notRequiredCell?.actualExcuse?.reasonText,
+    "No onboarding scheduled",
+  );
 
   const detail = await service.getKpiActualWorkspacePlanDetail(createActor(), {
     kpiPlanId: published.id,
@@ -2812,24 +3261,21 @@ test("KPI managed-group progress denies missing permission, scope, profile, assi
   seedManagerAssignment(managerRepository);
 
   await assert.rejects(
-    service.getKpiProgress(
-      createProgressReadOnlyBackofficeTeamManagerActor(),
-      { kpiPlanId: unmanagedPlan.id },
-    ),
+    service.getKpiProgress(createProgressReadOnlyBackofficeTeamManagerActor(), {
+      kpiPlanId: unmanagedPlan.id,
+    }),
     KpiPermissionScopeError,
   );
   await assert.rejects(
-    service.getKpiProgress(
-      createProgressReadOnlyBackofficeTeamManagerActor(),
-      { kpiPlanId: draft.id },
-    ),
+    service.getKpiProgress(createProgressReadOnlyBackofficeTeamManagerActor(), {
+      kpiPlanId: draft.id,
+    }),
     KpiPermissionScopeError,
   );
   await assert.rejects(
-    service.getKpiProgress(
-      createProgressReadOnlyBackofficeTeamManagerActor(),
-      { kpiPlanId: talentPlan.id },
-    ),
+    service.getKpiProgress(createProgressReadOnlyBackofficeTeamManagerActor(), {
+      kpiPlanId: talentPlan.id,
+    }),
     KpiPermissionScopeError,
   );
   await assert.rejects(
@@ -3140,10 +3586,7 @@ test("KPI V2 managedGroup list summarizes only visible plans without member deta
     result.items[0]?.allocationWorkflowSummary.byStatus.published,
     2,
   );
-  assert.equal(
-    result.items[0]?.allocationWorkflowSummary.byStatus.rejected,
-    0,
-  );
+  assert.equal(result.items[0]?.allocationWorkflowSummary.byStatus.rejected, 0);
   assert.equal(
     Object.prototype.hasOwnProperty.call(
       result.items[0]?.allocationWorkflowSummary,
@@ -4193,31 +4636,28 @@ test("KPI allocation approval foundation supports manager draft submit and admin
   );
   assert.equal(draft.allocations[0]?.createdByActorId, "manager-user");
 
-  const editedDraft = await service.upsertKpiAllocationDraft(
-    managerActor,
-    {
-      kpiPlanId: created.id,
-      allocations: [
-        {
-          employmentProfileId: "talent-profile-1",
-          allocationStartDate: "2026-05-01",
-          targetMetrics: [
-            { metricCode: "REVENUE_VND", targetValue: 120 },
-            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
-          ],
-          note: "Edited primary host",
-        },
-        {
-          employmentProfileId: "talent-profile-2",
-          allocationStartDate: "2026-05-01",
-          targetMetrics: [
-            { metricCode: "REVENUE_VND", targetValue: 180 },
-            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 2 },
-          ],
-        },
-      ],
-    },
-  );
+  const editedDraft = await service.upsertKpiAllocationDraft(managerActor, {
+    kpiPlanId: created.id,
+    allocations: [
+      {
+        employmentProfileId: "talent-profile-1",
+        allocationStartDate: "2026-05-01",
+        targetMetrics: [
+          { metricCode: "REVENUE_VND", targetValue: 120 },
+          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
+        ],
+        note: "Edited primary host",
+      },
+      {
+        employmentProfileId: "talent-profile-2",
+        allocationStartDate: "2026-05-01",
+        targetMetrics: [
+          { metricCode: "REVENUE_VND", targetValue: 180 },
+          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 2 },
+        ],
+      },
+    ],
+  });
   assert.equal(
     editedDraft.allocations[0]?.targetMetrics.find(
       (metric) => metric.metricCode === "REVENUE_VND",
@@ -4225,12 +4665,9 @@ test("KPI allocation approval foundation supports manager draft submit and admin
     120,
   );
 
-  const submitted = await service.submitKpiAllocationDraft(
-    managerActor,
-    {
-      kpiPlanId: created.id,
-    },
-  );
+  const submitted = await service.submitKpiAllocationDraft(managerActor, {
+    kpiPlanId: created.id,
+  });
   assert.equal(submitted.allocations[0]?.allocationStatus, "PENDING_APPROVAL");
   assert.equal(submitted.allocations[0]?.submittedByActorId, "manager-user");
 
@@ -4923,7 +5360,10 @@ test("KPI actual workspace exposes correction-aware revenue, coverage, limited m
   )[0];
   assert.ok(exposedMember);
   assert.equal(exposedMember.allocationId, first.id);
-  assert.equal(exposedMember.memberDisplayName, first.snapshotMemberDisplayName);
+  assert.equal(
+    exposedMember.memberDisplayName,
+    first.snapshotMemberDisplayName,
+  );
   assert.deepEqual(exposedDetail.actualEntryStatusSummary, {
     expectedEntryCount: 124,
     enteredEntryCount: 3,
@@ -4944,21 +5384,23 @@ test("KPI actual workspace exposes correction-aware revenue, coverage, limited m
   );
   assert.equal("memberTalentId" in exposedMember, false);
   assert.equal("memberEmploymentProfileId" in exposedMember, false);
-  assert.equal(
-    JSON.stringify(exposedDetail).includes("overdueCount"),
-    false,
-  );
+  assert.equal(JSON.stringify(exposedDetail).includes("overdueCount"), false);
 });
 
 test("KPI actual workspace keeps zero-allocation group plan visible as coverage gap", async () => {
   const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
-  const created = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
   const published = await service.publishKpiPlan(createActor(), {
     kpiPlanId: created.id,
   });
 
   const result = await service.listKpiActualWorkspacePlans(createActor(), {});
-  const item = result.items.find((candidate) => candidate.planId === published.id);
+  const item = result.items.find(
+    (candidate) => candidate.planId === published.id,
+  );
   assert.ok(item);
   assert.deepEqual(item.revenue, {
     metricCode: "REVENUE_VND",
@@ -5113,13 +5555,10 @@ test("KPI actual workspace sorts revenueActual before cursor and page selection"
 
 test("KPI actual workspace sorts achievementPercent with nulls last both directions", async () => {
   const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
-  const nullPlan = await service.publishKpiPlan(
-    createActor(),
-    {
-      kpiPlanId: (await service.createKpiPlan(createActor(), groupPlanCommand()))
-        .id,
-    },
-  );
+  const nullPlan = await service.publishKpiPlan(createActor(), {
+    kpiPlanId: (await service.createKpiPlan(createActor(), groupPlanCommand()))
+      .id,
+  });
   const low = await createPublishedGroupPlan(service);
   const high = await createPublishedGroupPlan(service);
 
@@ -5609,13 +6048,7 @@ test("KPI actual workspace status booleans use accepted daily status AND semanti
     repository,
     actualRepository,
     neither.id,
-    [
-      "01-05-2026",
-      "02-05-2026",
-      "03-05-2026",
-      "04-05-2026",
-      "05-05-2026",
-    ],
+    ["01-05-2026", "02-05-2026", "03-05-2026", "04-05-2026", "05-05-2026"],
     0,
   );
 
@@ -5645,12 +6078,12 @@ test("KPI actual workspace status booleans ignore future, EXCUSED, and NOT_REQUI
   );
   const exempted = await createPublishedGroupPlan(service);
   const future = await createPublishedJune2026GroupPlan(service);
-  seedOfficialActualEntriesForDates(
-    repository,
-    actualRepository,
-    exempted.id,
-    ["01-05-2026", "02-05-2026", "03-05-2026", "04-05-2026"],
-  );
+  seedOfficialActualEntriesForDates(repository, actualRepository, exempted.id, [
+    "01-05-2026",
+    "02-05-2026",
+    "03-05-2026",
+    "04-05-2026",
+  ]);
   seedOfficialActualExcusesForDate(repository, exempted.id, "05-05-2026");
   seedOfficialActualExcusesForDate(repository, exempted.id, "06-05-2026");
 
@@ -5688,12 +6121,12 @@ test("KPI actual workspace status booleans respect the D+1 10:00 HCM cutoff", as
     () => now.value,
   );
   const plan = await createPublishedGroupPlan(service);
-  seedOfficialActualEntriesForDates(
-    repository,
-    actualRepository,
-    plan.id,
-    ["01-05-2026", "02-05-2026", "03-05-2026", "04-05-2026"],
-  );
+  seedOfficialActualEntriesForDates(repository, actualRepository, plan.id, [
+    "01-05-2026",
+    "02-05-2026",
+    "03-05-2026",
+    "04-05-2026",
+  ]);
 
   assert.deepEqual(
     (
@@ -5718,7 +6151,10 @@ test("KPI actual workspace status booleans respect the D+1 10:00 HCM cutoff", as
 
 test("KPI actual workspace applies status booleans before pagination and validates cursor shape", async () => {
   const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
-  const skipped = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const skipped = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
   await service.publishKpiPlan(createActor(), { kpiPlanId: skipped.id });
   const firstMatch = await createPublishedGroupPlan(service);
   const secondMatch = await createPublishedGroupPlan(service);
@@ -5794,7 +6230,10 @@ test("KPI actual workspace status booleans compose with search, coverage, and de
 
 test("KPI actual workspace applies status booleans before derived-sort pagination", async () => {
   const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
-  const skipped = await service.createKpiPlan(createActor(), groupPlanCommand());
+  const skipped = await service.createKpiPlan(
+    createActor(),
+    groupPlanCommand(),
+  );
   await service.publishKpiPlan(createActor(), { kpiPlanId: skipped.id });
   const matching = [
     await createPublishedGroupPlan(service),
@@ -5816,9 +6255,7 @@ test("KPI actual workspace applies status booleans before derived-sort paginatio
     cursor: firstPage.nextCursor,
   });
   assert.deepEqual(
-    [...firstPage.items, ...secondPage.items]
-      .map((item) => item.planId)
-      .sort(),
+    [...firstPage.items, ...secondPage.items].map((item) => item.planId).sort(),
     matching.map((plan) => plan.id).sort(),
   );
   assert.equal(secondPage.nextCursor, undefined);
@@ -5828,12 +6265,12 @@ test("KPI managed actual workspace status booleans ignore hidden group and wrong
   const { service, repository, actualRepository, managerRepository } =
     createHarness(() => MAY_5_2026_NOON_HCM);
   const managed = await createPublishedGroupPlan(service);
-  seedOfficialActualEntriesForDates(
-    repository,
-    actualRepository,
-    managed.id,
-    ["01-05-2026", "02-05-2026", "03-05-2026", "04-05-2026"],
-  );
+  seedOfficialActualEntriesForDates(repository, actualRepository, managed.id, [
+    "01-05-2026",
+    "02-05-2026",
+    "03-05-2026",
+    "04-05-2026",
+  ]);
   const managedAllocations = repository.allocations.filter(
     (allocation) => allocation.kpiPlanId === managed.id,
   );
@@ -5951,10 +6388,7 @@ test("KPI actual workspace query controller rejects unknown list fields and read
   } as unknown as Request;
   bindCommand(req, "KPI_ACTUAL_WORKSPACE_PLAN_GET_DETAIL");
   const detail = await controller.handle(req, createActor(), "ADMIN");
-  assert.equal(
-    (detail as { readonly planId: string }).planId,
-    published.id,
-  );
+  assert.equal((detail as { readonly planId: string }).planId, published.id);
   await assert.rejects(
     service.getKpiActualWorkspacePlanDetail(createActor(), {
       kpiPlanId: "missing-workspace-plan",
@@ -6086,6 +6520,89 @@ class InMemoryBusinessCodeSequenceRepository implements BusinessCodeSequenceRepo
 class InMemoryKpiSubjectReadonlyAccess implements KpiSubjectReadonlyAccess {
   listSubjectRefsCallCount = 0;
   readonly listSubjectRefsSubjects: KpiSubjectReferenceLookup[] = [];
+  readonly orgUnits = new Map<
+    string,
+    {
+      readonly id: string;
+      readonly code: string;
+      readonly name: string;
+      readonly type: string;
+      readonly status: string;
+      readonly parentOrgUnitId?: string | null;
+      readonly ancestorChain?: readonly string[];
+      readonly externalRef?: string | null;
+      readonly managerEmploymentProfileIds?: readonly string[];
+      readonly memberEmploymentProfileIds?: readonly string[];
+      readonly description?: string | null;
+    }
+  >([
+    [
+      "org-department-active",
+      {
+        id: "org-department-active",
+        code: "OU-DEP-001",
+        name: "HR Department",
+        type: "DEPARTMENT",
+        status: "ACTIVE",
+        parentOrgUnitId: "org-business-active",
+        ancestorChain: ["org-business-active"],
+        externalRef: "hr-external",
+        managerEmploymentProfileIds: ["manager-profile-1"],
+        memberEmploymentProfileIds: ["talent-profile-1"],
+        description: "Sensitive HR department notes",
+      },
+    ],
+    [
+      "org-team-active",
+      {
+        id: "org-team-active",
+        code: "OU-TEAM-001",
+        name: "Ops Team",
+        type: "TEAM",
+        status: "ACTIVE",
+      },
+    ],
+    [
+      "org-business-active",
+      {
+        id: "org-business-active",
+        code: "OU-BU-001",
+        name: "Business Unit",
+        type: "BUSINESS_UNIT",
+        status: "ACTIVE",
+      },
+    ],
+    [
+      "org-support-active",
+      {
+        id: "org-support-active",
+        code: "OU-SUP-001",
+        name: "Support Unit",
+        type: "SUPPORT_UNIT",
+        status: "ACTIVE",
+      },
+    ],
+    [
+      "org-inactive",
+      {
+        id: "org-inactive",
+        code: "OU-INACTIVE-001",
+        name: "Inactive Unit",
+        type: "DEPARTMENT",
+        status: "INACTIVE",
+      },
+    ],
+    [
+      "org-unsupported-type",
+      {
+        id: "org-unsupported-type",
+        code: "OU-LEGACY-001",
+        name: "Legacy Unit",
+        type: "LEGACY_UNIT",
+        status: "ACTIVE",
+      },
+    ],
+  ]);
 
   async listSubjectRefs(
     subjects: readonly KpiSubjectReferenceLookup[],
@@ -6132,6 +6649,18 @@ class InMemoryKpiSubjectReadonlyAccess implements KpiSubjectReadonlyAccess {
           });
         }
       }
+      if (subject.subjectType === "ORG_UNIT") {
+        const orgUnit = this.orgUnits.get(subject.subjectId);
+        if (orgUnit) {
+          refs.set(kpiSubjectRefKey(subject), {
+            id: orgUnit.id,
+            code: orgUnit.code,
+            name: orgUnit.name,
+            displayName: orgUnit.name,
+            status: orgUnit.status,
+          });
+        }
+      }
     }
     return refs;
   }
@@ -6148,9 +6677,9 @@ class InMemoryKpiSubjectReadonlyAccess implements KpiSubjectReadonlyAccess {
     ]
       .filter((group) => !allowed || allowed.has(group.id))
       .filter((group) =>
-        `${group.code} ${group.name}`.toLocaleLowerCase("en-US").includes(
-          search,
-        ),
+        `${group.code} ${group.name}`
+          .toLocaleLowerCase("en-US")
+          .includes(search),
       )
       .map((group) => group.id);
   }
@@ -6161,6 +6690,16 @@ class InMemoryKpiSubjectReadonlyAccess implements KpiSubjectReadonlyAccess {
 
   async hasActiveTalentGroup(groupId: string): Promise<boolean> {
     return groupId === "group-1";
+  }
+
+  async hasActiveOrgUnit(orgUnitId: string): Promise<boolean> {
+    const orgUnit = this.orgUnits.get(orgUnitId);
+    return (
+      orgUnit?.status === "ACTIVE" &&
+      ["DEPARTMENT", "TEAM", "BUSINESS_UNIT", "SUPPORT_UNIT"].includes(
+        orgUnit.type,
+      )
+    );
   }
 
   async findActiveGroupMember(
@@ -6505,11 +7044,23 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
         }
         return true;
       })
-      .map((plan) => buildTestDerivedWorkspaceRow(plan, this.allocations, this.actualEntries))
-      .filter((row) =>
-        matchesTestAllocationCoverage(row, this.allocations, input.allocationCoverage),
+      .map((plan) =>
+        buildTestDerivedWorkspaceRow(
+          plan,
+          this.allocations,
+          this.actualEntries,
+        ),
       )
-      .filter((row) => !input.cursor || isAfterTestDerivedCursor(row, input.cursor))
+      .filter((row) =>
+        matchesTestAllocationCoverage(
+          row,
+          this.allocations,
+          input.allocationCoverage,
+        ),
+      )
+      .filter(
+        (row) => !input.cursor || isAfterTestDerivedCursor(row, input.cursor),
+      )
       .sort((left, right) => compareTestDerivedRows(left, right, input))
       .slice(0, input.limit);
   }
@@ -7272,8 +7823,8 @@ function compareTestDerivedRows(
   }
   return (
     left.achievementNullRank - right.achievementNullRank ||
-    (((left.achievementPercent ?? 0) - (right.achievementPercent ?? 0)) *
-      direction) ||
+    ((left.achievementPercent ?? 0) - (right.achievementPercent ?? 0)) *
+      direction ||
     left.plan.id.localeCompare(right.plan.id)
   );
 }

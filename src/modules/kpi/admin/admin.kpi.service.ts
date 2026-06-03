@@ -203,12 +203,11 @@ interface KpiActualWorkspaceAggregate {
 
 type KpiActualWorkspaceCoverageFilter = "complete" | "incomplete";
 
-interface NormalizedActualWorkspacePlansInput
-  extends Omit<ListKpiPlansInput, "sortBy" | "sortDirection" | "cursor"> {
-  readonly sortBy:
-    | "periodMonth"
-    | "planCode"
-    | KpiActualWorkspaceDerivedSortBy;
+interface NormalizedActualWorkspacePlansInput extends Omit<
+  ListKpiPlansInput,
+  "sortBy" | "sortDirection" | "cursor"
+> {
+  readonly sortBy: "periodMonth" | "planCode" | KpiActualWorkspaceDerivedSortBy;
   readonly sortDirection: "ASC" | "DESC";
   readonly cursor?: string;
   readonly allocationCoverage?: KpiActualWorkspaceCoverageFilter;
@@ -219,10 +218,7 @@ interface NormalizedActualWorkspacePlansInput
 interface ActualWorkspaceCursorEnvelope {
   readonly version: 1;
   readonly queryKey: string;
-  readonly sortBy:
-    | "periodMonth"
-    | "planCode"
-    | KpiActualWorkspaceDerivedSortBy;
+  readonly sortBy: "periodMonth" | "planCode" | KpiActualWorkspaceDerivedSortBy;
   readonly sortDirection: "ASC" | "DESC";
   readonly lastPeriodMonth?: string;
   readonly lastPlanCode?: string;
@@ -280,7 +276,7 @@ export class KpiAdminService {
       operation,
       `kpi-plan:create:${command.subjectType}:${command.subjectId}`,
       async (session) => {
-        await this.assertSubjectExecutable(
+        await this.assertSubjectReferenceActive(
           subjectType,
           normalizeRequiredText(command.subjectId, "subjectId"),
           session,
@@ -344,7 +340,7 @@ export class KpiAdminService {
           session,
         });
 
-        return this.toDetailView(plan, metricRecords, allocationRecords);
+        return this.loadPlanDetail(plan.id, session);
       },
     );
   }
@@ -411,13 +407,16 @@ export class KpiAdminService {
     if (!this.hasKpiGlobalScope(actor)) {
       await this.assertActorCanReadManagedGroupProgress(actor, plan);
     }
-    const [aggregate] = await this.buildActualWorkspaceAggregates(actor, [plan]);
+    const [aggregate] = await this.buildActualWorkspaceAggregates(actor, [
+      plan,
+    ]);
     if (!aggregate) {
       throw new KpiNotFoundError(plan.id);
     }
     return {
       ...aggregate.summary,
-      finalResult: plan.status === "FINALIZED" ? plan.finalResult ?? null : null,
+      finalResult:
+        plan.status === "FINALIZED" ? (plan.finalResult ?? null) : null,
       members: aggregate.members,
     };
   }
@@ -921,6 +920,7 @@ export class KpiAdminService {
       `kpi-plan:${command.kpiPlanId}`,
       async (session) => {
         const plan = await this.requirePlan(command.kpiPlanId, session);
+        assertExecutableSubjectType(plan.subjectType);
         if (plan.status !== "PUBLISHED") {
           throw new KpiStateError(
             "KPI allocation can be published only after the KPI plan is PUBLISHED",
@@ -1055,6 +1055,11 @@ export class KpiAdminService {
         if (current.status === "ARCHIVED") {
           throw new KpiStateError(`KPI plan ${current.id} is already ARCHIVED`);
         }
+        if (current.subjectType === "ORG_UNIT" && current.status !== "DRAFT") {
+          throw new KpiStateError(
+            "Org Unit KPI archive is enabled only for draft planning",
+          );
+        }
 
         const now = this.clock();
         const archived = await this.repository.transitionStatus(
@@ -1126,6 +1131,7 @@ export class KpiAdminService {
           metricCode,
           "actualValue",
         );
+        assertExecutableSubjectType(plan.subjectType);
         this.assertActualMutationPlanOpen(plan, "enter actual");
         const policy = requireActualPolicySnapshot(plan);
         assertActualDateWithinPlan(plan, actualDate);
@@ -1253,6 +1259,7 @@ export class KpiAdminService {
           "reasonText",
         );
 
+        assertExecutableSubjectType(plan.subjectType);
         this.assertActualMutationPlanOpen(plan, "mark actual excuse");
         assertActualDateWithinPlan(plan, actualDate);
         const allocation = await this.requireActiveAllocation(
@@ -1351,6 +1358,7 @@ export class KpiAdminService {
         ) {
           throw new KpiNotFoundError(command.excuseId);
         }
+        assertExecutableSubjectType(plan.subjectType);
         this.assertActualMutationPlanOpen(plan, "remove actual excuse");
         assertActualDateWithinPlan(plan, excuse.actualDate);
         const allocation = await this.requireActiveAllocation(
@@ -1429,6 +1437,7 @@ export class KpiAdminService {
           entry.metricCode,
           "actualValue",
         );
+        assertExecutableSubjectType(plan.subjectType);
         this.assertActualMutationPlanOpen(plan, "update actual");
         const policy = requireActualPolicySnapshot(plan);
         assertActualDateWithinPlan(plan, entry.actualDate);
@@ -1495,6 +1504,7 @@ export class KpiAdminService {
           entry.metricCode,
           "correctedValue",
         );
+        assertExecutableSubjectType(plan.subjectType);
         this.assertActualMutationPlanOpen(plan, "correct actual");
         const policy = requireActualPolicySnapshot(plan);
         assertActualDateWithinPlan(plan, entry.actualDate);
@@ -1593,6 +1603,7 @@ export class KpiAdminService {
       `kpi-plan:${command.kpiPlanId}`,
       async (session) => {
         const current = await this.requirePlan(command.kpiPlanId, session);
+        assertExecutableSubjectType(current.subjectType);
         if (current.status !== "PUBLISHED") {
           throw new KpiStateError(
             `KPI plan ${current.id} must be PUBLISHED before finalize`,
@@ -1652,6 +1663,7 @@ export class KpiAdminService {
   ): Promise<KpiProgressView> {
     this.assertContextPermission(actor, Permission.KPI_READ_PROGRESS);
     const plan = await this.requirePlan(query.kpiPlanId);
+    assertExecutableSubjectType(plan.subjectType);
     const allowedTalentIds = await this.resolveProgressTalentScope(actor, plan);
     return this.buildProgressView(plan, allowedTalentIds);
   }
@@ -1666,13 +1678,14 @@ export class KpiAdminService {
         "KPI self progress requires kpi.self scope",
       );
     }
+    const plan = await this.requirePlan(query.kpiPlanId);
+    assertExecutableSubjectType(plan.subjectType);
     const actorTalent = await this.resolveActorTalentId(actor);
     if (!actorTalent) {
       throw new KpiPermissionScopeError(
         "KPI progress self-view requires actor-to-talent mapping",
       );
     }
-    const plan = await this.requirePlan(query.kpiPlanId);
     return this.buildProgressView(plan, new Set([actorTalent]));
   }
 
@@ -1682,6 +1695,11 @@ export class KpiAdminService {
   ): Promise<KpiActualDailyGridView> {
     this.assertContextPermission(actor, Permission.KPI_READ_PROGRESS);
     const plan = await this.requirePlan(query.kpiPlanId);
+    if (plan.subjectType !== "TALENT_GROUP") {
+      throw new KpiPermissionScopeError(
+        "KPI actual grid supports only TALENT_GROUP plans",
+      );
+    }
     const actualDate = normalizeActualDateText(query.actualDate, "actualDate");
     assertActualDateWithinPlan(plan, actualDate);
     await this.assertActorCanReadActualGrid(actor, plan);
@@ -1694,6 +1712,7 @@ export class KpiAdminService {
   ): Promise<ListKpiActualCorrectionsResult> {
     this.assertContextPermission(actor, Permission.KPI_READ_PROGRESS);
     const plan = await this.requirePlan(query.kpiPlanId);
+    assertExecutableSubjectType(plan.subjectType);
     const entry = await this.requireActualEntry(query.actualEntryId, plan.id);
     await this.assertActorCanReadActualEntry(actor, plan, entry);
     const items = await this.actualRepository.listCorrectionsByActualEntryId(
@@ -1812,16 +1831,15 @@ export class KpiAdminService {
     actualDate: string,
     session?: ClientSession,
   ): Promise<void> {
-    const excuse =
-      await this.repository.findActiveActualSlotExcuseByIdentity(
-        {
-          kpiPlanId,
-          allocationId,
-          metricCode,
-          actualDate,
-        },
-        session,
-      );
+    const excuse = await this.repository.findActiveActualSlotExcuseByIdentity(
+      {
+        kpiPlanId,
+        allocationId,
+        metricCode,
+        actualDate,
+      },
+      session,
+    );
     if (!excuse) {
       return;
     }
@@ -1922,11 +1940,7 @@ export class KpiAdminService {
         this.clock(),
         session,
       );
-    if (
-      assignments.some(
-        (assignment) => assignment.groupId === groupId,
-      )
-    ) {
+    if (assignments.some((assignment) => assignment.groupId === groupId)) {
       return;
     }
     throw new KpiPermissionScopeError(
@@ -2136,7 +2150,11 @@ export class KpiAdminService {
       entry.metricCode,
     );
     this.assertActualEntryMatchesAllocation(entry, allocation);
-    await this.assertActorCanManageAllocationCorrection(actor, plan, allocation);
+    await this.assertActorCanManageAllocationCorrection(
+      actor,
+      plan,
+      allocation,
+    );
   }
 
   private async buildActualDailyGridView(
@@ -2630,7 +2648,9 @@ export class KpiAdminService {
           hasNext && pageRows.length > 0
             ? encodeActualWorkspaceCursor(
                 buildActualWorkspaceCursorEnvelope(
-                  pageRows[pageRows.length - 1] as KpiActualWorkspaceDerivedPlanSortRow,
+                  pageRows[
+                    pageRows.length - 1
+                  ] as KpiActualWorkspaceDerivedPlanSortRow,
                   input,
                   queryKey,
                 ),
@@ -2678,7 +2698,9 @@ export class KpiAdminService {
         hasNext && pageRows.length > 0
           ? encodeActualWorkspaceCursor(
               buildActualWorkspaceCursorEnvelope(
-                pageRows[pageRows.length - 1] as KpiActualWorkspaceDerivedPlanSortRow,
+                pageRows[
+                  pageRows.length - 1
+                ] as KpiActualWorkspaceDerivedPlanSortRow,
                 input,
                 queryKey,
               ),
@@ -2904,7 +2926,9 @@ export class KpiAdminService {
     plan: KpiPlan,
     finalizedAt: number,
   ): Promise<KpiFinalResultSnapshot> {
-    const [aggregate] = await this.buildActualWorkspaceAggregates(actor, [plan]);
+    const [aggregate] = await this.buildActualWorkspaceAggregates(actor, [
+      plan,
+    ]);
     if (!aggregate) {
       throw new KpiStateError(
         `KPI plan ${plan.id} cannot build final result snapshot`,
@@ -3162,7 +3186,7 @@ export class KpiAdminService {
     return formatBusinessCode(KPI_PLAN_CODE_POLICY, sequence);
   }
 
-  private async assertSubjectExecutable(
+  private async assertSubjectReferenceActive(
     subjectType: KpiSubjectType,
     subjectId: string,
     session: ClientSession,
@@ -3192,8 +3216,19 @@ export class KpiAdminService {
       return;
     }
 
+    if (subjectType === "ORG_UNIT") {
+      if (
+        !(await this.subjectReadonlyAccess.hasActiveOrgUnit(subjectId, session))
+      ) {
+        throw new KpiInvalidSubjectReferenceError(
+          `KPI ORG_UNIT subject must reference an active supported Org Unit: ${subjectId}`,
+        );
+      }
+      return;
+    }
+
     throw new KpiValidationError(
-      `KPI subjectType ${subjectType} is not executable in Phase 4-C.2`,
+      `KPI subjectType ${subjectType} is not supported for KPI planning`,
     );
   }
 
@@ -3432,6 +3467,7 @@ export class KpiAdminService {
       `kpi-plan:${kpiPlanId}`,
       async (session) => {
         const plan = await this.requirePlan(kpiPlanId, session);
+        assertExecutableSubjectType(plan.subjectType);
         this.assertActualMutationPlanOpen(plan, "approve or reject allocation");
         const allocations = await this.repository.listAllocationsByPlanId(
           plan.id,
@@ -3979,7 +4015,9 @@ function assertExecutableSubjectType(subjectType: KpiSubjectType): void {
   }
 
   throw new KpiValidationError(
-    `KPI subjectType ${subjectType} is future-compatible but not executable in Phase 4-C.2`,
+    subjectType === "ORG_UNIT"
+      ? "Org Unit KPI execution is not enabled yet"
+      : `KPI subjectType ${subjectType} is future-compatible but not executable in Phase 4-C.2`,
   );
 }
 
@@ -3989,11 +4027,13 @@ function assertCreateSubjectType(subjectType: KpiSubjectType): void {
   }
 
   throw new KpiValidationError(
-    `KPI create subjectType ${subjectType} is not supported; use TALENT_GROUP`,
+    `KPI create subjectType ${subjectType} is not supported; use TALENT_GROUP or ORG_UNIT`,
   );
 }
 
-function assertCreateCommandHasNoAllocations(command: CreateKpiPlanCommand): void {
+function assertCreateCommandHasNoAllocations(
+  command: CreateKpiPlanCommand,
+): void {
   if (Object.prototype.hasOwnProperty.call(command, "allocations")) {
     throw new KpiValidationError(
       "KPI create does not accept allocations; allocate members after publish",
@@ -4165,7 +4205,10 @@ function buildActualWorkspaceAggregate(input: {
       );
       return (
         sum +
-        Math.max(periodDayCount - (entryCountByAllocationMetric.get(key) ?? 0), 0)
+        Math.max(
+          periodDayCount - (entryCountByAllocationMetric.get(key) ?? 0),
+          0,
+        )
       );
     }, 0);
     const actualEntryStatusSummary = summarizeDailyActualStatuses({
@@ -4348,10 +4391,18 @@ function summarizeDailyActualStatuses(input: {
           allocation,
           actualDate,
           entry: input.entriesBySlot.get(
-            actualWorkspaceSlotKey(allocation.id, metric.metricCode, actualDate),
+            actualWorkspaceSlotKey(
+              allocation.id,
+              metric.metricCode,
+              actualDate,
+            ),
           ),
           excuse: input.excusesBySlot.get(
-            actualWorkspaceSlotKey(allocation.id, metric.metricCode, actualDate),
+            actualWorkspaceSlotKey(
+              allocation.id,
+              metric.metricCode,
+              actualDate,
+            ),
           ),
           now: input.now,
         });
@@ -4464,7 +4515,11 @@ function resolveDailyActualStatus(input: {
   }
   if (
     input.now <=
-    localDateTimeToUtcMs(input.actualDate, DEFAULT_ACTUAL_ENTRY_LOCK_LOCAL_TIME, 1)
+    localDateTimeToUtcMs(
+      input.actualDate,
+      DEFAULT_ACTUAL_ENTRY_LOCK_LOCAL_TIME,
+      1,
+    )
   ) {
     return "DUE_OPEN";
   }
@@ -4588,10 +4643,7 @@ function buildActualWorkspaceDerivedCursor(
 
 function buildActualWorkspaceCursorEnvelope(
   row: KpiPlan | KpiActualWorkspaceDerivedPlanSortRow,
-  input: Pick<
-    NormalizedActualWorkspacePlansInput,
-    "sortBy" | "sortDirection"
-  >,
+  input: Pick<NormalizedActualWorkspacePlansInput, "sortBy" | "sortDirection">,
   queryKey: string,
 ): ActualWorkspaceCursorEnvelope {
   const plan = isDerivedPlanSortRow(row) ? row.plan : row;
@@ -4625,10 +4677,7 @@ function encodeActualWorkspaceCursor(
 
 function decodeActualWorkspacePlanCursor(
   cursor: string,
-  input: Pick<
-    NormalizedActualWorkspacePlansInput,
-    "sortBy" | "sortDirection"
-  >,
+  input: Pick<NormalizedActualWorkspacePlansInput, "sortBy" | "sortDirection">,
   expectedQueryKey: string,
 ): KpiPlanListCursor {
   if (input.sortBy !== "periodMonth" && input.sortBy !== "planCode") {
@@ -4698,10 +4747,7 @@ function isDerivedPlanSortRow(
 
 function decodeActualWorkspaceDerivedCursor(
   cursor: string,
-  input: Pick<
-    NormalizedActualWorkspacePlansInput,
-    "sortBy" | "sortDirection"
-  >,
+  input: Pick<NormalizedActualWorkspacePlansInput, "sortBy" | "sortDirection">,
   expectedQueryKey: string,
 ): KpiActualWorkspaceDerivedCursor {
   if (!isActualWorkspaceDerivedSortBy(input.sortBy)) {
@@ -5005,9 +5051,9 @@ function matchesActualWorkspaceStatusFilters(
 ): boolean {
   return (
     (input.hasOverdueActuals === undefined ||
-      input.hasOverdueActuals === (summary.overdueEntryCount > 0)) &&
+      input.hasOverdueActuals === summary.overdueEntryCount > 0) &&
     (input.hasPendingActuals === undefined ||
-      input.hasPendingActuals === (summary.pendingEntryCount > 0))
+      input.hasPendingActuals === summary.pendingEntryCount > 0)
   );
 }
 

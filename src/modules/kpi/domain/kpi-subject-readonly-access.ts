@@ -48,6 +48,10 @@ export interface KpiSubjectReadonlyAccess {
     groupId: string,
     session?: ClientSession,
   ): Promise<boolean>;
+  hasActiveOrgUnit(
+    orgUnitId: string,
+    session?: ClientSession,
+  ): Promise<boolean>;
   findActiveGroupMember(
     groupId: string,
     memberTalentId: string,
@@ -76,8 +80,6 @@ export interface KpiSubjectReadonlyAccess {
   ): Promise<KpiActorTalentLookup | null>;
 }
 
-export function kpiSubjectRefKey(
-  subject: KpiSubjectReferenceLookup,
-): string {
+export function kpiSubjectRefKey(subject: KpiSubjectReferenceLookup): string {
   return `${subject.subjectType}:${subject.subjectId}`;
 }

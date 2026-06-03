@@ -66,6 +66,7 @@ export class SelfServiceKpiService {
     const now = this.clock();
     const currentPublishedPlans = plans.filter(
       (plan) =>
+        isSelfServiceKpiSubjectSupported(plan) &&
         plan.status === "PUBLISHED" &&
         plan.periodStartAt <= now &&
         plan.periodEndAt >= now,
@@ -73,6 +74,7 @@ export class SelfServiceKpiService {
     const previousOfficialPlans = plans
       .filter(
         (plan) =>
+          isSelfServiceKpiSubjectSupported(plan) &&
           isOfficialSelfServiceHistoryPlan(plan) && plan.periodEndAt < now,
       )
       .sort(compareKpiPlansNewestFirst);
@@ -147,6 +149,9 @@ function toSelfServiceKpiItem(input: {
 }): SelfServiceKpiItemView | null {
   const plan = input.plan;
   if (!plan) {
+    return null;
+  }
+  if (!isSelfServiceKpiSubjectSupported(plan)) {
     return null;
   }
 
@@ -255,6 +260,12 @@ function uniqueNonEmpty(values: readonly string[]): readonly string[] {
 
 function isOfficialSelfServiceHistoryPlan(plan: KpiPlan): boolean {
   return plan.status === "PUBLISHED" || plan.status === "FINALIZED";
+}
+
+function isSelfServiceKpiSubjectSupported(
+  plan: Pick<KpiPlan, "subjectType">,
+): boolean {
+  return plan.subjectType === "TALENT_GROUP";
 }
 
 function resolveLastUpdatedAt(

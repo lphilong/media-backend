@@ -189,6 +189,9 @@ test("GET /self-service/kpi returns only current staff own PUBLISHED KPI", async
         "plan-previous-finalized",
         "plan-future",
         "plan-draft",
+        "plan-forged-org-current",
+        "plan-forged-org-previous",
+        "plan-forged-org-finalized",
       ],
     ]);
     assert.deepEqual(harness.kpi.findPlanByIdInputs, []);
@@ -210,6 +213,11 @@ test("GET /self-service/kpi returns only current staff own PUBLISHED KPI", async
       "plan-other-member",
       "plan-unrelated-talent",
       "plan-unrelated-profile",
+      "plan-forged-org-current",
+      "plan-forged-org-previous",
+      "plan-forged-org-finalized",
+      "Forged ORG_UNIT",
+      "ORG_UNIT",
       "DRAFT",
       "PENDING_APPROVAL",
       "APPROVED",
@@ -241,6 +249,50 @@ test("GET /self-service/kpi returns only current staff own PUBLISHED KPI", async
     ]) {
       assert.equal(serialized.includes(forbidden), false, forbidden);
     }
+  } finally {
+    await close(server);
+  }
+});
+
+test("GET /self-service/kpi excludes forged ORG_UNIT plans from current and history", async () => {
+  const harness = createHarness();
+  const { server, baseUrl } = await listen(
+    createSelfServiceKpiTestApp(harness, createStaffActor("user-staff")),
+  );
+
+  try {
+    const response = await fetch(`${baseUrl}/self-service/kpi`);
+    const body = await response.json();
+    const currentIds = body.data.items.map(
+      (item: { kpiPlanId: string }) => item.kpiPlanId,
+    );
+    const historyIds = body.data.history.map(
+      (item: { kpiPlanId: string }) => item.kpiPlanId,
+    );
+    const allExposedIds = [
+      ...currentIds,
+      body.data.current?.kpiPlanId,
+      body.data.latestPrevious?.kpiPlanId,
+      ...historyIds,
+    ].filter(Boolean);
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(currentIds, ["plan-official"]);
+    assert.equal(body.data.current.kpiPlanId, "plan-official");
+    assert.equal(body.data.latestPrevious.kpiPlanId, "plan-previous-published");
+    assert.deepEqual(historyIds, [
+      "plan-previous-published",
+      "plan-previous-finalized",
+    ]);
+    assert.equal(allExposedIds.includes("plan-forged-org-current"), false);
+    assert.equal(allExposedIds.includes("plan-forged-org-previous"), false);
+    assert.equal(allExposedIds.includes("plan-forged-org-finalized"), false);
+    assert.deepEqual(harness.actuals.listPlanIdsInputs, [
+      ["plan-official", "plan-previous-published", "plan-previous-finalized"],
+    ]);
+    assert.deepEqual(harness.kpi.listActualSlotExcusePlanIdsInputs, [
+      ["plan-official", "plan-previous-published", "plan-previous-finalized"],
+    ]);
   } finally {
     await close(server);
   }
@@ -502,7 +554,37 @@ function createHarness(): SelfServiceKpiHarness {
       }),
       kpiPlan({ id: "plan-other-member", title: "Other member KPI" }),
       kpiPlan({ id: "plan-unrelated-talent", title: "Unrelated Talent KPI" }),
-      kpiPlan({ id: "plan-unrelated-profile", title: "Unrelated EmploymentProfile KPI" }),
+      kpiPlan({
+        id: "plan-unrelated-profile",
+        title: "Unrelated EmploymentProfile KPI",
+      }),
+      kpiPlan({
+        id: "plan-forged-org-current",
+        title: "Forged ORG_UNIT current KPI",
+        subjectType: "ORG_UNIT",
+        subjectId: "org-unit-forged",
+      }),
+      kpiPlan({
+        id: "plan-forged-org-previous",
+        title: "Forged ORG_UNIT previous KPI",
+        subjectType: "ORG_UNIT",
+        subjectId: "org-unit-forged",
+        periodMonth: "2026-04",
+        periodStartAt: APRIL_2026_START_AT,
+        periodEndAt: APRIL_2026_END_AT,
+      }),
+      kpiPlan({
+        id: "plan-forged-org-finalized",
+        title: "Forged ORG_UNIT finalized KPI",
+        subjectType: "ORG_UNIT",
+        subjectId: "org-unit-forged",
+        status: "FINALIZED",
+        periodMonth: "2026-03",
+        periodStartAt: MARCH_2026_START_AT,
+        periodEndAt: MARCH_2026_END_AT,
+        finalizedAt: APRIL_2026_END_AT + 1,
+        finalizedByActorId: "admin",
+      }),
     ],
     [
       allocation({ id: "alloc-official", kpiPlanId: "plan-official" }),
@@ -566,6 +648,26 @@ function createHarness(): SelfServiceKpiHarness {
         kpiPlanId: "plan-unrelated-profile",
         memberTalentId: "talent-staff",
         memberEmploymentProfileId: "ep-other",
+      }),
+      allocation({
+        id: "alloc-forged-org-current",
+        kpiPlanId: "plan-forged-org-current",
+        groupId: "org-unit-forged",
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 100 }],
+      }),
+      allocation({
+        id: "alloc-forged-org-previous",
+        kpiPlanId: "plan-forged-org-previous",
+        groupId: "org-unit-forged",
+        allocationStartDate: "2026-04-01",
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 100 }],
+      }),
+      allocation({
+        id: "alloc-forged-org-finalized",
+        kpiPlanId: "plan-forged-org-finalized",
+        groupId: "org-unit-forged",
+        allocationStartDate: "2026-03-01",
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 100 }],
       }),
     ],
   );

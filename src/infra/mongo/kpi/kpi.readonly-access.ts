@@ -32,6 +32,14 @@ interface TalentGroupDocument {
   readonly status: string;
 }
 
+interface OrgUnitDocument {
+  readonly _id: string;
+  readonly code?: string;
+  readonly name?: string;
+  readonly type?: string;
+  readonly status?: string;
+}
+
 interface TalentGroupMemberDocument {
   readonly _id: string;
   readonly groupId: string;
@@ -52,12 +60,14 @@ export class NativeMongoKpiSubjectReadonlyAccess
   implements KpiSubjectReadonlyAccess
 {
   private readonly groupCollection: Collection<TalentGroupDocument>;
+  private readonly orgUnitCollection: Collection<OrgUnitDocument>;
   private readonly memberCollection: Collection<TalentGroupMemberDocument>;
   private readonly employmentProfileCollection: Collection<EmploymentProfileDocument>;
 
   constructor(db: Db) {
     super(db, "talents");
     this.groupCollection = db.collection<TalentGroupDocument>("talent_groups");
+    this.orgUnitCollection = db.collection<OrgUnitDocument>("org_units");
     this.memberCollection = db.collection<TalentGroupMemberDocument>(
       "talent_group_members",
     );
@@ -73,6 +83,7 @@ export class NativeMongoKpiSubjectReadonlyAccess
     const refs = new Map<string, ReferenceSummary>();
     const groupIds = uniqueSubjectIds(subjects, "TALENT_GROUP");
     const talentIds = uniqueSubjectIds(subjects, "TALENT");
+    const orgUnitIds = uniqueSubjectIds(subjects, "ORG_UNIT");
 
     if (groupIds.length > 0) {
       const groups = await this.groupCollection
@@ -174,6 +185,36 @@ export class NativeMongoKpiSubjectReadonlyAccess
       }
     }
 
+    if (orgUnitIds.length > 0) {
+      const orgUnits = await this.orgUnitCollection
+        .find(
+          { _id: { $in: orgUnitIds } },
+          {
+            ...this.withSession(session),
+            projection: { _id: 1, code: 1, name: 1, status: 1 },
+          },
+        )
+        .toArray();
+
+      for (const orgUnit of orgUnits) {
+        const code = readText(orgUnit.code);
+        const name = readText(orgUnit.name);
+        const status = readText(orgUnit.status);
+        refs.set(
+          kpiSubjectRefKey({
+            subjectType: "ORG_UNIT",
+            subjectId: orgUnit._id,
+          }),
+          {
+            id: orgUnit._id,
+            ...(code ? { code } : {}),
+            ...(name ? { name, displayName: name } : {}),
+            ...(status ? { status } : {}),
+          },
+        );
+      }
+    }
+
     return refs;
   }
 
@@ -223,6 +264,21 @@ export class NativeMongoKpiSubjectReadonlyAccess
   ): Promise<boolean> {
     const doc = await this.groupCollection.findOne(
       { _id: groupId, status: "ACTIVE" },
+      { ...this.withSession(session), projection: { _id: 1 } },
+    );
+    return doc !== null;
+  }
+
+  async hasActiveOrgUnit(
+    orgUnitId: string,
+    session?: ClientSession,
+  ): Promise<boolean> {
+    const doc = await this.orgUnitCollection.findOne(
+      {
+        _id: orgUnitId,
+        status: "ACTIVE",
+        type: { $in: ["DEPARTMENT", "TEAM", "BUSINESS_UNIT", "SUPPORT_UNIT"] },
+      },
       { ...this.withSession(session), projection: { _id: 1 } },
     );
     return doc !== null;

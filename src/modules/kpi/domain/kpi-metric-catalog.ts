@@ -21,7 +21,7 @@ export const KPI_METRIC_CATALOG: Readonly<
     code: "REVENUE_VND",
     unit: "VND",
     rollupMethod: "SUM",
-    allowedSubjectTypes: ["TALENT", "TALENT_GROUP"],
+    allowedSubjectTypes: ["TALENT", "TALENT_GROUP", "ORG_UNIT"],
     currencyCode: "VND",
   },
   CONTENT_OUTPUT_COUNT: {
