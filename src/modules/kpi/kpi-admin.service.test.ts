@@ -1139,7 +1139,16 @@ test("NativeMongo OrgUnit manager assignment repository filters active manager-r
   const queries: Record<string, unknown>[] = [];
   const repository = new NativeMongoOrgUnitManagerAssignmentRepository({
     collection(name: string) {
-      assert.equal(name, "org_unit_manager_assignments");
+      assert.ok(
+        ["org_unit_manager_assignments", "employment_profiles"].includes(name),
+      );
+      if (name === "employment_profiles") {
+        return {
+          findOne() {
+            return Promise.resolve(null);
+          },
+        };
+      }
       return {
         find(query: Record<string, unknown>) {
           queries.push(query);
@@ -2555,6 +2564,146 @@ test("KPI ORG_UNIT actual/progress/correction uses EmploymentProfile identity wi
   assert.equal(corrected.correction.memberTalentId, null);
   assert.equal(history.items.length, 1);
   assert.equal(history.items[0]?.memberEmploymentProfileId, "org-profile-1");
+});
+
+test("KPI ORG_UNIT correction succeeds after zero update and cleared exceptions while active and finalized blockers remain", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
+  const { service, repository } = createHarness(() => now.value);
+  const actor = createActor();
+  const created = await service.createKpiPlan(actor, orgUnitPlanCommand());
+  await service.publishKpiPlan(actor, { kpiPlanId: created.id });
+  await service.upsertKpiAllocationDraft(actor, {
+    kpiPlanId: created.id,
+    allocations: [
+      {
+        employmentProfileId: "org-profile-1",
+        allocationStartDate: "2026-05-01",
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 300 }],
+      },
+    ],
+  });
+  await service.submitKpiAllocationDraft(actor, { kpiPlanId: created.id });
+  await service.approveKpiAllocation(actor, { kpiPlanId: created.id });
+  const published = await service.publishKpiAllocation(actor, {
+    kpiPlanId: created.id,
+  });
+  const allocation = published.allocations[0] as KpiAllocation;
+
+  const actual = await service.createOrSetKpiOrgUnitActual(actor, {
+    kpiPlanId: created.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 80,
+  });
+  const zero = await service.updateKpiOrgUnitActualDirect(actor, {
+    kpiPlanId: created.id,
+    actualEntryId: actual.actualEntry.id,
+    actualValue: 0,
+  });
+  assert.equal(zero.actualEntry.actualValue, 0);
+  assert.equal(zero.actualEntry.effectiveValue, 0);
+
+  const excused = await service.markKpiOrgUnitActualExcuse(actor, {
+    kpiPlanId: created.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "06-05-2026",
+    status: "EXCUSED",
+    reasonCode: "MEMBER_LEAVE",
+    reasonText: "Approved leave",
+  });
+  const excusedId = repository.actualExcuses.find(
+    (item) => item.kpiPlanId === excused.id && item.actualDate === "06-05-2026",
+  )?.id;
+  assert.ok(excusedId);
+  await service.removeKpiOrgUnitActualExcuse(actor, {
+    kpiPlanId: created.id,
+    excuseId: excusedId,
+  });
+
+  const notRequired = await service.markKpiOrgUnitActualExcuse(actor, {
+    kpiPlanId: created.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "07-05-2026",
+    status: "NOT_REQUIRED",
+    reasonCode: "NO_OPERATION_REQUIRED",
+    reasonText: "No operation required",
+  });
+  const notRequiredId = repository.actualExcuses.find(
+    (item) =>
+      item.kpiPlanId === notRequired.id && item.actualDate === "07-05-2026",
+  )?.id;
+  assert.ok(notRequiredId);
+  await service.removeKpiOrgUnitActualExcuse(actor, {
+    kpiPlanId: created.id,
+    excuseId: notRequiredId,
+  });
+
+  repository.actualExcuses.push({
+    id: "stale-active-excuse-on-zero-actual",
+    kpiPlanId: created.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    status: "EXCUSED",
+    reasonCode: "OTHER",
+    reasonText: "Stale active blocker",
+    createdAt: now.value,
+    createdByActorId: actor.id,
+    updatedAt: now.value,
+    updatedByActorId: actor.id,
+    deletedAt: null,
+    deletedByActorId: null,
+  });
+
+  now.value = MAY_5_2026_AFTER_LOCK_HCM;
+  await assert.rejects(
+    service.correctKpiOrgUnitActual(actor, {
+      kpiPlanId: created.id,
+      actualEntryId: actual.actualEntry.id,
+      correctedValue: 120,
+      reason: "blocked while active exception exists",
+    }),
+    KpiConflictError,
+  );
+  await service.removeKpiOrgUnitActualExcuse(actor, {
+    kpiPlanId: created.id,
+    excuseId: "stale-active-excuse-on-zero-actual",
+  });
+
+  const corrected = await service.correctKpiOrgUnitActual(actor, {
+    kpiPlanId: created.id,
+    actualEntryId: actual.actualEntry.id,
+    correctedValue: 120,
+    reason: "eligible correction after cleared exceptions",
+  });
+  const history = await service.listKpiOrgUnitActualCorrections(actor, {
+    kpiPlanId: created.id,
+    actualEntryId: actual.actualEntry.id,
+  });
+  const exposedCorrection = KpiActualCorrectionExposure.expose(
+    corrected.correction,
+  );
+
+  assert.equal(corrected.actualEntry.actualValue, 0);
+  assert.equal(corrected.actualEntry.effectiveValue, 120);
+  assert.equal(corrected.correction.memberEmploymentProfileId, "org-profile-1");
+  assert.equal(history.items.length, 1);
+  assert.equal("memberEmploymentProfileId" in exposedCorrection, false);
+
+  now.value = JUNE_1_2026_NOON_HCM;
+  await service.finalizeKpiPlan(actor, { kpiPlanId: created.id });
+  await assert.rejects(
+    service.correctKpiOrgUnitActual(actor, {
+      kpiPlanId: created.id,
+      actualEntryId: actual.actualEntry.id,
+      correctedValue: 130,
+      reason: "finalized blocker",
+    }),
+    KpiStateError,
+  );
 });
 
 test("KPI V2 manager-scoped ORG_UNIT read shows only assigned published plans", async () => {
@@ -10101,6 +10250,21 @@ class InMemoryOrgUnitManagerAssignmentRepository
 {
   readonly assignments: OrgUnitManagerAssignment[] = [];
 
+  async insertAssignment(
+    assignment: OrgUnitManagerAssignment,
+  ): Promise<OrgUnitManagerAssignment> {
+    this.assignments.push(assignment);
+    return assignment;
+  }
+
+  async listAssignmentsByOrgUnitId(
+    orgUnitId: string,
+  ): Promise<readonly OrgUnitManagerAssignment[]> {
+    return this.assignments.filter(
+      (assignment) => assignment.orgUnitId === orgUnitId,
+    );
+  }
+
   async listActiveByManagerEmploymentProfileId(
     managerEmploymentProfileId: string,
     asOf: number,
@@ -10134,6 +10298,87 @@ class InMemoryOrgUnitManagerAssignmentRepository
       (assignment) =>
         assignment.orgUnitId === orgUnitId && isActiveAt(assignment, asOf),
     );
+  }
+
+  async findAssignmentById(
+    assignmentId: string,
+  ): Promise<OrgUnitManagerAssignment | null> {
+    return (
+      this.assignments.find((assignment) => assignment.id === assignmentId) ??
+      null
+    );
+  }
+
+  async updateAssignment(input: {
+    readonly assignmentId: string;
+    readonly role?: OrgUnitManagerAssignment["role"];
+    readonly includeDescendants?: boolean;
+    readonly effectiveFrom?: number;
+    readonly effectiveTo?: number | null;
+    readonly isPrimary?: boolean;
+    readonly updatedAt: number;
+    readonly updatedByActorId: string;
+  }): Promise<OrgUnitManagerAssignment | null> {
+    const index = this.assignments.findIndex(
+      (assignment) => assignment.id === input.assignmentId,
+    );
+    if (index < 0) {
+      return null;
+    }
+    const current = this.assignments[index] as OrgUnitManagerAssignment;
+    const updated: OrgUnitManagerAssignment = {
+      ...current,
+      role: input.role ?? current.role,
+      includeDescendants:
+        input.includeDescendants ?? current.includeDescendants,
+      effectiveFrom: input.effectiveFrom ?? current.effectiveFrom,
+      effectiveTo:
+        input.effectiveTo === undefined
+          ? current.effectiveTo
+          : input.effectiveTo,
+      isPrimary: input.isPrimary ?? current.isPrimary,
+      updatedAt: input.updatedAt,
+      updatedByActorId: input.updatedByActorId,
+    };
+    this.assignments[index] = updated;
+    return updated;
+  }
+
+  async revokeAssignment(input: {
+    readonly assignmentId: string;
+    readonly effectiveTo: number;
+    readonly updatedAt: number;
+    readonly updatedByActorId: string;
+  }): Promise<OrgUnitManagerAssignment | null> {
+    const index = this.assignments.findIndex(
+      (assignment) =>
+        assignment.id === input.assignmentId &&
+        isActiveAt(assignment, input.effectiveTo),
+    );
+    if (index < 0) {
+      return null;
+    }
+    const current = this.assignments[index] as OrgUnitManagerAssignment;
+    const updated: OrgUnitManagerAssignment = {
+      ...current,
+      status: "INACTIVE",
+      effectiveTo: input.effectiveTo,
+      updatedAt: input.updatedAt,
+      updatedByActorId: input.updatedByActorId,
+    };
+    this.assignments[index] = updated;
+    return updated;
+  }
+
+  async findManagerEmploymentProfileCandidate(employmentProfileId: string) {
+    return {
+      id: employmentProfileId,
+      employeeCode: employmentProfileId,
+      displayName: employmentProfileId,
+      legalName: employmentProfileId,
+      jobTitle: "Manager",
+      employmentStatus: "ACTIVE",
+    };
   }
 }
 

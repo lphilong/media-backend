@@ -149,6 +149,9 @@ import { adminKpiRoutes } from "@modules/kpi/admin/admin.kpi.routes";
 import { KpiAdminController } from "@modules/kpi/admin/admin.kpi.controller";
 import { KpiAdminQueryController } from "@modules/kpi/admin/admin.kpi.query.controller";
 import { KpiAdminService } from "@modules/kpi/admin/admin.kpi.service";
+import { adminManagerWorkspaceRoutes } from "@modules/manager-workspace/admin/admin.manager-workspace.routes";
+import { ManagerWorkspaceAdminController } from "@modules/manager-workspace/admin/admin.manager-workspace.controller";
+import { ManagerWorkspaceAdminService } from "@modules/manager-workspace/admin/admin.manager-workspace.service";
 
 /* COMMISSION */
 import { adminCommissionRoutes } from "@modules/commission/admin/admin.commission.routes";
@@ -831,6 +834,20 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   const kpiQueryController = new KpiAdminQueryController(kpiService);
 
   r.use("/kpi", adminKpiRoutes(kpiController, kpiQueryController));
+
+  const managerWorkspaceController = new ManagerWorkspaceAdminController(
+    new ManagerWorkspaceAdminService(
+      employmentProfileRepository,
+      kpiSubjectReadonlyAccess,
+      talentGroupManagerAssignmentRepository,
+      orgUnitManagerAssignmentRepository,
+    ),
+  );
+
+  r.use(
+    "/manager-workspace",
+    adminManagerWorkspaceRoutes(managerWorkspaceController),
+  );
 
   /* COMMISSION */
   const commissionService = new CommissionAdminService(
