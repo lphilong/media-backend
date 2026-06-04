@@ -37,6 +37,13 @@ import {
   UserListItemView,
   UserRecord,
 } from "@modules/user/domain/user.types";
+import { UserValidationError } from "@modules/user/domain/user.errors";
+import { UserAdminQueryService } from "@modules/user/admin/admin.user.query-service";
+import {
+  ListUserReadInput,
+  ListUserReadResult,
+  UserReadRepository,
+} from "@modules/user/read/user.read-repository";
 import {
   UserAdminDetailExposure,
   UserAdminListExposure,
@@ -104,6 +111,40 @@ test("user detail exposure keeps existing auth linkage detail fields", () => {
     subject: "auth0|detail",
     status: "LINKED",
   });
+});
+
+test("user admin query forwards unlinked employment profile filter", async () => {
+  const readRepository = new RecordingUserReadRepository();
+  const service = new UserAdminQueryService(readRepository);
+
+  await service.listUsers(createActor([Permission.USER_VIEW]), {
+    hasEmploymentProfile: "false",
+    limit: "25",
+  });
+
+  assert.deepEqual(readRepository.listInputs[0], {
+    actorKind: undefined,
+    cursor: undefined,
+    hasEmploymentProfile: false,
+    limit: 25,
+    search: undefined,
+    state: undefined,
+  });
+});
+
+test("user admin query rejects invalid employment profile filter", async () => {
+  const readRepository = new RecordingUserReadRepository();
+  const service = new UserAdminQueryService(readRepository);
+
+  await assert.rejects(
+    () =>
+      service.listUsers(createActor([Permission.USER_VIEW]), {
+        hasEmploymentProfile: "maybe",
+      }),
+    UserValidationError,
+  );
+
+  assert.equal(readRepository.listInputs.length, 0);
 });
 
 const ALL_PERMISSIONS = Object.values(Permission);
@@ -1178,6 +1219,21 @@ class StaticAuthResolutionRepository implements UserAuthResolutionRepository {
     Awaited<ReturnType<UserAuthResolutionRepository["findByAuthSubject"]>>
   > {
     return this.candidates;
+  }
+}
+
+class RecordingUserReadRepository implements UserReadRepository {
+  readonly listInputs: ListUserReadInput[] = [];
+
+  async listUsers(input: ListUserReadInput): Promise<ListUserReadResult> {
+    this.listInputs.push(input);
+    return {
+      items: [],
+    };
+  }
+
+  async getUserDetail(): Promise<UserDetailView | null> {
+    return null;
   }
 }
 

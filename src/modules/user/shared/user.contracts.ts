@@ -80,6 +80,7 @@ export interface GetUserDetailQuery {
 export interface ListUsersQuery {
   readonly state?: UserAccountStatus | string;
   readonly actorKind?: UserActorKind | string;
+  readonly hasEmploymentProfile?: boolean | string;
   readonly cursor?: string;
   readonly limit?: number | string;
   readonly search?: string;

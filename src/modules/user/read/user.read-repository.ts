@@ -8,6 +8,7 @@ import {
 export interface ListUserReadInput {
   readonly state?: UserAccountStatus;
   readonly actorKind?: UserActorKind;
+  readonly hasEmploymentProfile?: boolean;
   readonly limit: number;
   readonly cursor?: string;
   readonly search?: string;

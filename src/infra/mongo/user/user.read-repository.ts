@@ -81,11 +81,23 @@ export class MongoUserReadRepository
       queryFilters.push(buildPageAfterFilter(cursor));
     }
 
-    const docs = await this.collection
-      .find(buildQuery(queryFilters))
-      .sort({ updatedAt: -1, _id: 1 })
-      .limit(input.limit + 1)
-      .toArray();
+    const docs =
+      input.hasEmploymentProfile === undefined
+        ? await this.collection
+            .find(buildQuery(queryFilters))
+            .sort({ updatedAt: -1, _id: 1 })
+            .limit(input.limit + 1)
+            .toArray()
+        : await this.collection
+            .aggregate<UserReadDocument>(
+              buildEmploymentProfileFilterPipeline({
+                filters: queryFilters,
+                hasEmploymentProfile:
+                  input.hasEmploymentProfile,
+                limit: input.limit + 1,
+              }),
+            )
+            .toArray();
 
     const hasNext = docs.length > input.limit;
     const page = hasNext ? docs.slice(0, input.limit) : docs;
@@ -115,6 +127,50 @@ export class MongoUserReadRepository
 
     return toUserDetailView(doc);
   }
+}
+
+function buildEmploymentProfileFilterPipeline(input: {
+  readonly filters: ReadonlyArray<Record<string, unknown>>;
+  readonly hasEmploymentProfile: boolean;
+  readonly limit: number;
+}): Record<string, unknown>[] {
+  return [
+    { $match: buildQuery(input.filters) },
+    {
+      $lookup: {
+        from: "employment_profiles",
+        let: { userId: "$_id" },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ["$linkedUserId", "$$userId"] },
+                  {
+                    $ne: [
+                      "$employmentStatus",
+                      "ARCHIVED",
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+          { $limit: 1 },
+          { $project: { _id: 1 } },
+        ],
+        as: "employmentProfileLinks",
+      },
+    },
+    {
+      $match: input.hasEmploymentProfile
+        ? { "employmentProfileLinks.0": { $exists: true } }
+        : { "employmentProfileLinks.0": { $exists: false } },
+    },
+    { $sort: { updatedAt: -1, _id: 1 } },
+    { $limit: input.limit },
+    { $project: { employmentProfileLinks: 0 } },
+  ];
 }
 
 function toUserListItemView(document: UserReadDocument): UserListItemView {

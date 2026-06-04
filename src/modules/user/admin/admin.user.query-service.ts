@@ -48,6 +48,11 @@ export class UserAdminQueryService {
       actorKind: parseOptionalActorKind(
         query.actorKind,
       ),
+      hasEmploymentProfile:
+        parseOptionalBoolean(
+          query.hasEmploymentProfile,
+          "hasEmploymentProfile",
+        ),
       cursor: parseOptionalCursor(query.cursor),
       limit: parseLimit(query.limit),
       search: parseOptionalSearch(query.search),
@@ -171,6 +176,39 @@ function parseOptionalCursor(
 
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : undefined;
+}
+
+function parseOptionalBoolean(
+  value: unknown,
+  field: string,
+): boolean | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value !== "string") {
+    throw new UserValidationError(
+      `${field} must be true or false`,
+    );
+  }
+
+  const normalized = value.trim().toLowerCase();
+
+  if (normalized === "true") {
+    return true;
+  }
+
+  if (normalized === "false") {
+    return false;
+  }
+
+  throw new UserValidationError(
+    `${field} must be true or false`,
+  );
 }
 
 function parseLimit(value: unknown): number {
