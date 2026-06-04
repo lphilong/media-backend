@@ -58,6 +58,8 @@ import { OrgUnitAdminController } from "@modules/org-unit/admin/admin.org-unit.c
 import { OrgUnitAdminQueryController } from "@modules/org-unit/admin/admin.org-unit.query.controller";
 import { OrgUnitAdminService } from "@modules/org-unit/admin/admin.org-unit.service";
 import { OrgUnitAdminQueryService } from "@modules/org-unit/admin/admin.org-unit.query-service";
+import { OrgUnitResponsibilityAdminService } from "@modules/org-unit/admin/admin.org-unit-responsibility.service";
+import { OrgUnitResponsibilityAdminController } from "@modules/org-unit/admin/admin.org-unit-responsibility.controller";
 
 /* EMPLOYMENT PROFILE */
 import { adminEmploymentProfileRoutes } from "@modules/employment-profile/admin/admin.employment-profile.routes";
@@ -420,10 +422,23 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   const orgUnitQueryController = new OrgUnitAdminQueryController(
     orgUnitQueryService,
   );
+  const orgUnitResponsibilityController =
+    new OrgUnitResponsibilityAdminController(
+      new OrgUnitResponsibilityAdminService(
+        orgUnitRepository,
+        orgUnitManagerAssignmentRepository,
+        authoritativeAuditGuard,
+        adminMutationBridge,
+      ),
+    );
 
   r.use(
     "/org-units",
-    adminOrgUnitRoutes(orgUnitController, orgUnitQueryController),
+    adminOrgUnitRoutes(
+      orgUnitController,
+      orgUnitQueryController,
+      orgUnitResponsibilityController,
+    ),
   );
 
   /* EMPLOYMENT PROFILE */

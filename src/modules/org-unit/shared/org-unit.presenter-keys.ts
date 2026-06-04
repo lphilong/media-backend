@@ -6,3 +6,6 @@ export const ORG_UNIT_ADMIN_LIST_PRESENTER_KEY =
 
 export const ORG_UNIT_ADMIN_DETAIL_PRESENTER_KEY =
   "org-unit.admin.detail";
+
+export const ORG_UNIT_ADMIN_RESPONSIBILITY_LIST_PRESENTER_KEY =
+  "org-unit.admin.responsibility-list";

@@ -5,6 +5,7 @@ import {
   GetOrgUnitDetailResult,
   ListDirectChildrenResult,
   ListOrgUnitsResult,
+  ListOrgUnitResponsibilitiesResult,
   ListRootOrgUnitsResult,
   OrgUnitMutationResult,
 } from "./org-unit.contracts";
@@ -12,6 +13,7 @@ import {
   OrgUnitAdminDetailExposure,
   OrgUnitAdminListExposure,
   OrgUnitAdminMutationExposure,
+  OrgUnitResponsibilityExposure,
 } from "./org-unit.exposure";
 
 type OrgUnitListPresentationInput =
@@ -69,6 +71,20 @@ export class OrgUnitAdminDetailPresenter extends Presenter<
   ): PresentationResult {
     return {
       data: OrgUnitAdminDetailExposure.expose(input),
+    };
+  }
+}
+
+export class OrgUnitResponsibilityListPresenter extends Presenter<
+  ListOrgUnitResponsibilitiesResult,
+  PresentationResult
+> {
+  present(
+    input: ListOrgUnitResponsibilitiesResult,
+    _context: ContextType,
+  ): PresentationResult {
+    return {
+      data: OrgUnitResponsibilityExposure.exposeMany(input.items),
     };
   }
 }

@@ -7,6 +7,10 @@ import {
   OrgUnitStatus,
   OrgUnitType,
 } from "@modules/org-unit/domain/org-unit.types";
+import {
+  OrgUnitManagerAssignmentView,
+  OrgUnitManagerRole,
+} from "@modules/kpi/domain/kpi.types";
 import { OrgUnitListItemView } from "@modules/org-unit/domain/org-unit.types";
 
 export interface CreateOrgUnitCommand {
@@ -44,6 +48,31 @@ export interface ArchiveOrgUnitCommand {
   readonly orgUnitId: string;
 }
 
+export interface CreateOrgUnitResponsibilityCommand {
+  readonly orgUnitId: string;
+  readonly managerEmploymentProfileId: string;
+  readonly role: OrgUnitManagerRole | string;
+  readonly includeDescendants?: boolean;
+  readonly effectiveFrom?: number | string | null;
+  readonly effectiveTo?: number | string | null;
+  readonly isPrimary?: boolean;
+}
+
+export interface UpdateOrgUnitResponsibilityCommand {
+  readonly orgUnitId: string;
+  readonly assignmentId: string;
+  readonly role?: OrgUnitManagerRole | string;
+  readonly includeDescendants?: boolean;
+  readonly effectiveFrom?: number | string | null;
+  readonly effectiveTo?: number | string | null;
+  readonly isPrimary?: boolean;
+}
+
+export interface RevokeOrgUnitResponsibilityCommand {
+  readonly orgUnitId: string;
+  readonly assignmentId: string;
+}
+
 export interface GetOrgUnitDetailQuery {
   readonly orgUnitId: string;
 }
@@ -71,8 +100,13 @@ export interface ListDirectChildrenQuery {
   readonly cursor?: string;
 }
 
+export interface ListOrgUnitResponsibilitiesQuery {
+  readonly orgUnitId: string;
+}
+
 export type OrgUnitMutationResult =
-  OrgUnitMutationView;
+  | OrgUnitMutationView
+  | OrgUnitManagerAssignmentView;
 
 export type GetOrgUnitDetailResult =
   OrgUnitDetailView;
@@ -90,4 +124,8 @@ export interface ListRootOrgUnitsResult {
 export interface ListDirectChildrenResult {
   readonly items: readonly OrgUnitChildListItemView[];
   readonly nextCursor?: string;
+}
+
+export interface ListOrgUnitResponsibilitiesResult {
+  readonly items: readonly OrgUnitManagerAssignmentView[];
 }

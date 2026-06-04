@@ -357,6 +357,11 @@ export interface OrgUnitManagerAssignment {
   readonly updatedByActorId: string;
 }
 
+export interface OrgUnitManagerAssignmentView extends OrgUnitManagerAssignment {
+  readonly orgUnitRef: ReferenceSummary;
+  readonly managerRef: ReferenceSummary;
+}
+
 export interface TalentGroupManagerAssignmentView extends TalentGroupManagerAssignment {
   readonly groupRef: ReferenceSummary;
   readonly managerRef: ReferenceSummary;

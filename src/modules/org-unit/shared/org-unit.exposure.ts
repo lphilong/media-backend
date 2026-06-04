@@ -3,6 +3,7 @@ import {
   toPlainObject,
 } from "@app/base/presentation-result.types";
 import { ExposurePolicy } from "@core/exposure/exposure.policy";
+import { OrgUnitManagerAssignmentView } from "@modules/kpi/domain/kpi.types";
 import {
   OrgUnitChildListItemView,
   OrgUnitDetailView,
@@ -50,6 +51,22 @@ const ORG_UNIT_ADMIN_DETAIL_FIELDS = [
   "createdAt",
   "updatedAt",
   "hierarchy",
+] as const;
+
+const ORG_UNIT_RESPONSIBILITY_FIELDS = [
+  "id",
+  "orgUnitId",
+  "managerEmploymentProfileId",
+  "role",
+  "status",
+  "includeDescendants",
+  "effectiveFrom",
+  "effectiveTo",
+  "isPrimary",
+  "createdAt",
+  "updatedAt",
+  "orgUnitRef",
+  "managerRef",
 ] as const;
 
 export const OrgUnitAdminListExposure =
@@ -153,7 +170,41 @@ export const OrgUnitAdminDetailExposure =
 
 export const OrgUnitAdminMutationExposure =
   Object.freeze({
-    expose(input: OrgUnitMutationView): PlainObject {
+    expose(input: OrgUnitMutationView | OrgUnitManagerAssignmentView): PlainObject {
+      if ("managerEmploymentProfileId" in input) {
+        return OrgUnitResponsibilityExposure.expose(input);
+      }
+
       return OrgUnitAdminDetailExposure.expose(input);
     },
   });
+
+export const OrgUnitResponsibilityExposure = Object.freeze({
+  expose(input: OrgUnitManagerAssignmentView): PlainObject {
+    return toPlainObject(
+      ExposurePolicy.expose(
+        {
+          id: input.id,
+          orgUnitId: input.orgUnitId,
+          managerEmploymentProfileId: input.managerEmploymentProfileId,
+          role: input.role,
+          status: input.status,
+          includeDescendants: input.includeDescendants,
+          effectiveFrom: input.effectiveFrom,
+          effectiveTo: input.effectiveTo,
+          isPrimary: input.isPrimary,
+          createdAt: input.createdAt,
+          updatedAt: input.updatedAt,
+          orgUnitRef: input.orgUnitRef,
+          managerRef: input.managerRef,
+        },
+        ORG_UNIT_RESPONSIBILITY_FIELDS,
+      ),
+      "OrgUnitResponsibility exposure",
+    );
+  },
+
+  exposeMany(items: readonly OrgUnitManagerAssignmentView[]): readonly PlainObject[] {
+    return items.map((item) => this.expose(item));
+  },
+});
