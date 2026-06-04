@@ -24,6 +24,11 @@ import {
   UpdateKpiDraftCoreCommand,
   UpsertKpiAllocationDraftCommand,
 } from "@modules/kpi/shared/kpi.contracts";
+import {
+  KpiActualCorrectionExposure,
+  KpiOrgUnitActualEntryExposure,
+  KpiPlanDetailExposure,
+} from "@modules/kpi/shared/kpi.exposure";
 import { KPI_ADMIN_MUTATION_PRESENTER_KEY } from "@modules/kpi/shared/kpi.presenter-keys";
 import { KpiAdminService } from "./admin.kpi.service";
 
@@ -40,10 +45,15 @@ type KpiMutationCommand =
   | "KPI_PLAN_PUBLISH"
   | "KPI_PLAN_ARCHIVE"
   | "KPI_ACTUAL_CREATE"
+  | "KPI_ORG_UNIT_ACTUAL_CREATE"
   | "KPI_ACTUAL_EXCUSE_MARK"
+  | "KPI_ORG_UNIT_ACTUAL_EXCUSE_MARK"
   | "KPI_ACTUAL_EXCUSE_REMOVE"
+  | "KPI_ORG_UNIT_ACTUAL_EXCUSE_REMOVE"
   | "KPI_ACTUAL_UPDATE"
+  | "KPI_ORG_UNIT_ACTUAL_UPDATE"
   | "KPI_ACTUAL_CORRECT"
+  | "KPI_ORG_UNIT_ACTUAL_CORRECT"
   | "KPI_PLAN_FINALIZE";
 
 const CREATE_KPI_PLAN_BODY_FIELDS = [
@@ -183,8 +193,18 @@ export class KpiAdminController extends SecureController {
           actor,
           parseCreateKpiActualCommand(req),
         );
+      case "KPI_ORG_UNIT_ACTUAL_CREATE":
+        return this.service.createOrSetKpiOrgUnitActual(
+          actor,
+          parseCreateKpiActualCommand(req),
+        );
       case "KPI_ACTUAL_EXCUSE_MARK":
         return this.service.markKpiActualExcuse(
+          actor,
+          parseMarkKpiActualExcuseCommand(req),
+        );
+      case "KPI_ORG_UNIT_ACTUAL_EXCUSE_MARK":
+        return this.service.markKpiOrgUnitActualExcuse(
           actor,
           parseMarkKpiActualExcuseCommand(req),
         );
@@ -198,13 +218,33 @@ export class KpiAdminController extends SecureController {
           kpiPlanId: req.params.kpiPlanId,
           excuseId: req.params.excuseId,
         } satisfies RemoveKpiActualExcuseCommand);
+      case "KPI_ORG_UNIT_ACTUAL_EXCUSE_REMOVE":
+        assertNoUnexpectedFields(
+          requireRecord(req.body),
+          [],
+          "removeKpiOrgUnitActualExcuse",
+        );
+        return this.service.removeKpiOrgUnitActualExcuse(actor, {
+          kpiPlanId: req.params.kpiPlanId,
+          excuseId: req.params.excuseId,
+        } satisfies RemoveKpiActualExcuseCommand);
       case "KPI_ACTUAL_UPDATE":
         return this.service.updateKpiActualDirect(
           actor,
           parseUpdateKpiActualCommand(req),
         );
+      case "KPI_ORG_UNIT_ACTUAL_UPDATE":
+        return this.service.updateKpiOrgUnitActualDirect(
+          actor,
+          parseUpdateKpiActualCommand(req),
+        );
       case "KPI_ACTUAL_CORRECT":
         return this.service.correctKpiActual(
+          actor,
+          parseCorrectKpiActualCommand(req),
+        );
+      case "KPI_ORG_UNIT_ACTUAL_CORRECT":
+        return this.service.correctKpiOrgUnitActual(
           actor,
           parseCorrectKpiActualCommand(req),
         );
@@ -227,6 +267,56 @@ export class KpiAdminController extends SecureController {
     _actor: Actor,
     context: ContextType,
   ): Promise<PresentationResult> {
+    const command = readCommand<KpiMutationCommand>(req);
+    if (command === "KPI_ORG_UNIT_ACTUAL_CREATE") {
+      return {
+        data: KpiOrgUnitActualEntryExposure.expose(
+          (
+            result as Awaited<
+              ReturnType<KpiAdminService["createOrSetKpiOrgUnitActual"]>
+            >
+          ).actualEntry,
+        ),
+      };
+    }
+    if (command === "KPI_ORG_UNIT_ACTUAL_UPDATE") {
+      return {
+        data: KpiOrgUnitActualEntryExposure.expose(
+          (
+            result as Awaited<
+              ReturnType<KpiAdminService["updateKpiOrgUnitActualDirect"]>
+            >
+          ).actualEntry,
+        ),
+      };
+    }
+    if (command === "KPI_ORG_UNIT_ACTUAL_CORRECT") {
+      const input = result as Awaited<
+        ReturnType<KpiAdminService["correctKpiOrgUnitActual"]>
+      >;
+      return {
+        data: {
+          actualEntry: KpiOrgUnitActualEntryExposure.expose(input.actualEntry),
+          correction: KpiActualCorrectionExposure.expose(input.correction),
+        },
+      };
+    }
+    if (
+      command === "KPI_ORG_UNIT_ACTUAL_EXCUSE_MARK" ||
+      command === "KPI_ORG_UNIT_ACTUAL_EXCUSE_REMOVE"
+    ) {
+      return {
+        data: KpiPlanDetailExposure.expose(
+          result as
+            | Awaited<
+                ReturnType<KpiAdminService["markKpiOrgUnitActualExcuse"]>
+              >
+            | Awaited<
+                ReturnType<KpiAdminService["removeKpiOrgUnitActualExcuse"]>
+              >,
+        ),
+      };
+    }
     return getPresenterRegistryFromRequest(req)
       .get<unknown, PresentationResult>(KPI_ADMIN_MUTATION_PRESENTER_KEY)
       .present(result, context);

@@ -449,7 +449,10 @@ export class KpiAdminService {
     }
 
     const plan = await this.requirePlan(query.kpiPlanId);
-    if (plan.status !== "PUBLISHED") {
+    if (
+      plan.status !== "PUBLISHED" &&
+      !(plan.subjectType === "ORG_UNIT" && plan.status === "FINALIZED")
+    ) {
       throw new KpiPermissionScopeError(
         "KPI manager-scoped detail is supported only for PUBLISHED plans",
       );
@@ -840,6 +843,73 @@ export class KpiAdminService {
       },
     );
     return { items };
+  }
+
+  async getKpiOrgUnitFinalResultDetail(
+    actor: Actor,
+    query: GetKpiPlanDetailQuery,
+  ): Promise<KpiPlanDetailView> {
+    const detail = await this.getKpiPlanDetail(actor, query);
+    if (detail.subjectType !== "ORG_UNIT") {
+      throw new KpiPermissionScopeError(
+        "KPI Org Unit final result is supported only for ORG_UNIT plans",
+      );
+    }
+    if (detail.status !== "FINALIZED") {
+      throw new KpiPermissionScopeError(
+        "KPI Org Unit final result is supported only for FINALIZED plans",
+      );
+    }
+    return { ...detail, allocations: [] };
+  }
+
+  async createOrSetKpiOrgUnitActual(
+    actor: Actor,
+    command: CreateKpiActualCommand,
+  ): Promise<KpiActualMutationResult> {
+    await this.assertOrgUnitPlan(command.kpiPlanId, "KPI Org Unit actual");
+    return this.createOrSetKpiActual(actor, command);
+  }
+
+  async markKpiOrgUnitActualExcuse(
+    actor: Actor,
+    command: MarkKpiActualExcuseCommand,
+  ): Promise<KpiPlanMutationView> {
+    await this.assertOrgUnitPlan(
+      command.kpiPlanId,
+      "KPI Org Unit actual excuse",
+    );
+    return this.markKpiActualExcuse(actor, command);
+  }
+
+  async removeKpiOrgUnitActualExcuse(
+    actor: Actor,
+    command: RemoveKpiActualExcuseCommand,
+  ): Promise<KpiPlanMutationView> {
+    await this.assertOrgUnitPlan(
+      command.kpiPlanId,
+      "KPI Org Unit actual excuse",
+    );
+    return this.removeKpiActualExcuse(actor, command);
+  }
+
+  async updateKpiOrgUnitActualDirect(
+    actor: Actor,
+    command: UpdateKpiActualCommand,
+  ): Promise<KpiActualMutationResult> {
+    await this.assertOrgUnitPlan(command.kpiPlanId, "KPI Org Unit actual");
+    return this.updateKpiActualDirect(actor, command);
+  }
+
+  async correctKpiOrgUnitActual(
+    actor: Actor,
+    command: CorrectKpiActualCommand,
+  ): Promise<KpiActualCorrectionResult> {
+    await this.assertOrgUnitPlan(
+      command.kpiPlanId,
+      "KPI Org Unit actual correction",
+    );
+    return this.correctKpiActual(actor, command);
   }
 
   async upsertKpiAllocationDraft(
@@ -1785,6 +1855,19 @@ export class KpiAdminService {
     return this.buildProgressView(plan, allowedTalentIds);
   }
 
+  async getKpiOrgUnitProgress(
+    actor: Actor,
+    query: GetKpiProgressQuery,
+  ): Promise<KpiProgressView> {
+    const result = await this.getKpiProgress(actor, query);
+    if (result.plan.subjectType !== "ORG_UNIT") {
+      throw new KpiPermissionScopeError(
+        "KPI Org Unit progress is supported only for ORG_UNIT plans",
+      );
+    }
+    return result;
+  }
+
   async getMyKpiProgress(
     actor: Actor,
     query: GetMyKpiProgressQuery,
@@ -1819,6 +1902,19 @@ export class KpiAdminService {
     return this.buildActualDailyGridView(actor, plan, actualDate);
   }
 
+  async getKpiOrgUnitActualDailyGrid(
+    actor: Actor,
+    query: GetKpiActualDailyGridQuery,
+  ): Promise<KpiActualDailyGridView> {
+    const result = await this.getKpiActualDailyGrid(actor, query);
+    if (result.subjectType !== "ORG_UNIT") {
+      throw new KpiPermissionScopeError(
+        "KPI Org Unit actual grid is supported only for ORG_UNIT plans",
+      );
+    }
+    return result;
+  }
+
   async listKpiActualCorrections(
     actor: Actor,
     query: ListKpiActualCorrectionsQuery,
@@ -1832,6 +1928,17 @@ export class KpiAdminService {
       entry.id,
     );
     return { items };
+  }
+
+  async listKpiOrgUnitActualCorrections(
+    actor: Actor,
+    query: ListKpiActualCorrectionsQuery,
+  ): Promise<ListKpiActualCorrectionsResult> {
+    await this.assertOrgUnitPlan(
+      query.kpiPlanId,
+      "KPI Org Unit actual correction history",
+    );
+    return this.listKpiActualCorrections(actor, query);
   }
 
   private async updateExistingActualDirect(
@@ -3357,6 +3464,20 @@ export class KpiAdminService {
     return plan;
   }
 
+  private async assertOrgUnitPlan(
+    kpiPlanId: string,
+    operation: string,
+    session?: ClientSession,
+  ): Promise<KpiPlan> {
+    const plan = await this.requirePlan(kpiPlanId, session);
+    if (plan.subjectType !== "ORG_UNIT") {
+      throw new KpiPermissionScopeError(
+        `${operation} is supported only for ORG_UNIT plans`,
+      );
+    }
+    return plan;
+  }
+
   private async loadPlanDetail(
     kpiPlanId: string,
     session?: ClientSession,
@@ -3766,7 +3887,9 @@ export class KpiAdminService {
     if (kpiPlanId) {
       const plan = await this.requirePlan(kpiPlanId);
       if (plan.subjectType !== "ORG_UNIT") {
-        return [];
+        throw new KpiPermissionScopeError(
+          "KPI Org Unit allocation list is supported only for ORG_UNIT plans",
+        );
       }
       if (orgUnitId && plan.subjectId !== orgUnitId) {
         return [];
@@ -3774,15 +3897,25 @@ export class KpiAdminService {
       if (this.hasKpiGlobalScope(actor)) {
         return [plan.id];
       }
-      await this.assertDirectUnitManagerAllocationWrite(actor, plan);
-      return [plan.id];
+      if (plan.status !== "PUBLISHED") {
+        throw new KpiPermissionScopeError(
+          "KPI manager-scoped Org Unit allocation list is supported only for PUBLISHED plans",
+        );
+      }
+      const managedOrgUnitIds = await this.resolveManagedOrgUnitIds(actor);
+      if (managedOrgUnitIds.includes(plan.subjectId)) {
+        return [plan.id];
+      }
+      throw new KpiPermissionScopeError(
+        `KPI actor is not an active manager for org unit ${plan.subjectId}`,
+      );
     }
 
     const subjectIds = orgUnitId
       ? [orgUnitId]
       : this.hasKpiGlobalScope(actor)
         ? undefined
-        : await this.resolveDirectUnitManagerOrgUnitIds(actor);
+        : await this.resolveManagedOrgUnitIds(actor);
     if (subjectIds !== undefined && subjectIds.length === 0) {
       return [];
     }

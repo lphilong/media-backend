@@ -46,13 +46,38 @@ export function adminKpiRoutes(
     queryController.execute,
   );
   router.get(
+    "/plans/:kpiPlanId/org-unit-progress",
+    withCommand("KPI_PLAN_ORG_UNIT_PROGRESS"),
+    queryController.execute,
+  );
+  router.get(
     "/plans/:kpiPlanId/managed-members",
     withCommand("KPI_PLAN_MANAGED_MEMBER_LIST"),
     queryController.execute,
   );
   router.get(
+    "/plans/:kpiPlanId/org-unit-managed-members",
+    withCommand("KPI_PLAN_ORG_UNIT_MANAGED_MEMBER_LIST"),
+    queryController.execute,
+  );
+  router.get(
+    "/plans/:kpiPlanId/org-unit-allocations",
+    withCommand("KPI_PLAN_ORG_UNIT_ALLOCATION_LIST"),
+    queryController.execute,
+  );
+  router.get(
+    "/plans/:kpiPlanId/org-unit-final-result",
+    withCommand("KPI_PLAN_ORG_UNIT_FINAL_RESULT"),
+    queryController.execute,
+  );
+  router.get(
     "/plans/:kpiPlanId/actuals",
     withCommand("KPI_PLAN_ACTUAL_DAILY_GRID"),
+    queryController.execute,
+  );
+  router.get(
+    "/plans/:kpiPlanId/org-unit-actuals",
+    withCommand("KPI_PLAN_ORG_UNIT_ACTUAL_DAILY_GRID"),
     queryController.execute,
   );
   router.patch(
@@ -106,8 +131,18 @@ export function adminKpiRoutes(
     mutationController.execute,
   );
   router.post(
+    "/plans/:kpiPlanId/org-unit-actuals",
+    withCommand("KPI_ORG_UNIT_ACTUAL_CREATE"),
+    mutationController.execute,
+  );
+  router.post(
     "/plans/:kpiPlanId/actual-excuses",
     withCommand("KPI_ACTUAL_EXCUSE_MARK"),
+    mutationController.execute,
+  );
+  router.post(
+    "/plans/:kpiPlanId/org-unit-actual-excuses",
+    withCommand("KPI_ORG_UNIT_ACTUAL_EXCUSE_MARK"),
     mutationController.execute,
   );
   router.delete(
@@ -115,9 +150,19 @@ export function adminKpiRoutes(
     withCommand("KPI_ACTUAL_EXCUSE_REMOVE"),
     mutationController.execute,
   );
+  router.delete(
+    "/plans/:kpiPlanId/org-unit-actual-excuses/:excuseId",
+    withCommand("KPI_ORG_UNIT_ACTUAL_EXCUSE_REMOVE"),
+    mutationController.execute,
+  );
   router.patch(
     "/plans/:kpiPlanId/actuals/:actualEntryId",
     withCommand("KPI_ACTUAL_UPDATE"),
+    mutationController.execute,
+  );
+  router.patch(
+    "/plans/:kpiPlanId/org-unit-actuals/:actualEntryId",
+    withCommand("KPI_ORG_UNIT_ACTUAL_UPDATE"),
     mutationController.execute,
   );
   router.post(
@@ -125,9 +170,19 @@ export function adminKpiRoutes(
     withCommand("KPI_ACTUAL_CORRECT"),
     mutationController.execute,
   );
+  router.post(
+    "/plans/:kpiPlanId/org-unit-actuals/:actualEntryId/corrections",
+    withCommand("KPI_ORG_UNIT_ACTUAL_CORRECT"),
+    mutationController.execute,
+  );
   router.get(
     "/plans/:kpiPlanId/actuals/:actualEntryId/corrections",
     withCommand("KPI_ACTUAL_CORRECTION_LIST"),
+    queryController.execute,
+  );
+  router.get(
+    "/plans/:kpiPlanId/org-unit-actuals/:actualEntryId/corrections",
+    withCommand("KPI_ORG_UNIT_ACTUAL_CORRECTION_LIST"),
     queryController.execute,
   );
   router.post(

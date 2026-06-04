@@ -463,6 +463,56 @@ export const KpiActualEntryExposure = Object.freeze({
   },
 });
 
+export const KpiOrgUnitActualEntryExposure = Object.freeze({
+  expose(input: KpiActualEntry): PlainObject {
+    return toPlainObject(
+      ExposurePolicy.expose(
+        {
+          id: input.id,
+          kpiPlanId: input.kpiPlanId,
+          allocationId: input.allocationId,
+          memberEmploymentProfileId: input.memberEmploymentProfileId,
+          memberTalentId: input.memberTalentId,
+          metricCode: input.metricCode,
+          actualDate: input.actualDate,
+          actualValue: input.actualValue,
+          effectiveValue: input.effectiveValue,
+          editCount: input.editCount,
+          correctionCount: input.correctionCount,
+          latestCorrectionId: input.latestCorrectionId,
+          createdAt: input.createdAt,
+          createdByActorId: input.createdByActorId,
+          updatedAt: input.updatedAt,
+          updatedByActorId: input.updatedByActorId,
+          lastEditedAt: input.lastEditedAt,
+          lastEditedByActorId: input.lastEditedByActorId,
+        },
+        [
+          "id",
+          "kpiPlanId",
+          "allocationId",
+          "memberEmploymentProfileId",
+          "memberTalentId",
+          "metricCode",
+          "actualDate",
+          "actualValue",
+          "effectiveValue",
+          "editCount",
+          "correctionCount",
+          "latestCorrectionId",
+          "createdAt",
+          "createdByActorId",
+          "updatedAt",
+          "updatedByActorId",
+          "lastEditedAt",
+          "lastEditedByActorId",
+        ] as const,
+      ),
+      "KpiOrgUnitActualEntry exposure",
+    );
+  },
+});
+
 export const KpiActualCorrectionExposure = Object.freeze({
   expose(input: KpiActualCorrection): PlainObject {
     return toPlainObject(
@@ -547,6 +597,67 @@ export const KpiActualDailyGridExposure = Object.freeze({
   },
 });
 
+export const KpiOrgUnitActualDailyGridExposure = Object.freeze({
+  expose(input: KpiActualDailyGridView): PlainObject {
+    return toPlainObject(
+      ExposurePolicy.expose(
+        {
+          kpiPlanId: input.kpiPlanId,
+          planCode: input.planCode,
+          status: input.status,
+          subjectType: input.subjectType,
+          subjectId: input.subjectId,
+          actualDate: input.actualDate,
+          policy: {
+            timezone: input.policy.timezone,
+            entryOpenLocalTime: input.policy.entryOpenLocalTime,
+            entryLockLocalTime: input.policy.entryLockLocalTime,
+            maxDirectEditsPerEntry: input.policy.maxDirectEditsPerEntry,
+            correctionAllowedUntil: input.policy.correctionAllowedUntil,
+          },
+          editability: {
+            isDirectEditOpen: input.editability.isDirectEditOpen,
+            isPlanFinalized: input.editability.isPlanFinalized,
+            disabledReason: input.editability.disabledReason,
+          },
+          targetMetrics: input.targetMetrics.map((metric) => ({
+            metricCode: metric.metricCode,
+            targetValue: metric.targetValue,
+            unit: metric.unit,
+          })),
+          rows: input.rows.map((row) => ({
+            allocationId: row.allocationId,
+            memberEmploymentProfileId: row.memberEmploymentProfileId,
+            memberTalentId: row.memberTalentId,
+            memberDisplayName: row.memberDisplayName,
+            allocationStatus: row.allocationStatus,
+            metrics: row.metrics.map((metric) => ({
+              metricCode: metric.metricCode,
+              targetValue: metric.targetValue,
+              actualEntryId: metric.actualEntryId,
+              actualValue: metric.actualValue,
+              effectiveValue: metric.effectiveValue,
+              hasEntry: metric.hasEntry,
+              dailyActualStatus: metric.dailyActualStatus,
+              actualExcuse: metric.actualExcuse,
+              editCount: metric.editCount,
+              correctionCount: metric.correctionCount,
+              latestCorrectionId: metric.latestCorrectionId,
+              canDirectEdit: metric.canDirectEdit,
+              canMarkExcused: metric.canMarkExcused,
+              canUnmarkExcused: metric.canUnmarkExcused,
+              requiresCorrection: metric.requiresCorrection,
+              disabledReason: metric.disabledReason,
+            })),
+          })),
+        },
+        KPI_ACTUAL_GRID_FIELDS,
+      ),
+      "KpiOrgUnitActualDailyGrid exposure",
+    );
+  },
+});
+
 export const KpiProgressExposure = Object.freeze({
   expose(input: KpiProgressView): PlainObject {
     return toPlainObject(
@@ -572,6 +683,36 @@ export const KpiProgressExposure = Object.freeze({
         })),
       },
       "KpiProgress exposure",
+    );
+  },
+});
+
+export const KpiOrgUnitProgressExposure = Object.freeze({
+  expose(input: KpiProgressView): PlainObject {
+    return toPlainObject(
+      {
+        plan: input.plan,
+        periodElapsedPercent: input.periodElapsedPercent,
+        targetMetrics: KpiTargetMetricExposure.exposeMany(input.targetMetrics),
+        groupTotals: input.groupTotals.map((total) => ({
+          metricCode: total.metricCode,
+          targetValue: total.targetValue,
+          actualValue: total.actualValue,
+          progressPercent: total.progressPercent,
+        })),
+        memberProgress: input.memberProgress.map((row) => ({
+          allocationId: row.allocationId,
+          memberEmploymentProfileId: row.memberEmploymentProfileId,
+          memberTalentId: row.memberTalentId,
+          metricCode: row.metricCode,
+          targetValue: row.targetValue,
+          actualValue: row.actualValue,
+          progressPercent: row.progressPercent,
+          actualEntryCount: row.actualEntryCount,
+          missingEntryCount: row.missingEntryCount,
+        })),
+      },
+      "KpiOrgUnitProgress exposure",
     );
   },
 });

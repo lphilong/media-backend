@@ -12,6 +12,7 @@ import {
   GetKpiActualWorkspacePlanDetailQuery,
   GetKpiActualDailyGridQuery,
   GetKpiProgressQuery,
+  ListKpiOrgUnitAllocationsQuery,
   ListKpiActualCorrectionsQuery,
   ListKpiActualWorkspacePlansQuery,
   GetMyKpiProgressQuery,
@@ -19,7 +20,15 @@ import {
   ListKpiManagedMembersQuery,
   ListKpiPlansQuery,
 } from "@modules/kpi/shared/kpi.contracts";
-import { KpiActualWorkspaceExposure } from "@modules/kpi/shared/kpi.exposure";
+import {
+  KpiActualCorrectionExposure,
+  KpiActualWorkspaceExposure,
+  KpiOrgUnitActualDailyGridExposure,
+  KpiOrgUnitAllocationExposure,
+  KpiOrgUnitManagedMemberPickerExposure,
+  KpiOrgUnitProgressExposure,
+  KpiPlanDetailExposure,
+} from "@modules/kpi/shared/kpi.exposure";
 import {
   KPI_ADMIN_ACTUAL_GRID_PRESENTER_KEY,
   KPI_ADMIN_ALLOCATION_LIST_PRESENTER_KEY,
@@ -38,9 +47,15 @@ type KpiQueryCommand =
   | "KPI_ALLOCATION_LIST"
   | "KPI_PLAN_GET_DETAIL"
   | "KPI_PLAN_ACTUAL_DAILY_GRID"
+  | "KPI_PLAN_ORG_UNIT_ACTUAL_DAILY_GRID"
   | "KPI_ACTUAL_CORRECTION_LIST"
+  | "KPI_ORG_UNIT_ACTUAL_CORRECTION_LIST"
   | "KPI_PLAN_PROGRESS"
+  | "KPI_PLAN_ORG_UNIT_PROGRESS"
   | "KPI_PLAN_MANAGED_MEMBER_LIST"
+  | "KPI_PLAN_ORG_UNIT_MANAGED_MEMBER_LIST"
+  | "KPI_PLAN_ORG_UNIT_ALLOCATION_LIST"
+  | "KPI_PLAN_ORG_UNIT_FINAL_RESULT"
   | "KPI_MY_PROGRESS";
 
 const LIST_KPI_PLANS_QUERY_FIELDS = [
@@ -72,6 +87,10 @@ const LIST_KPI_ALLOCATIONS_QUERY_FIELDS = [
   "status",
   "kpiPlanId",
   "groupId",
+  "limit",
+] as const;
+const LIST_KPI_ORG_UNIT_ALLOCATIONS_QUERY_FIELDS = [
+  "status",
   "limit",
 ] as const;
 
@@ -121,8 +140,18 @@ export class KpiAdminQueryController extends SecureController {
           actor,
           parseListKpiAllocationsQuery(req),
         );
+      case "KPI_PLAN_ORG_UNIT_ALLOCATION_LIST":
+        return this.service.listKpiOrgUnitAllocations(
+          actor,
+          parseListKpiOrgUnitAllocationsQuery(req),
+        );
       case "KPI_PLAN_GET_DETAIL":
         return this.service.getKpiPlanDetail(
+          actor,
+          parseGetKpiPlanDetailQuery(req),
+        );
+      case "KPI_PLAN_ORG_UNIT_FINAL_RESULT":
+        return this.service.getKpiOrgUnitFinalResultDetail(
           actor,
           parseGetKpiPlanDetailQuery(req),
         );
@@ -131,8 +160,18 @@ export class KpiAdminQueryController extends SecureController {
           actor,
           parseGetKpiActualDailyGridQuery(req),
         );
+      case "KPI_PLAN_ORG_UNIT_ACTUAL_DAILY_GRID":
+        return this.service.getKpiOrgUnitActualDailyGrid(
+          actor,
+          parseGetKpiActualDailyGridQuery(req),
+        );
       case "KPI_ACTUAL_CORRECTION_LIST":
         return this.service.listKpiActualCorrections(
+          actor,
+          parseListKpiActualCorrectionsQuery(req),
+        );
+      case "KPI_ORG_UNIT_ACTUAL_CORRECTION_LIST":
+        return this.service.listKpiOrgUnitActualCorrections(
           actor,
           parseListKpiActualCorrectionsQuery(req),
         );
@@ -141,8 +180,18 @@ export class KpiAdminQueryController extends SecureController {
           actor,
           parseGetKpiProgressQuery(req),
         );
+      case "KPI_PLAN_ORG_UNIT_PROGRESS":
+        return this.service.getKpiOrgUnitProgress(
+          actor,
+          parseGetKpiProgressQuery(req),
+        );
       case "KPI_PLAN_MANAGED_MEMBER_LIST":
         return this.service.listKpiManagedMembers(
+          actor,
+          parseListKpiManagedMembersQuery(req),
+        );
+      case "KPI_PLAN_ORG_UNIT_MANAGED_MEMBER_LIST":
+        return this.service.listKpiOrgUnitManagedMembers(
           actor,
           parseListKpiManagedMembersQuery(req),
         );
@@ -188,6 +237,64 @@ export class KpiAdminQueryController extends SecureController {
         data: KpiActualWorkspaceExposure.exposeDetail(
           result as Awaited<
             ReturnType<KpiAdminService["getKpiActualWorkspacePlanDetail"]>
+          >,
+        ),
+      };
+    }
+    if (command === "KPI_PLAN_ORG_UNIT_ALLOCATION_LIST") {
+      return {
+        data: KpiOrgUnitAllocationExposure.exposeMany(
+          (
+            result as Awaited<
+              ReturnType<KpiAdminService["listKpiOrgUnitAllocations"]>
+            >
+          ).items,
+        ),
+      };
+    }
+    if (command === "KPI_PLAN_ORG_UNIT_MANAGED_MEMBER_LIST") {
+      return {
+        data: KpiOrgUnitManagedMemberPickerExposure.exposeMany(
+          (
+            result as Awaited<
+              ReturnType<KpiAdminService["listKpiOrgUnitManagedMembers"]>
+            >
+          ).items,
+        ),
+      };
+    }
+    if (command === "KPI_PLAN_ORG_UNIT_PROGRESS") {
+      return {
+        data: KpiOrgUnitProgressExposure.expose(
+          result as Awaited<
+            ReturnType<KpiAdminService["getKpiOrgUnitProgress"]>
+          >,
+        ),
+      };
+    }
+    if (command === "KPI_PLAN_ORG_UNIT_ACTUAL_DAILY_GRID") {
+      return {
+        data: KpiOrgUnitActualDailyGridExposure.expose(
+          result as Awaited<
+            ReturnType<KpiAdminService["getKpiOrgUnitActualDailyGrid"]>
+          >,
+        ),
+      };
+    }
+    if (command === "KPI_ORG_UNIT_ACTUAL_CORRECTION_LIST") {
+      return {
+        data: (
+          result as Awaited<
+            ReturnType<KpiAdminService["listKpiOrgUnitActualCorrections"]>
+          >
+        ).items.map((item) => KpiActualCorrectionExposure.expose(item)),
+      };
+    }
+    if (command === "KPI_PLAN_ORG_UNIT_FINAL_RESULT") {
+      return {
+        data: KpiPlanDetailExposure.expose(
+          result as Awaited<
+            ReturnType<KpiAdminService["getKpiOrgUnitFinalResultDetail"]>
           >,
         ),
       };
@@ -275,6 +382,21 @@ function parseListKpiAllocationsQuery(req: Request): ListKpiAllocationsQuery {
     status: req.query.status as string | undefined,
     kpiPlanId: req.query.kpiPlanId as string | undefined,
     groupId: req.query.groupId as string | undefined,
+    limit: req.query.limit as string | undefined,
+  };
+}
+
+function parseListKpiOrgUnitAllocationsQuery(
+  req: Request,
+): ListKpiOrgUnitAllocationsQuery {
+  assertNoUnexpectedFields(
+    req.query as Record<string, unknown>,
+    LIST_KPI_ORG_UNIT_ALLOCATIONS_QUERY_FIELDS,
+    "listKpiOrgUnitAllocations",
+  );
+  return {
+    kpiPlanId: req.params.kpiPlanId,
+    status: req.query.status as string | undefined,
     limit: req.query.limit as string | undefined,
   };
 }

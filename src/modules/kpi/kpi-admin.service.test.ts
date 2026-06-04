@@ -23,6 +23,9 @@ import {
   KpiActualCorrectionExposure,
   KpiActualWorkspaceExposure,
   KpiOrgUnitAllocationExposure,
+  KpiOrgUnitActualDailyGridExposure,
+  KpiOrgUnitManagedMemberPickerExposure,
+  KpiOrgUnitProgressExposure,
   KpiPlanDetailExposure,
   KpiPlanListExposure,
 } from "@modules/kpi/shared/kpi.exposure";
@@ -2880,6 +2883,437 @@ test("KPI ORG_UNIT allocation validates direct EmploymentProfile eligibility and
   );
 });
 
+test("KPI ORG_UNIT explicit query route contracts expose EmploymentProfile-safe DTOs", async () => {
+  const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
+  const actor = createActor();
+  const controller = new KpiAdminQueryController(service) as unknown as {
+    handle(req: Request, actor: Actor, context: "ADMIN"): Promise<unknown>;
+    present(
+      result: unknown,
+      req: Request,
+      actor: Actor,
+      context: "ADMIN",
+    ): Promise<{ readonly data: unknown }>;
+  };
+  const created = await service.createKpiPlan(actor, orgUnitPlanCommand());
+  await service.publishKpiPlan(actor, { kpiPlanId: created.id });
+  await service.upsertKpiAllocationDraft(actor, {
+    kpiPlanId: created.id,
+    allocations: [
+      {
+        employmentProfileId: "org-profile-1",
+        allocationStartDate: "2026-05-01",
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 300 }],
+      },
+    ],
+  });
+  await service.submitKpiAllocationDraft(actor, { kpiPlanId: created.id });
+  await service.approveKpiAllocation(actor, { kpiPlanId: created.id });
+  const published = await service.publishKpiAllocation(actor, {
+    kpiPlanId: created.id,
+  });
+  const allocation = published.allocations[0] as KpiAllocation;
+  await service.createOrSetKpiActual(actor, {
+    kpiPlanId: created.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 80,
+  });
+
+  const call = async (command: string, query: Record<string, unknown> = {}) => {
+    const req = {
+      query,
+      params: { kpiPlanId: created.id },
+    } as unknown as Request;
+    bindCommand(req, command);
+    const result = await controller.handle(req, actor, "ADMIN");
+    return controller.present(result, req, actor, "ADMIN");
+  };
+
+  const allocationResponse = await call("KPI_PLAN_ORG_UNIT_ALLOCATION_LIST");
+  const allocationItem = (
+    allocationResponse.data as readonly Record<string, unknown>[]
+  )[0];
+  assert.equal(allocationItem?.memberEmploymentProfileId, "org-profile-1");
+  assert.equal(allocationItem?.memberTalentId, null);
+  assert.equal(allocationItem?.groupId, null);
+  assert.equal("subjectType" in (allocationItem ?? {}), false);
+  assert.equal("subjectId" in (allocationItem ?? {}), false);
+
+  const memberResponse = await call("KPI_PLAN_ORG_UNIT_MANAGED_MEMBER_LIST");
+  const memberItem = (
+    memberResponse.data as readonly Record<string, unknown>[]
+  )[0];
+  assert.equal(memberItem?.employmentProfileId, "org-profile-1");
+  assert.equal(memberItem?.displayName, "Org Profile 1");
+  assert.equal("talentId" in (memberItem ?? {}), false);
+  const orgMembers = await service.listKpiOrgUnitManagedMembers(actor, {
+    kpiPlanId: created.id,
+  });
+  assert.deepEqual(
+    KpiOrgUnitManagedMemberPickerExposure.exposeMany(orgMembers.items),
+    memberResponse.data,
+  );
+
+  const progressResponse = await call("KPI_PLAN_ORG_UNIT_PROGRESS");
+  const progress = progressResponse.data as {
+    readonly memberProgress: readonly Record<string, unknown>[];
+  };
+  assert.equal(
+    progress.memberProgress[0]?.memberEmploymentProfileId,
+    "org-profile-1",
+  );
+  assert.equal(progress.memberProgress[0]?.memberTalentId, null);
+  assert.deepEqual(
+    KpiOrgUnitProgressExposure.expose(
+      await service.getKpiOrgUnitProgress(actor, { kpiPlanId: created.id }),
+    ),
+    progressResponse.data,
+  );
+
+  const gridResponse = await call("KPI_PLAN_ORG_UNIT_ACTUAL_DAILY_GRID", {
+    actualDate: "05-05-2026",
+  });
+  const grid = gridResponse.data as {
+    readonly rows: readonly Record<string, unknown>[];
+  };
+  assert.equal(grid.rows[0]?.memberEmploymentProfileId, "org-profile-1");
+  assert.equal(grid.rows[0]?.memberTalentId, null);
+  assert.deepEqual(
+    KpiOrgUnitActualDailyGridExposure.expose(
+      await service.getKpiOrgUnitActualDailyGrid(actor, {
+        kpiPlanId: created.id,
+        actualDate: "05-05-2026",
+      }),
+    ),
+    gridResponse.data,
+  );
+
+  await assert.rejects(
+    call("KPI_PLAN_ORG_UNIT_ALLOCATION_LIST", { unexpected: "x" }),
+    KpiValidationError,
+  );
+  const groupPlan = await createPublishedGroupPlan(service);
+  const groupReq = {
+    query: {},
+    params: { kpiPlanId: groupPlan.id },
+  } as unknown as Request;
+  bindCommand(groupReq, "KPI_PLAN_ORG_UNIT_PROGRESS");
+  await assert.rejects(
+    controller.handle(groupReq, actor, "ADMIN"),
+    KpiPermissionScopeError,
+  );
+});
+
+test("KPI ORG_UNIT explicit mutation route contract returns profile identity without broadening correction DTO", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
+  const { service } = createHarness(() => now.value);
+  const actor = createActor();
+  const controller = new KpiAdminController(service) as unknown as {
+    handle(req: Request, actor: Actor, context: "ADMIN"): Promise<unknown>;
+    present(
+      result: unknown,
+      req: Request,
+      actor: Actor,
+      context: "ADMIN",
+    ): Promise<{ readonly data: unknown }>;
+  };
+  const created = await service.createKpiPlan(actor, orgUnitPlanCommand());
+  await service.publishKpiPlan(actor, { kpiPlanId: created.id });
+  await service.upsertKpiAllocationDraft(actor, {
+    kpiPlanId: created.id,
+    allocations: [
+      {
+        employmentProfileId: "org-profile-1",
+        allocationStartDate: "2026-05-01",
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 300 }],
+      },
+    ],
+  });
+  await service.submitKpiAllocationDraft(actor, { kpiPlanId: created.id });
+  await service.approveKpiAllocation(actor, { kpiPlanId: created.id });
+  const published = await service.publishKpiAllocation(actor, {
+    kpiPlanId: created.id,
+  });
+  const allocation = published.allocations[0] as KpiAllocation;
+
+  const createReq = {
+    body: {
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      actualValue: 80,
+    },
+    params: { kpiPlanId: created.id },
+  } as unknown as Request;
+  bindCommand(createReq, "KPI_ORG_UNIT_ACTUAL_CREATE");
+  const createdResponse = await controller.present(
+    await controller.handle(createReq, actor, "ADMIN"),
+    createReq,
+    actor,
+    "ADMIN",
+  );
+  const actual = createdResponse.data as Record<string, unknown>;
+  assert.equal(actual.memberEmploymentProfileId, "org-profile-1");
+  assert.equal(actual.memberTalentId, null);
+
+  const updateReq = {
+    body: { actualValue: 90 },
+    params: { kpiPlanId: created.id, actualEntryId: actual.id },
+  } as unknown as Request;
+  bindCommand(updateReq, "KPI_ORG_UNIT_ACTUAL_UPDATE");
+  const updateResponse = await controller.present(
+    await controller.handle(updateReq, actor, "ADMIN"),
+    updateReq,
+    actor,
+    "ADMIN",
+  );
+  assert.equal(
+    (updateResponse.data as Record<string, unknown>).memberEmploymentProfileId,
+    "org-profile-1",
+  );
+
+  now.value = MAY_5_2026_AFTER_LOCK_HCM;
+  const correctionReq = {
+    body: { correctedValue: 110, reason: "post cutoff correction" },
+    params: { kpiPlanId: created.id, actualEntryId: actual.id },
+  } as unknown as Request;
+  bindCommand(correctionReq, "KPI_ORG_UNIT_ACTUAL_CORRECT");
+  const correctionResponse = await controller.present(
+    await controller.handle(correctionReq, actor, "ADMIN"),
+    correctionReq,
+    actor,
+    "ADMIN",
+  );
+  const correctionPayload = correctionResponse.data as {
+    readonly actualEntry: Record<string, unknown>;
+    readonly correction: Record<string, unknown>;
+  };
+  assert.equal(
+    correctionPayload.actualEntry.memberEmploymentProfileId,
+    "org-profile-1",
+  );
+  assert.equal("memberEmploymentProfileId" in correctionPayload.correction, false);
+
+  const groupPlan = await createPublishedGroupPlan(service);
+  const groupReq = {
+    body: {
+      allocationId: "not-used",
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      actualValue: 1,
+    },
+    params: { kpiPlanId: groupPlan.id },
+  } as unknown as Request;
+  bindCommand(groupReq, "KPI_ORG_UNIT_ACTUAL_CREATE");
+  await assert.rejects(
+    controller.handle(groupReq, actor, "ADMIN"),
+    KpiPermissionScopeError,
+  );
+});
+
+test("KPI ORG_UNIT explicit excuse and correction-history route contracts stay ORG_UNIT-scoped", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
+  const { service, repository } = createHarness(() => now.value);
+  const actor = createActor();
+  const mutationController = new KpiAdminController(service) as unknown as {
+    handle(req: Request, actor: Actor, context: "ADMIN"): Promise<unknown>;
+    present(
+      result: unknown,
+      req: Request,
+      actor: Actor,
+      context: "ADMIN",
+    ): Promise<{ readonly data: unknown }>;
+  };
+  const queryController = new KpiAdminQueryController(service) as unknown as {
+    handle(req: Request, actor: Actor, context: "ADMIN"): Promise<unknown>;
+    present(
+      result: unknown,
+      req: Request,
+      actor: Actor,
+      context: "ADMIN",
+    ): Promise<{ readonly data: unknown }>;
+  };
+
+  const created = await service.createKpiPlan(actor, orgUnitPlanCommand());
+  await service.publishKpiPlan(actor, { kpiPlanId: created.id });
+  await service.upsertKpiAllocationDraft(actor, {
+    kpiPlanId: created.id,
+    allocations: [
+      {
+        employmentProfileId: "org-profile-1",
+        allocationStartDate: "2026-05-01",
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 300 }],
+      },
+    ],
+  });
+  await service.submitKpiAllocationDraft(actor, { kpiPlanId: created.id });
+  await service.approveKpiAllocation(actor, { kpiPlanId: created.id });
+  const published = await service.publishKpiAllocation(actor, {
+    kpiPlanId: created.id,
+  });
+  const allocation = published.allocations[0] as KpiAllocation;
+  assert.equal(allocation.memberEmploymentProfileId, "org-profile-1");
+  assert.equal(allocation.memberTalentId, null);
+
+  const markReq = {
+    body: {
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      status: "EXCUSED",
+      reasonCode: "OTHER",
+      reasonText: "Blocked by approved operating exception",
+    },
+    params: { kpiPlanId: created.id },
+  } as unknown as Request;
+  bindCommand(markReq, "KPI_ORG_UNIT_ACTUAL_EXCUSE_MARK");
+  const markResponse = await mutationController.present(
+    await mutationController.handle(markReq, actor, "ADMIN"),
+    markReq,
+    actor,
+    "ADMIN",
+  );
+  const markedPlan = markResponse.data as {
+    readonly subjectType: string;
+    readonly allocations: readonly unknown[];
+  };
+  assert.equal(markedPlan.subjectType, "ORG_UNIT");
+  assert.deepEqual(markedPlan.allocations, []);
+  const markedExcuse = repository.actualExcuses[0];
+  assert.ok(markedExcuse);
+  assert.equal(markedExcuse.kpiPlanId, created.id);
+  assert.equal(markedExcuse.allocationId, allocation.id);
+
+  const excusedGrid = await service.getKpiOrgUnitActualDailyGrid(actor, {
+    kpiPlanId: created.id,
+    actualDate: "05-05-2026",
+  });
+  assert.equal(excusedGrid.rows[0]?.memberEmploymentProfileId, "org-profile-1");
+  assert.equal(
+    excusedGrid.rows[0]?.metrics[0]?.actualExcuse?.id,
+    markedExcuse.id,
+  );
+
+  const removeReq = {
+    body: {},
+    params: { kpiPlanId: created.id, excuseId: markedExcuse.id },
+  } as unknown as Request;
+  bindCommand(removeReq, "KPI_ORG_UNIT_ACTUAL_EXCUSE_REMOVE");
+  const removeResponse = await mutationController.present(
+    await mutationController.handle(removeReq, actor, "ADMIN"),
+    removeReq,
+    actor,
+    "ADMIN",
+  );
+  assert.equal(
+    (removeResponse.data as Record<string, unknown>).subjectType,
+    "ORG_UNIT",
+  );
+  assert.ok(repository.actualExcuses[0]?.deletedAt);
+
+  const createdActual = await service.createOrSetKpiOrgUnitActual(actor, {
+    kpiPlanId: created.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 90,
+  });
+  now.value = MAY_5_2026_AFTER_LOCK_HCM;
+  await service.correctKpiOrgUnitActual(actor, {
+    kpiPlanId: created.id,
+    actualEntryId: createdActual.actualEntry.id,
+    correctedValue: 110,
+    reason: "post cutoff correction",
+  });
+
+  const historyReq = {
+    query: {},
+    params: {
+      kpiPlanId: created.id,
+      actualEntryId: createdActual.actualEntry.id,
+    },
+  } as unknown as Request;
+  bindCommand(historyReq, "KPI_ORG_UNIT_ACTUAL_CORRECTION_LIST");
+  const historyResponse = await queryController.present(
+    await queryController.handle(historyReq, actor, "ADMIN"),
+    historyReq,
+    actor,
+    "ADMIN",
+  );
+  const history = historyResponse.data as readonly Record<string, unknown>[];
+  assert.equal(history.length, 1);
+  assert.equal(history[0]?.actualEntryId, createdActual.actualEntry.id);
+  assert.equal("memberEmploymentProfileId" in (history[0] ?? {}), false);
+  assert.equal("memberTalentId" in (history[0] ?? {}), false);
+  assert.equal("correctedByActorId" in (history[0] ?? {}), false);
+
+  const finalizedExcuse = await service.markKpiOrgUnitActualExcuse(actor, {
+    kpiPlanId: created.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "06-05-2026",
+    status: "NOT_REQUIRED",
+    reasonCode: "NO_OPERATION_REQUIRED",
+    reasonText: "No operation required",
+  });
+  const activeExcuse = repository.actualExcuses.find(
+    (excuse) =>
+      excuse.kpiPlanId === finalizedExcuse.id && excuse.deletedAt === null,
+  );
+  assert.ok(activeExcuse);
+  const groupPlan = await createPublishedGroupPlan(service);
+  now.value = JUNE_1_2026_NOON_HCM;
+  await service.finalizeKpiPlan(actor, { kpiPlanId: created.id });
+  const finalizedRemoveReq = {
+    body: {},
+    params: { kpiPlanId: created.id, excuseId: activeExcuse.id },
+  } as unknown as Request;
+  bindCommand(finalizedRemoveReq, "KPI_ORG_UNIT_ACTUAL_EXCUSE_REMOVE");
+  await assert.rejects(
+    mutationController.handle(finalizedRemoveReq, actor, "ADMIN"),
+    KpiStateError,
+  );
+
+  const groupMarkReq = {
+    body: {
+      allocationId: "not-used",
+      metricCode: "REVENUE_VND",
+      actualDate: "05-05-2026",
+      status: "EXCUSED",
+      reasonCode: "OTHER",
+      reasonText: "not used",
+    },
+    params: { kpiPlanId: groupPlan.id },
+  } as unknown as Request;
+  bindCommand(groupMarkReq, "KPI_ORG_UNIT_ACTUAL_EXCUSE_MARK");
+  await assert.rejects(
+    mutationController.handle(groupMarkReq, actor, "ADMIN"),
+    KpiPermissionScopeError,
+  );
+
+  const groupRemoveReq = {
+    body: {},
+    params: { kpiPlanId: groupPlan.id, excuseId: "not-used" },
+  } as unknown as Request;
+  bindCommand(groupRemoveReq, "KPI_ORG_UNIT_ACTUAL_EXCUSE_REMOVE");
+  await assert.rejects(
+    mutationController.handle(groupRemoveReq, actor, "ADMIN"),
+    KpiPermissionScopeError,
+  );
+
+  const groupHistoryReq = {
+    query: {},
+    params: { kpiPlanId: groupPlan.id, actualEntryId: "not-used" },
+  } as unknown as Request;
+  bindCommand(groupHistoryReq, "KPI_ORG_UNIT_ACTUAL_CORRECTION_LIST");
+  await assert.rejects(
+    queryController.handle(groupHistoryReq, actor, "ADMIN"),
+    KpiPermissionScopeError,
+  );
+});
+
 test("KPI UNIT_MANAGER direct assignment can draft ORG_UNIT allocation while broader roles cannot", async () => {
   const { service, orgUnitManagerRepository } = createHarness(
     () => MAY_5_2026_NOON_HCM,
@@ -3354,6 +3788,118 @@ test("KPI ORG_UNIT finalize writes finalResult from EmploymentProfile actuals wi
   assert.deepEqual(
     (await repository.findPlanById(created.id))?.finalResult,
     snapshot,
+  );
+});
+
+test("KPI ORG_UNIT finalized finalResult route is manager-readable and scoped", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
+  const { service, orgUnitManagerRepository } = createHarness(() => now.value);
+  const actor = createActor();
+  const controller = new KpiAdminQueryController(service) as unknown as {
+    handle(req: Request, actor: Actor, context: "ADMIN"): Promise<unknown>;
+    present(
+      result: unknown,
+      req: Request,
+      actor: Actor,
+      context: "ADMIN",
+    ): Promise<{ readonly data: unknown }>;
+  };
+  const created = await service.createKpiPlan(actor, orgUnitPlanCommand());
+  await service.publishKpiPlan(actor, { kpiPlanId: created.id });
+  await service.upsertKpiAllocationDraft(actor, {
+    kpiPlanId: created.id,
+    allocations: [
+      {
+        employmentProfileId: "org-profile-1",
+        allocationStartDate: "2026-05-01",
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 300 }],
+      },
+    ],
+  });
+  await service.submitKpiAllocationDraft(actor, { kpiPlanId: created.id });
+  await service.approveKpiAllocation(actor, { kpiPlanId: created.id });
+  const publishedAllocation = await service.publishKpiAllocation(actor, {
+    kpiPlanId: created.id,
+  });
+  const allocation = publishedAllocation.allocations[0] as KpiAllocation;
+  await service.createOrSetKpiActual(actor, {
+    kpiPlanId: created.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "05-05-2026",
+    actualValue: 100,
+  });
+  now.value = JUNE_1_2026_NOON_HCM;
+  const finalized = await service.finalizeKpiPlan(actor, {
+    kpiPlanId: created.id,
+  });
+  orgUnitManagerRepository.assignments.push(
+    orgUnitManagerAssignment({
+      orgUnitId: "org-department-active",
+      role: "UNIT_OPERATOR",
+    }),
+  );
+
+  const req = {
+    query: {},
+    params: { kpiPlanId: finalized.id },
+  } as unknown as Request;
+  bindCommand(req, "KPI_PLAN_ORG_UNIT_FINAL_RESULT");
+  const response = await controller.present(
+    await controller.handle(req, createManagerActor(), "ADMIN"),
+    req,
+    createManagerActor(),
+    "ADMIN",
+  );
+  const detail = response.data as {
+    readonly status: string;
+    readonly subjectType: string;
+    readonly allocations: readonly unknown[];
+    readonly finalResult: Record<string, unknown>;
+  };
+  assert.equal(detail.status, "FINALIZED");
+  assert.equal(detail.subjectType, "ORG_UNIT");
+  assert.deepEqual(detail.allocations, []);
+  assert.equal(detail.finalResult.subjectType, "ORG_UNIT");
+  assert.equal(JSON.stringify(detail.finalResult).includes("memberTalentId"), false);
+  assert.equal(
+    JSON.stringify(detail.finalResult).includes("memberEmploymentProfileId"),
+    false,
+  );
+
+  orgUnitManagerRepository.assignments.length = 0;
+  orgUnitManagerRepository.assignments.push(
+    orgUnitManagerAssignment({
+      orgUnitId: "org-team-active",
+      role: "UNIT_MANAGER",
+    }),
+  );
+  await assert.rejects(
+    controller.handle(req, createManagerActor(), "ADMIN"),
+    KpiPermissionScopeError,
+  );
+
+  now.value = MAY_5_2026_NOON_HCM;
+  const draft = await service.createKpiPlan(actor, orgUnitPlanCommand());
+  const draftReq = {
+    query: {},
+    params: { kpiPlanId: draft.id },
+  } as unknown as Request;
+  bindCommand(draftReq, "KPI_PLAN_ORG_UNIT_FINAL_RESULT");
+  await assert.rejects(
+    controller.handle(draftReq, createActor(), "ADMIN"),
+    KpiPermissionScopeError,
+  );
+
+  const groupPlan = await createPublishedGroupPlan(service);
+  const groupReq = {
+    query: {},
+    params: { kpiPlanId: groupPlan.id },
+  } as unknown as Request;
+  bindCommand(groupReq, "KPI_PLAN_ORG_UNIT_FINAL_RESULT");
+  await assert.rejects(
+    controller.handle(groupReq, createActor(), "ADMIN"),
+    KpiPermissionScopeError,
   );
 });
 
