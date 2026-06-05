@@ -253,6 +253,10 @@ export class WorkScheduleAdminService {
             sourceGenerationRunId: null,
             sourceRosterMonth: null,
             sourceDepartmentOrgUnitId: null,
+            sourceRosterTargetType: null,
+            sourceRosterTargetId: null,
+            sourceRosterTargetMode: null,
+            sourceMemberIdentityType: null,
             sourceRosterLocalDate: null,
             sourceRosterSlotKey: null,
             createdAt: now,
@@ -2157,6 +2161,13 @@ function toWorkShiftMutationView(
     sourceRosterMonth: record.sourceRosterMonth,
     sourceDepartmentOrgUnitId:
       record.sourceDepartmentOrgUnitId,
+    sourceRosterTargetType:
+      record.sourceRosterTargetType,
+    sourceRosterTargetId: record.sourceRosterTargetId,
+    sourceRosterTargetMode:
+      record.sourceRosterTargetMode,
+    sourceMemberIdentityType:
+      record.sourceMemberIdentityType,
     sourceRosterLocalDate:
       record.sourceRosterLocalDate,
     sourceRosterSlotKey: record.sourceRosterSlotKey,

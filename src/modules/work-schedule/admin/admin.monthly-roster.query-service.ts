@@ -17,13 +17,17 @@ import {
   WorkScheduleReferencedEmploymentProfile,
 } from "@modules/work-schedule/domain/work-schedule-employment-profile-readonly-access";
 import { WorkScheduleOrgUnitReadonlyAccess } from "@modules/work-schedule/domain/work-schedule-org-unit-readonly-access";
+import { WorkScheduleTalentGroupReadonlyAccess } from "@modules/work-schedule/domain/work-schedule-talent-group-readonly-access";
 import {
   HOLIDAY_CALENDAR_TIMEZONE,
   MONTHLY_ROSTER_TARGET_ORG_UNIT_MODE,
   MONTHLY_ROSTER_TARGET_SUBJECT_KIND,
+  MONTHLY_ROSTER_TARGET_TYPES,
   MONTHLY_ROSTER_TIMEZONE,
   MONTHLY_ROSTER_STATUSES,
+  MonthlyRosterMemberExclusionReasonCode,
   MonthlyRosterStatus,
+  MonthlyRosterTargetType,
   MonthlyRosterPreviewView,
   MonthlyRosterView,
 } from "@modules/work-schedule/domain/work-schedule.types";
@@ -53,6 +57,7 @@ export class MonthlyRosterAdminQueryService {
     private readonly holidayCalendarReadRepository: HolidayCalendarReadRepository,
     private readonly workShiftReadRepository: WorkShiftReadRepository,
     private readonly orgUnitReadonlyAccess: WorkScheduleOrgUnitReadonlyAccess,
+    private readonly talentGroupReadonlyAccess: WorkScheduleTalentGroupReadonlyAccess = createMissingTalentGroupReadonlyAccess(),
   ) {}
 
   async listMonthlyRosters(
@@ -66,10 +71,21 @@ export class MonthlyRosterAdminQueryService {
         query.departmentOrgUnitId,
         "departmentOrgUnitId",
       );
+    const targetType =
+      query.targetType === undefined
+        ? undefined
+        : normalizeRosterTargetType(query.targetType);
+    const targetOrgUnitId = normalizeOptionalText(
+      query.targetOrgUnitId,
+      "targetOrgUnitId",
+    );
+    const targetTalentGroupId = normalizeOptionalText(
+      query.targetTalentGroupId,
+      "targetTalentGroupId",
+    );
     await this.assertRosterReadScope(
       actor,
       scope,
-      departmentOrgUnitId,
     );
 
     return this.readRepository.listMonthlyRosters({
@@ -79,6 +95,9 @@ export class MonthlyRosterAdminQueryService {
           ? undefined
           : normalizeRosterMonth(query.rosterMonth),
       departmentOrgUnitId,
+      targetType,
+      targetOrgUnitId,
+      targetTalentGroupId,
       workPatternId: normalizeOptionalText(
         query.workPatternId,
         "workPatternId",
@@ -116,7 +135,6 @@ export class MonthlyRosterAdminQueryService {
     await this.assertRosterReadScope(
       actor,
       parseRequestedScope(query.scope),
-      detail.departmentOrgUnitId,
     );
 
     return detail;
@@ -145,13 +163,10 @@ export class MonthlyRosterAdminQueryService {
     await this.assertRosterReadScope(
       actor,
       parseRequestedScope(query.scope),
-      roster.departmentOrgUnitId,
     );
 
     assertPreviewRosterState(roster);
-    await this.assertActiveDepartment(
-      roster.departmentOrgUnitId,
-    );
+    await this.assertActiveRosterTarget(roster);
 
     const pattern =
       await this.workPatternReadRepository.getWorkPatternDetail(
@@ -190,19 +205,9 @@ export class MonthlyRosterAdminQueryService {
       );
     }
 
-    const profiles = (
-      await this.employmentProfileReadonlyAccess.listByOrgUnitId(
-        roster.departmentOrgUnitId,
-      )
-    )
-      .filter(
-        (profile) =>
-          profile.employmentStatus === "ACTIVE" &&
-          profile.orgUnitId === roster.departmentOrgUnitId,
-      )
-      .sort((left, right) =>
-        left.id.localeCompare(right.id),
-      );
+    const memberResolution =
+      await this.resolveRosterMembers(roster);
+    const profiles = memberResolution.eligibleProfiles;
     const eligibleProfileIds = profiles.map(
       (profile) => profile.id,
     );
@@ -229,6 +234,8 @@ export class MonthlyRosterAdminQueryService {
         employmentStatus: "ACTIVE",
         orgUnitId: profile.orgUnitId,
       })),
+      excludedMembers:
+        memberResolution.excludedMembers,
       existingActiveShifts: activeShifts,
     });
 
@@ -252,7 +259,6 @@ export class MonthlyRosterAdminQueryService {
   private async assertRosterReadScope(
     actor: Actor,
     requestedScope: "global" | undefined,
-    _departmentOrgUnitId: string | undefined,
   ): Promise<void> {
     if (
       requestedScope !== undefined &&
@@ -275,31 +281,137 @@ export class MonthlyRosterAdminQueryService {
     }
   }
 
-  private async assertActiveDepartment(
-    departmentOrgUnitId: string,
+  private async assertActiveRosterTarget(
+    roster: MonthlyRosterView,
   ): Promise<void> {
-    const orgUnit =
-      await this.orgUnitReadonlyAccess.findById(
-        departmentOrgUnitId,
-      );
-
-    if (!orgUnit) {
+    if (roster.targetMode !== "EXACT_ONLY") {
       throw new WorkScheduleValidationError(
-        `Roster target Org Unit does not exist: ${departmentOrgUnitId}`,
+        "Monthly Roster targetMode must be EXACT_ONLY",
       );
     }
 
-    if (orgUnit.type !== "DEPARTMENT") {
+    if (roster.targetType === "ORG_UNIT") {
+      const targetOrgUnitId = requireRosterTargetId(
+        roster.targetOrgUnitId,
+        "targetOrgUnitId",
+      );
+      const orgUnit =
+        await this.orgUnitReadonlyAccess.findById(
+          targetOrgUnitId,
+        );
+
+      if (!orgUnit) {
+        throw new WorkScheduleValidationError(
+          `Roster target Org Unit does not exist: ${targetOrgUnitId}`,
+        );
+      }
+
+      if (orgUnit.status !== "ACTIVE") {
+        throw new WorkScheduleValidationError(
+          `Roster target Org Unit must be ACTIVE: ${targetOrgUnitId}`,
+        );
+      }
+
+      return;
+    }
+
+    const targetTalentGroupId = requireRosterTargetId(
+      roster.targetTalentGroupId,
+      "targetTalentGroupId",
+    );
+    const talentGroup =
+      await this.talentGroupReadonlyAccess.findById(
+        targetTalentGroupId,
+      );
+
+    if (!talentGroup) {
       throw new WorkScheduleValidationError(
-        `Roster target Org Unit must be type DEPARTMENT: ${departmentOrgUnitId}`,
+        `Roster target Talent Group does not exist: ${targetTalentGroupId}`,
       );
     }
 
-    if (orgUnit.status !== "ACTIVE") {
+    if (talentGroup.status !== "ACTIVE") {
       throw new WorkScheduleValidationError(
-        `Roster target Org Unit must be ACTIVE: ${departmentOrgUnitId}`,
+        `Roster target Talent Group must be ACTIVE: ${targetTalentGroupId}`,
       );
     }
+  }
+
+  private async resolveRosterMembers(
+    roster: MonthlyRosterView,
+  ): Promise<{
+    readonly eligibleProfiles: readonly WorkScheduleReferencedEmploymentProfile[];
+    readonly excludedMembers: MonthlyRosterPreviewView["excludedMembers"];
+  }> {
+    if (roster.targetType === "ORG_UNIT") {
+      const targetOrgUnitId = requireRosterTargetId(
+        roster.targetOrgUnitId,
+        "targetOrgUnitId",
+      );
+      const eligibleProfiles = (
+        await this.employmentProfileReadonlyAccess.listByOrgUnitId(
+          targetOrgUnitId,
+        )
+      )
+        .filter(
+          (profile) =>
+            profile.employmentStatus === "ACTIVE" &&
+            profile.orgUnitId === targetOrgUnitId,
+        )
+        .sort((left, right) =>
+          left.id.localeCompare(right.id),
+        );
+
+      return {
+        eligibleProfiles,
+        excludedMembers: [],
+      };
+    }
+
+    const targetTalentGroupId = requireRosterTargetId(
+      roster.targetTalentGroupId,
+      "targetTalentGroupId",
+    );
+    const resolutions =
+      await this.employmentProfileReadonlyAccess.listTalentGroupMemberEmploymentProfileResolutions(
+        targetTalentGroupId,
+      );
+    const seenEmploymentProfileIds = new Set<string>();
+    const eligibleProfiles: WorkScheduleReferencedEmploymentProfile[] = [];
+    const excludedMembers: MonthlyRosterPreviewView["excludedMembers"][number][] = [];
+
+    for (const resolution of resolutions) {
+      const reasonCode =
+        getTalentGroupMemberExclusionReason(
+          resolution,
+          seenEmploymentProfileIds,
+        );
+
+      if (reasonCode) {
+        excludedMembers.push({
+          memberId: resolution.memberId,
+          talentId: resolution.talentId,
+          linkedEmploymentProfileId:
+            resolution.linkedEmploymentProfileId,
+          linkedEmploymentProfileRef:
+            resolution.employmentProfile?.ref ?? null,
+          reasonCode,
+        });
+        continue;
+      }
+
+      const employmentProfile =
+        resolution.employmentProfile as WorkScheduleReferencedEmploymentProfile;
+      seenEmploymentProfileIds.add(employmentProfile.id);
+      eligibleProfiles.push(employmentProfile);
+    }
+
+    return {
+      eligibleProfiles: eligibleProfiles.sort((left, right) =>
+        left.id.localeCompare(right.id),
+      ),
+      excludedMembers,
+    };
   }
 }
 
@@ -439,9 +551,17 @@ function enrichMonthlyRosterPreviewReferences(
   );
   const departmentOrgUnitRef =
     roster.departmentOrgUnitRef ?? null;
+  const targetOrgUnitRef =
+    roster.targetOrgUnitRef ?? null;
+  const targetTalentGroupRef =
+    roster.targetTalentGroupRef ?? null;
+  const targetRef = roster.targetRef ?? null;
 
   return {
     ...preview,
+    targetOrgUnitRef,
+    targetTalentGroupRef,
+    targetRef,
     departmentOrgUnitRef,
     workPatternRef: roster.workPatternRef ?? null,
     holidayCalendarRef:
@@ -458,12 +578,27 @@ function enrichMonthlyRosterPreviewReferences(
     ),
     rows: preview.rows.map((row) => ({
       ...row,
+      targetOrgUnitRef,
+      targetTalentGroupRef,
+      targetRef,
       departmentOrgUnitRef,
       subjectEmploymentProfileRef:
         profileRefMap.get(
           row.subjectEmploymentProfileId,
         ) ?? null,
     })),
+    excludedMembers: preview.excludedMembers.map(
+      (member) => ({
+        ...member,
+        linkedEmploymentProfileRef:
+          member.linkedEmploymentProfileRef ??
+          (member.linkedEmploymentProfileId
+            ? (profileRefMap.get(
+                member.linkedEmploymentProfileId,
+              ) ?? null)
+            : null),
+      }),
+    ),
   };
 }
 
@@ -497,6 +632,89 @@ function normalizeRequiredText(
   }
 
   return normalized;
+}
+
+function normalizeRosterTargetType(
+  value: unknown,
+): MonthlyRosterTargetType {
+  if (typeof value !== "string") {
+    throw new WorkScheduleValidationError(
+      `targetType must be one of ${MONTHLY_ROSTER_TARGET_TYPES.join(", ")}`,
+    );
+  }
+
+  const normalized = value.trim().toUpperCase();
+
+  if (
+    MONTHLY_ROSTER_TARGET_TYPES.includes(
+      normalized as MonthlyRosterTargetType,
+    )
+  ) {
+    return normalized as MonthlyRosterTargetType;
+  }
+
+  throw new WorkScheduleValidationError(
+    `targetType must be one of ${MONTHLY_ROSTER_TARGET_TYPES.join(", ")}`,
+  );
+}
+
+function requireRosterTargetId(
+  value: string | null,
+  field: string,
+): string {
+  if (typeof value === "string" && value.trim()) {
+    return value;
+  }
+
+  throw new WorkScheduleValidationError(
+    `${field} is required`,
+  );
+}
+
+function getTalentGroupMemberExclusionReason(
+  resolution: {
+    readonly membershipStatus: string;
+    readonly talentOperationalStatus: string | null;
+    readonly linkedEmploymentProfileId: string | null;
+    readonly employmentProfile: WorkScheduleReferencedEmploymentProfile | null;
+  },
+  seenEmploymentProfileIds: ReadonlySet<string>,
+): MonthlyRosterMemberExclusionReasonCode | null {
+  if (resolution.membershipStatus !== "ACTIVE") {
+    return "MEMBERSHIP_INACTIVE";
+  }
+
+  if (resolution.talentOperationalStatus === null) {
+    return "TALENT_NOT_FOUND";
+  }
+
+  if (resolution.talentOperationalStatus !== "ACTIVE") {
+    return "TALENT_INACTIVE";
+  }
+
+  if (!resolution.linkedEmploymentProfileId) {
+    return "MISSING_LINKED_EMPLOYMENT_PROFILE";
+  }
+
+  if (!resolution.employmentProfile) {
+    return "EMPLOYMENT_PROFILE_NOT_FOUND";
+  }
+
+  if (
+    resolution.employmentProfile.employmentStatus !== "ACTIVE"
+  ) {
+    return "EMPLOYMENT_PROFILE_INACTIVE";
+  }
+
+  if (
+    seenEmploymentProfileIds.has(
+      resolution.employmentProfile.id,
+    )
+  ) {
+    return "DUPLICATE_EMPLOYMENT_PROFILE";
+  }
+
+  return null;
 }
 
 function parseRequestedScope(
@@ -551,10 +769,11 @@ function assertPreviewRosterState(
 
   if (
     roster.targetOrgUnitMode !==
-    MONTHLY_ROSTER_TARGET_ORG_UNIT_MODE
+      MONTHLY_ROSTER_TARGET_ORG_UNIT_MODE ||
+    roster.targetMode !== "EXACT_ONLY"
   ) {
     throw new WorkScheduleValidationError(
-      "Monthly Roster preview supports only EXACT_ONLY department targets in MVP-A",
+      "Monthly Roster preview supports only EXACT_ONLY targets",
     );
   }
 }
@@ -568,4 +787,15 @@ function assertAdminActorType(actor: Actor): void {
     "PERMISSION_DENIED",
     `Monthly Roster access requires actor.type admin, received ${actor.type}`,
   );
+}
+
+function createMissingTalentGroupReadonlyAccess(): WorkScheduleTalentGroupReadonlyAccess {
+  return {
+    async findById(): Promise<null> {
+      throw new SystemInvariantError(
+        "SYSTEM_INVARIANT_VIOLATION",
+        "WorkScheduleTalentGroupReadonlyAccess is required for Monthly Roster Talent Group targets",
+      );
+    },
+  };
 }

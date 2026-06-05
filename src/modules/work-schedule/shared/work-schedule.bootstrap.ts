@@ -24,13 +24,14 @@ import {
   HOLIDAY_CALENDAR_ENTRY_DATE_LOOKUP_INDEX_NAME,
   HOLIDAY_CALENDAR_NORMALIZED_CALENDAR_CODE_INDEX_NAME,
   HOLIDAY_CALENDAR_STATUS_NAME_INDEX_NAME,
-  MONTHLY_ROSTER_ACTIVE_DEPARTMENT_MONTH_UNIQ_INDEX_NAME,
+  MONTHLY_ROSTER_ACTIVE_TARGET_MONTH_UNIQ_INDEX_NAME,
   MONTHLY_ROSTER_CALENDAR_LOOKUP_INDEX_NAME,
   MONTHLY_ROSTER_DEPARTMENT_MONTH_STATUS_INDEX_NAME,
   MONTHLY_ROSTER_EXCEPTION_PROFILE_DATE_INDEX_NAME,
   MONTHLY_ROSTER_PATTERN_LOOKUP_INDEX_NAME,
   MONTHLY_ROSTER_ROSTER_CODE_UNIQ_INDEX_NAME,
   MONTHLY_ROSTER_STATUS_MONTH_INDEX_NAME,
+  MONTHLY_ROSTER_TARGET_MONTH_STATUS_INDEX_NAME,
   WORK_SCHEDULE_REQUEST_CODE_UNIQ_INDEX_NAME,
   WORK_SCHEDULE_REQUEST_REQUESTER_INDEX_NAME,
   WORK_SCHEDULE_REQUEST_STATUS_CREATED_AT_INDEX_NAME,
@@ -334,14 +335,19 @@ export function createWorkScheduleBootstrapRegistrar(): BootstrapRegistrar {
       await assertRequiredPartialUniqueIndex(
         db,
         "work_monthly_rosters",
-        MONTHLY_ROSTER_ACTIVE_DEPARTMENT_MONTH_UNIQ_INDEX_NAME,
+        MONTHLY_ROSTER_ACTIVE_TARGET_MONTH_UNIQ_INDEX_NAME,
         {
           rosterMonth: 1,
-          departmentOrgUnitId: 1,
+          targetType: 1,
+          targetOrgUnitId: 1,
+          targetTalentGroupId: 1,
         },
         {
           status: {
             $in: ["DRAFT", "PUBLISHED", "LOCKED"],
+          },
+          targetType: {
+            $in: ["ORG_UNIT", "TALENT_GROUP"],
           },
         },
       );
@@ -363,6 +369,20 @@ export function createWorkScheduleBootstrapRegistrar(): BootstrapRegistrar {
         MONTHLY_ROSTER_DEPARTMENT_MONTH_STATUS_INDEX_NAME,
         {
           departmentOrgUnitId: 1,
+          rosterMonth: 1,
+          status: 1,
+          _id: 1,
+        },
+      );
+
+      await assertRequiredIndex(
+        db,
+        "work_monthly_rosters",
+        MONTHLY_ROSTER_TARGET_MONTH_STATUS_INDEX_NAME,
+        {
+          targetType: 1,
+          targetOrgUnitId: 1,
+          targetTalentGroupId: 1,
           rosterMonth: 1,
           status: 1,
           _id: 1,

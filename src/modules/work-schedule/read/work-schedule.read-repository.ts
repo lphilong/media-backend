@@ -5,6 +5,7 @@ import {
   HolidayCalendarView,
   MonthlyRosterListItemView,
   MonthlyRosterStatus,
+  MonthlyRosterTargetType,
   MonthlyRosterView,
   WorkPatternListItemView,
   WorkPatternStatus,
@@ -185,6 +186,9 @@ export interface HolidayCalendarReadRepository {
 export interface MonthlyRosterListReadInput {
   readonly status?: MonthlyRosterStatus;
   readonly rosterMonth?: string;
+  readonly targetType?: MonthlyRosterTargetType;
+  readonly targetOrgUnitId?: string;
+  readonly targetTalentGroupId?: string;
   readonly departmentOrgUnitId?: string;
   readonly workPatternId?: string;
   readonly holidayCalendarId?: string;

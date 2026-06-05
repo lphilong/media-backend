@@ -11,6 +11,16 @@ export interface WorkScheduleReferencedEmploymentProfile {
   readonly ref?: ReferenceSummary;
 }
 
+export interface WorkScheduleTalentGroupMemberEmploymentProfileResolution {
+  readonly memberId: string;
+  readonly groupId: string;
+  readonly talentId: string;
+  readonly membershipStatus: string;
+  readonly talentOperationalStatus: string | null;
+  readonly linkedEmploymentProfileId: string | null;
+  readonly employmentProfile: WorkScheduleReferencedEmploymentProfile | null;
+}
+
 export interface WorkScheduleEmploymentProfileReadonlyAccess {
   findById(
     employmentProfileId: string,
@@ -41,4 +51,11 @@ export interface WorkScheduleEmploymentProfileReadonlyAccess {
     orgUnitId: string,
     session?: ClientSession,
   ): Promise<readonly WorkScheduleReferencedEmploymentProfile[]>;
+
+  listTalentGroupMemberEmploymentProfileResolutions(
+    talentGroupId: string,
+    session?: ClientSession,
+  ): Promise<
+    readonly WorkScheduleTalentGroupMemberEmploymentProfileResolution[]
+  >;
 }

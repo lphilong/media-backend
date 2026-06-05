@@ -95,6 +95,16 @@ function parseListMonthlyRostersQuery(
     status: req.query.status as string | undefined,
     rosterMonth:
       req.query.rosterMonth as string | undefined,
+    targetType:
+      req.query.targetType as string | undefined,
+    targetOrgUnitId:
+      req.query.targetOrgUnitId as
+        | string
+        | undefined,
+    targetTalentGroupId:
+      req.query.targetTalentGroupId as
+        | string
+        | undefined,
     departmentOrgUnitId:
       req.query.departmentOrgUnitId as
         | string

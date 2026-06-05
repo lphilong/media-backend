@@ -130,8 +130,36 @@ export const MONTHLY_ROSTER_TIMEZONE =
 export const MONTHLY_ROSTER_TARGET_SUBJECT_KIND =
   "EMPLOYMENT_PROFILE" as const;
 
+export const MONTHLY_ROSTER_TARGET_TYPES = [
+  "ORG_UNIT",
+  "TALENT_GROUP",
+] as const;
+
+export type MonthlyRosterTargetType =
+  (typeof MONTHLY_ROSTER_TARGET_TYPES)[number];
+
 export const MONTHLY_ROSTER_TARGET_ORG_UNIT_MODE =
   "EXACT_ONLY" as const;
+
+export const MONTHLY_ROSTER_TARGET_MODES = [
+  "EXACT_ONLY",
+] as const;
+
+export type MonthlyRosterTargetMode =
+  (typeof MONTHLY_ROSTER_TARGET_MODES)[number];
+
+export const MONTHLY_ROSTER_MEMBER_EXCLUSION_REASON_CODES = [
+  "MEMBERSHIP_INACTIVE",
+  "TALENT_NOT_FOUND",
+  "TALENT_INACTIVE",
+  "MISSING_LINKED_EMPLOYMENT_PROFILE",
+  "EMPLOYMENT_PROFILE_NOT_FOUND",
+  "EMPLOYMENT_PROFILE_INACTIVE",
+  "DUPLICATE_EMPLOYMENT_PROFILE",
+] as const;
+
+export type MonthlyRosterMemberExclusionReasonCode =
+  (typeof MONTHLY_ROSTER_MEMBER_EXCLUSION_REASON_CODES)[number];
 
 export const ROSTER_EXCEPTION_TYPES = [
   "WORKING_TO_OFF",
@@ -173,6 +201,12 @@ export interface WorkShiftRecord {
   readonly sourceGenerationRunId: string | null;
   readonly sourceRosterMonth: string | null;
   readonly sourceDepartmentOrgUnitId: string | null;
+  readonly sourceRosterTargetType: MonthlyRosterTargetType | null;
+  readonly sourceRosterTargetId: string | null;
+  readonly sourceRosterTargetMode: MonthlyRosterTargetMode | null;
+  readonly sourceMemberIdentityType:
+    | typeof MONTHLY_ROSTER_TARGET_SUBJECT_KIND
+    | null;
   readonly sourceRosterLocalDate: string | null;
   readonly sourceRosterSlotKey: string | null;
   readonly createdAt: number;
@@ -205,6 +239,12 @@ export interface WorkShiftDetailView {
   readonly sourceRosterMonth: string | null;
   readonly sourceDepartmentOrgUnitId: string | null;
   readonly sourceDepartmentOrgUnitRef?: ReferenceSummary | null;
+  readonly sourceRosterTargetType: MonthlyRosterTargetType | null;
+  readonly sourceRosterTargetId: string | null;
+  readonly sourceRosterTargetMode: MonthlyRosterTargetMode | null;
+  readonly sourceMemberIdentityType:
+    | typeof MONTHLY_ROSTER_TARGET_SUBJECT_KIND
+    | null;
   readonly sourceRosterLocalDate: string | null;
   readonly sourceRosterSlotKey: string | null;
   readonly createdAt: number;
@@ -227,6 +267,9 @@ export interface WorkShiftListItemView {
   readonly sourceRosterId: string | null;
   readonly sourceRosterRef?: ReferenceSummary | null;
   readonly sourceRosterMonth: string | null;
+  readonly sourceRosterTargetType: MonthlyRosterTargetType | null;
+  readonly sourceRosterTargetId: string | null;
+  readonly sourceRosterTargetMode: MonthlyRosterTargetMode | null;
   readonly sourceRosterLocalDate: string | null;
   readonly sourceRosterSlotKey: string | null;
   readonly createdAt: number;
@@ -385,7 +428,11 @@ export interface MonthlyRosterRecord {
   readonly timezone: typeof MONTHLY_ROSTER_TIMEZONE;
   readonly targetSubjectKind: typeof MONTHLY_ROSTER_TARGET_SUBJECT_KIND;
   readonly targetOrgUnitMode: typeof MONTHLY_ROSTER_TARGET_ORG_UNIT_MODE;
-  readonly departmentOrgUnitId: string;
+  readonly targetType: MonthlyRosterTargetType;
+  readonly targetMode: MonthlyRosterTargetMode;
+  readonly targetOrgUnitId: string | null;
+  readonly targetTalentGroupId: string | null;
+  readonly departmentOrgUnitId: string | null;
   readonly workPatternId: string;
   readonly holidayCalendarId: string;
   readonly status: MonthlyRosterStatus;
@@ -410,7 +457,14 @@ export interface MonthlyRosterListItemView {
   readonly timezone: typeof MONTHLY_ROSTER_TIMEZONE;
   readonly targetSubjectKind: typeof MONTHLY_ROSTER_TARGET_SUBJECT_KIND;
   readonly targetOrgUnitMode: typeof MONTHLY_ROSTER_TARGET_ORG_UNIT_MODE;
-  readonly departmentOrgUnitId: string;
+  readonly targetType: MonthlyRosterTargetType;
+  readonly targetMode: MonthlyRosterTargetMode;
+  readonly targetOrgUnitId: string | null;
+  readonly targetOrgUnitRef?: ReferenceSummary | null;
+  readonly targetTalentGroupId: string | null;
+  readonly targetTalentGroupRef?: ReferenceSummary | null;
+  readonly targetRef?: ReferenceSummary | null;
+  readonly departmentOrgUnitId: string | null;
   readonly departmentOrgUnitRef?: ReferenceSummary | null;
   readonly workPatternId: string;
   readonly workPatternRef?: ReferenceSummary | null;
@@ -454,8 +508,17 @@ export interface MonthlyRosterPreviewEligibleProfileView {
   readonly subjectEmploymentProfileId: string;
   readonly subjectEmploymentProfileRef?: ReferenceSummary | null;
   readonly employmentStatus: "ACTIVE";
-  readonly departmentOrgUnitId: string;
+  readonly departmentOrgUnitId: string | null;
   readonly departmentOrgUnitRef?: ReferenceSummary | null;
+}
+
+export interface MonthlyRosterPreviewExcludedMemberView {
+  readonly memberId: string;
+  readonly talentId: string | null;
+  readonly talentRef?: ReferenceSummary | null;
+  readonly linkedEmploymentProfileId: string | null;
+  readonly linkedEmploymentProfileRef?: ReferenceSummary | null;
+  readonly reasonCode: MonthlyRosterMemberExclusionReasonCode;
 }
 
 export interface MonthlyRosterPreviewConflictView {
@@ -480,7 +543,14 @@ export interface MonthlyRosterPreviewRowView {
   readonly previewRowId: string;
   readonly monthlyRosterId: string;
   readonly rosterMonth: string;
-  readonly departmentOrgUnitId: string;
+  readonly targetType: MonthlyRosterTargetType;
+  readonly targetMode: MonthlyRosterTargetMode;
+  readonly targetOrgUnitId: string | null;
+  readonly targetOrgUnitRef?: ReferenceSummary | null;
+  readonly targetTalentGroupId: string | null;
+  readonly targetTalentGroupRef?: ReferenceSummary | null;
+  readonly targetRef?: ReferenceSummary | null;
+  readonly departmentOrgUnitId: string | null;
   readonly departmentOrgUnitRef?: ReferenceSummary | null;
   readonly subjectEmploymentProfileId: string;
   readonly subjectEmploymentProfileRef?: ReferenceSummary | null;
@@ -506,6 +576,8 @@ export interface MonthlyRosterPreviewRowView {
 
 export interface MonthlyRosterPreviewSummaryView {
   readonly totalEligibleProfiles: number;
+  readonly includedMemberCount: number;
+  readonly excludedMemberCount: number;
   readonly totalStandardCandidateShifts: number;
   readonly totalHolidaySuppressions: number;
   readonly totalWorkingToOff: number;
@@ -519,7 +591,14 @@ export interface MonthlyRosterPreviewView {
   readonly monthlyRosterId: string;
   readonly rosterMonth: string;
   readonly timezone: typeof MONTHLY_ROSTER_TIMEZONE;
-  readonly departmentOrgUnitId: string;
+  readonly targetType: MonthlyRosterTargetType;
+  readonly targetMode: MonthlyRosterTargetMode;
+  readonly targetOrgUnitId: string | null;
+  readonly targetOrgUnitRef?: ReferenceSummary | null;
+  readonly targetTalentGroupId: string | null;
+  readonly targetTalentGroupRef?: ReferenceSummary | null;
+  readonly targetRef?: ReferenceSummary | null;
+  readonly departmentOrgUnitId: string | null;
   readonly departmentOrgUnitRef?: ReferenceSummary | null;
   readonly workPatternId: string;
   readonly workPatternRef?: ReferenceSummary | null;
@@ -530,8 +609,10 @@ export interface MonthlyRosterPreviewView {
   readonly currentPreviewHash: string | null;
   readonly computedPreviewHash: string;
   readonly eligibleProfiles: readonly MonthlyRosterPreviewEligibleProfileView[];
+  readonly excludedMembers: readonly MonthlyRosterPreviewExcludedMemberView[];
   readonly rows: readonly MonthlyRosterPreviewRowView[];
   readonly summary: MonthlyRosterPreviewSummaryView;
+  readonly warnings: readonly string[];
 }
 
 export const WORK_SCHEDULE_REQUEST_TYPES = [

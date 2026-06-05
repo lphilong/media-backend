@@ -124,7 +124,11 @@ export interface CreateMonthlyRosterDraftCommand {
   readonly rosterCode?: string | null;
   readonly rosterMonth: string;
   readonly timezone?: string;
-  readonly departmentOrgUnitId: string;
+  readonly targetType?: string;
+  readonly targetMode?: string;
+  readonly targetOrgUnitId?: string | null;
+  readonly targetTalentGroupId?: string | null;
+  readonly departmentOrgUnitId?: string;
   readonly workPatternId: string;
   readonly holidayCalendarId: string;
   readonly description?: string | null;
@@ -136,6 +140,10 @@ export interface UpdateMonthlyRosterDraftCommand {
   readonly monthlyRosterId: string;
   readonly rosterMonth?: string;
   readonly timezone?: string;
+  readonly targetType?: string;
+  readonly targetMode?: string;
+  readonly targetOrgUnitId?: string | null;
+  readonly targetTalentGroupId?: string | null;
   readonly departmentOrgUnitId?: string;
   readonly workPatternId?: string;
   readonly holidayCalendarId?: string;
@@ -341,6 +349,9 @@ export interface PreviewMonthlyRosterQuery {
 export interface ListMonthlyRostersQuery {
   readonly status?: MonthlyRosterStatus | string;
   readonly rosterMonth?: string;
+  readonly targetType?: string;
+  readonly targetOrgUnitId?: string;
+  readonly targetTalentGroupId?: string;
   readonly departmentOrgUnitId?: string;
   readonly workPatternId?: string;
   readonly holidayCalendarId?: string;

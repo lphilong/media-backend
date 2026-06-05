@@ -115,6 +115,10 @@ const monthlyRoster = {
   timezone: "Asia/Ho_Chi_Minh",
   targetSubjectKind: "EMPLOYMENT_PROFILE",
   targetOrgUnitMode: "EXACT_ONLY",
+  targetType: "ORG_UNIT",
+  targetMode: "EXACT_ONLY",
+  targetOrgUnitId: "ou-1",
+  targetTalentGroupId: null,
   departmentOrgUnitId: "ou-1",
   workPatternId: "pattern-1",
   holidayCalendarId: "calendar-1",
@@ -450,6 +454,19 @@ test("Monthly Roster preview decorates rows and eligible profiles with refs afte
     ...monthlyRoster,
     monthlyRosterId: monthlyRoster._id,
     exceptionCount: 0,
+    targetOrgUnitRef: {
+      id: "ou-1",
+      code: "OU-1",
+      name: "Sales",
+      status: "ACTIVE",
+    },
+    targetTalentGroupRef: null,
+    targetRef: {
+      id: "ou-1",
+      code: "OU-1",
+      name: "Sales",
+      status: "ACTIVE",
+    },
     departmentOrgUnitRef: {
       id: "ou-1",
       code: "OU-1",
@@ -502,6 +519,8 @@ test("Monthly Roster preview decorates rows and eligible profiles with refs afte
       listIdsByManagerEmploymentProfileId: async () => [],
       listIdsByActiveTalentGroupIds: async () => [],
       listIdsByOrgUnitId: async () => [],
+      listTalentGroupMemberEmploymentProfileResolutions:
+        async () => [],
     } as never,
     {
       listWorkPatterns: async () => ({ items: [] }),

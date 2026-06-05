@@ -47,6 +47,10 @@ interface WorkShiftDocument {
   readonly sourceGenerationRunId?: string | null;
   readonly sourceRosterMonth?: string | null;
   readonly sourceDepartmentOrgUnitId?: string | null;
+  readonly sourceRosterTargetType?: WorkShiftRecord["sourceRosterTargetType"];
+  readonly sourceRosterTargetId?: string | null;
+  readonly sourceRosterTargetMode?: WorkShiftRecord["sourceRosterTargetMode"];
+  readonly sourceMemberIdentityType?: WorkShiftRecord["sourceMemberIdentityType"];
   readonly sourceRosterLocalDate?: string | null;
   readonly sourceRosterSlotKey?: string | null;
   readonly createdAt: number;
@@ -427,6 +431,13 @@ function toWorkShiftDocument(
     sourceRosterMonth: workShift.sourceRosterMonth,
     sourceDepartmentOrgUnitId:
       workShift.sourceDepartmentOrgUnitId,
+    sourceRosterTargetType:
+      workShift.sourceRosterTargetType,
+    sourceRosterTargetId: workShift.sourceRosterTargetId,
+    sourceRosterTargetMode:
+      workShift.sourceRosterTargetMode,
+    sourceMemberIdentityType:
+      workShift.sourceMemberIdentityType,
     sourceRosterLocalDate:
       workShift.sourceRosterLocalDate,
     sourceRosterSlotKey:
@@ -475,6 +486,14 @@ function toWorkShiftRecord(
       document.sourceRosterMonth ?? null,
     sourceDepartmentOrgUnitId:
       document.sourceDepartmentOrgUnitId ?? null,
+    sourceRosterTargetType:
+      document.sourceRosterTargetType ?? null,
+    sourceRosterTargetId:
+      document.sourceRosterTargetId ?? null,
+    sourceRosterTargetMode:
+      document.sourceRosterTargetMode ?? null,
+    sourceMemberIdentityType:
+      document.sourceMemberIdentityType ?? null,
     sourceRosterLocalDate:
       document.sourceRosterLocalDate ?? null,
     sourceRosterSlotKey:

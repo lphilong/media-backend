@@ -5,6 +5,8 @@ import {
   HolidayCalendarRecord,
   MonthlyRosterRecord,
   MonthlyRosterStatus,
+  MonthlyRosterTargetType,
+  MonthlyRosterTargetMode,
   RosterExceptionRecord,
   WorkPatternRecord,
   WorkPatternStatus,
@@ -310,7 +312,11 @@ export interface InsertMonthlyRosterInput
 export interface UpdateMonthlyRosterDraftInput {
   readonly monthlyRosterId: string;
   readonly rosterMonth?: string;
-  readonly departmentOrgUnitId?: string;
+  readonly targetType?: MonthlyRosterTargetType;
+  readonly targetMode?: MonthlyRosterTargetMode;
+  readonly targetOrgUnitId?: string | null;
+  readonly targetTalentGroupId?: string | null;
+  readonly departmentOrgUnitId?: string | null;
   readonly workPatternId?: string;
   readonly holidayCalendarId?: string;
   readonly description?: string | null;
@@ -385,8 +391,12 @@ export interface MonthlyRosterRepository {
     session?: ClientSession,
   ): Promise<MonthlyRosterRecord | null>;
 
-  findActiveByDepartmentAndMonth(
-    departmentOrgUnitId: string,
+  findActiveByTargetAndMonth(
+    target: {
+      readonly targetType: MonthlyRosterTargetType;
+      readonly targetOrgUnitId: string | null;
+      readonly targetTalentGroupId: string | null;
+    },
     rosterMonth: string,
     session?: ClientSession,
   ): Promise<MonthlyRosterRecord | null>;

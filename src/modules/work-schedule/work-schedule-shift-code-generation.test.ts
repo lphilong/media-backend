@@ -370,6 +370,9 @@ function createService(params?: {
       async listByOrgUnitId() {
         return [];
       },
+      async listTalentGroupMemberEmploymentProfileResolutions() {
+        return [];
+      },
     },
     {
       async findById(talentId: string) {
@@ -454,6 +457,10 @@ function seedRecord(shiftCode: string): WorkShiftRecord {
     sourceGenerationRunId: null,
     sourceRosterMonth: null,
     sourceDepartmentOrgUnitId: null,
+    sourceRosterTargetType: null,
+    sourceRosterTargetId: null,
+    sourceRosterTargetMode: null,
+    sourceMemberIdentityType: null,
     sourceRosterLocalDate: null,
     sourceRosterSlotKey: null,
     createdAt: 1,
@@ -991,6 +998,11 @@ test("Work Schedule list and detail exposures include source metadata read-only"
     sourceType: record.sourceType,
     sourceRosterId: record.sourceRosterId,
     sourceRosterMonth: record.sourceRosterMonth,
+    sourceRosterTargetType:
+      record.sourceRosterTargetType,
+    sourceRosterTargetId: record.sourceRosterTargetId,
+    sourceRosterTargetMode:
+      record.sourceRosterTargetMode,
     sourceRosterLocalDate:
       record.sourceRosterLocalDate,
     sourceRosterSlotKey: record.sourceRosterSlotKey,
@@ -1021,6 +1033,13 @@ test("Work Schedule list and detail exposures include source metadata read-only"
     sourceRosterMonth: record.sourceRosterMonth,
     sourceDepartmentOrgUnitId:
       record.sourceDepartmentOrgUnitId,
+    sourceRosterTargetType:
+      record.sourceRosterTargetType,
+    sourceRosterTargetId: record.sourceRosterTargetId,
+    sourceRosterTargetMode:
+      record.sourceRosterTargetMode,
+    sourceMemberIdentityType:
+      record.sourceMemberIdentityType,
     sourceRosterLocalDate:
       record.sourceRosterLocalDate,
     sourceRosterSlotKey: record.sourceRosterSlotKey,
@@ -1031,6 +1050,9 @@ test("Work Schedule list and detail exposures include source metadata read-only"
   assert.equal(list.sourceType, "MANUAL");
   assert.equal(list.sourceRosterId, null);
   assert.equal(list.sourceRosterMonth, null);
+  assert.equal(list.sourceRosterTargetType, null);
+  assert.equal(list.sourceRosterTargetId, null);
+  assert.equal(list.sourceRosterTargetMode, null);
   assert.equal(list.sourceRosterLocalDate, null);
   assert.equal(list.sourceRosterSlotKey, null);
   assert.equal(detail.sourceType, "MANUAL");
@@ -1040,6 +1062,10 @@ test("Work Schedule list and detail exposures include source metadata read-only"
   assert.equal(detail.sourceGenerationRunId, null);
   assert.equal(detail.sourceRosterMonth, null);
   assert.equal(detail.sourceDepartmentOrgUnitId, null);
+  assert.equal(detail.sourceRosterTargetType, null);
+  assert.equal(detail.sourceRosterTargetId, null);
+  assert.equal(detail.sourceRosterTargetMode, null);
+  assert.equal(detail.sourceMemberIdentityType, null);
   assert.equal(detail.sourceRosterLocalDate, null);
   assert.equal(detail.sourceRosterSlotKey, null);
 });
@@ -1077,6 +1103,9 @@ test("Work Schedule list source filters are parsed and passed to read repository
         return [];
       },
       async listByOrgUnitId() {
+        return [];
+      },
+      async listTalentGroupMemberEmploymentProfileResolutions() {
         return [];
       },
     },
@@ -1138,6 +1167,9 @@ test("Work Schedule team read scope resolves active managed group memberships", 
         return [];
       },
       async listByOrgUnitId() {
+        return [];
+      },
+      async listTalentGroupMemberEmploymentProfileResolutions() {
         return [];
       },
     },

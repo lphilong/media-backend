@@ -49,6 +49,10 @@ interface WorkShiftReadDocument {
   readonly sourceGenerationRunId?: string | null;
   readonly sourceRosterMonth?: string | null;
   readonly sourceDepartmentOrgUnitId?: string | null;
+  readonly sourceRosterTargetType?: WorkShiftDetailView["sourceRosterTargetType"];
+  readonly sourceRosterTargetId?: string | null;
+  readonly sourceRosterTargetMode?: WorkShiftDetailView["sourceRosterTargetMode"];
+  readonly sourceMemberIdentityType?: WorkShiftDetailView["sourceMemberIdentityType"];
   readonly sourceRosterLocalDate?: string | null;
   readonly sourceRosterSlotKey?: string | null;
   readonly createdAt: number;
@@ -634,6 +638,12 @@ function toWorkShiftListItemView(
     sourceType: normalizeSourceType(document.sourceType),
     sourceRosterId: document.sourceRosterId ?? null,
     sourceRosterMonth: document.sourceRosterMonth ?? null,
+    sourceRosterTargetType:
+      document.sourceRosterTargetType ?? null,
+    sourceRosterTargetId:
+      document.sourceRosterTargetId ?? null,
+    sourceRosterTargetMode:
+      document.sourceRosterTargetMode ?? null,
     sourceRosterLocalDate: document.sourceRosterLocalDate ?? null,
     sourceRosterSlotKey: document.sourceRosterSlotKey ?? null,
     createdAt: document.createdAt,
@@ -691,6 +701,14 @@ function toWorkShiftDetailView(
     sourceGenerationRunId: document.sourceGenerationRunId ?? null,
     sourceRosterMonth: document.sourceRosterMonth ?? null,
     sourceDepartmentOrgUnitId: document.sourceDepartmentOrgUnitId ?? null,
+    sourceRosterTargetType:
+      document.sourceRosterTargetType ?? null,
+    sourceRosterTargetId:
+      document.sourceRosterTargetId ?? null,
+    sourceRosterTargetMode:
+      document.sourceRosterTargetMode ?? null,
+    sourceMemberIdentityType:
+      document.sourceMemberIdentityType ?? null,
     sourceRosterLocalDate: document.sourceRosterLocalDate ?? null,
     sourceRosterSlotKey: document.sourceRosterSlotKey ?? null,
     createdAt: document.createdAt,

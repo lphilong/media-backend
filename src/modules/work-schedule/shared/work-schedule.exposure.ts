@@ -45,6 +45,9 @@ const WORK_SHIFT_ADMIN_LIST_FIELDS = [
   "sourceRosterId",
   "sourceRosterRef",
   "sourceRosterMonth",
+  "sourceRosterTargetType",
+  "sourceRosterTargetId",
+  "sourceRosterTargetMode",
   "sourceRosterLocalDate",
   "sourceRosterSlotKey",
   "createdAt",
@@ -95,6 +98,10 @@ const WORK_SHIFT_ADMIN_DETAIL_FIELDS = [
   "sourceRosterMonth",
   "sourceDepartmentOrgUnitId",
   "sourceDepartmentOrgUnitRef",
+  "sourceRosterTargetType",
+  "sourceRosterTargetId",
+  "sourceRosterTargetMode",
+  "sourceMemberIdentityType",
   "sourceRosterLocalDate",
   "sourceRosterSlotKey",
   "createdAt",
@@ -215,6 +222,13 @@ const MONTHLY_ROSTER_ADMIN_LIST_FIELDS = [
   "timezone",
   "targetSubjectKind",
   "targetOrgUnitMode",
+  "targetType",
+  "targetMode",
+  "targetOrgUnitId",
+  "targetOrgUnitRef",
+  "targetTalentGroupId",
+  "targetTalentGroupRef",
+  "targetRef",
   "departmentOrgUnitId",
   "departmentOrgUnitRef",
   "workPatternId",
@@ -249,6 +263,15 @@ const MONTHLY_ROSTER_PREVIEW_ELIGIBLE_PROFILE_FIELDS = [
   "departmentOrgUnitRef",
 ] as const;
 
+const MONTHLY_ROSTER_PREVIEW_EXCLUDED_MEMBER_FIELDS = [
+  "memberId",
+  "talentId",
+  "talentRef",
+  "linkedEmploymentProfileId",
+  "linkedEmploymentProfileRef",
+  "reasonCode",
+] as const;
+
 const MONTHLY_ROSTER_PREVIEW_CONFLICT_FIELDS = [
   "conflictKind",
   "workShiftId",
@@ -269,6 +292,13 @@ const MONTHLY_ROSTER_PREVIEW_ROW_FIELDS = [
   "previewRowId",
   "monthlyRosterId",
   "rosterMonth",
+  "targetType",
+  "targetMode",
+  "targetOrgUnitId",
+  "targetOrgUnitRef",
+  "targetTalentGroupId",
+  "targetTalentGroupRef",
+  "targetRef",
   "departmentOrgUnitId",
   "departmentOrgUnitRef",
   "subjectEmploymentProfileId",
@@ -295,6 +325,8 @@ const MONTHLY_ROSTER_PREVIEW_ROW_FIELDS = [
 
 const MONTHLY_ROSTER_PREVIEW_SUMMARY_FIELDS = [
   "totalEligibleProfiles",
+  "includedMemberCount",
+  "excludedMemberCount",
   "totalStandardCandidateShifts",
   "totalHolidaySuppressions",
   "totalWorkingToOff",
@@ -308,6 +340,13 @@ const MONTHLY_ROSTER_PREVIEW_FIELDS = [
   "monthlyRosterId",
   "rosterMonth",
   "timezone",
+  "targetType",
+  "targetMode",
+  "targetOrgUnitId",
+  "targetOrgUnitRef",
+  "targetTalentGroupId",
+  "targetTalentGroupRef",
+  "targetRef",
   "departmentOrgUnitId",
   "departmentOrgUnitRef",
   "workPatternId",
@@ -319,8 +358,10 @@ const MONTHLY_ROSTER_PREVIEW_FIELDS = [
   "currentPreviewHash",
   "computedPreviewHash",
   "eligibleProfiles",
+  "excludedMembers",
   "rows",
   "summary",
+  "warnings",
 ] as const;
 
 export const WorkScheduleAdminListExposure =
@@ -347,6 +388,12 @@ export const WorkScheduleAdminListExposure =
             sourceRosterRef: input.sourceRosterRef,
             sourceRosterMonth:
               input.sourceRosterMonth,
+            sourceRosterTargetType:
+              input.sourceRosterTargetType,
+            sourceRosterTargetId:
+              input.sourceRosterTargetId,
+            sourceRosterTargetMode:
+              input.sourceRosterTargetMode,
             sourceRosterLocalDate:
               input.sourceRosterLocalDate,
             sourceRosterSlotKey:
@@ -463,6 +510,14 @@ export const WorkScheduleAdminDetailExposure =
               input.sourceDepartmentOrgUnitId,
             sourceDepartmentOrgUnitRef:
               input.sourceDepartmentOrgUnitRef,
+            sourceRosterTargetType:
+              input.sourceRosterTargetType,
+            sourceRosterTargetId:
+              input.sourceRosterTargetId,
+            sourceRosterTargetMode:
+              input.sourceRosterTargetMode,
+            sourceMemberIdentityType:
+              input.sourceMemberIdentityType,
             sourceRosterLocalDate:
               input.sourceRosterLocalDate,
             sourceRosterSlotKey:
@@ -736,6 +791,15 @@ export const MonthlyRosterAdminExposure =
               input.targetSubjectKind,
             targetOrgUnitMode:
               input.targetOrgUnitMode,
+            targetType: input.targetType,
+            targetMode: input.targetMode,
+            targetOrgUnitId: input.targetOrgUnitId,
+            targetOrgUnitRef: input.targetOrgUnitRef,
+            targetTalentGroupId:
+              input.targetTalentGroupId,
+            targetTalentGroupRef:
+              input.targetTalentGroupRef,
+            targetRef: input.targetRef,
             departmentOrgUnitId:
               input.departmentOrgUnitId,
             departmentOrgUnitRef:
@@ -778,6 +842,15 @@ export const MonthlyRosterAdminExposure =
               input.targetSubjectKind,
             targetOrgUnitMode:
               input.targetOrgUnitMode,
+            targetType: input.targetType,
+            targetMode: input.targetMode,
+            targetOrgUnitId: input.targetOrgUnitId,
+            targetOrgUnitRef: input.targetOrgUnitRef,
+            targetTalentGroupId:
+              input.targetTalentGroupId,
+            targetTalentGroupRef:
+              input.targetTalentGroupRef,
+            targetRef: input.targetRef,
             departmentOrgUnitId:
               input.departmentOrgUnitId,
             departmentOrgUnitRef:
@@ -878,6 +951,27 @@ export const MonthlyRosterPreviewAdminExposure =
       );
     },
 
+    exposeExcludedMember(
+      input: MonthlyRosterPreviewView["excludedMembers"][number],
+    ): PlainObject {
+      return toPlainObject(
+        ExposurePolicy.expose(
+          {
+            memberId: input.memberId,
+            talentId: input.talentId,
+            talentRef: input.talentRef,
+            linkedEmploymentProfileId:
+              input.linkedEmploymentProfileId,
+            linkedEmploymentProfileRef:
+              input.linkedEmploymentProfileRef,
+            reasonCode: input.reasonCode,
+          },
+          MONTHLY_ROSTER_PREVIEW_EXCLUDED_MEMBER_FIELDS,
+        ),
+        "MonthlyRosterPreviewExcludedMember exposure",
+      );
+    },
+
     exposeRow(
       input: MonthlyRosterPreviewRowView,
     ): PlainObject {
@@ -887,6 +981,15 @@ export const MonthlyRosterPreviewAdminExposure =
             previewRowId: input.previewRowId,
             monthlyRosterId: input.monthlyRosterId,
             rosterMonth: input.rosterMonth,
+            targetType: input.targetType,
+            targetMode: input.targetMode,
+            targetOrgUnitId: input.targetOrgUnitId,
+            targetOrgUnitRef: input.targetOrgUnitRef,
+            targetTalentGroupId:
+              input.targetTalentGroupId,
+            targetTalentGroupRef:
+              input.targetTalentGroupRef,
+            targetRef: input.targetRef,
             departmentOrgUnitId:
               input.departmentOrgUnitId,
             departmentOrgUnitRef:
@@ -933,6 +1036,10 @@ export const MonthlyRosterPreviewAdminExposure =
           {
             totalEligibleProfiles:
               input.totalEligibleProfiles,
+            includedMemberCount:
+              input.includedMemberCount,
+            excludedMemberCount:
+              input.excludedMemberCount,
             totalStandardCandidateShifts:
               input.totalStandardCandidateShifts,
             totalHolidaySuppressions:
@@ -959,6 +1066,15 @@ export const MonthlyRosterPreviewAdminExposure =
             monthlyRosterId: input.monthlyRosterId,
             rosterMonth: input.rosterMonth,
             timezone: input.timezone,
+            targetType: input.targetType,
+            targetMode: input.targetMode,
+            targetOrgUnitId: input.targetOrgUnitId,
+            targetOrgUnitRef: input.targetOrgUnitRef,
+            targetTalentGroupId:
+              input.targetTalentGroupId,
+            targetTalentGroupRef:
+              input.targetTalentGroupRef,
+            targetRef: input.targetRef,
             departmentOrgUnitId:
               input.departmentOrgUnitId,
             departmentOrgUnitRef:
@@ -979,10 +1095,15 @@ export const MonthlyRosterPreviewAdminExposure =
               input.eligibleProfiles.map((profile) =>
                 this.exposeEligibleProfile(profile),
               ),
+            excludedMembers:
+              input.excludedMembers.map((member) =>
+                this.exposeExcludedMember(member),
+              ),
             rows: input.rows.map((row) =>
               this.exposeRow(row),
             ),
             summary: this.exposeSummary(input.summary),
+            warnings: [...input.warnings],
           },
           MONTHLY_ROSTER_PREVIEW_FIELDS,
         ),

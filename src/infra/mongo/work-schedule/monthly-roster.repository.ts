@@ -19,6 +19,8 @@ import {
   MONTHLY_ROSTER_TIMEZONE,
   MonthlyRosterRecord,
   MonthlyRosterStatus,
+  MonthlyRosterTargetMode,
+  MonthlyRosterTargetType,
   RosterExceptionRecord,
 } from "@modules/work-schedule/domain/work-schedule.types";
 
@@ -30,7 +32,11 @@ interface MonthlyRosterDocument {
   readonly timezone: typeof MONTHLY_ROSTER_TIMEZONE;
   readonly targetSubjectKind: typeof MONTHLY_ROSTER_TARGET_SUBJECT_KIND;
   readonly targetOrgUnitMode: typeof MONTHLY_ROSTER_TARGET_ORG_UNIT_MODE;
-  readonly departmentOrgUnitId: string;
+  readonly targetType?: MonthlyRosterTargetType;
+  readonly targetMode?: MonthlyRosterTargetMode;
+  readonly targetOrgUnitId?: string | null;
+  readonly targetTalentGroupId?: string | null;
+  readonly departmentOrgUnitId?: string | null;
   readonly workPatternId: string;
   readonly holidayCalendarId: string;
   readonly status: MonthlyRosterStatus;
@@ -92,14 +98,37 @@ export class NativeMongoMonthlyRosterRepository
     return doc ? toMonthlyRosterRecord(doc) : null;
   }
 
-  async findActiveByDepartmentAndMonth(
-    departmentOrgUnitId: string,
+  async findActiveByTargetAndMonth(
+    target: {
+      readonly targetType: MonthlyRosterTargetType;
+      readonly targetOrgUnitId: string | null;
+      readonly targetTalentGroupId: string | null;
+    },
     rosterMonth: string,
     session?: ClientSession,
   ): Promise<MonthlyRosterRecord | null> {
+    const targetFilter: Record<string, unknown> =
+      target.targetType === "ORG_UNIT"
+        ? {
+            $or: [
+              {
+                targetType: "ORG_UNIT",
+                targetOrgUnitId: target.targetOrgUnitId,
+              },
+              {
+                targetType: { $exists: false },
+                departmentOrgUnitId: target.targetOrgUnitId,
+              },
+            ],
+          }
+        : {
+            targetType: "TALENT_GROUP",
+            targetTalentGroupId:
+              target.targetTalentGroupId,
+          };
     const doc = await this.collection.findOne(
       {
-        departmentOrgUnitId,
+        ...targetFilter,
         rosterMonth,
         status: {
           $ne: "ARCHIVED",
@@ -126,6 +155,23 @@ export class NativeMongoMonthlyRosterRepository
     if (input.departmentOrgUnitId !== undefined) {
       set.departmentOrgUnitId =
         input.departmentOrgUnitId;
+    }
+
+    if (input.targetType !== undefined) {
+      set.targetType = input.targetType;
+    }
+
+    if (input.targetMode !== undefined) {
+      set.targetMode = input.targetMode;
+    }
+
+    if (input.targetOrgUnitId !== undefined) {
+      set.targetOrgUnitId = input.targetOrgUnitId;
+    }
+
+    if (input.targetTalentGroupId !== undefined) {
+      set.targetTalentGroupId =
+        input.targetTalentGroupId;
     }
 
     if (input.workPatternId !== undefined) {
@@ -332,6 +378,10 @@ function toMonthlyRosterDocument(
     timezone: record.timezone,
     targetSubjectKind: record.targetSubjectKind,
     targetOrgUnitMode: record.targetOrgUnitMode,
+    targetType: record.targetType,
+    targetMode: record.targetMode,
+    targetOrgUnitId: record.targetOrgUnitId,
+    targetTalentGroupId: record.targetTalentGroupId,
     departmentOrgUnitId: record.departmentOrgUnitId,
     workPatternId: record.workPatternId,
     holidayCalendarId: record.holidayCalendarId,
@@ -368,7 +418,20 @@ function toMonthlyRosterRecord(
     timezone: document.timezone,
     targetSubjectKind: document.targetSubjectKind,
     targetOrgUnitMode: document.targetOrgUnitMode,
-    departmentOrgUnitId: document.departmentOrgUnitId,
+    targetType: document.targetType ?? "ORG_UNIT",
+    targetMode:
+      document.targetMode ??
+      document.targetOrgUnitMode,
+    targetOrgUnitId:
+      document.targetOrgUnitId ??
+      document.departmentOrgUnitId ??
+      null,
+    targetTalentGroupId:
+      document.targetTalentGroupId ?? null,
+    departmentOrgUnitId:
+      document.departmentOrgUnitId ??
+      document.targetOrgUnitId ??
+      null,
     workPatternId: document.workPatternId,
     holidayCalendarId: document.holidayCalendarId,
     status: document.status,

@@ -197,7 +197,20 @@ class MemoryWorkShiftReadRepository
 function createService(params: {
   readonly rosters?: readonly MonthlyRosterRecord[];
   readonly orgUnits?: readonly WorkScheduleReferencedOrgUnit[];
+  readonly talentGroups?: readonly {
+    readonly id: string;
+    readonly status: "ACTIVE" | "ARCHIVED";
+  }[];
   readonly profiles?: readonly WorkScheduleReferencedEmploymentProfile[];
+  readonly talentGroupMemberResolutions?: readonly {
+    readonly memberId: string;
+    readonly groupId: string;
+    readonly talentId: string;
+    readonly membershipStatus: string;
+    readonly talentOperationalStatus: string | null;
+    readonly linkedEmploymentProfileId: string | null;
+    readonly employmentProfile: WorkScheduleReferencedEmploymentProfile | null;
+  }[];
   readonly patterns?: readonly WorkPatternRecord[];
   readonly calendars?: readonly HolidayCalendarRecord[];
   readonly workShiftReadRepository?: MemoryWorkShiftReadRepository;
@@ -224,6 +237,14 @@ function createService(params: {
         orgUnitId: "dept-1",
         managerEmploymentProfileId: null,
         linkedUserId: "admin-user-1",
+      },
+    ];
+  const talentGroups =
+    params.talentGroups ??
+    [
+      {
+        id: "group-1",
+        status: "ACTIVE" as const,
       },
     ];
 
@@ -257,6 +278,23 @@ function createService(params: {
           .sort((left, right) =>
             left.id.localeCompare(right.id),
           ),
+      listTalentGroupMemberEmploymentProfileResolutions:
+        async (talentGroupId: string) =>
+          (
+            params.talentGroupMemberResolutions ??
+            profiles.map((profile) => ({
+              memberId: `member-${profile.id}`,
+              groupId: talentGroupId,
+              talentId: `talent-${profile.id}`,
+              membershipStatus: "ACTIVE",
+              talentOperationalStatus: "ACTIVE",
+              linkedEmploymentProfileId: profile.id,
+              employmentProfile: profile,
+            }))
+          ).filter(
+            (resolution) =>
+              resolution.groupId === talentGroupId,
+          ),
     },
     new MemoryWorkPatternReadRepository(
       params.patterns ?? [seedPattern()],
@@ -269,6 +307,11 @@ function createService(params: {
     {
       findById: async (id: string) =>
         orgUnits.find((unit) => unit.id === id) ?? null,
+    },
+    {
+      findById: async (id: string) =>
+        talentGroups.find((group) => group.id === id) ??
+        null,
     },
   );
 }
@@ -445,6 +488,115 @@ test("Monthly Roster preview returns deterministic rows from draft, pattern, cal
   });
 });
 
+test("Monthly Roster preview resolves exact Talent Group members with explicit exclusions", async () => {
+  await bindTraceId("trace-roster-preview-talent-group", async () => {
+    const activeProfile = seedProfile(
+      "emp-linked",
+      "ACTIVE",
+      "dept-1",
+    );
+    const inactiveProfile = seedProfile(
+      "emp-inactive-linked",
+      "ON_LEAVE",
+      "dept-1",
+    );
+    const preview = await createService({
+      rosters: [
+        seedRoster({
+          targetType: "TALENT_GROUP",
+          targetTalentGroupId: "group-1",
+        }),
+      ],
+      profiles: [activeProfile, inactiveProfile],
+      talentGroupMemberResolutions: [
+        {
+          memberId: "member-linked",
+          groupId: "group-1",
+          talentId: "talent-linked",
+          membershipStatus: "ACTIVE",
+          talentOperationalStatus: "ACTIVE",
+          linkedEmploymentProfileId: activeProfile.id,
+          employmentProfile: activeProfile,
+        },
+        {
+          memberId: "member-inactive-membership",
+          groupId: "group-1",
+          talentId: "talent-inactive-membership",
+          membershipStatus: "REMOVED",
+          talentOperationalStatus: "ACTIVE",
+          linkedEmploymentProfileId: "emp-removed",
+          employmentProfile: null,
+        },
+        {
+          memberId: "member-unlinked",
+          groupId: "group-1",
+          talentId: "talent-unlinked",
+          membershipStatus: "ACTIVE",
+          talentOperationalStatus: "ACTIVE",
+          linkedEmploymentProfileId: null,
+          employmentProfile: null,
+        },
+        {
+          memberId: "member-inactive-profile",
+          groupId: "group-1",
+          talentId: "talent-inactive-profile",
+          membershipStatus: "ACTIVE",
+          talentOperationalStatus: "ACTIVE",
+          linkedEmploymentProfileId: inactiveProfile.id,
+          employmentProfile: inactiveProfile,
+        },
+        {
+          memberId: "member-duplicate-profile",
+          groupId: "group-1",
+          talentId: "talent-duplicate-profile",
+          membershipStatus: "ACTIVE",
+          talentOperationalStatus: "ACTIVE",
+          linkedEmploymentProfileId: activeProfile.id,
+          employmentProfile: activeProfile,
+        },
+      ],
+    }).previewMonthlyRoster(
+      createActor([Permission.WORK_SCHEDULE_READ]),
+      {
+        monthlyRosterId: "roster-1",
+        scope: "global",
+      },
+    );
+
+    assert.equal(preview.targetType, "TALENT_GROUP");
+    assert.equal(preview.targetTalentGroupId, "group-1");
+    assert.equal(preview.departmentOrgUnitId, null);
+    assert.deepEqual(
+      preview.eligibleProfiles.map(
+        (profile) =>
+          profile.subjectEmploymentProfileId,
+      ),
+      ["emp-linked"],
+    );
+    assert.equal(preview.summary.includedMemberCount, 1);
+    assert.equal(preview.summary.excludedMemberCount, 4);
+    assert.deepEqual(
+      preview.excludedMembers.map(
+        (member) => member.reasonCode,
+      ),
+      [
+        "MEMBERSHIP_INACTIVE",
+        "MISSING_LINKED_EMPLOYMENT_PROFILE",
+        "EMPLOYMENT_PROFILE_INACTIVE",
+        "DUPLICATE_EMPLOYMENT_PROFILE",
+      ],
+    );
+    assert.ok(
+      preview.rows.every(
+        (row) =>
+          row.targetType === "TALENT_GROUP" &&
+          row.targetTalentGroupId === "group-1" &&
+          row.departmentOrgUnitId === null,
+      ),
+    );
+  });
+});
+
 test("Monthly Roster preview rejects unusable roster dependencies and invalid persisted exception state", async () => {
   await bindTraceId("trace-roster-preview-invalid", async () => {
     await assert.rejects(
@@ -471,7 +623,7 @@ test("Monthly Roster preview rejects unusable roster dependencies and invalid pe
             {
               id: "dept-1",
               type: "TEAM",
-              status: "ACTIVE",
+              status: "ARCHIVED",
             },
           ],
         }).previewMonthlyRoster(
@@ -1070,8 +1222,21 @@ function seedRoster(params: {
   readonly status?: MonthlyRosterStatus;
   readonly draftVersion?: number;
   readonly previewHash?: string | null;
+  readonly targetType?: MonthlyRosterRecord["targetType"];
+  readonly targetOrgUnitId?: string | null;
+  readonly targetTalentGroupId?: string | null;
   readonly exceptions?: readonly RosterExceptionRecord[];
 } = {}): MonthlyRosterRecord {
+  const targetType = params.targetType ?? "ORG_UNIT";
+  const targetOrgUnitId =
+    targetType === "ORG_UNIT"
+      ? (params.targetOrgUnitId ?? "dept-1")
+      : null;
+  const targetTalentGroupId =
+    targetType === "TALENT_GROUP"
+      ? (params.targetTalentGroupId ?? "group-1")
+      : null;
+
   return {
     monthlyRosterId: "roster-1",
     rosterCode: "MR-2026-05-HR",
@@ -1080,7 +1245,12 @@ function seedRoster(params: {
     timezone: "Asia/Ho_Chi_Minh",
     targetSubjectKind: "EMPLOYMENT_PROFILE",
     targetOrgUnitMode: "EXACT_ONLY",
-    departmentOrgUnitId: "dept-1",
+    targetType,
+    targetMode: "EXACT_ONLY",
+    targetOrgUnitId,
+    targetTalentGroupId,
+    departmentOrgUnitId:
+      targetType === "ORG_UNIT" ? targetOrgUnitId : null,
     workPatternId: "pattern-1",
     holidayCalendarId: "calendar-1",
     status: params.status ?? "DRAFT",

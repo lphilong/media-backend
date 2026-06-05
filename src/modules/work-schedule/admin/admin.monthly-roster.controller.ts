@@ -32,6 +32,10 @@ const CREATE_ROSTER_BODY_FIELDS = Object.freeze([
   "rosterCode",
   "rosterMonth",
   "timezone",
+  "targetType",
+  "targetMode",
+  "targetOrgUnitId",
+  "targetTalentGroupId",
   "departmentOrgUnitId",
   "workPatternId",
   "holidayCalendarId",
@@ -43,6 +47,10 @@ const CREATE_ROSTER_BODY_FIELDS = Object.freeze([
 const UPDATE_ROSTER_BODY_FIELDS = Object.freeze([
   "rosterMonth",
   "timezone",
+  "targetType",
+  "targetMode",
+  "targetOrgUnitId",
+  "targetTalentGroupId",
   "departmentOrgUnitId",
   "workPatternId",
   "holidayCalendarId",
@@ -177,8 +185,17 @@ function parseCreateMonthlyRosterDraftCommand(
       body.rosterCode as string | null | undefined,
     rosterMonth: body.rosterMonth as string,
     timezone: body.timezone as string | undefined,
+    targetType: body.targetType as string,
+    targetMode: body.targetMode as string | undefined,
+    targetOrgUnitId:
+      body.targetOrgUnitId as string | null | undefined,
+    targetTalentGroupId:
+      body.targetTalentGroupId as
+        | string
+        | null
+        | undefined,
     departmentOrgUnitId:
-      body.departmentOrgUnitId as string,
+      body.departmentOrgUnitId as string | undefined,
     workPatternId: body.workPatternId as string,
     holidayCalendarId:
       body.holidayCalendarId as string,
@@ -210,6 +227,15 @@ function parseUpdateMonthlyRosterDraftCommand(
     monthlyRosterId: req.params.monthlyRosterId,
     rosterMonth: body.rosterMonth as string | undefined,
     timezone: body.timezone as string | undefined,
+    targetType: body.targetType as string | undefined,
+    targetMode: body.targetMode as string | undefined,
+    targetOrgUnitId:
+      body.targetOrgUnitId as string | null | undefined,
+    targetTalentGroupId:
+      body.targetTalentGroupId as
+        | string
+        | null
+        | undefined,
     departmentOrgUnitId:
       body.departmentOrgUnitId as
         | string

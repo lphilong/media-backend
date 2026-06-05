@@ -81,8 +81,11 @@ class MemoryMonthlyRosterRepository
           record.rosterCode === roster.rosterCode ||
           (record.status !== "ARCHIVED" &&
             record.rosterMonth === roster.rosterMonth &&
-            record.departmentOrgUnitId ===
-              roster.departmentOrgUnitId),
+            record.targetType === roster.targetType &&
+            record.targetOrgUnitId ===
+              roster.targetOrgUnitId &&
+            record.targetTalentGroupId ===
+              roster.targetTalentGroupId),
       )
     ) {
       throw new MongoServerError({
@@ -117,16 +120,23 @@ class MemoryMonthlyRosterRepository
     );
   }
 
-  async findActiveByDepartmentAndMonth(
-    departmentOrgUnitId: string,
+  async findActiveByTargetAndMonth(
+    target: {
+      readonly targetType: MonthlyRosterRecord["targetType"];
+      readonly targetOrgUnitId: string | null;
+      readonly targetTalentGroupId: string | null;
+    },
     rosterMonth: string,
   ): Promise<MonthlyRosterRecord | null> {
     return (
       this.records.find(
         (record) =>
           record.status !== "ARCHIVED" &&
-          record.departmentOrgUnitId ===
-            departmentOrgUnitId &&
+          record.targetType === target.targetType &&
+          record.targetOrgUnitId ===
+            target.targetOrgUnitId &&
+          record.targetTalentGroupId ===
+            target.targetTalentGroupId &&
           record.rosterMonth === rosterMonth,
       ) ?? null
     );
@@ -147,9 +157,20 @@ class MemoryMonthlyRosterRepository
       ...current,
       rosterMonth:
         input.rosterMonth ?? current.rosterMonth,
+      targetType: input.targetType ?? current.targetType,
+      targetMode: input.targetMode ?? current.targetMode,
+      targetOrgUnitId:
+        input.targetOrgUnitId === undefined
+          ? current.targetOrgUnitId
+          : input.targetOrgUnitId,
+      targetTalentGroupId:
+        input.targetTalentGroupId === undefined
+          ? current.targetTalentGroupId
+          : input.targetTalentGroupId,
       departmentOrgUnitId:
-        input.departmentOrgUnitId ??
-        current.departmentOrgUnitId,
+        input.departmentOrgUnitId === undefined
+          ? current.departmentOrgUnitId
+          : input.departmentOrgUnitId,
       workPatternId:
         input.workPatternId ?? current.workPatternId,
       holidayCalendarId:
@@ -742,12 +763,27 @@ function seedCalendar(params: {
 function seedRoster(params: {
   readonly monthlyRosterId?: string;
   readonly rosterMonth?: string;
+  readonly targetType?: MonthlyRosterRecord["targetType"];
+  readonly targetOrgUnitId?: string | null;
+  readonly targetTalentGroupId?: string | null;
   readonly departmentOrgUnitId?: string;
   readonly workPatternId?: string;
   readonly holidayCalendarId?: string;
   readonly status?: MonthlyRosterStatus;
   readonly exceptions?: readonly RosterExceptionRecord[];
 } = {}): MonthlyRosterRecord {
+  const targetType = params.targetType ?? "ORG_UNIT";
+  const targetOrgUnitId =
+    targetType === "ORG_UNIT"
+      ? (params.targetOrgUnitId ??
+        params.departmentOrgUnitId ??
+        "dept-1")
+      : null;
+  const targetTalentGroupId =
+    targetType === "TALENT_GROUP"
+      ? (params.targetTalentGroupId ?? "group-1")
+      : null;
+
   return {
     monthlyRosterId:
       params.monthlyRosterId ?? "roster-1",
@@ -757,8 +793,14 @@ function seedRoster(params: {
     timezone: "Asia/Ho_Chi_Minh",
     targetSubjectKind: "EMPLOYMENT_PROFILE",
     targetOrgUnitMode: "EXACT_ONLY",
+    targetType,
+    targetMode: "EXACT_ONLY",
+    targetOrgUnitId,
+    targetTalentGroupId,
     departmentOrgUnitId:
-      params.departmentOrgUnitId ?? "dept-1",
+      targetType === "ORG_UNIT"
+        ? (params.departmentOrgUnitId ?? targetOrgUnitId)
+        : null,
     workPatternId: params.workPatternId ?? "pattern-1",
     holidayCalendarId:
       params.holidayCalendarId ?? "calendar-1",
@@ -839,7 +881,20 @@ function seedRosterException(params: {
 function createService(params: {
   readonly rosters?: readonly MonthlyRosterRecord[];
   readonly orgUnits?: readonly WorkScheduleReferencedOrgUnit[];
+  readonly talentGroups?: readonly {
+    readonly id: string;
+    readonly status: "ACTIVE" | "ARCHIVED";
+  }[];
   readonly profiles?: readonly WorkScheduleReferencedEmploymentProfile[];
+  readonly talentGroupMemberResolutions?: readonly {
+    readonly memberId: string;
+    readonly groupId: string;
+    readonly talentId: string;
+    readonly membershipStatus: string;
+    readonly talentOperationalStatus: string | null;
+    readonly linkedEmploymentProfileId: string | null;
+    readonly employmentProfile: WorkScheduleReferencedEmploymentProfile | null;
+  }[];
   readonly patterns?: readonly WorkPatternRecord[];
   readonly calendars?: readonly HolidayCalendarRecord[];
   readonly resources?: readonly WorkScheduleReferencedStudioResource[];
@@ -872,6 +927,14 @@ function createService(params: {
         orgUnitId: "dept-1",
         managerEmploymentProfileId: null,
         linkedUserId: "admin-user-1",
+      },
+    ];
+  const talentGroups =
+    params.talentGroups ??
+    [
+      {
+        id: "group-1",
+        status: "ACTIVE" as const,
       },
     ];
   const resources =
@@ -917,6 +980,23 @@ function createService(params: {
         profiles.filter(
           (profile) => profile.orgUnitId === orgUnitId,
         ),
+      listTalentGroupMemberEmploymentProfileResolutions:
+        async (talentGroupId: string) =>
+          (
+            params.talentGroupMemberResolutions ??
+            profiles.map((profile) => ({
+              memberId: `member-${profile.id}`,
+              groupId: talentGroupId,
+              talentId: `talent-${profile.id}`,
+              membershipStatus: "ACTIVE",
+              talentOperationalStatus: "ACTIVE",
+              linkedEmploymentProfileId: profile.id,
+              employmentProfile: profile,
+            }))
+          ).filter(
+            (resolution) =>
+              resolution.groupId === talentGroupId,
+          ),
     },
     {
       findById: async (id: string) =>
@@ -925,6 +1005,11 @@ function createService(params: {
     },
     audit,
     mutationBridge,
+    {
+      findById: async (id: string) =>
+        talentGroups.find((group) => group.id === id) ??
+        null,
+    },
     {
       info() {},
       warn() {},
@@ -940,6 +1025,9 @@ function createRosterPayload(
   params: Partial<{
     readonly rosterCode: string | null;
     readonly rosterMonth: string;
+    readonly targetType: MonthlyRosterRecord["targetType"];
+    readonly targetOrgUnitId: string | null;
+    readonly targetTalentGroupId: string | null;
     readonly departmentOrgUnitId: string;
     readonly workPatternId: string;
     readonly holidayCalendarId: string;
@@ -951,8 +1039,24 @@ function createRosterPayload(
         ? params.rosterCode
         : "MR-2026-05-HR",
     rosterMonth: params.rosterMonth ?? "2026-05",
+    targetType: params.targetType ?? "ORG_UNIT",
+    targetMode: "EXACT_ONLY",
+    targetOrgUnitId:
+      params.targetType === "TALENT_GROUP"
+        ? null
+        : (params.targetOrgUnitId ??
+          params.departmentOrgUnitId ??
+          "dept-1"),
+    targetTalentGroupId:
+      params.targetType === "TALENT_GROUP"
+        ? (params.targetTalentGroupId ?? "group-1")
+        : null,
     departmentOrgUnitId:
-      params.departmentOrgUnitId ?? "dept-1",
+      params.targetType === "TALENT_GROUP"
+        ? undefined
+        : (params.departmentOrgUnitId ??
+          params.targetOrgUnitId ??
+          "dept-1"),
     workPatternId: params.workPatternId ?? "pattern-1",
     holidayCalendarId:
       params.holidayCalendarId ?? "calendar-1",
@@ -997,16 +1101,18 @@ function expectedPreviewHash(params: {
       params.calendar ?? seedCalendar()
     ).entries.filter((entry) => entry.status === "ACTIVE"),
     eligibleProfiles: profiles
-      .filter(
-        (profile) =>
-          profile.employmentStatus === "ACTIVE" &&
-          profile.orgUnitId === roster.departmentOrgUnitId,
+      .filter((profile) => profile.employmentStatus === "ACTIVE")
+      .filter((profile) =>
+        roster.targetType === "ORG_UNIT"
+          ? profile.orgUnitId === roster.targetOrgUnitId
+          : true,
       )
       .map((profile) => ({
         id: profile.id,
         employmentStatus: "ACTIVE" as const,
         orgUnitId: profile.orgUnitId,
       })),
+    excludedMembers: [],
     existingActiveShifts: [],
   }).computedPreviewHash;
 }
@@ -1047,6 +1153,90 @@ test("Monthly Roster creates DRAFT with active department, pattern, and calendar
       "EXACT_ONLY",
     );
     assert.equal(created.exceptionCount, 0);
+  });
+});
+
+test("Monthly Roster accepts Talent Group target and blocks zero eligible Talent Group publish", async () => {
+  await bindTraceId("trace-roster-talent-group-target", async () => {
+    const linkedProfile = {
+      id: "emp-linked",
+      employmentStatus: "ACTIVE" as const,
+      orgUnitId: "dept-1",
+      managerEmploymentProfileId: null,
+      linkedUserId: null,
+    };
+    const created =
+      await createService({
+        profiles: [linkedProfile],
+        talentGroupMemberResolutions: [
+          {
+            memberId: "member-linked",
+            groupId: "group-1",
+            talentId: "talent-linked",
+            membershipStatus: "ACTIVE",
+            talentOperationalStatus: "ACTIVE",
+            linkedEmploymentProfileId: linkedProfile.id,
+            employmentProfile: linkedProfile,
+          },
+        ],
+      }).createMonthlyRosterDraft(
+        createActor([
+          Permission.WORK_SCHEDULE_CREATE,
+        ]),
+        {
+          rosterMonth: "2026-05",
+          timezone: "Asia/Ho_Chi_Minh",
+          targetType: "TALENT_GROUP",
+          targetMode: "EXACT_ONLY",
+          targetTalentGroupId: "group-1",
+          workPatternId: "pattern-1",
+          holidayCalendarId: "calendar-1",
+          scope: "global",
+        },
+      );
+
+    assert.equal(created.targetType, "TALENT_GROUP");
+    assert.equal(created.targetMode, "EXACT_ONLY");
+    assert.equal(created.targetOrgUnitId, null);
+    assert.equal(created.targetTalentGroupId, "group-1");
+    assert.equal(created.departmentOrgUnitId, null);
+
+    const zeroEligibleRoster = seedRoster({
+      monthlyRosterId: "roster-zero-tg",
+      targetType: "TALENT_GROUP",
+      targetTalentGroupId: "group-1",
+    });
+
+    await assert.rejects(
+      createService({
+        rosters: [zeroEligibleRoster],
+        profiles: [],
+        talentGroupMemberResolutions: [
+          {
+            memberId: "member-unlinked",
+            groupId: "group-1",
+            talentId: "talent-unlinked",
+            membershipStatus: "ACTIVE",
+            talentOperationalStatus: "ACTIVE",
+            linkedEmploymentProfileId: null,
+            employmentProfile: null,
+          },
+        ],
+      }).publishMonthlyRoster(
+        createActor([
+          Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+        ]),
+        {
+          monthlyRosterId: "roster-zero-tg",
+          expectedPreviewHash: expectedPreviewHash({
+            roster: zeroEligibleRoster,
+            profiles: [],
+          }),
+          scope: "global",
+        },
+      ),
+      WorkScheduleValidationError,
+    );
   });
 });
 
@@ -1152,28 +1342,41 @@ test("Monthly Roster explicit custom rosterCode is preserved and update cannot m
   });
 });
 
-test("Monthly Roster rejects invalid department, pattern, calendar, month, duplicate, and client status", async (t) => {
+test("Monthly Roster enforces target, pattern, calendar, month, duplicate, and client status contracts", async (t) => {
   const actor = createActor([
     Permission.WORK_SCHEDULE_CREATE,
   ]);
 
-  await t.test("non department", async () => {
-    await bindTraceId("trace-roster-non-dept", async () => {
-      await assert.rejects(
-        createService({
-          orgUnits: [
-            {
-              id: "dept-1",
-              type: "TEAM",
-              status: "ACTIVE",
-            },
-          ],
-        }).createMonthlyRosterDraft(
-          actor,
-          createRosterPayload(),
-        ),
-        WorkScheduleInvalidSubjectReferenceError,
+  await t.test("active non-department Org Unit target", async () => {
+    await bindTraceId("trace-roster-active-team-target", async () => {
+      const created = await createService({
+        orgUnits: [
+          {
+            id: "team-1",
+            type: "TEAM",
+            status: "ACTIVE",
+          },
+        ],
+        profiles: [
+          {
+            id: "emp-team",
+            employmentStatus: "ACTIVE",
+            orgUnitId: "team-1",
+            managerEmploymentProfileId: null,
+            linkedUserId: null,
+          },
+        ],
+      }).createMonthlyRosterDraft(
+        actor,
+        createRosterPayload({
+          targetOrgUnitId: "team-1",
+          departmentOrgUnitId: "team-1",
+        }),
       );
+
+      assert.equal(created.targetType, "ORG_UNIT");
+      assert.equal(created.targetOrgUnitId, "team-1");
+      assert.equal(created.departmentOrgUnitId, "team-1");
     });
   });
 
@@ -1193,6 +1396,38 @@ test("Monthly Roster rejects invalid department, pattern, calendar, month, dupli
           createRosterPayload(),
         ),
         WorkScheduleInvalidSubjectReferenceError,
+      );
+    });
+  });
+
+  await t.test("unsupported or mismatched target shape", async () => {
+    await bindTraceId("trace-roster-invalid-target-shape", async () => {
+      await assert.rejects(
+        createService().createMonthlyRosterDraft(actor, {
+          rosterMonth: "2026-05",
+          timezone: "Asia/Ho_Chi_Minh",
+          targetType: "COMPANY",
+          targetMode: "EXACT_ONLY",
+          workPatternId: "pattern-1",
+          holidayCalendarId: "calendar-1",
+          scope: "global",
+        }),
+        WorkScheduleValidationError,
+      );
+
+      await assert.rejects(
+        createService().createMonthlyRosterDraft(actor, {
+          rosterMonth: "2026-05",
+          timezone: "Asia/Ho_Chi_Minh",
+          targetType: "ORG_UNIT",
+          targetMode: "EXACT_ONLY",
+          targetOrgUnitId: "dept-1",
+          targetTalentGroupId: "group-1",
+          workPatternId: "pattern-1",
+          holidayCalendarId: "calendar-1",
+          scope: "global",
+        }),
+        WorkScheduleValidationError,
       );
     });
   });
@@ -1553,7 +1788,7 @@ test("Monthly Roster structural draft update still enforces active base referenc
           {
             id: "dept-2",
             type: "TEAM",
-            status: "ACTIVE",
+            status: "ARCHIVED",
           },
         ],
       }).updateMonthlyRosterDraft(actor, {
@@ -2067,6 +2302,8 @@ test("Monthly Roster read query normalizes filters and enforces read permission"
         listIdsByActiveTalentGroupIds: async () => [],
         listIdsByOrgUnitId: async () => [],
         listByOrgUnitId: async () => [],
+        listTalentGroupMemberEmploymentProfileResolutions:
+          async () => [],
       },
       {
         listWorkPatterns: async () => ({ items: [] }),
@@ -2084,6 +2321,9 @@ test("Monthly Roster read query normalizes filters and enforces read permission"
         getWorkShiftDetail: async () => null,
         listActiveEmploymentProfileShiftsForWindow:
           async () => [],
+      },
+      {
+        findById: async () => null,
       },
       {
         findById: async () => null,
@@ -2126,6 +2366,9 @@ test("Monthly Roster read query normalizes filters and enforces read permission"
     status: "DRAFT",
     rosterMonth: "2026-05",
     departmentOrgUnitId: "dept-1",
+    targetType: undefined,
+    targetOrgUnitId: undefined,
+    targetTalentGroupId: undefined,
     workPatternId: undefined,
     holidayCalendarId: undefined,
     limit: 20,
@@ -2489,6 +2732,10 @@ test("Monthly Roster publish duplicate protection leaves roster draft metadata u
         sourceGenerationRunId: "preexisting-run",
         sourceRosterMonth: "2026-05",
         sourceDepartmentOrgUnitId: "dept-1",
+        sourceRosterTargetType: "ORG_UNIT",
+        sourceRosterTargetId: "dept-1",
+        sourceRosterTargetMode: "EXACT_ONLY",
+        sourceMemberIdentityType: "EMPLOYMENT_PROFILE",
         sourceRosterLocalDate: "2026-05-01",
         sourceRosterSlotKey: "STANDARD",
         createdAt: 1,

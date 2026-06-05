@@ -51,12 +51,14 @@ export const HOLIDAY_CALENDAR_ENTRY_DATE_LOOKUP_INDEX_NAME =
   "idx_holiday_calendar_entry_date_lookup";
 export const MONTHLY_ROSTER_ROSTER_CODE_UNIQ_INDEX_NAME =
   "uniq_monthly_roster_roster_code";
-export const MONTHLY_ROSTER_ACTIVE_DEPARTMENT_MONTH_UNIQ_INDEX_NAME =
-  "uniq_monthly_roster_active_department_month";
+export const MONTHLY_ROSTER_ACTIVE_TARGET_MONTH_UNIQ_INDEX_NAME =
+  "uniq_monthly_roster_active_target_month";
 export const MONTHLY_ROSTER_STATUS_MONTH_INDEX_NAME =
   "idx_monthly_roster_status_month";
 export const MONTHLY_ROSTER_DEPARTMENT_MONTH_STATUS_INDEX_NAME =
   "idx_monthly_roster_department_month_status";
+export const MONTHLY_ROSTER_TARGET_MONTH_STATUS_INDEX_NAME =
+  "idx_monthly_roster_target_month_status";
 export const MONTHLY_ROSTER_PATTERN_LOOKUP_INDEX_NAME =
   "idx_monthly_roster_pattern_lookup";
 export const MONTHLY_ROSTER_CALENDAR_LOOKUP_INDEX_NAME =
@@ -422,15 +424,20 @@ async function initMonthlyRosterIndexes(
   await collection.createIndex(
     {
       rosterMonth: 1,
-      departmentOrgUnitId: 1,
+      targetType: 1,
+      targetOrgUnitId: 1,
+      targetTalentGroupId: 1,
     },
     {
       name:
-        MONTHLY_ROSTER_ACTIVE_DEPARTMENT_MONTH_UNIQ_INDEX_NAME,
+        MONTHLY_ROSTER_ACTIVE_TARGET_MONTH_UNIQ_INDEX_NAME,
       unique: true,
       partialFilterExpression: {
         status: {
           $in: ["DRAFT", "PUBLISHED", "LOCKED"],
+        },
+        targetType: {
+          $in: ["ORG_UNIT", "TALENT_GROUP"],
         },
       },
     },
@@ -457,6 +464,21 @@ async function initMonthlyRosterIndexes(
     {
       name:
         MONTHLY_ROSTER_DEPARTMENT_MONTH_STATUS_INDEX_NAME,
+    },
+  );
+
+  await collection.createIndex(
+    {
+      targetType: 1,
+      targetOrgUnitId: 1,
+      targetTalentGroupId: 1,
+      rosterMonth: 1,
+      status: 1,
+      _id: 1,
+    },
+    {
+      name:
+        MONTHLY_ROSTER_TARGET_MONTH_STATUS_INDEX_NAME,
     },
   );
 

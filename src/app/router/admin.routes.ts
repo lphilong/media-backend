@@ -713,6 +713,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     workScheduleStudioResourceReadonlyAccess,
     authoritativeAuditGuard,
     adminMutationBridge,
+    workScheduleTalentGroupReadonlyAccess,
   );
   const monthlyRosterQueryService = new MonthlyRosterAdminQueryService(
     monthlyRosterReadRepository,
@@ -721,6 +722,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     holidayCalendarReadRepository,
     workShiftReadRepository,
     workScheduleOrgUnitReadonlyAccess,
+    workScheduleTalentGroupReadonlyAccess,
   );
   const monthlyRosterController = new MonthlyRosterAdminController(
     monthlyRosterService,

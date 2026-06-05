@@ -7,6 +7,7 @@ import { EmploymentProfileWorkScheduleReadonlyAccess } from "@modules/employment
 import {
   WorkScheduleEmploymentProfileReadonlyAccess,
   WorkScheduleReferencedEmploymentProfile,
+  WorkScheduleTalentGroupMemberEmploymentProfileResolution,
 } from "@modules/work-schedule/domain/work-schedule-employment-profile-readonly-access";
 import {
   WorkScheduleOrgUnitReadonlyAccess,
@@ -41,6 +42,8 @@ interface EmploymentProfileReferenceDocument {
 
 interface WorkScheduleTalentReferenceDocument {
   readonly _id: string;
+  readonly talentCode?: string;
+  readonly stageName?: string;
   readonly operationalStatus: string;
   readonly linkedEmploymentProfileId: string | null;
 }
@@ -50,6 +53,7 @@ interface WorkScheduleTalentGroupMemberReferenceDocument {
   readonly groupId: string;
   readonly talentId: string;
   readonly membershipStatus: string;
+  readonly lineupOrder?: number;
 }
 
 interface OrgUnitReferenceDocument {
@@ -345,6 +349,132 @@ export class NativeMongoWorkScheduleEmploymentProfileReadonlyAccess
       linkedUserId: doc.linkedUserId,
       ref: toEmploymentProfileReferenceSummary(doc),
     }));
+  }
+
+  async listTalentGroupMemberEmploymentProfileResolutions(
+    talentGroupId: string,
+    session?: ClientSession,
+  ): Promise<
+    readonly WorkScheduleTalentGroupMemberEmploymentProfileResolution[]
+  > {
+    const options = session ? { session } : {};
+    const members = await this.talentGroupMemberCollection
+      .find(
+        {
+          groupId: talentGroupId,
+          membershipStatus: {
+            $ne: "REMOVED",
+          },
+        },
+        {
+          projection: {
+            _id: 1,
+            groupId: 1,
+            talentId: 1,
+            membershipStatus: 1,
+          },
+          ...options,
+        },
+      )
+      .sort({ lineupOrder: 1, _id: 1 })
+      .toArray();
+
+    if (members.length === 0) {
+      return [];
+    }
+
+    const talentIds = [
+      ...new Set(members.map((member) => member.talentId)),
+    ];
+    const talents = await this.talentCollection
+      .find(
+        {
+          _id: {
+            $in: talentIds,
+          },
+        },
+        {
+          projection: {
+            _id: 1,
+            operationalStatus: 1,
+            linkedEmploymentProfileId: 1,
+          },
+          ...options,
+        },
+      )
+      .toArray();
+    const talentById = new Map(
+      talents.map((talent) => [talent._id, talent]),
+    );
+    const employmentProfileIds = [
+      ...new Set(
+        talents
+          .map((talent) => talent.linkedEmploymentProfileId)
+          .filter(
+            (id): id is string =>
+              typeof id === "string" && id.length > 0,
+          ),
+      ),
+    ];
+    const profiles =
+      employmentProfileIds.length === 0
+        ? []
+        : await this.collection
+            .find(
+              {
+                _id: {
+                  $in: employmentProfileIds,
+                },
+              },
+              {
+                projection: {
+                  _id: 1,
+                  employeeCode: 1,
+                  legalName: 1,
+                  displayName: 1,
+                  employmentStatus: 1,
+                  orgUnitId: 1,
+                  managerEmploymentProfileId: 1,
+                  linkedUserId: 1,
+                },
+                ...options,
+              },
+            )
+            .toArray();
+    const profileById = new Map(
+      profiles.map((profile) => [
+        profile._id,
+        {
+          id: profile._id,
+          employmentStatus: profile.employmentStatus,
+          orgUnitId: profile.orgUnitId,
+          managerEmploymentProfileId:
+            profile.managerEmploymentProfileId,
+          linkedUserId: profile.linkedUserId,
+          ref: toEmploymentProfileReferenceSummary(profile),
+        } satisfies WorkScheduleReferencedEmploymentProfile,
+      ]),
+    );
+
+    return members.map((member) => {
+      const talent = talentById.get(member.talentId);
+      const linkedEmploymentProfileId =
+        talent?.linkedEmploymentProfileId ?? null;
+
+      return {
+        memberId: member._id,
+        groupId: member.groupId,
+        talentId: member.talentId,
+        membershipStatus: member.membershipStatus,
+        talentOperationalStatus:
+          talent?.operationalStatus ?? null,
+        linkedEmploymentProfileId,
+        employmentProfile: linkedEmploymentProfileId
+          ? (profileById.get(linkedEmploymentProfileId) ??
+            null)
+          : null,
+      };
+    });
   }
 }
 

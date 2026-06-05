@@ -3,6 +3,7 @@ import { assertWorkScheduleDateOnlyWithinRosterMonth } from "./work-schedule-dat
 import { WorkScheduleValidationError } from "./work-schedule.errors";
 import {
   HolidayCalendarEntryRecord,
+  MonthlyRosterPreviewExcludedMemberView,
   MonthlyRosterPreviewConflictView,
   MonthlyRosterPreviewRowView,
   MonthlyRosterPreviewSummaryView,
@@ -25,6 +26,7 @@ export function buildMonthlyRosterPreview(params: {
   readonly pattern: WorkPatternView;
   readonly activeHolidayEntries: readonly HolidayCalendarEntryRecord[];
   readonly eligibleProfiles: readonly MonthlyRosterPreviewEligibleProfileInput[];
+  readonly excludedMembers?: readonly MonthlyRosterPreviewExcludedMemberView[];
   readonly existingActiveShifts: readonly ActiveEmploymentProfileWorkShiftConflictView[];
 }): MonthlyRosterPreviewView {
   const profiles = [...params.eligibleProfiles].sort(
@@ -46,6 +48,11 @@ export function buildMonthlyRosterPreview(params: {
     buildPreviewRows({
       monthlyRosterId: params.roster.monthlyRosterId,
       rosterMonth: params.roster.rosterMonth,
+      targetType: params.roster.targetType,
+      targetMode: params.roster.targetMode,
+      targetOrgUnitId: params.roster.targetOrgUnitId,
+      targetTalentGroupId:
+        params.roster.targetTalentGroupId,
       departmentOrgUnitId:
         params.roster.departmentOrgUnitId,
       profileIds: eligibleProfileIds,
@@ -61,6 +68,7 @@ export function buildMonthlyRosterPreview(params: {
   );
   const summary = summarizePreviewRows(
     eligibleProfileIds.length,
+    (params.excludedMembers ?? []).length,
     rows,
   );
   const computedPreviewHash = computePreviewHash({
@@ -68,6 +76,11 @@ export function buildMonthlyRosterPreview(params: {
       monthlyRosterId: params.roster.monthlyRosterId,
       rosterMonth: params.roster.rosterMonth,
       timezone: params.roster.timezone,
+      targetType: params.roster.targetType,
+      targetMode: params.roster.targetMode,
+      targetOrgUnitId: params.roster.targetOrgUnitId,
+      targetTalentGroupId:
+        params.roster.targetTalentGroupId,
       departmentOrgUnitId:
         params.roster.departmentOrgUnitId,
       workPatternId: params.roster.workPatternId,
@@ -76,6 +89,7 @@ export function buildMonthlyRosterPreview(params: {
       draftVersion: params.roster.draftVersion,
     },
     eligibleProfileIds,
+    excludedMembers: params.excludedMembers ?? [],
     rows,
     summary,
   });
@@ -84,6 +98,11 @@ export function buildMonthlyRosterPreview(params: {
     monthlyRosterId: params.roster.monthlyRosterId,
     rosterMonth: params.roster.rosterMonth,
     timezone: params.roster.timezone,
+    targetType: params.roster.targetType,
+    targetMode: params.roster.targetMode,
+    targetOrgUnitId: params.roster.targetOrgUnitId,
+    targetTalentGroupId:
+      params.roster.targetTalentGroupId,
     departmentOrgUnitId:
       params.roster.departmentOrgUnitId,
     workPatternId: params.roster.workPatternId,
@@ -98,8 +117,13 @@ export function buildMonthlyRosterPreview(params: {
       employmentStatus: "ACTIVE",
       departmentOrgUnitId: profile.orgUnitId,
     })),
+    excludedMembers: params.excludedMembers ?? [],
     rows,
     summary,
+    warnings:
+      (params.excludedMembers ?? []).length > 0
+        ? ["EXCLUDED_MEMBERS_PRESENT"]
+        : [],
   };
 }
 
@@ -156,7 +180,11 @@ export function rosterMonthUtcWindow(
 function buildPreviewRows(params: {
   readonly monthlyRosterId: string;
   readonly rosterMonth: string;
-  readonly departmentOrgUnitId: string;
+  readonly targetType: MonthlyRosterView["targetType"];
+  readonly targetMode: MonthlyRosterView["targetMode"];
+  readonly targetOrgUnitId: string | null;
+  readonly targetTalentGroupId: string | null;
+  readonly departmentOrgUnitId: string | null;
   readonly profileIds: readonly string[];
   readonly dates: readonly string[];
   readonly pattern: WorkPatternView;
@@ -252,6 +280,11 @@ function buildPreviewRows(params: {
             buildSuppressedRow({
               monthlyRosterId: params.monthlyRosterId,
               rosterMonth: params.rosterMonth,
+              targetType: params.targetType,
+              targetMode: params.targetMode,
+              targetOrgUnitId: params.targetOrgUnitId,
+              targetTalentGroupId:
+                params.targetTalentGroupId,
               departmentOrgUnitId:
                 params.departmentOrgUnitId,
               profileId,
@@ -269,6 +302,11 @@ function buildPreviewRows(params: {
             buildSuppressedRow({
               monthlyRosterId: params.monthlyRosterId,
               rosterMonth: params.rosterMonth,
+              targetType: params.targetType,
+              targetMode: params.targetMode,
+              targetOrgUnitId: params.targetOrgUnitId,
+              targetTalentGroupId:
+                params.targetTalentGroupId,
               departmentOrgUnitId:
                 params.departmentOrgUnitId,
               profileId,
@@ -284,6 +322,11 @@ function buildPreviewRows(params: {
               monthlyRosterId:
                 params.monthlyRosterId,
               rosterMonth: params.rosterMonth,
+              targetType: params.targetType,
+              targetMode: params.targetMode,
+              targetOrgUnitId: params.targetOrgUnitId,
+              targetTalentGroupId:
+                params.targetTalentGroupId,
               departmentOrgUnitId:
                 params.departmentOrgUnitId,
               profileId,
@@ -325,6 +368,11 @@ function buildPreviewRows(params: {
           buildCandidateRowWithConflicts({
             monthlyRosterId: params.monthlyRosterId,
             rosterMonth: params.rosterMonth,
+            targetType: params.targetType,
+            targetMode: params.targetMode,
+            targetOrgUnitId: params.targetOrgUnitId,
+            targetTalentGroupId:
+              params.targetTalentGroupId,
             departmentOrgUnitId:
               params.departmentOrgUnitId,
             profileId,
@@ -532,7 +580,11 @@ function appendCandidateSelfConflict(
 function buildSuppressedRow(params: {
   readonly monthlyRosterId: string;
   readonly rosterMonth: string;
-  readonly departmentOrgUnitId: string;
+  readonly targetType: MonthlyRosterView["targetType"];
+  readonly targetMode: MonthlyRosterView["targetMode"];
+  readonly targetOrgUnitId: string | null;
+  readonly targetTalentGroupId: string | null;
+  readonly departmentOrgUnitId: string | null;
   readonly profileId: string;
   readonly date: string;
   readonly rowKind: "WORKING_TO_OFF" | "HOLIDAY_SUPPRESSED";
@@ -551,6 +603,10 @@ function buildSuppressedRow(params: {
     }),
     monthlyRosterId: params.monthlyRosterId,
     rosterMonth: params.rosterMonth,
+    targetType: params.targetType,
+    targetMode: params.targetMode,
+    targetOrgUnitId: params.targetOrgUnitId,
+    targetTalentGroupId: params.targetTalentGroupId,
     departmentOrgUnitId: params.departmentOrgUnitId,
     subjectEmploymentProfileId: params.profileId,
     localDate: params.date,
@@ -580,7 +636,11 @@ function buildSuppressedRow(params: {
 function buildCandidateRowWithConflicts(params: {
   readonly monthlyRosterId: string;
   readonly rosterMonth: string;
-  readonly departmentOrgUnitId: string;
+  readonly targetType: MonthlyRosterView["targetType"];
+  readonly targetMode: MonthlyRosterView["targetMode"];
+  readonly targetOrgUnitId: string | null;
+  readonly targetTalentGroupId: string | null;
+  readonly departmentOrgUnitId: string | null;
   readonly profileId: string;
   readonly date: string;
   readonly rowKind: "STANDARD" | "CHANGE_TIME" | "ADD_SPECIAL_SHIFT";
@@ -626,6 +686,10 @@ function buildCandidateRowWithConflicts(params: {
     }),
     monthlyRosterId: params.monthlyRosterId,
     rosterMonth: params.rosterMonth,
+    targetType: params.targetType,
+    targetMode: params.targetMode,
+    targetOrgUnitId: params.targetOrgUnitId,
+    targetTalentGroupId: params.targetTalentGroupId,
     departmentOrgUnitId: params.departmentOrgUnitId,
     subjectEmploymentProfileId: params.profileId,
     localDate: params.date,
@@ -706,10 +770,13 @@ function toCandidatePreviewConflict(
 
 function summarizePreviewRows(
   totalEligibleProfiles: number,
+  excludedMemberCount: number,
   rows: readonly MonthlyRosterPreviewRowView[],
 ): MonthlyRosterPreviewSummaryView {
   return {
     totalEligibleProfiles,
+    includedMemberCount: totalEligibleProfiles,
+    excludedMemberCount,
     totalStandardCandidateShifts: rows.filter(
       (row) =>
         row.rowKind === "STANDARD" ||
