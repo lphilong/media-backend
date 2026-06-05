@@ -842,7 +842,15 @@ export class KpiAdminService {
         limit: normalizeLimit(query.limit),
       },
     );
-    return { items };
+    const actorEmploymentProfileId =
+      await this.resolveManagedOrgUnitSelfExclusionProfileId(actor, plan);
+    return {
+      items: actorEmploymentProfileId
+        ? items.filter(
+            (item) => item.employmentProfileId !== actorEmploymentProfileId,
+          )
+        : items,
+    };
   }
 
   async getKpiOrgUnitFinalResultDetail(
@@ -939,6 +947,12 @@ export class KpiAdminService {
           command.allocations,
           targetMetrics,
         );
+        await this.assertNoManagedOrgUnitSelfAllocationInputs(
+          actor,
+          plan,
+          normalized,
+          session,
+        );
         const existing = await this.repository.listAllocationsByPlanId(
           plan.id,
           session,
@@ -1018,6 +1032,12 @@ export class KpiAdminService {
             "KPI allocation draft requires DRAFT rows before submit",
           );
         }
+        await this.assertNoManagedOrgUnitSelfAllocationRows(
+          actor,
+          plan,
+          allocations,
+          session,
+        );
         const now = this.clock();
         const modified = await this.repository.transitionAllocationsForPlan(
           {
@@ -3855,6 +3875,73 @@ export class KpiAdminService {
     throw new KpiPermissionScopeError(
       `KPI actor is not a direct UNIT_MANAGER for org unit ${plan.subjectId}`,
     );
+  }
+
+  private async resolveManagedOrgUnitSelfExclusionProfileId(
+    actor: Actor,
+    plan: KpiPlan,
+    session?: ClientSession,
+  ): Promise<string | null> {
+    if (plan.subjectType !== "ORG_UNIT" || this.hasKpiGlobalScope(actor)) {
+      return null;
+    }
+    const authority = await this.resolveManagedUnitAuthority(actor, session);
+    return authority?.actorEmploymentProfileId ?? null;
+  }
+
+  private async assertNoManagedOrgUnitSelfAllocationInputs(
+    actor: Actor,
+    plan: KpiPlan,
+    inputs: readonly NormalizedEmploymentAllocationInput[],
+    session?: ClientSession,
+  ): Promise<void> {
+    const actorEmploymentProfileId =
+      await this.resolveManagedOrgUnitSelfExclusionProfileId(
+        actor,
+        plan,
+        session,
+      );
+    if (!actorEmploymentProfileId) {
+      return;
+    }
+    if (
+      inputs.some(
+        (input) => input.employmentProfileId === actorEmploymentProfileId,
+      )
+    ) {
+      throw new KpiInvalidAllocationError(
+        "KPI Org Unit allocation cannot include the current manager as a member",
+      );
+    }
+  }
+
+  private async assertNoManagedOrgUnitSelfAllocationRows(
+    actor: Actor,
+    plan: KpiPlan,
+    allocations: readonly KpiAllocation[],
+    session?: ClientSession,
+  ): Promise<void> {
+    const actorEmploymentProfileId =
+      await this.resolveManagedOrgUnitSelfExclusionProfileId(
+        actor,
+        plan,
+        session,
+      );
+    if (!actorEmploymentProfileId) {
+      return;
+    }
+    if (
+      allocations.some(
+        (allocation) =>
+          allocation.subjectType === "ORG_UNIT" &&
+          allocation.subjectId === plan.subjectId &&
+          allocation.memberEmploymentProfileId === actorEmploymentProfileId,
+      )
+    ) {
+      throw new KpiInvalidAllocationError(
+        "KPI Org Unit allocation cannot include the current manager as a member",
+      );
+    }
   }
 
   private async assertDirectUnitManagerActualWrite(
