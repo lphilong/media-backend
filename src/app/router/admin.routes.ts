@@ -152,6 +152,7 @@ import { KpiAdminService } from "@modules/kpi/admin/admin.kpi.service";
 import { adminManagerWorkspaceRoutes } from "@modules/manager-workspace/admin/admin.manager-workspace.routes";
 import { ManagerWorkspaceAdminController } from "@modules/manager-workspace/admin/admin.manager-workspace.controller";
 import { ManagerWorkspaceAdminService } from "@modules/manager-workspace/admin/admin.manager-workspace.service";
+import { ManagerWorkspaceWorkScheduleAdminService } from "@modules/manager-workspace/admin/admin.manager-workspace-work-schedule.service";
 
 /* COMMISSION */
 import { adminCommissionRoutes } from "@modules/commission/admin/admin.commission.routes";
@@ -843,6 +844,13 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       kpiSubjectReadonlyAccess,
       talentGroupManagerAssignmentRepository,
       orgUnitManagerAssignmentRepository,
+    ),
+    new ManagerWorkspaceWorkScheduleAdminService(
+      employmentProfileRepository,
+      workScheduleEmploymentProfileReadonlyAccess,
+      talentGroupManagerAssignmentRepository,
+      orgUnitManagerAssignmentRepository,
+      workShiftReadRepository,
     ),
   );
 

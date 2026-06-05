@@ -12,6 +12,11 @@ export function adminManagerWorkspaceRoutes(
     withCommand("MANAGER_WORKSPACE_CONTEXT"),
     controller.execute,
   );
+  router.get(
+    "/work-schedule/work-shifts",
+    withCommand("MANAGER_WORKSPACE_LIST_WORK_SHIFTS"),
+    controller.execute,
+  );
 
   return router;
 }

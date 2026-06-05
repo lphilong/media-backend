@@ -6,7 +6,10 @@ import {
   OrgUnitManagerAssignment,
   TalentGroupManagerAssignment,
 } from "@modules/kpi/domain/kpi.types";
+import { WorkScheduleReferencedEmploymentProfile } from "@modules/work-schedule/domain/work-schedule-employment-profile-readonly-access";
+import { WorkShiftListReadInput } from "@modules/work-schedule/read/work-schedule.read-repository";
 import { ManagerWorkspaceAdminService } from "./admin/admin.manager-workspace.service";
+import { ManagerWorkspaceWorkScheduleAdminService } from "./admin/admin.manager-workspace-work-schedule.service";
 
 const now = Date.UTC(2026, 5, 4, 0, 0, 0, 0);
 
@@ -45,6 +48,23 @@ test("OrgUnit-only manager context exposes Unit KPI only", async () => {
   assert.equal(context.modules.kpi.talentGroupKpiVisible, false);
   assert.equal(context.scopes.orgUnits[0]?.orgUnitId, "ou-production");
   assert.equal(context.scopes.orgUnits[0]?.name, "Production Unit");
+  assert.equal(context.modules.workShifts.visible, false);
+});
+
+test("managed Work is visible only with assignment and WorkSchedule read capability", async () => {
+  const service = createService({
+    profile: activeProfile(),
+    orgUnitAssignments: [orgUnitAssignment("ou-production", "UNIT_MANAGER")],
+  });
+  const context = await service.getContext(
+    managerActor({
+      permissions: ["workSchedule.read"],
+      scopeGrants: {},
+    }),
+  );
+
+  assert.deepEqual(context.modules.workShifts, { visible: true });
+  assert.equal(context.modules.kpi.visible, false);
 });
 
 test("TalentGroup-only manager context exposes Talent Group KPI only", async () => {
@@ -150,6 +170,65 @@ test("terminated linked EmploymentProfile fail-closes manager workspace context"
 test("manager workspace context requires no new scope literals", async () => {
   const actor = managerActor();
   assert.deepEqual(actor.scopeGrants.kpi, ["managedGroup"]);
+});
+
+test("manager WorkSchedule unions exact OrgUnit and eligible TalentGroup members, dedupes, and fails closed", async () => {
+  let capturedInput: WorkShiftListReadInput | undefined;
+  const service = createWorkScheduleService({
+    orgUnitAssignments: [orgUnitAssignment("ou-direct", "UNIT_MANAGER", { includeDescendants: true })],
+    talentGroupAssignments: [talentGroupAssignment("tg-live")],
+    orgUnitProfiles: [managedProfile("ep-org"), managedProfile("ep-both"), managedProfile("ep-inactive", "SUSPENDED")],
+    talentGroupProfiles: [
+      managedTalentGroupResolution(managedProfile("ep-group")),
+      managedTalentGroupResolution(managedProfile("ep-both")),
+      managedTalentGroupResolution(managedProfile("ep-removed"), "REMOVED"),
+    ],
+    onList(input) {
+      capturedInput = input;
+      return [
+        managerShift("shift-org", "ep-org"),
+        managerShift("shift-group", "ep-group", "ROSTER_GENERATED"),
+        managerShift("shift-both", "ep-both"),
+        managerShift("shift-unmanaged", "ep-unmanaged"),
+      ];
+    },
+  });
+
+  const result = await service.listWorkShifts(
+    managerActor({ permissions: ["workSchedule.read"], scopeGrants: {} }),
+    { month: "2026-06" },
+  );
+
+  assert.deepEqual(capturedInput?.scopeEmploymentProfileIds, ["ep-both", "ep-group", "ep-org"]);
+  assert.equal(capturedInput?.status, "ACTIVE");
+  assert.equal(capturedInput?.subjectKind, "EMPLOYMENT_PROFILE");
+  assert.deepEqual(result.items.map((item) => item.workShiftId), [
+    "shift-org",
+    "shift-group",
+    "shift-both",
+  ]);
+  assert.equal(result.meta.managedMemberCount, 3);
+  assert.equal(result.meta.representedMemberCount, 3);
+});
+
+test("manager WorkSchedule reporting-manager relationship alone grants no access and no mutations", async () => {
+  let repositoryCalled = false;
+  const service = createWorkScheduleService({
+    onList() {
+      repositoryCalled = true;
+      return [];
+    },
+  });
+
+  const result = await service.listWorkShifts(
+    managerActor({ permissions: ["workSchedule.read"], scopeGrants: {} }),
+    {},
+  );
+
+  assert.equal(repositoryCalled, false);
+  assert.deepEqual(result.items, []);
+  assert.equal("createWorkShift" in service, false);
+  assert.equal("cancelWorkShift" in service, false);
 });
 
 function createService(input: {
@@ -306,5 +385,107 @@ function talentGroupAssignment(
     updatedAt: now,
     updatedByActorId: "user-admin",
     ...overrides,
+  };
+}
+
+function createWorkScheduleService(input: {
+  readonly orgUnitAssignments?: readonly OrgUnitManagerAssignment[];
+  readonly talentGroupAssignments?: readonly TalentGroupManagerAssignment[];
+  readonly orgUnitProfiles?: readonly WorkScheduleReferencedEmploymentProfile[];
+  readonly talentGroupProfiles?: readonly ReturnType<typeof managedTalentGroupResolution>[];
+  readonly onList?: (input: WorkShiftListReadInput) => ReturnType<typeof managerShift>[];
+}): ManagerWorkspaceWorkScheduleAdminService {
+  return new ManagerWorkspaceWorkScheduleAdminService(
+    {
+      async findNonArchivedByLinkedUserId() {
+        return activeProfile();
+      },
+    },
+    {
+      async listByOrgUnitId() {
+        return input.orgUnitProfiles ?? [];
+      },
+      async listTalentGroupMemberEmploymentProfileResolutions() {
+        return input.talentGroupProfiles ?? [];
+      },
+    },
+    {
+      async listActiveAssignmentsByManagerEmploymentProfile() {
+        return input.talentGroupAssignments ?? [];
+      },
+    },
+    {
+      async listActiveByManagerEmploymentProfileId() {
+        return input.orgUnitAssignments ?? [];
+      },
+    },
+    {
+      async listWorkShifts(readInput) {
+        return { items: input.onList?.(readInput) ?? [] };
+      },
+    },
+    () => now,
+  );
+}
+
+function managedProfile(
+  id: string,
+  employmentStatus: WorkScheduleReferencedEmploymentProfile["employmentStatus"] = "ACTIVE",
+): WorkScheduleReferencedEmploymentProfile {
+  return {
+    id,
+    employmentStatus,
+    orgUnitId: "ou-direct",
+    managerEmploymentProfileId: id === "ep-reporting-only" ? "ep-manager" : null,
+    linkedUserId: null,
+    ref: {
+      id,
+      code: id.toUpperCase(),
+      displayName: `Display ${id}`,
+      status: employmentStatus,
+    },
+  };
+}
+
+function managedTalentGroupResolution(
+  employmentProfile: WorkScheduleReferencedEmploymentProfile,
+  membershipStatus = "ACTIVE",
+) {
+  return {
+    memberId: `member-${employmentProfile.id}`,
+    groupId: "tg-live",
+    talentId: `talent-${employmentProfile.id}`,
+    membershipStatus,
+    talentOperationalStatus: "ACTIVE",
+    linkedEmploymentProfileId: employmentProfile.id,
+    employmentProfile,
+  };
+}
+
+function managerShift(
+  id: string,
+  employmentProfileId: string,
+  sourceType: "MANUAL" | "ROSTER_GENERATED" = "MANUAL",
+) {
+  return {
+    id,
+    shiftCode: id.toUpperCase(),
+    title: `Shift ${id}`,
+    subjectKind: "EMPLOYMENT_PROFILE" as const,
+    subjectEmploymentProfileId: employmentProfileId,
+    subjectTalentId: null,
+    subjectTalentGroupId: null,
+    status: "ACTIVE" as const,
+    shiftStartAt: now,
+    shiftEndAt: now + 3_600_000,
+    sourceType,
+    sourceRosterId: sourceType === "ROSTER_GENERATED" ? "roster-1" : null,
+    sourceRosterMonth: sourceType === "ROSTER_GENERATED" ? "2026-06" : null,
+    sourceRosterTargetType: sourceType === "ROSTER_GENERATED" ? ("TALENT_GROUP" as const) : null,
+    sourceRosterTargetId: sourceType === "ROSTER_GENERATED" ? "tg-live" : null,
+    sourceRosterTargetMode: sourceType === "ROSTER_GENERATED" ? ("EXACT_ONLY" as const) : null,
+    sourceRosterLocalDate: sourceType === "ROSTER_GENERATED" ? "2026-06-06" : null,
+    sourceRosterSlotKey: sourceType === "ROSTER_GENERATED" ? "slot-1" : null,
+    createdAt: now,
   };
 }

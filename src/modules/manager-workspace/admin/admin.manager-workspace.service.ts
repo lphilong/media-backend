@@ -71,8 +71,8 @@ export interface ManagerWorkspaceContextView {
       readonly talentGroupKpiVisible: boolean;
     };
     readonly workShifts: {
-      readonly visible: false;
-      readonly reason: "NOT_ENABLED_IN_MANAGER_WORKSPACE_YET";
+      readonly visible: boolean;
+      readonly reason?: "NO_MANAGED_SCOPE_ASSIGNED" | "MISSING_WORK_SCHEDULE_READ_CAPABILITY";
     };
     readonly events: {
       readonly visible: false;
@@ -156,6 +156,10 @@ export class ManagerWorkspaceAdminService {
       (scope) => scope.capabilities.kpi.read,
     );
     const visible = unitKpiVisible || talentGroupKpiVisible;
+    const hasManagedAssignment = orgUnits.length + talentGroups.length > 0;
+    const workShiftsVisible =
+      hasManagedAssignment &&
+      actor.permissions.includes(Permission.WORK_SCHEDULE_READ);
     const reasons = visible
       ? []
       : [
@@ -182,7 +186,14 @@ export class ManagerWorkspaceAdminService {
           unitKpiVisible,
           talentGroupKpiVisible,
         },
-        workShifts: disabledModule(),
+        workShifts: workShiftsVisible
+          ? { visible: true }
+          : {
+              visible: false,
+              reason: hasManagedAssignment
+                ? "MISSING_WORK_SCHEDULE_READ_CAPABILITY"
+                : "NO_MANAGED_SCOPE_ASSIGNED",
+            },
         events: disabledModule(),
         members: disabledModule(),
       },
@@ -228,7 +239,10 @@ function emptyContext(
         unitKpiVisible: false,
         talentGroupKpiVisible: false,
       },
-      workShifts: disabledModule(),
+      workShifts: {
+        visible: false,
+        reason: "NO_MANAGED_SCOPE_ASSIGNED",
+      },
       events: disabledModule(),
       members: disabledModule(),
     },
