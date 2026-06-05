@@ -107,6 +107,9 @@ import { WorkScheduleAdminQueryService } from "@modules/work-schedule/admin/admi
 import { adminWorkScheduleRequestRoutes } from "@modules/work-schedule/admin/admin.work-schedule-request.routes";
 import { WorkScheduleRequestAdminController } from "@modules/work-schedule/admin/admin.work-schedule-request.controller";
 import { WorkScheduleRequestAdminService } from "@modules/work-schedule/admin/admin.work-schedule-request.service";
+import { adminWorkScheduleRequestBatchRoutes } from "@modules/work-schedule/admin/admin.work-schedule-request-batch.routes";
+import { WorkScheduleRequestBatchAdminController } from "@modules/work-schedule/admin/admin.work-schedule-request-batch.controller";
+import { WorkScheduleRequestBatchAdminService } from "@modules/work-schedule/admin/admin.work-schedule-request-batch.service";
 import { adminWorkPatternRoutes } from "@modules/work-schedule/admin/admin.work-pattern.routes";
 import { WorkPatternAdminController } from "@modules/work-schedule/admin/admin.work-pattern.controller";
 import { WorkPatternAdminQueryController } from "@modules/work-schedule/admin/admin.work-pattern.query.controller";
@@ -346,6 +349,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     monthlyRosterRepository,
     monthlyRosterReadRepository,
     workScheduleRequestRepository,
+    workScheduleRequestBatchRepository,
     workScheduleOrgUnitReadonlyAccess,
     workScheduleEmploymentProfileReadonlyAccess,
     workScheduleTalentReadonlyAccess,
@@ -643,6 +647,22 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     new WorkScheduleRequestAdminController(
       workScheduleRequestService,
     );
+  const workScheduleRequestBatchService =
+    new WorkScheduleRequestBatchAdminService(
+      workScheduleRequestBatchRepository,
+      workShiftRepository,
+      workShiftCodeSequenceRepository,
+      workScheduleEmploymentProfileReadonlyAccess,
+      workScheduleStudioResourceReadonlyAccess,
+      talentGroupManagerAssignmentRepository,
+      orgUnitManagerAssignmentRepository,
+      authoritativeAuditGuard,
+      adminMutationBridge,
+    );
+  const workScheduleRequestBatchController =
+    new WorkScheduleRequestBatchAdminController(
+      workScheduleRequestBatchService,
+    );
 
   r.use(
     "/work-shifts",
@@ -656,6 +676,13 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     "/work-schedule/requests",
     adminWorkScheduleRequestRoutes(
       workScheduleRequestController,
+    ),
+  );
+
+  r.use(
+    "/work-schedule/request-batches",
+    adminWorkScheduleRequestBatchRoutes(
+      workScheduleRequestBatchController,
     ),
   );
 
@@ -852,6 +879,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       orgUnitManagerAssignmentRepository,
       workShiftReadRepository,
     ),
+    workScheduleRequestBatchService,
   );
 
   r.use(

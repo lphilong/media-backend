@@ -7,12 +7,14 @@ import { ContextType } from "@core/context/context.types";
 import {
   GetHolidayCalendarDetailResult,
   GetWorkScheduleRequestDetailResult,
+  GetWorkScheduleRequestBatchDetailResult,
   GetWorkShiftDetailResult,
   GetWorkPatternDetailResult,
   ListHolidayCalendarsResult,
   GetMonthlyRosterDetailResult,
   ListMonthlyRostersResult,
   ListWorkScheduleRequestsResult,
+  ListWorkScheduleRequestBatchesResult,
   PreviewMonthlyRosterResult,
   ListWorkPatternsResult,
   ListWorkShiftsByResourceResult,
@@ -20,6 +22,7 @@ import {
   ListWorkShiftsResult,
   WorkShiftMutationResult,
   WorkScheduleRequestMutationResult,
+  WorkScheduleRequestBatchMutationResult,
   WorkPatternMutationResult,
   HolidayCalendarMutationResult,
   MonthlyRosterMutationResult,
@@ -32,6 +35,7 @@ import {
   WorkScheduleAdminListExposure,
   WorkScheduleAdminMutationExposure,
   WorkScheduleRequestAdminExposure,
+  WorkScheduleRequestBatchAdminExposure,
   WorkPatternAdminExposure,
   HolidayCalendarAdminExposure,
   MonthlyRosterAdminExposure,
@@ -200,6 +204,65 @@ export class WorkScheduleRequestAdminDetailPresenter extends Presenter<
     return {
       data:
         WorkScheduleRequestAdminExposure.expose(
+          input,
+        ),
+    };
+  }
+}
+
+export class WorkScheduleRequestBatchAdminMutationPresenter extends Presenter<
+  WorkScheduleRequestBatchMutationResult,
+  PresentationResult
+> {
+  present(
+    input: WorkScheduleRequestBatchMutationResult,
+    _context: ContextType,
+  ): PresentationResult {
+    return {
+      data:
+        WorkScheduleRequestBatchAdminExposure.exposeDetail(
+          input,
+        ),
+    };
+  }
+}
+
+export class WorkScheduleRequestBatchAdminListPresenter extends Presenter<
+  ListWorkScheduleRequestBatchesResult,
+  PresentationResult
+> {
+  present(
+    input: ListWorkScheduleRequestBatchesResult,
+    _context: ContextType,
+  ): PresentationResult {
+    const output: PresentationResult = {
+      data:
+        WorkScheduleRequestBatchAdminExposure.exposeMany(
+          input.items,
+        ),
+    };
+
+    if (input.nextCursor) {
+      output.meta = {
+        nextCursor: input.nextCursor,
+      };
+    }
+
+    return output;
+  }
+}
+
+export class WorkScheduleRequestBatchAdminDetailPresenter extends Presenter<
+  GetWorkScheduleRequestBatchDetailResult,
+  PresentationResult
+> {
+  present(
+    input: GetWorkScheduleRequestBatchDetailResult,
+    _context: ContextType,
+  ): PresentationResult {
+    return {
+      data:
+        WorkScheduleRequestBatchAdminExposure.exposeDetail(
           input,
         ),
     };

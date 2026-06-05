@@ -33,6 +33,17 @@ export class WorkScheduleRequestNotFoundError extends DomainError {
   }
 }
 
+export class WorkScheduleRequestBatchNotFoundError extends DomainError {
+  constructor(batchId: string) {
+    super(
+      "WORK_SCHEDULE_REQUEST_BATCH_NOT_FOUND",
+      `Work schedule request batch not found: ${batchId}`,
+      "Work schedule request batch not found",
+      404,
+    );
+  }
+}
+
 export class WorkScheduleConflictError extends DomainError {
   constructor(message: string) {
     super(

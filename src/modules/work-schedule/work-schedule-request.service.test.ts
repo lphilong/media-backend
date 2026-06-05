@@ -423,6 +423,9 @@ const employmentProfileReadonlyAccess: WorkScheduleEmploymentProfileReadonlyAcce
     async listByOrgUnitId() {
       return [];
     },
+    async listTalentGroupMemberEmploymentProfileResolutions() {
+      return [];
+    },
   };
 
 const studioResourceReadonlyAccess: WorkScheduleStudioResourceReadonlyAccess =
@@ -572,6 +575,10 @@ function seedShift(params?: {
     sourceGenerationRunId: null,
     sourceRosterMonth: null,
     sourceDepartmentOrgUnitId: null,
+    sourceRosterTargetType: null,
+    sourceRosterTargetId: null,
+    sourceRosterTargetMode: null,
+    sourceMemberIdentityType: null,
     sourceRosterLocalDate: null,
     sourceRosterSlotKey: null,
     createdAt: 1,

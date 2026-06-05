@@ -22,6 +22,15 @@ export const WORK_SCHEDULE_REQUEST_ADMIN_LIST_PRESENTER_KEY =
 export const WORK_SCHEDULE_REQUEST_ADMIN_DETAIL_PRESENTER_KEY =
   "work-schedule-request.admin.detail";
 
+export const WORK_SCHEDULE_REQUEST_BATCH_ADMIN_MUTATION_PRESENTER_KEY =
+  "work-schedule-request-batch.admin.mutation";
+
+export const WORK_SCHEDULE_REQUEST_BATCH_ADMIN_LIST_PRESENTER_KEY =
+  "work-schedule-request-batch.admin.list";
+
+export const WORK_SCHEDULE_REQUEST_BATCH_ADMIN_DETAIL_PRESENTER_KEY =
+  "work-schedule-request-batch.admin.detail";
+
 export const WORK_PATTERN_ADMIN_MUTATION_PRESENTER_KEY =
   "work-pattern.admin.mutation";
 

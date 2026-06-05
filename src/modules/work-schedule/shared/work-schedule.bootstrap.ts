@@ -33,6 +33,14 @@ import {
   MONTHLY_ROSTER_STATUS_MONTH_INDEX_NAME,
   MONTHLY_ROSTER_TARGET_MONTH_STATUS_INDEX_NAME,
   WORK_SCHEDULE_REQUEST_CODE_UNIQ_INDEX_NAME,
+  WORK_SCHEDULE_REQUEST_BATCH_CLIENT_TOKEN_UNIQ_INDEX_NAME,
+  WORK_SCHEDULE_REQUEST_BATCH_CODE_UNIQ_INDEX_NAME,
+  WORK_SCHEDULE_REQUEST_BATCH_PERIOD_STATUS_INDEX_NAME,
+  WORK_SCHEDULE_REQUEST_BATCH_STATUS_CREATED_AT_INDEX_NAME,
+  WORK_SCHEDULE_REQUEST_BATCH_SUBMITTER_INDEX_NAME,
+  WORK_SCHEDULE_REQUEST_LINE_BATCH_STATUS_INDEX_NAME,
+  WORK_SCHEDULE_REQUEST_LINE_MEMBER_STATUS_INDEX_NAME,
+  WORK_SCHEDULE_REQUEST_LINE_PENDING_DUPLICATE_INDEX_NAME,
   WORK_SCHEDULE_REQUEST_REQUESTER_INDEX_NAME,
   WORK_SCHEDULE_REQUEST_STATUS_CREATED_AT_INDEX_NAME,
   WORK_SCHEDULE_REQUEST_TARGET_PROFILE_INDEX_NAME,
@@ -464,6 +472,103 @@ export function createWorkScheduleBootstrapRegistrar(): BootstrapRegistrar {
           status: 1,
           createdAt: -1,
           _id: 1,
+        },
+      );
+
+      await assertRequiredUniqueIndex(
+        db,
+        "work_schedule_request_batches",
+        WORK_SCHEDULE_REQUEST_BATCH_CODE_UNIQ_INDEX_NAME,
+        {
+          batchCode: 1,
+        },
+      );
+
+      await assertRequiredUniqueIndex(
+        db,
+        "work_schedule_request_batches",
+        WORK_SCHEDULE_REQUEST_BATCH_CLIENT_TOKEN_UNIQ_INDEX_NAME,
+        {
+          submittedByEmploymentProfileId: 1,
+          clientToken: 1,
+        },
+      );
+
+      await assertRequiredIndex(
+        db,
+        "work_schedule_request_batches",
+        WORK_SCHEDULE_REQUEST_BATCH_STATUS_CREATED_AT_INDEX_NAME,
+        {
+          status: 1,
+          createdAt: -1,
+          _id: 1,
+        },
+      );
+
+      await assertRequiredIndex(
+        db,
+        "work_schedule_request_batches",
+        WORK_SCHEDULE_REQUEST_BATCH_PERIOD_STATUS_INDEX_NAME,
+        {
+          periodMonth: 1,
+          status: 1,
+          createdAt: -1,
+          _id: 1,
+        },
+      );
+
+      await assertRequiredIndex(
+        db,
+        "work_schedule_request_batches",
+        WORK_SCHEDULE_REQUEST_BATCH_SUBMITTER_INDEX_NAME,
+        {
+          submittedByEmploymentProfileId: 1,
+          status: 1,
+          createdAt: -1,
+          _id: 1,
+        },
+      );
+
+      await assertRequiredIndex(
+        db,
+        "work_schedule_request_lines",
+        WORK_SCHEDULE_REQUEST_LINE_BATCH_STATUS_INDEX_NAME,
+        {
+          batchId: 1,
+          status: 1,
+          lineNo: 1,
+          _id: 1,
+        },
+      );
+
+      await assertRequiredIndex(
+        db,
+        "work_schedule_request_lines",
+        WORK_SCHEDULE_REQUEST_LINE_MEMBER_STATUS_INDEX_NAME,
+        {
+          memberEmploymentProfileId: 1,
+          status: 1,
+          createdAt: -1,
+          _id: 1,
+        },
+      );
+
+      await assertRequiredPartialIndex(
+        db,
+        "work_schedule_request_lines",
+        WORK_SCHEDULE_REQUEST_LINE_PENDING_DUPLICATE_INDEX_NAME,
+        {
+          submittedByEmploymentProfileId: 1,
+          periodMonth: 1,
+          requestType: 1,
+          memberEmploymentProfileId: 1,
+          workShiftId: 1,
+          requestedStartAt: 1,
+          requestedEndAt: 1,
+          status: 1,
+        },
+        {
+          status: "PENDING",
         },
       );
     },

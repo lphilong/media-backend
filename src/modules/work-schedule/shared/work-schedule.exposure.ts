@@ -23,6 +23,9 @@ import {
   WorkShiftListItemView,
   WorkShiftMutationView,
   WorkScheduleRequestListItemView,
+  WorkScheduleRequestBatchListItemView,
+  WorkScheduleRequestBatchView,
+  WorkScheduleRequestLineView,
   WorkScheduleRequestView,
   WorkPatternListItemView,
   WorkPatternMutationView,
@@ -141,6 +144,60 @@ const WORK_SCHEDULE_REQUEST_ADMIN_FIELDS = [
   "appliedWorkShiftRef",
   "createdAt",
   "updatedAt",
+] as const;
+
+const WORK_SCHEDULE_REQUEST_BATCH_ADMIN_LIST_FIELDS = [
+  "id",
+  "batchCode",
+  "submittedByEmploymentProfileId",
+  "submittedByEmploymentProfileRef",
+  "periodMonth",
+  "scopeSummary",
+  "status",
+  "note",
+  "lineCounts",
+  "clientToken",
+  "submittedAt",
+  "cancelledAt",
+  "resolvedAt",
+  "createdAt",
+  "updatedAt",
+] as const;
+
+const WORK_SCHEDULE_REQUEST_LINE_ADMIN_FIELDS = [
+  "id",
+  "batchId",
+  "lineNo",
+  "requestType",
+  "memberEmploymentProfileId",
+  "memberEmploymentProfileRef",
+  "workShiftId",
+  "workShiftRef",
+  "requestedStartAt",
+  "requestedEndAt",
+  "timezone",
+  "title",
+  "description",
+  "externalRef",
+  "reason",
+  "status",
+  "approvalNote",
+  "rejectionReason",
+  "cancellationReason",
+  "failureReason",
+  "appliedWorkShiftId",
+  "appliedWorkShiftRef",
+  "createdAt",
+  "updatedAt",
+  "approvedAt",
+  "rejectedAt",
+  "cancelledAt",
+  "failedAt",
+] as const;
+
+const WORK_SCHEDULE_REQUEST_BATCH_ADMIN_DETAIL_FIELDS = [
+  ...WORK_SCHEDULE_REQUEST_BATCH_ADMIN_LIST_FIELDS,
+  "lines",
 ] as const;
 
 const WORK_PATTERN_ADMIN_FIELDS = [
@@ -611,6 +668,120 @@ export const WorkScheduleRequestAdminExposure =
       items: readonly WorkScheduleRequestListItemView[],
     ): readonly PlainObject[] {
       return items.map((item) => this.expose(item));
+    },
+  });
+
+export const WorkScheduleRequestBatchAdminExposure =
+  Object.freeze({
+    exposeListItem(
+      input:
+        | WorkScheduleRequestBatchListItemView
+        | WorkScheduleRequestBatchView,
+    ): PlainObject {
+      return toPlainObject(
+        ExposurePolicy.expose(
+          {
+            id: input.id,
+            batchCode: input.batchCode,
+            submittedByEmploymentProfileId:
+              input.submittedByEmploymentProfileId,
+            submittedByEmploymentProfileRef:
+              input.submittedByEmploymentProfileRef ?? null,
+            periodMonth: input.periodMonth,
+            scopeSummary: input.scopeSummary,
+            status: input.status,
+            note: input.note,
+            lineCounts: input.lineCounts,
+            clientToken: input.clientToken,
+            submittedAt: input.submittedAt,
+            cancelledAt: input.cancelledAt,
+            resolvedAt: input.resolvedAt,
+            createdAt: input.createdAt,
+            updatedAt: input.updatedAt,
+          },
+          WORK_SCHEDULE_REQUEST_BATCH_ADMIN_LIST_FIELDS,
+        ),
+        "WorkScheduleRequestBatchAdminList exposure",
+      );
+    },
+
+    exposeLine(input: WorkScheduleRequestLineView): PlainObject {
+      return toPlainObject(
+        ExposurePolicy.expose(
+          {
+            id: input.id,
+            batchId: input.batchId,
+            lineNo: input.lineNo,
+            requestType: input.requestType,
+            memberEmploymentProfileId:
+              input.memberEmploymentProfileId,
+            memberEmploymentProfileRef:
+              input.memberEmploymentProfileRef ?? null,
+            workShiftId: input.workShiftId,
+            workShiftRef: input.workShiftRef ?? null,
+            requestedStartAt: input.requestedStartAt,
+            requestedEndAt: input.requestedEndAt,
+            timezone: input.timezone,
+            title: input.title,
+            description: input.description,
+            externalRef: input.externalRef,
+            reason: input.reason,
+            status: input.status,
+            approvalNote: input.approvalNote,
+            rejectionReason: input.rejectionReason,
+            cancellationReason: input.cancellationReason,
+            failureReason: input.failureReason,
+            appliedWorkShiftId: input.appliedWorkShiftId,
+            appliedWorkShiftRef:
+              input.appliedWorkShiftRef ?? null,
+            createdAt: input.createdAt,
+            updatedAt: input.updatedAt,
+            approvedAt: input.approvedAt,
+            rejectedAt: input.rejectedAt,
+            cancelledAt: input.cancelledAt,
+            failedAt: input.failedAt,
+          },
+          WORK_SCHEDULE_REQUEST_LINE_ADMIN_FIELDS,
+        ),
+        "WorkScheduleRequestLineAdmin exposure",
+      );
+    },
+
+    exposeDetail(input: WorkScheduleRequestBatchView): PlainObject {
+      return toPlainObject(
+        ExposurePolicy.expose(
+          {
+            id: input.id,
+            batchCode: input.batchCode,
+            submittedByEmploymentProfileId:
+              input.submittedByEmploymentProfileId,
+            submittedByEmploymentProfileRef:
+              input.submittedByEmploymentProfileRef ?? null,
+            periodMonth: input.periodMonth,
+            scopeSummary: input.scopeSummary,
+            status: input.status,
+            note: input.note,
+            lineCounts: input.lineCounts,
+            clientToken: input.clientToken,
+            submittedAt: input.submittedAt,
+            cancelledAt: input.cancelledAt,
+            resolvedAt: input.resolvedAt,
+            createdAt: input.createdAt,
+            updatedAt: input.updatedAt,
+            lines: input.lines.map((line) =>
+              this.exposeLine(line),
+            ),
+          },
+          WORK_SCHEDULE_REQUEST_BATCH_ADMIN_DETAIL_FIELDS,
+        ),
+        "WorkScheduleRequestBatchAdminDetail exposure",
+      );
+    },
+
+    exposeMany(
+      items: readonly WorkScheduleRequestBatchListItemView[],
+    ): readonly PlainObject[] {
+      return items.map((item) => this.exposeListItem(item));
     },
   });
 

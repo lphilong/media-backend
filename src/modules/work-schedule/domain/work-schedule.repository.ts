@@ -14,6 +14,11 @@ import {
   WorkShiftStatus,
   WorkShiftSubjectKind,
   WorkScheduleRequestRecord,
+  WorkScheduleRequestBatchRecord,
+  WorkScheduleRequestBatchStatus,
+  WorkScheduleRequestLineRecord,
+  WorkScheduleRequestLineCounts,
+  WorkScheduleRequestLineStatus,
   WorkScheduleRequestStatus,
   WorkScheduleRequestType,
 } from "./work-schedule.types";
@@ -489,4 +494,111 @@ export interface WorkScheduleRequestRepository {
     input: TransitionWorkScheduleRequestInput,
     session: ClientSession,
   ): Promise<WorkScheduleRequestRecord | null>;
+}
+
+export interface WorkScheduleRequestBatchListInput {
+  readonly status?: WorkScheduleRequestBatchStatus;
+  readonly periodMonth?: string;
+  readonly submittedByEmploymentProfileId?: string;
+  readonly submittedByActorId?: string;
+  readonly limit: number;
+  readonly cursor?: string;
+}
+
+export interface WorkScheduleRequestBatchListResult {
+  readonly items: readonly WorkScheduleRequestBatchRecord[];
+  readonly nextCursor?: string;
+}
+
+export interface PendingDuplicateWorkScheduleRequestLineInput {
+  readonly submittedByEmploymentProfileId: string;
+  readonly periodMonth: string;
+  readonly requestType: WorkScheduleRequestType;
+  readonly memberEmploymentProfileId: string;
+  readonly workShiftId: string | null;
+  readonly requestedStartAt: number | null;
+  readonly requestedEndAt: number | null;
+}
+
+export interface TransitionWorkScheduleRequestLineInput {
+  readonly batchId: string;
+  readonly lineId: string;
+  readonly fromStatus: "PENDING";
+  readonly toStatus: Exclude<
+    WorkScheduleRequestLineStatus,
+    "PENDING"
+  >;
+  readonly updatedAt: number;
+  readonly approvalNote?: string | null;
+  readonly rejectionReason?: string | null;
+  readonly cancellationReason?: string | null;
+  readonly failureReason?: string | null;
+  readonly appliedWorkShiftId?: string | null;
+  readonly approvedAt?: number | null;
+  readonly approvedByActorId?: string | null;
+  readonly rejectedAt?: number | null;
+  readonly rejectedByActorId?: string | null;
+  readonly cancelledAt?: number | null;
+  readonly cancelledByActorId?: string | null;
+  readonly failedAt?: number | null;
+  readonly failedByActorId?: string | null;
+}
+
+export interface UpdateWorkScheduleRequestBatchDerivedInput {
+  readonly batchId: string;
+  readonly status: WorkScheduleRequestBatchStatus;
+  readonly lineCounts: WorkScheduleRequestLineCounts;
+  readonly updatedAt: number;
+  readonly cancelledAt?: number | null;
+  readonly resolvedAt?: number | null;
+}
+
+export interface WorkScheduleRequestBatchRepository {
+  insertBatchWithLines(
+    batch: WorkScheduleRequestBatchRecord,
+    lines: readonly WorkScheduleRequestLineRecord[],
+    session: ClientSession,
+  ): Promise<WorkScheduleRequestBatchRecord>;
+
+  findBatchById(
+    batchId: string,
+    session?: ClientSession,
+  ): Promise<WorkScheduleRequestBatchRecord | null>;
+
+  findBatchByClientToken(
+    submittedByEmploymentProfileId: string,
+    clientToken: string,
+    session?: ClientSession,
+  ): Promise<WorkScheduleRequestBatchRecord | null>;
+
+  listBatches(
+    input: WorkScheduleRequestBatchListInput,
+    session?: ClientSession,
+  ): Promise<WorkScheduleRequestBatchListResult>;
+
+  listLinesByBatchId(
+    batchId: string,
+    session?: ClientSession,
+  ): Promise<readonly WorkScheduleRequestLineRecord[]>;
+
+  findLineById(
+    batchId: string,
+    lineId: string,
+    session?: ClientSession,
+  ): Promise<WorkScheduleRequestLineRecord | null>;
+
+  findPendingDuplicateLine(
+    input: PendingDuplicateWorkScheduleRequestLineInput,
+    session?: ClientSession,
+  ): Promise<WorkScheduleRequestLineRecord | null>;
+
+  transitionLineStatus(
+    input: TransitionWorkScheduleRequestLineInput,
+    session: ClientSession,
+  ): Promise<WorkScheduleRequestLineRecord | null>;
+
+  updateBatchDerived(
+    input: UpdateWorkScheduleRequestBatchDerivedInput,
+    session: ClientSession,
+  ): Promise<WorkScheduleRequestBatchRecord | null>;
 }

@@ -15,6 +15,7 @@ import {
 } from "@infra/mongo/work-schedule/work-schedule.readonly-access";
 import { NativeMongoWorkShiftCodeSequenceRepository } from "@infra/mongo/work-schedule/work-schedule-code-sequence.repository";
 import { NativeMongoWorkScheduleRequestRepository } from "@infra/mongo/work-schedule/work-schedule-request.repository";
+import { NativeMongoWorkScheduleRequestBatchRepository } from "@infra/mongo/work-schedule/work-schedule-request-batch.repository";
 import { NativeMongoWorkShiftRepository } from "@infra/mongo/work-schedule/work-schedule.repository";
 
 export interface WorkScheduleInfra {
@@ -28,6 +29,7 @@ export interface WorkScheduleInfra {
   readonly monthlyRosterRepository: NativeMongoMonthlyRosterRepository;
   readonly monthlyRosterReadRepository: NativeMongoMonthlyRosterReadRepository;
   readonly workScheduleRequestRepository: NativeMongoWorkScheduleRequestRepository;
+  readonly workScheduleRequestBatchRepository: NativeMongoWorkScheduleRequestBatchRepository;
   readonly workScheduleOrgUnitReadonlyAccess: NativeMongoWorkScheduleOrgUnitReadonlyAccess;
   readonly workScheduleEmploymentProfileReadonlyAccess: NativeMongoWorkScheduleEmploymentProfileReadonlyAccess;
   readonly workScheduleTalentReadonlyAccess: NativeMongoWorkScheduleTalentReadonlyAccess;
@@ -61,6 +63,8 @@ export function createWorkScheduleInfra(
       new NativeMongoMonthlyRosterReadRepository(db),
     workScheduleRequestRepository:
       new NativeMongoWorkScheduleRequestRepository(db),
+    workScheduleRequestBatchRepository:
+      new NativeMongoWorkScheduleRequestBatchRepository(db),
     workScheduleOrgUnitReadonlyAccess:
       new NativeMongoWorkScheduleOrgUnitReadonlyAccess(
         db,

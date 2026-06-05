@@ -73,6 +73,22 @@ export const WORK_SCHEDULE_REQUEST_TARGET_PROFILE_INDEX_NAME =
   "idx_work_schedule_request_target_profile";
 export const WORK_SCHEDULE_REQUEST_REQUESTER_INDEX_NAME =
   "idx_work_schedule_request_requester";
+export const WORK_SCHEDULE_REQUEST_BATCH_CODE_UNIQ_INDEX_NAME =
+  "uniq_work_schedule_request_batch_code";
+export const WORK_SCHEDULE_REQUEST_BATCH_CLIENT_TOKEN_UNIQ_INDEX_NAME =
+  "uniq_work_schedule_request_batch_manager_client_token";
+export const WORK_SCHEDULE_REQUEST_BATCH_STATUS_CREATED_AT_INDEX_NAME =
+  "idx_work_schedule_request_batch_status_created_at";
+export const WORK_SCHEDULE_REQUEST_BATCH_PERIOD_STATUS_INDEX_NAME =
+  "idx_work_schedule_request_batch_period_status";
+export const WORK_SCHEDULE_REQUEST_BATCH_SUBMITTER_INDEX_NAME =
+  "idx_work_schedule_request_batch_submitter";
+export const WORK_SCHEDULE_REQUEST_LINE_BATCH_STATUS_INDEX_NAME =
+  "idx_work_schedule_request_line_batch_status";
+export const WORK_SCHEDULE_REQUEST_LINE_MEMBER_STATUS_INDEX_NAME =
+  "idx_work_schedule_request_line_member_status";
+export const WORK_SCHEDULE_REQUEST_LINE_PENDING_DUPLICATE_INDEX_NAME =
+  "idx_work_schedule_request_line_pending_duplicate";
 
 interface WorkShiftLegacyDocument {
   readonly _id: string;
@@ -272,6 +288,7 @@ export async function initWorkShiftIndexes(
   await initHolidayCalendarIndexes(db);
   await initMonthlyRosterIndexes(db);
   await initWorkScheduleRequestIndexes(db);
+  await initWorkScheduleRequestBatchIndexes(db);
 }
 
 async function initWorkShiftCodeSequenceIndexes(
@@ -571,6 +588,118 @@ async function initWorkScheduleRequestIndexes(
     },
     {
       name: WORK_SCHEDULE_REQUEST_REQUESTER_INDEX_NAME,
+    },
+  );
+}
+
+async function initWorkScheduleRequestBatchIndexes(
+  db: Db,
+): Promise<void> {
+  const batches = db.collection(
+    "work_schedule_request_batches",
+  );
+  const lines = db.collection(
+    "work_schedule_request_lines",
+  );
+
+  await batches.createIndex(
+    { batchCode: 1 },
+    {
+      name: WORK_SCHEDULE_REQUEST_BATCH_CODE_UNIQ_INDEX_NAME,
+      unique: true,
+    },
+  );
+
+  await batches.createIndex(
+    {
+      submittedByEmploymentProfileId: 1,
+      clientToken: 1,
+    },
+    {
+      name:
+        WORK_SCHEDULE_REQUEST_BATCH_CLIENT_TOKEN_UNIQ_INDEX_NAME,
+      unique: true,
+    },
+  );
+
+  await batches.createIndex(
+    {
+      status: 1,
+      createdAt: -1,
+      _id: 1,
+    },
+    {
+      name:
+        WORK_SCHEDULE_REQUEST_BATCH_STATUS_CREATED_AT_INDEX_NAME,
+    },
+  );
+
+  await batches.createIndex(
+    {
+      periodMonth: 1,
+      status: 1,
+      createdAt: -1,
+      _id: 1,
+    },
+    {
+      name:
+        WORK_SCHEDULE_REQUEST_BATCH_PERIOD_STATUS_INDEX_NAME,
+    },
+  );
+
+  await batches.createIndex(
+    {
+      submittedByEmploymentProfileId: 1,
+      status: 1,
+      createdAt: -1,
+      _id: 1,
+    },
+    {
+      name: WORK_SCHEDULE_REQUEST_BATCH_SUBMITTER_INDEX_NAME,
+    },
+  );
+
+  await lines.createIndex(
+    {
+      batchId: 1,
+      status: 1,
+      lineNo: 1,
+      _id: 1,
+    },
+    {
+      name: WORK_SCHEDULE_REQUEST_LINE_BATCH_STATUS_INDEX_NAME,
+    },
+  );
+
+  await lines.createIndex(
+    {
+      memberEmploymentProfileId: 1,
+      status: 1,
+      createdAt: -1,
+      _id: 1,
+    },
+    {
+      name: WORK_SCHEDULE_REQUEST_LINE_MEMBER_STATUS_INDEX_NAME,
+    },
+  );
+
+  await lines.createIndex(
+    {
+      submittedByEmploymentProfileId: 1,
+      periodMonth: 1,
+      requestType: 1,
+      memberEmploymentProfileId: 1,
+      workShiftId: 1,
+      requestedStartAt: 1,
+      requestedEndAt: 1,
+      status: 1,
+    },
+    {
+      name:
+        WORK_SCHEDULE_REQUEST_LINE_PENDING_DUPLICATE_INDEX_NAME,
+      partialFilterExpression: {
+        status: "PENDING",
+      },
     },
   );
 }

@@ -689,3 +689,113 @@ export interface WorkScheduleRequestView
 
 export interface WorkScheduleRequestListItemView
   extends WorkScheduleRequestView {}
+
+export const WORK_SCHEDULE_REQUEST_BATCH_STATUSES = [
+  "PENDING",
+  "PARTIALLY_APPROVED",
+  "APPROVED",
+  "REJECTED",
+  "CANCELLED",
+] as const;
+
+export type WorkScheduleRequestBatchStatus =
+  (typeof WORK_SCHEDULE_REQUEST_BATCH_STATUSES)[number];
+
+export const WORK_SCHEDULE_REQUEST_BATCH_SCOPE_SUMMARIES = [
+  "ORG_UNIT",
+  "TALENT_GROUP",
+  "MIXED",
+] as const;
+
+export type WorkScheduleRequestBatchScopeSummary =
+  (typeof WORK_SCHEDULE_REQUEST_BATCH_SCOPE_SUMMARIES)[number];
+
+export const WORK_SCHEDULE_REQUEST_LINE_STATUSES = [
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+  "CANCELLED",
+  "FAILED_TO_APPLY",
+] as const;
+
+export type WorkScheduleRequestLineStatus =
+  (typeof WORK_SCHEDULE_REQUEST_LINE_STATUSES)[number];
+
+export interface WorkScheduleRequestLineCounts {
+  readonly total: number;
+  readonly pending: number;
+  readonly approved: number;
+  readonly rejected: number;
+  readonly cancelled: number;
+  readonly failedToApply: number;
+}
+
+export interface WorkScheduleRequestBatchRecord {
+  readonly id: string;
+  readonly batchCode: string;
+  readonly submittedByActorId: string;
+  readonly submittedByEmploymentProfileId: string;
+  readonly periodMonth: string;
+  readonly scopeSummary: WorkScheduleRequestBatchScopeSummary;
+  readonly status: WorkScheduleRequestBatchStatus;
+  readonly note: string | null;
+  readonly lineCounts: WorkScheduleRequestLineCounts;
+  readonly clientToken: string;
+  readonly submittedAt: number;
+  readonly cancelledAt: number | null;
+  readonly resolvedAt: number | null;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+export interface WorkScheduleRequestLineRecord {
+  readonly id: string;
+  readonly batchId: string;
+  readonly lineNo: number;
+  readonly requestType: WorkScheduleRequestType;
+  readonly memberEmploymentProfileId: string;
+  readonly workShiftId: string | null;
+  readonly requestedStartAt: number | null;
+  readonly requestedEndAt: number | null;
+  readonly timezone: string;
+  readonly title: string | null;
+  readonly description: string | null;
+  readonly externalRef: string | null;
+  readonly reason: string;
+  readonly status: WorkScheduleRequestLineStatus;
+  readonly approvalNote: string | null;
+  readonly rejectionReason: string | null;
+  readonly cancellationReason: string | null;
+  readonly failureReason: string | null;
+  readonly appliedWorkShiftId: string | null;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly approvedAt: number | null;
+  readonly approvedByActorId: string | null;
+  readonly rejectedAt: number | null;
+  readonly rejectedByActorId: string | null;
+  readonly cancelledAt: number | null;
+  readonly cancelledByActorId: string | null;
+  readonly failedAt: number | null;
+  readonly failedByActorId: string | null;
+  readonly submittedByEmploymentProfileId: string;
+  readonly periodMonth: string;
+}
+
+export interface WorkScheduleRequestLineView
+  extends WorkScheduleRequestLineRecord {
+  readonly memberEmploymentProfileRef?: ReferenceSummary | null;
+  readonly workShiftRef?: ReferenceSummary | null;
+  readonly appliedWorkShiftRef?: ReferenceSummary | null;
+}
+
+export interface WorkScheduleRequestBatchView
+  extends WorkScheduleRequestBatchRecord {
+  readonly submittedByEmploymentProfileRef?: ReferenceSummary | null;
+  readonly lines: readonly WorkScheduleRequestLineView[];
+}
+
+export interface WorkScheduleRequestBatchListItemView
+  extends WorkScheduleRequestBatchRecord {
+  readonly submittedByEmploymentProfileRef?: ReferenceSummary | null;
+}

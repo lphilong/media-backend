@@ -12,6 +12,9 @@ import {
   MonthlyRosterView,
   RosterExceptionType,
   WorkScheduleRequestListItemView,
+  WorkScheduleRequestBatchListItemView,
+  WorkScheduleRequestBatchStatus,
+  WorkScheduleRequestBatchView,
   WorkScheduleRequestStatus,
   WorkScheduleRequestType,
   WorkScheduleRequestView,
@@ -219,6 +222,58 @@ export interface RejectWorkScheduleRequestCommand {
 export interface CancelWorkScheduleRequestCommand {
   readonly requestId: string;
   readonly cancellationReason?: string | null;
+}
+
+export interface WorkScheduleRequestBatchLineCommand {
+  readonly requestType: WorkScheduleRequestType | string;
+  readonly memberEmploymentProfileId: string;
+  readonly workShiftId?: string | null;
+  readonly requestedStartAt?: number | null;
+  readonly requestedEndAt?: number | null;
+  readonly timezone?: string | null;
+  readonly title?: string | null;
+  readonly description?: string | null;
+  readonly externalRef?: string | null;
+  readonly reason: string;
+}
+
+export interface SubmitWorkScheduleRequestBatchCommand {
+  readonly periodMonth: string;
+  readonly clientToken?: string | null;
+  readonly idempotencyKey?: string | null;
+  readonly note?: string | null;
+  readonly lines: readonly WorkScheduleRequestBatchLineCommand[];
+}
+
+export interface ListWorkScheduleRequestBatchesQuery {
+  readonly status?: WorkScheduleRequestBatchStatus | string;
+  readonly periodMonth?: string;
+  readonly submittedByEmploymentProfileId?: string;
+  readonly limit?: number | string;
+  readonly cursor?: string;
+}
+
+export interface GetWorkScheduleRequestBatchDetailQuery {
+  readonly batchId: string;
+}
+
+export interface DecideWorkScheduleRequestBatchLinesCommand {
+  readonly batchId: string;
+  readonly lineIds: readonly string[];
+  readonly approvalNote?: string | null;
+  readonly rejectionReason?: string | null;
+  readonly cancellationReason?: string | null;
+}
+
+export interface CancelWorkScheduleRequestBatchCommand {
+  readonly batchId: string;
+  readonly cancellationReason: string;
+}
+
+export interface CancelWorkScheduleRequestBatchLineCommand {
+  readonly batchId: string;
+  readonly lineId: string;
+  readonly cancellationReason: string;
 }
 
 export interface UpdateWorkShiftCoreCommand {
@@ -459,5 +514,16 @@ export type GetWorkScheduleRequestDetailResult =
 
 export interface ListWorkScheduleRequestsResult {
   readonly items: readonly WorkScheduleRequestListItemView[];
+  readonly nextCursor?: string;
+}
+
+export type WorkScheduleRequestBatchMutationResult =
+  WorkScheduleRequestBatchView;
+
+export type GetWorkScheduleRequestBatchDetailResult =
+  WorkScheduleRequestBatchView;
+
+export interface ListWorkScheduleRequestBatchesResult {
+  readonly items: readonly WorkScheduleRequestBatchListItemView[];
   readonly nextCursor?: string;
 }
