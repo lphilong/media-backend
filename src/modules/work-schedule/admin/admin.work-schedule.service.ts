@@ -92,6 +92,9 @@ interface NormalizedCreateCommand {
   readonly requestedScope?: WorkShiftScope;
 }
 
+const MANUAL_CREATE_EMPLOYMENT_PROFILE_ONLY_MESSAGE =
+  "Manual Official WorkShift create supports individual EmploymentProfile shifts only. Use Monthly Rosters for OrgUnit/TalentGroup bulk scheduling.";
+
 interface NormalizedUpdateCoreCommand {
   readonly workShiftId: string;
   readonly title?: string;
@@ -148,6 +151,8 @@ export class WorkScheduleAdminService {
     );
     this.assertOfficialWorkShiftMutationAuthority(actor);
     const input = normalizeCreateCommand(command);
+    assertManualCreateEmploymentProfileSubject(input.subject);
+    assertManualCreateReason(input);
 
     return this.executeMutation(
       actor,
@@ -2091,6 +2096,30 @@ function canonicalizeSearchToken(
     .trim()
     .replace(/\s+/gu, " ")
     .toLowerCase();
+}
+
+function assertManualCreateEmploymentProfileSubject(
+  subject: NormalizedSubjectReference,
+): void {
+  if (subject.subjectKind === "EMPLOYMENT_PROFILE") {
+    return;
+  }
+
+  throw new WorkScheduleValidationError(
+    MANUAL_CREATE_EMPLOYMENT_PROFILE_ONLY_MESSAGE,
+  );
+}
+
+function assertManualCreateReason(
+  command: NormalizedCreateCommand,
+): void {
+  if (command.description || command.externalRef) {
+    return;
+  }
+
+  throw new WorkScheduleValidationError(
+    "Manual Official WorkShift create requires description or externalRef for the exception reason.",
+  );
 }
 
 function toUtcShiftCodeDateBucket(

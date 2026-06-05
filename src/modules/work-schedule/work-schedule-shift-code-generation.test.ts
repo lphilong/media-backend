@@ -17,6 +17,7 @@ import { WorkScheduleAdminService } from "@modules/work-schedule/admin/admin.wor
 import type { WorkShiftCodeSequenceRepository } from "@modules/work-schedule/domain/work-schedule-code-sequence.repository";
 import {
   WorkScheduleConflictError,
+  WorkScheduleOverlapConflictError,
   WorkSchedulePermissionScopeError,
   WorkScheduleValidationError,
 } from "@modules/work-schedule/domain/work-schedule.errors";
@@ -251,6 +252,13 @@ const mutationBridge: AuthoritativeAdminMutationBridge = {
   },
 };
 
+type AuditRecordCall = {
+  readonly actor: Actor;
+  readonly permission: unknown;
+  readonly targetId: string;
+  readonly metadata: Record<string, unknown>;
+};
+
 const audit = {
   async record() {},
 } as unknown as AuditGuard;
@@ -340,6 +348,7 @@ function createReadActor(): Actor {
 function createService(params?: {
   readonly repository?: MemoryWorkShiftRepository;
   readonly sequenceRepository?: MemoryWorkShiftCodeSequenceRepository;
+  readonly audit?: AuditGuard;
 }): WorkScheduleAdminService {
   return new WorkScheduleAdminService(
     params?.repository ?? new MemoryWorkShiftRepository(),
@@ -398,7 +407,7 @@ function createService(params?: {
         };
       },
     },
-    audit,
+    params?.audit ?? audit,
     mutationBridge,
     {
       info() {},
@@ -415,6 +424,8 @@ function createPayload(
     readonly subjectEmploymentProfileId: string;
     readonly shiftStartAt: number;
     readonly shiftEndAt: number;
+    readonly description: string | null;
+    readonly externalRef: string | null;
   }> = {},
 ) {
   return {
@@ -430,6 +441,14 @@ function createPayload(
       params.shiftEndAt ??
       Date.UTC(2026, 4, 4, 2, 0, 0),
     studioResourceIds: ["studio-1"],
+    description:
+      params.description === undefined
+        ? "Manual exception coverage"
+        : params.description,
+    externalRef:
+      params.externalRef === undefined
+        ? null
+        : params.externalRef,
   };
 }
 
@@ -640,6 +659,159 @@ test("Work Schedule create generates shiftCode when omitted", async () => {
     assert.equal(created.sourceDepartmentOrgUnitId, null);
     assert.equal(created.sourceRosterLocalDate, null);
     assert.equal(created.sourceRosterSlotKey, null);
+  });
+});
+
+test("Work Schedule manual create rejects Talent and Talent Group subjects", async (t) => {
+  const service = createService();
+  const actor = createAdminActor();
+
+  await bindTraceId("trace-work-shift-create-subject-hardening", async () => {
+    await t.test("Talent is rejected", async () => {
+      await assert.rejects(
+        service.createWorkShift(actor, {
+          ...createPayload({ shiftCode: undefined }),
+          subjectKind: "TALENT",
+          subjectEmploymentProfileId: null,
+          subjectTalentId: "talent-1",
+          description: "Manual exception coverage",
+        }),
+        (error: unknown) =>
+          error instanceof WorkScheduleValidationError &&
+          error.message.includes(
+            "Manual Official WorkShift create supports individual EmploymentProfile shifts only",
+          ) &&
+          error.message.includes("Use Monthly Rosters"),
+      );
+    });
+
+    await t.test("Talent Group is rejected", async () => {
+      await assert.rejects(
+        service.createWorkShift(actor, {
+          ...createPayload({ shiftCode: undefined }),
+          subjectKind: "TALENT_GROUP",
+          subjectEmploymentProfileId: null,
+          subjectTalentGroupId: "group-1",
+          description: "Manual exception coverage",
+        }),
+        (error: unknown) =>
+          error instanceof WorkScheduleValidationError &&
+          error.message.includes(
+            "Manual Official WorkShift create supports individual EmploymentProfile shifts only",
+          ) &&
+          error.message.includes("Use Monthly Rosters"),
+      );
+    });
+  });
+});
+
+test("Work Schedule manual create requires description or externalRef", async () => {
+  const service = createService();
+  const actor = createAdminActor();
+
+  await bindTraceId("trace-work-shift-create-reason", async () => {
+    await assert.rejects(
+      service.createWorkShift(
+        actor,
+        createPayload({
+          shiftCode: undefined,
+          description: null,
+          externalRef: null,
+        }),
+      ),
+      /requires description or externalRef/u,
+    );
+
+    const externalRefOnly = await service.createWorkShift(
+      actor,
+      createPayload({
+        shiftCode: undefined,
+        subjectEmploymentProfileId: "ep-external-ref",
+        description: null,
+        externalRef: "OPS-123",
+      }),
+    );
+
+    assert.equal(externalRefOnly.description, null);
+    assert.equal(externalRefOnly.externalRef, "OPS-123");
+  });
+});
+
+test("Work Schedule Employment Profile manual create preserves overlap checks", async () => {
+  class OverlapRepository extends MemoryWorkShiftRepository {
+    async hasActiveOverlappingSubjectShift(
+      input: WorkShiftOverlapSubjectCheckInput,
+    ): Promise<boolean> {
+      assert.equal(input.subjectKind, "EMPLOYMENT_PROFILE");
+      assert.equal(input.subjectEmploymentProfileId, "ep-overlap");
+      return true;
+    }
+  }
+
+  await bindTraceId("trace-work-shift-create-overlap", async () => {
+    await assert.rejects(
+      createService({
+        repository: new OverlapRepository(),
+      }).createWorkShift(
+        createAdminActor(),
+        createPayload({
+          shiftCode: undefined,
+          subjectEmploymentProfileId: "ep-overlap",
+        }),
+      ),
+      WorkScheduleOverlapConflictError,
+    );
+  });
+});
+
+test("Work Schedule Employment Profile manual create preserves MANUAL source and audit metadata", async () => {
+  const auditCalls: AuditRecordCall[] = [];
+  const captureAudit = {
+    async record(
+      actor: Actor,
+      permission: unknown,
+      targetId: string,
+      metadata: Record<string, unknown>,
+    ) {
+      auditCalls.push({
+        actor,
+        permission,
+        targetId,
+        metadata,
+      });
+    },
+  } as unknown as AuditGuard;
+  const service = createService({ audit: captureAudit });
+  const actor = createAdminActor();
+
+  await bindTraceId("trace-work-shift-create-audit", async () => {
+    const created = await service.createWorkShift(
+      actor,
+      createPayload({
+        shiftCode: undefined,
+        subjectEmploymentProfileId: "ep-audit",
+      }),
+    );
+
+    assert.equal(created.subjectKind, "EMPLOYMENT_PROFILE");
+    assert.equal(created.sourceType, "MANUAL");
+    assert.equal(created.createdAt, created.updatedAt);
+    assert.equal(auditCalls.length, 1);
+    assert.equal(auditCalls[0]?.actor, actor);
+    assert.equal(auditCalls[0]?.targetId, created.id);
+    assert.equal(
+      auditCalls[0]?.metadata.mutationType,
+      "work-schedule.create",
+    );
+    assert.equal(auditCalls[0]?.metadata.actorId, actor.id);
+    assert.equal(
+      auditCalls[0]?.metadata.subjectEmploymentProfileId,
+      "ep-audit",
+    );
+    assert.equal(
+      auditCalls[0]?.metadata.effectiveScope,
+      "global",
+    );
   });
 });
 
