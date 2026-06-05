@@ -34,6 +34,7 @@ tools/test/*
 # but explicitly allow the Mongo partial-index regression tests required for acceptance.
 **/*.test.ts
 **/*.spec.ts
+!src/modules/work-schedule/work-schedule-request-batch.service.test.ts
 !src/modules/manager-workspace/manager-workspace.context.service.spec.ts
 !src/modules/mongo-partial-index-compatibility.test.ts
 !src/modules/org-unit/org-unit-live-name-uniqueness.test.ts
