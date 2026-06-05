@@ -49,6 +49,7 @@ export interface TransitionKpiPlanStatusInput {
 
 export interface ListKpiPlansInput {
   readonly subjectType?: KpiSubjectType;
+  readonly subjectTypes?: readonly KpiSubjectType[];
   readonly subjectId?: string;
   readonly subjectIds?: readonly string[];
   readonly groupId?: string;
@@ -85,7 +86,11 @@ export interface KpiActualWorkspaceDerivedCursor {
 }
 
 export interface ListKpiActualWorkspaceDerivedPlansInput {
-  readonly subjectType: "TALENT_GROUP";
+  readonly subjectType?: Extract<KpiSubjectType, "TALENT_GROUP" | "ORG_UNIT">;
+  readonly subjectTypes?: readonly Extract<
+    KpiSubjectType,
+    "TALENT_GROUP" | "ORG_UNIT"
+  >[];
   readonly subjectId?: string;
   readonly subjectIds?: readonly string[];
   readonly groupId?: string;

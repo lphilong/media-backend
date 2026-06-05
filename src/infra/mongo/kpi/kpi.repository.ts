@@ -283,6 +283,9 @@ export class NativeMongoKpiPlanRepository
     const filters: Record<string, unknown>[] = [];
     const query: Record<string, unknown> = {};
     assignIfDefined(query, "subjectType", input.subjectType);
+    if (input.subjectType === undefined && input.subjectTypes !== undefined) {
+      query.subjectType = { $in: [...input.subjectTypes] };
+    }
     assignIfDefined(query, "periodMonth", input.periodMonth);
     assignIfDefined(query, "status", input.status);
     const subjectIds = normalizeSubjectIdFilter(input);
@@ -354,6 +357,9 @@ export class NativeMongoKpiPlanRepository
     const filters: Record<string, unknown>[] = [];
     const query: Record<string, unknown> = {};
     assignIfDefined(query, "subjectType", input.subjectType);
+    if (input.subjectType === undefined && input.subjectTypes !== undefined) {
+      query.subjectType = { $in: [...input.subjectTypes] };
+    }
     assignIfDefined(query, "periodMonth", input.periodMonth);
     assignIfDefined(query, "status", input.status);
     const subjectIds = normalizeSubjectIdFilter(input);
@@ -444,7 +450,46 @@ export class NativeMongoKpiPlanRepository
               cond: {
                 $and: [
                   { $eq: ["$$allocation.allocationStatus", "PUBLISHED"] },
-                  { $eq: ["$$allocation.groupId", "$subjectId"] },
+                  {
+                    $or: [
+                      {
+                        $and: [
+                          { $eq: ["$subjectType", "TALENT_GROUP"] },
+                          { $eq: ["$$allocation.subjectType", "TALENT_GROUP"] },
+                          { $eq: ["$$allocation.groupId", "$subjectId"] },
+                          {
+                            $eq: [
+                              { $type: "$$allocation.memberTalentId" },
+                              "string",
+                            ],
+                          },
+                          { $ne: ["$$allocation.memberTalentId", ""] },
+                        ],
+                      },
+                      {
+                        $and: [
+                          { $eq: ["$subjectType", "ORG_UNIT"] },
+                          { $eq: ["$$allocation.subjectType", "ORG_UNIT"] },
+                          { $eq: ["$$allocation.subjectId", "$subjectId"] },
+                          {
+                            $eq: [
+                              {
+                                $type:
+                                  "$$allocation.memberEmploymentProfileId",
+                              },
+                              "string",
+                            ],
+                          },
+                          {
+                            $ne: [
+                              "$$allocation.memberEmploymentProfileId",
+                              "",
+                            ],
+                          },
+                        ],
+                      },
+                    ],
+                  },
                   {
                     $in: [
                       "REVENUE_VND",
@@ -465,13 +510,40 @@ export class NativeMongoKpiPlanRepository
       },
       {
         $addFields: {
-          revenueAllocationPairs: {
+          revenueTalentAllocationPairs: {
             $map: {
-              input: "$revenueAllocations",
+              input: {
+                $filter: {
+                  input: "$revenueAllocations",
+                  as: "allocation",
+                  cond: {
+                    $eq: ["$$allocation.subjectType", "TALENT_GROUP"],
+                  },
+                },
+              },
               as: "allocation",
               in: {
                 allocationId: "$$allocation._id",
                 memberTalentId: "$$allocation.memberTalentId",
+              },
+            },
+          },
+          revenueEmploymentAllocationPairs: {
+            $map: {
+              input: {
+                $filter: {
+                  input: "$revenueAllocations",
+                  as: "allocation",
+                  cond: {
+                    $eq: ["$$allocation.subjectType", "ORG_UNIT"],
+                  },
+                },
+              },
+              as: "allocation",
+              in: {
+                allocationId: "$$allocation._id",
+                memberEmploymentProfileId:
+                  "$$allocation.memberEmploymentProfileId",
               },
             },
           },
@@ -509,7 +581,8 @@ export class NativeMongoKpiPlanRepository
             planId: "$_id",
             periodStartAt: "$periodStartAt",
             periodEndAt: "$periodEndAt",
-            allocationPairs: "$revenueAllocationPairs",
+            talentAllocationPairs: "$revenueTalentAllocationPairs",
+            employmentAllocationPairs: "$revenueEmploymentAllocationPairs",
           },
           pipeline: [
             {
@@ -519,12 +592,26 @@ export class NativeMongoKpiPlanRepository
                     { $eq: ["$kpiPlanId", "$$planId"] },
                     { $eq: ["$metricCode", "REVENUE_VND"] },
                     {
-                      $in: [
+                      $or: [
                         {
-                          allocationId: "$allocationId",
-                          memberTalentId: "$memberTalentId",
+                          $in: [
+                            {
+                              allocationId: "$allocationId",
+                              memberTalentId: "$memberTalentId",
+                            },
+                            "$$talentAllocationPairs",
+                          ],
                         },
-                        "$$allocationPairs",
+                        {
+                          $in: [
+                            {
+                              allocationId: "$allocationId",
+                              memberEmploymentProfileId:
+                                "$memberEmploymentProfileId",
+                            },
+                            "$$employmentAllocationPairs",
+                          ],
+                        },
                       ],
                     },
                   ],
@@ -601,7 +688,15 @@ export class NativeMongoKpiPlanRepository
       ...buildDerivedCursorStages(input),
       { $sort: buildDerivedSort(input) },
       { $limit: input.limit },
-      { $project: { workspaceAllocations: 0, revenueAllocations: 0, revenueAllocationPairs: 0, revenueActualRows: 0 } },
+      {
+        $project: {
+          workspaceAllocations: 0,
+          revenueAllocations: 0,
+          revenueTalentAllocationPairs: 0,
+          revenueEmploymentAllocationPairs: 0,
+          revenueActualRows: 0,
+        },
+      },
     ];
 
     const docs = await this.collection

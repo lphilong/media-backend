@@ -187,6 +187,7 @@ export interface GetKpiPlanDetailQuery {
 }
 
 export interface ListKpiActualWorkspacePlansQuery {
+  readonly subjectType?: Extract<KpiSubjectType, "TALENT_GROUP" | "ORG_UNIT"> | string;
   readonly periodMonth?: string;
   readonly groupId?: string;
   readonly subjectId?: string;

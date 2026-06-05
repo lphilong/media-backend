@@ -212,11 +212,19 @@ interface KpiActualWorkspaceAggregate {
 }
 
 type KpiActualWorkspaceCoverageFilter = "complete" | "incomplete";
+type KpiActualWorkspaceSubjectType = Extract<
+  KpiSubjectType,
+  "TALENT_GROUP" | "ORG_UNIT"
+>;
+const KPI_ACTUAL_WORKSPACE_SUBJECT_TYPES: readonly KpiActualWorkspaceSubjectType[] =
+  ["TALENT_GROUP", "ORG_UNIT"];
 
 interface NormalizedActualWorkspacePlansInput extends Omit<
   ListKpiPlansInput,
-  "sortBy" | "sortDirection" | "cursor"
+  "subjectType" | "subjectTypes" | "sortBy" | "sortDirection" | "cursor"
 > {
+  readonly subjectType?: KpiActualWorkspaceSubjectType;
+  readonly subjectTypes?: readonly KpiActualWorkspaceSubjectType[];
   readonly sortBy: "periodMonth" | "planCode" | KpiActualWorkspaceDerivedSortBy;
   readonly sortDirection: "ASC" | "DESC";
   readonly cursor?: string;
@@ -392,6 +400,9 @@ export class KpiAdminService {
     ) {
       return { items: [] };
     }
+    if (input.groupId !== undefined && input.subjectType === "ORG_UNIT") {
+      return { items: [] };
+    }
 
     const page = this.hasKpiGlobalScope(actor)
       ? await this.listActualWorkspacePlanPage(input)
@@ -401,7 +412,13 @@ export class KpiAdminService {
       page.items,
     );
     return {
-      items: aggregates.map((aggregate) => aggregate.summary),
+      items: aggregates
+        .filter(
+          (aggregate) =>
+            aggregate.summary.subjectType !== "ORG_UNIT" ||
+            aggregate.summary.allocationCoverage.publishedAllocationCount > 0,
+        )
+        .map((aggregate) => aggregate.summary),
       nextCursor: page.nextCursor,
     };
   }
@@ -412,18 +429,29 @@ export class KpiAdminService {
   ): Promise<KpiActualWorkspacePlanDetail> {
     this.assertContextPermission(actor, Permission.KPI_READ_PROGRESS);
     const plan = await this.requirePlan(query.kpiPlanId);
-    if (plan.subjectType !== "TALENT_GROUP") {
+    if (!isActualWorkspaceSubjectType(plan.subjectType)) {
       throw new KpiPermissionScopeError(
-        "KPI actual workspace supports only TALENT_GROUP plans",
+        "KPI actual workspace supports only TALENT_GROUP or ORG_UNIT plans",
       );
     }
     if (!this.hasKpiGlobalScope(actor)) {
+      if (plan.subjectType !== "TALENT_GROUP") {
+        throw new KpiPermissionScopeError(
+          "KPI managed actual workspace supports only TALENT_GROUP plans",
+        );
+      }
       await this.assertActorCanReadManagedGroupProgress(actor, plan);
     }
     const [aggregate] = await this.buildActualWorkspaceAggregates(actor, [
       plan,
     ]);
     if (!aggregate) {
+      throw new KpiNotFoundError(plan.id);
+    }
+    if (
+      plan.subjectType === "ORG_UNIT" &&
+      aggregate.summary.allocationCoverage.publishedAllocationCount === 0
+    ) {
       throw new KpiNotFoundError(plan.id);
     }
     return {
@@ -2736,7 +2764,10 @@ export class KpiAdminService {
       ? normalizeSortDirection(query.sortDirection)
       : "DESC";
     return {
-      subjectType: "TALENT_GROUP",
+      subjectType:
+        query.subjectType === undefined
+          ? undefined
+          : normalizeActualWorkspaceSubjectType(query.subjectType),
       subjectId: normalizeOptionalText(query.subjectId),
       groupId: normalizeOptionalText(query.groupId),
       periodMonth: query.periodMonth
@@ -2784,6 +2815,7 @@ export class KpiAdminService {
       return this.listDerivedActualWorkspacePlanPage(
         {
           ...input,
+          ...actualWorkspaceSubjectFilter(input),
           sortBy,
           searchSubjectIds: groupIds,
           cursor,
@@ -2799,6 +2831,7 @@ export class KpiAdminService {
     return this.collectActualWorkspacePlanPage(
       {
         ...input,
+        ...actualWorkspaceSubjectFilter(input),
         sortBy,
         searchSubjectIds: groupIds,
         cursor,
@@ -2823,6 +2856,9 @@ export class KpiAdminService {
       throw new KpiPermissionScopeError(
         "KPI actual workspace requires kpi.global or kpi.managedGroup scope",
       );
+    }
+    if (input.subjectType === "ORG_UNIT") {
+      return { items: [] };
     }
 
     const managedGroupIds = await this.resolveManagedTalentGroupIds(actor);
@@ -2856,6 +2892,7 @@ export class KpiAdminService {
         {
           ...input,
           sortBy,
+          subjectType: "TALENT_GROUP",
           subjectId: undefined,
           groupId: undefined,
           subjectIds: candidateGroupIds,
@@ -2875,6 +2912,7 @@ export class KpiAdminService {
       {
         ...input,
         sortBy,
+        subjectType: "TALENT_GROUP",
         subjectId: undefined,
         groupId: undefined,
         subjectIds: candidateGroupIds,
@@ -2899,7 +2937,6 @@ export class KpiAdminService {
     if (!hasActualWorkspaceStatusFilters(input)) {
       const rows = await this.repository.listActualWorkspaceDerivedPlans({
         ...input,
-        subjectType: "TALENT_GROUP",
         limit: input.limit + 1,
       });
       const hasNext = rows.length > input.limit;
@@ -2929,7 +2966,6 @@ export class KpiAdminService {
     while (collected.length < input.limit + 1 && !exhausted) {
       const batch = await this.repository.listActualWorkspaceDerivedPlans({
         ...input,
-        subjectType: "TALENT_GROUP",
         cursor,
         limit: scanLimit + 1,
       });
@@ -2978,17 +3014,33 @@ export class KpiAdminService {
     if (input.search === undefined) {
       return undefined;
     }
-    const requestedGroupId = input.groupId ?? input.subjectId;
+    const requestedGroupId =
+      input.subjectType === "ORG_UNIT" ? undefined : input.groupId ?? input.subjectId;
     const groupIds =
       requestedGroupId !== undefined
         ? [requestedGroupId]
-        : visibleGroupIds !== undefined
+        : visibleGroupIds !== undefined || input.subjectType === "TALENT_GROUP"
           ? visibleGroupIds
           : undefined;
-    return this.subjectReadonlyAccess.listTalentGroupIdsByCodeOrName({
-      search: input.search,
-      ...(groupIds !== undefined ? { groupIds } : {}),
-    });
+    const requestedOrgUnitId =
+      input.subjectType === "ORG_UNIT" ? input.subjectId : undefined;
+    const [matchingGroupIds, matchingOrgUnitIds] = await Promise.all([
+      input.subjectType === undefined || input.subjectType === "TALENT_GROUP"
+        ? this.subjectReadonlyAccess.listTalentGroupIdsByCodeOrName({
+            search: input.search,
+            ...(groupIds !== undefined ? { groupIds } : {}),
+          })
+        : Promise.resolve([]),
+      input.subjectType === undefined || input.subjectType === "ORG_UNIT"
+        ? this.subjectReadonlyAccess.listActiveOrgUnitIdsByCodeOrName({
+            search: input.search,
+            ...(requestedOrgUnitId !== undefined
+              ? { orgUnitIds: [requestedOrgUnitId] }
+              : {}),
+          })
+        : Promise.resolve([]),
+    ]);
+    return [...matchingGroupIds, ...matchingOrgUnitIds];
   }
 
   private async collectActualWorkspacePlanPage(
@@ -5578,6 +5630,7 @@ function buildActualWorkspaceCursorQueryKey(
   input: Pick<
     NormalizedActualWorkspacePlansInput,
     | "periodMonth"
+    | "subjectType"
     | "groupId"
     | "subjectId"
     | "search"
@@ -5591,6 +5644,7 @@ function buildActualWorkspaceCursorQueryKey(
   return JSON.stringify({
     authorityScopeKey: input.authorityScopeKey ?? null,
     periodMonth: input.periodMonth ?? null,
+    subjectType: input.subjectType ?? null,
     groupId: input.groupId ?? null,
     subjectId: input.subjectId ?? null,
     search: input.search ?? null,
@@ -5924,6 +5978,35 @@ function normalizeActualWorkspaceCoverageFilter(
     );
   }
   return text;
+}
+
+function normalizeActualWorkspaceSubjectType(
+  value: unknown,
+): KpiActualWorkspaceSubjectType {
+  const text = normalizeRequiredText(value, "subjectType");
+  if (isActualWorkspaceSubjectType(text)) {
+    return text;
+  }
+  throw new KpiValidationError(
+    `KPI actual workspace subjectType is unsupported: ${text}`,
+  );
+}
+
+function actualWorkspaceSubjectFilter(
+  input: Pick<NormalizedActualWorkspacePlansInput, "subjectType">,
+): {
+  readonly subjectType?: KpiActualWorkspaceSubjectType;
+  readonly subjectTypes?: readonly KpiActualWorkspaceSubjectType[];
+} {
+  return input.subjectType === undefined
+    ? { subjectTypes: KPI_ACTUAL_WORKSPACE_SUBJECT_TYPES }
+    : { subjectType: input.subjectType };
+}
+
+function isActualWorkspaceSubjectType(
+  value: unknown,
+): value is KpiActualWorkspaceSubjectType {
+  return value === "TALENT_GROUP" || value === "ORG_UNIT";
 }
 
 function normalizeActualWorkspaceBooleanFilter(

@@ -2403,7 +2403,7 @@ test("KPI V2 ORG_UNIT draft core, target replacement, and draft archive are plan
   assert.equal(archived.subjectType, "ORG_UNIT");
 });
 
-test("KPI V2 ORG_UNIT publish opens backend progress/grid while default workspace stays TalentGroup-only", async () => {
+test("KPI V2 ORG_UNIT official published allocations appear in Admin actual workspace", async () => {
   const { service, repository } = createHarness();
   const created = await service.createKpiPlan(
     createActor(),
@@ -2465,12 +2465,14 @@ test("KPI V2 ORG_UNIT publish opens backend progress/grid while default workspac
   };
   repository.plans.push(forcedPublishedOrgUnit);
 
-  const workspace = await service.listKpiActualWorkspacePlans(
+  const workspaceBeforeAllocation = await service.listKpiActualWorkspacePlans(
     createActor(),
     {},
   );
   assert.equal(
-    workspace.items.some((item) => item.planId === forcedPublishedOrgUnit.id),
+    workspaceBeforeAllocation.items.some(
+      (item) => item.planId === forcedPublishedOrgUnit.id,
+    ),
     false,
   );
   await assert.rejects(
@@ -2491,6 +2493,67 @@ test("KPI V2 ORG_UNIT publish opens backend progress/grid while default workspac
     }),
     KpiStateError,
   );
+
+  await service.upsertKpiAllocationDraft(createActor(), {
+    kpiPlanId: published.id,
+    allocations: [
+      {
+        employmentProfileId: "org-profile-1",
+        allocationStartDate: "2026-05-01",
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 300 }],
+      },
+    ],
+  });
+  await service.submitKpiAllocationDraft(createActor(), { kpiPlanId: published.id });
+  await service.approveKpiAllocation(createActor(), { kpiPlanId: published.id });
+  await service.publishKpiAllocation(createActor(), { kpiPlanId: published.id });
+  const groupPlan = await createPublishedGroupPlan(service);
+
+  const allWorkspace = await service.listKpiActualWorkspacePlans(createActor(), {});
+  const orgOnlyWorkspace = await service.listKpiActualWorkspacePlans(createActor(), {
+    subjectType: "ORG_UNIT",
+  });
+  const groupOnlyWorkspace = await service.listKpiActualWorkspacePlans(createActor(), {
+    subjectType: "TALENT_GROUP",
+  });
+  const searchedWorkspace = await service.listKpiActualWorkspacePlans(createActor(), {
+    search: "OU-DEP-001",
+  });
+  const orgDetail = await service.getKpiActualWorkspacePlanDetail(createActor(), {
+    kpiPlanId: published.id,
+  });
+
+  assert.equal(
+    allWorkspace.items.some((item) => item.planId === published.id),
+    true,
+  );
+  assert.equal(
+    allWorkspace.items.some((item) => item.planId === groupPlan.id),
+    true,
+  );
+  assert.deepEqual(
+    orgOnlyWorkspace.items.map((item) => item.subjectType),
+    ["ORG_UNIT"],
+  );
+  assert.deepEqual(
+    groupOnlyWorkspace.items.map((item) => item.subjectType),
+    ["TALENT_GROUP"],
+  );
+  assert.deepEqual(
+    searchedWorkspace.items.map((item) => item.planId),
+    [published.id],
+  );
+  assert.equal(orgDetail.subjectType, "ORG_UNIT");
+  assert.equal(orgDetail.members.length, 1);
+  assert.equal(JSON.stringify(orgDetail).includes("memberTalentId"), false);
+  assert.equal(JSON.stringify(orgDetail).includes("memberEmploymentProfileId"), false);
+  const managerOrgWorkspace = await service.listKpiActualWorkspacePlans(
+    createManagerActor(),
+    {
+      subjectType: "ORG_UNIT",
+    },
+  );
+  assert.deepEqual(managerOrgWorkspace.items, []);
 });
 
 test("KPI ORG_UNIT actual/progress/correction uses EmploymentProfile identity without Talent", async () => {
@@ -9644,6 +9707,13 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
         if (input.subjectType && plan.subjectType !== input.subjectType) {
           return false;
         }
+        if (
+          input.subjectType === undefined &&
+          input.subjectTypes !== undefined &&
+          !input.subjectTypes.includes(plan.subjectType)
+        ) {
+          return false;
+        }
         if (subjectIds !== undefined && !subjectIds.includes(plan.subjectId)) {
           return false;
         }
@@ -9709,7 +9779,16 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     }
     return this.plans
       .filter((plan) => {
-        if (plan.subjectType !== input.subjectType) {
+        if (input.subjectType && plan.subjectType !== input.subjectType) {
+          return false;
+        }
+        if (
+          input.subjectType === undefined &&
+          input.subjectTypes !== undefined &&
+          !input.subjectTypes.includes(
+            plan.subjectType as Extract<KpiSubjectType, "TALENT_GROUP" | "ORG_UNIT">,
+          )
+        ) {
           return false;
         }
         if (subjectIds !== undefined && !subjectIds.includes(plan.subjectId)) {
@@ -10644,7 +10723,16 @@ function buildTestDerivedWorkspaceRow(
     (allocation) =>
       allocation.kpiPlanId === plan.id &&
       allocation.allocationStatus === "PUBLISHED" &&
-      allocation.groupId === plan.subjectId &&
+      ((plan.subjectType === "TALENT_GROUP" &&
+        allocation.subjectType === "TALENT_GROUP" &&
+        allocation.groupId === plan.subjectId &&
+        typeof allocation.memberTalentId === "string" &&
+        allocation.memberTalentId.length > 0) ||
+        (plan.subjectType === "ORG_UNIT" &&
+          allocation.subjectType === "ORG_UNIT" &&
+          allocation.subjectId === plan.subjectId &&
+          typeof allocation.memberEmploymentProfileId === "string" &&
+          allocation.memberEmploymentProfileId.length > 0)) &&
       allocation.targetMetrics.some(
         (metric) => metric.metricCode === "REVENUE_VND",
       ),
@@ -10658,7 +10746,10 @@ function buildTestDerivedWorkspaceRow(
         entry.kpiPlanId === plan.id &&
         entry.metricCode === "REVENUE_VND" &&
         allocation !== undefined &&
-        entry.memberTalentId === allocation.memberTalentId &&
+        (allocation.subjectType === "ORG_UNIT"
+          ? entry.memberEmploymentProfileId ===
+            allocation.memberEmploymentProfileId
+          : entry.memberTalentId === allocation.memberTalentId) &&
         isTestActualEntryWithinPlanPeriod(plan, entry.actualDate)
       );
     })

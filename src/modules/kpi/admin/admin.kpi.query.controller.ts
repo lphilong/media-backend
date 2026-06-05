@@ -71,6 +71,7 @@ const LIST_KPI_PLANS_QUERY_FIELDS = [
   "sortDirection",
 ] as const;
 const LIST_KPI_ACTUAL_WORKSPACE_PLANS_QUERY_FIELDS = [
+  "subjectType",
   "periodMonth",
   "groupId",
   "subjectId",
@@ -358,6 +359,7 @@ function parseListKpiActualWorkspacePlansQuery(
     "listKpiActualWorkspacePlans",
   );
   return {
+    subjectType: req.query.subjectType as string | undefined,
     periodMonth: req.query.periodMonth as string | undefined,
     groupId: req.query.groupId as string | undefined,
     subjectId: req.query.subjectId as string | undefined,
