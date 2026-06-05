@@ -536,7 +536,7 @@ export class NativeMongoKpiPlanRepository
                 actualDateAt: {
                   $dateFromString: {
                     dateString: "$actualDate",
-                    format: "%d-%m-%Y",
+                    format: "%Y-%m-%d",
                     timezone: "Asia/Ho_Chi_Minh",
                     onError: null,
                     onNull: null,

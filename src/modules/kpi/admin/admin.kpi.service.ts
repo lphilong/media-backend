@@ -5285,7 +5285,7 @@ function listLocalDatesInPlan(periodMonth: string): readonly string[] {
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   return Array.from({ length: lastDay }, (_value, index) => {
     const day = String(index + 1).padStart(2, "0");
-    return `${day}-${monthText}-${yearText}`;
+    return `${yearText}-${monthText}-${day}`;
   });
 }
 
@@ -6200,7 +6200,7 @@ function lastLocalDateOfPeriod(periodMonth: string): string {
   const year = Number(yearText);
   const monthIndex = Number(monthText) - 1;
   const lastDay = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
-  return `${String(lastDay).padStart(2, "0")}-${monthText}-${yearText}`;
+  return `${yearText}-${monthText}-${String(lastDay).padStart(2, "0")}`;
 }
 
 function countLocalDaysInPlan(plan: KpiPlan): number {
@@ -6326,13 +6326,13 @@ function parseActualDateText(
   text: string,
   field: string,
 ): { readonly day: number; readonly month: number; readonly year: number } {
-  const match = /^(\d{2})-(\d{2})-(\d{4})$/.exec(text);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
   if (!match) {
-    throw new KpiValidationError(`KPI ${field} must use DD-MM-YYYY format`);
+    throw new KpiValidationError(`KPI ${field} must use YYYY-MM-DD format`);
   }
-  const day = Number(match[1]);
+  const year = Number(match[1]);
   const month = Number(match[2]);
-  const year = Number(match[3]);
+  const day = Number(match[3]);
   if (month < 1 || month > 12) {
     throw new KpiValidationError(`KPI ${field} must be a valid calendar date`);
   }

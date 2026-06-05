@@ -2443,7 +2443,7 @@ test("KPI V2 ORG_UNIT publish opens backend progress/grid while default workspac
   );
   const emptyGrid = await service.getKpiActualDailyGrid(createActor(), {
     kpiPlanId: published.id,
-    actualDate: "01-05-2026",
+    actualDate: "2026-05-01",
   });
   const emptyProgress = await service.getKpiProgress(createActor(), {
     kpiPlanId: published.id,
@@ -2520,12 +2520,12 @@ test("KPI ORG_UNIT actual/progress/correction uses EmploymentProfile identity wi
     kpiPlanId: created.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
   const grid = await service.getKpiActualDailyGrid(actor, {
     kpiPlanId: created.id,
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
   });
   const progress = await service.getKpiProgress(actor, { kpiPlanId: created.id });
 
@@ -2593,7 +2593,7 @@ test("KPI ORG_UNIT correction succeeds after zero update and cleared exceptions 
     kpiPlanId: created.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
   const zero = await service.updateKpiOrgUnitActualDirect(actor, {
@@ -2608,13 +2608,13 @@ test("KPI ORG_UNIT correction succeeds after zero update and cleared exceptions 
     kpiPlanId: created.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "06-05-2026",
+    actualDate: "2026-05-06",
     status: "EXCUSED",
     reasonCode: "MEMBER_LEAVE",
     reasonText: "Approved leave",
   });
   const excusedId = repository.actualExcuses.find(
-    (item) => item.kpiPlanId === excused.id && item.actualDate === "06-05-2026",
+    (item) => item.kpiPlanId === excused.id && item.actualDate === "2026-05-06",
   )?.id;
   assert.ok(excusedId);
   await service.removeKpiOrgUnitActualExcuse(actor, {
@@ -2626,14 +2626,14 @@ test("KPI ORG_UNIT correction succeeds after zero update and cleared exceptions 
     kpiPlanId: created.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "07-05-2026",
+    actualDate: "2026-05-07",
     status: "NOT_REQUIRED",
     reasonCode: "NO_OPERATION_REQUIRED",
     reasonText: "No operation required",
   });
   const notRequiredId = repository.actualExcuses.find(
     (item) =>
-      item.kpiPlanId === notRequired.id && item.actualDate === "07-05-2026",
+      item.kpiPlanId === notRequired.id && item.actualDate === "2026-05-07",
   )?.id;
   assert.ok(notRequiredId);
   await service.removeKpiOrgUnitActualExcuse(actor, {
@@ -2646,7 +2646,7 @@ test("KPI ORG_UNIT correction succeeds after zero update and cleared exceptions 
     kpiPlanId: created.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     status: "EXCUSED",
     reasonCode: "OTHER",
     reasonText: "Stale active blocker",
@@ -2809,7 +2809,7 @@ test("KPI V2 manager-scoped ORG_UNIT read shows only assigned published plans", 
     createBackofficeTeamManagerActor(),
     {
       kpiPlanId: direct.id,
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
     },
   );
   assert.equal(grid.subjectType, "ORG_UNIT");
@@ -3066,7 +3066,7 @@ test("KPI ORG_UNIT explicit query route contracts expose EmploymentProfile-safe 
     kpiPlanId: created.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
 
@@ -3122,7 +3122,7 @@ test("KPI ORG_UNIT explicit query route contracts expose EmploymentProfile-safe 
   );
 
   const gridResponse = await call("KPI_PLAN_ORG_UNIT_ACTUAL_DAILY_GRID", {
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
   });
   const grid = gridResponse.data as {
     readonly rows: readonly Record<string, unknown>[];
@@ -3133,7 +3133,7 @@ test("KPI ORG_UNIT explicit query route contracts expose EmploymentProfile-safe 
     KpiOrgUnitActualDailyGridExposure.expose(
       await service.getKpiOrgUnitActualDailyGrid(actor, {
         kpiPlanId: created.id,
-        actualDate: "05-05-2026",
+        actualDate: "2026-05-05",
       }),
     ),
     gridResponse.data,
@@ -3191,7 +3191,7 @@ test("KPI ORG_UNIT explicit mutation route contract returns profile identity wit
     body: {
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 80,
     },
     params: { kpiPlanId: created.id },
@@ -3250,7 +3250,7 @@ test("KPI ORG_UNIT explicit mutation route contract returns profile identity wit
     body: {
       allocationId: "not-used",
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 1,
     },
     params: { kpiPlanId: groupPlan.id },
@@ -3310,7 +3310,7 @@ test("KPI ORG_UNIT explicit excuse and correction-history route contracts stay O
     body: {
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       status: "EXCUSED",
       reasonCode: "OTHER",
       reasonText: "Blocked by approved operating exception",
@@ -3337,7 +3337,7 @@ test("KPI ORG_UNIT explicit excuse and correction-history route contracts stay O
 
   const excusedGrid = await service.getKpiOrgUnitActualDailyGrid(actor, {
     kpiPlanId: created.id,
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
   });
   assert.equal(excusedGrid.rows[0]?.memberEmploymentProfileId, "org-profile-1");
   assert.equal(
@@ -3366,7 +3366,7 @@ test("KPI ORG_UNIT explicit excuse and correction-history route contracts stay O
     kpiPlanId: created.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 90,
   });
   now.value = MAY_5_2026_AFTER_LOCK_HCM;
@@ -3402,7 +3402,7 @@ test("KPI ORG_UNIT explicit excuse and correction-history route contracts stay O
     kpiPlanId: created.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "06-05-2026",
+    actualDate: "2026-05-06",
     status: "NOT_REQUIRED",
     reasonCode: "NO_OPERATION_REQUIRED",
     reasonText: "No operation required",
@@ -3429,7 +3429,7 @@ test("KPI ORG_UNIT explicit excuse and correction-history route contracts stay O
     body: {
       allocationId: "not-used",
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       status: "EXCUSED",
       reasonCode: "OTHER",
       reasonText: "not used",
@@ -3889,7 +3889,7 @@ test("KPI ORG_UNIT published allocation enables actuals and excuses with Employm
   });
   const emptyGrid = await service.getKpiActualDailyGrid(actor, {
     kpiPlanId: created.id,
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
   });
   assert.equal(emptyProgress.plan.subjectType, "ORG_UNIT");
   assert.deepEqual(emptyProgress.memberProgress, [
@@ -3913,14 +3913,14 @@ test("KPI ORG_UNIT published allocation enables actuals and excuses with Employm
     kpiPlanId: created.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     status: "EXCUSED",
     reasonCode: "OTHER",
     reasonText: "Blocked",
   });
   const excusedGrid = await service.getKpiActualDailyGrid(actor, {
     kpiPlanId: created.id,
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
   });
   assert.equal(
     excusedGrid.rows[0]?.metrics[0]?.dailyActualStatus,
@@ -3931,7 +3931,7 @@ test("KPI ORG_UNIT published allocation enables actuals and excuses with Employm
       kpiPlanId: created.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 1,
     }),
     KpiConflictError,
@@ -3945,7 +3945,7 @@ test("KPI ORG_UNIT published allocation enables actuals and excuses with Employm
     kpiPlanId: created.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 1,
   });
   assert.equal(actual.actualEntry.memberEmploymentProfileId, "org-profile-1");
@@ -3955,7 +3955,7 @@ test("KPI ORG_UNIT published allocation enables actuals and excuses with Employm
       kpiPlanId: created.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       status: "NOT_REQUIRED",
       reasonCode: "NO_OPERATION_REQUIRED",
       reasonText: "No operation",
@@ -3997,7 +3997,7 @@ test("KPI ORG_UNIT finalize writes finalResult from EmploymentProfile actuals wi
     kpiPlanId: created.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 100,
   });
 
@@ -4078,7 +4078,7 @@ test("KPI ORG_UNIT finalized finalResult route is manager-readable and scoped", 
     kpiPlanId: created.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 100,
   });
   now.value = JUNE_1_2026_NOON_HCM;
@@ -4585,7 +4585,7 @@ test("KPI V2 actual policy snapshot and actual lifecycle are enforced", async ()
     kpiPlanId: published.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
   assert.equal(created.actualEntry.effectiveValue, 80);
@@ -4674,7 +4674,7 @@ test("KPI V2 actual validation rejects invalid state, dates, and numeric values"
       kpiPlanId: draft.id,
       allocationId: "missing",
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 1,
     }),
     KpiStateError,
@@ -4687,7 +4687,7 @@ test("KPI V2 actual validation rejects invalid state, dates, and numeric values"
       kpiPlanId: published.id,
       allocationId: "missing",
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 1,
     }),
     KpiInvalidAllocationError,
@@ -4697,7 +4697,7 @@ test("KPI V2 actual validation rejects invalid state, dates, and numeric values"
       kpiPlanId: published.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "01-06-2026",
+      actualDate: "2026-06-01",
       actualValue: 1,
     }),
     KpiValidationError,
@@ -4707,7 +4707,7 @@ test("KPI V2 actual validation rejects invalid state, dates, and numeric values"
       kpiPlanId: published.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: "1000000" as unknown as number,
     }),
     KpiValidationError,
@@ -4717,24 +4717,24 @@ test("KPI V2 actual validation rejects invalid state, dates, and numeric values"
       kpiPlanId: published.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 1.5,
     }),
     KpiValidationError,
   );
 });
 
-test("KPI V2 actualDate requires strict DD-MM-YYYY calendar dates", async () => {
+test("KPI V2 actualDate requires strict YYYY-MM-DD calendar dates", async () => {
   const { service } = createHarness(() => MAY_5_2026_NOON_HCM);
   const published = await createPublishedGroupPlan(service);
   const allocation = published.allocations[0] as KpiAllocation;
 
   for (const actualDate of [
-    "31-04-2026",
-    "29-02-2026",
-    "01-13-2026",
-    "00-01-2026",
-    "2026-05-16",
+    "2026-04-31",
+    "2026-02-29",
+    "2026-13-01",
+    "2026-01-00",
+    "16-05-2026",
     "16/05/2026",
     "16-5-2026",
   ]) {
@@ -4751,7 +4751,7 @@ test("KPI V2 actualDate requires strict DD-MM-YYYY calendar dates", async () => 
   }
 });
 
-test("KPI V2 actualDate accepts leap day in DD-MM-YYYY within plan window", async () => {
+test("KPI V2 actualDate accepts leap day in YYYY-MM-DD within plan window", async () => {
   const { service } = createHarness(() => FEB_29_2028_NOON_HCM);
   const published = await createPublishedFebruary2028GroupPlan(service);
   const allocation = published.allocations[0] as KpiAllocation;
@@ -4760,11 +4760,11 @@ test("KPI V2 actualDate accepts leap day in DD-MM-YYYY within plan window", asyn
     kpiPlanId: published.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "29-02-2028",
+    actualDate: "2028-02-29",
     actualValue: 100,
   });
 
-  assert.equal(result.actualEntry.actualDate, "29-02-2028");
+  assert.equal(result.actualEntry.actualDate, "2028-02-29");
   assert.equal(result.actualEntry.effectiveValue, 100);
 });
 
@@ -4778,7 +4778,7 @@ test("KPI V2 direct actual window allows D 00:00 through D+1 10:00 inclusive", a
     kpiPlanId: published.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
   assert.equal(created.actualEntry.effectiveValue, 80);
@@ -4789,7 +4789,7 @@ test("KPI V2 direct actual window allows D 00:00 through D+1 10:00 inclusive", a
       kpiPlanId: published.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 80,
     });
     assert.equal(retry.actualEntry.id, created.actualEntry.id);
@@ -4801,7 +4801,7 @@ test("KPI V2 direct actual window allows D 00:00 through D+1 10:00 inclusive", a
       kpiPlanId: published.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 80,
     }),
     KpiStateError,
@@ -4819,10 +4819,10 @@ test("KPI V2 month-end actual remains in original period until D+1 10:00", async
     kpiPlanId: published.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "30-06-2026",
+    actualDate: "2026-06-30",
     actualValue: 100,
   });
-  assert.equal(created.actualEntry.actualDate, "30-06-2026");
+  assert.equal(created.actualEntry.actualDate, "2026-06-30");
   assert.equal(
     (await service.getKpiPlanDetail(createActor(), { kpiPlanId: published.id }))
       .periodMonth,
@@ -4851,7 +4851,7 @@ test("KPI V2 year-end direct actual window crosses into next year", async () => 
     kpiPlanId: published.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "31-12-2026",
+    actualDate: "2026-12-31",
     actualValue: 100,
   });
   assert.equal(created.actualEntry.effectiveValue, 100);
@@ -4876,7 +4876,7 @@ test("KPI V2 duplicate POST is idempotent only inside the direct window", async 
     kpiPlanId: published.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
   const auditCountAfterCreate = audit.records.length;
@@ -4887,7 +4887,7 @@ test("KPI V2 duplicate POST is idempotent only inside the direct window", async 
       kpiPlanId: published.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 80,
     }),
     KpiStateError,
@@ -4898,7 +4898,7 @@ test("KPI V2 duplicate POST is idempotent only inside the direct window", async 
       kpiPlanId: published.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 81,
     }),
     KpiStateError,
@@ -4928,14 +4928,14 @@ test("KPI V2 progress sums effective values, can exceed 100%, and tracks missing
     kpiPlanId: published.id,
     allocationId: first.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 120,
   });
   await service.createOrSetKpiActual(createActor(), {
     kpiPlanId: published.id,
     allocationId: second.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 250,
   });
   now.value = MAY_5_2026_AFTER_LOCK_HCM;
@@ -4970,7 +4970,7 @@ test("KPI V2 treats TikTok Diamond as supporting operational count, not revenue"
       kpiPlanId: published.id,
       allocationId: first.id,
       metricCode: "TIKTOK_DIAMOND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 1.5,
     }),
     /TIKTOK_DIAMOND requires an integer actual value/,
@@ -4980,14 +4980,14 @@ test("KPI V2 treats TikTok Diamond as supporting operational count, not revenue"
     kpiPlanId: published.id,
     allocationId: first.id,
     metricCode: "TIKTOK_DIAMOND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 500,
   });
   await service.createOrSetKpiActual(createActor(), {
     kpiPlanId: published.id,
     allocationId: second.id,
     metricCode: "TIKTOK_DIAMOND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 300,
   });
 
@@ -5070,14 +5070,14 @@ test("KPI V2 daily actual grid rejects missing actualDate", async () => {
   );
 });
 
-test("KPI V2 daily actual grid rejects YYYY-MM-DD actualDate", async () => {
+test("KPI V2 daily actual grid rejects legacy DD-MM-YYYY actualDate", async () => {
   const { service } = createHarness();
   const published = await createPublishedGroupPlan(service);
 
   await assert.rejects(
     service.getKpiActualDailyGrid(createActor(), {
       kpiPlanId: published.id,
-      actualDate: "2026-05-05",
+      actualDate: "05-05-2026",
     }),
     KpiValidationError,
   );
@@ -5090,7 +5090,7 @@ test("KPI V2 daily actual grid rejects invalid calendar actualDate", async () =>
   await assert.rejects(
     service.getKpiActualDailyGrid(createActor(), {
       kpiPlanId: published.id,
-      actualDate: "31-02-2026",
+      actualDate: "2026-02-31",
     }),
     KpiValidationError,
   );
@@ -5103,7 +5103,7 @@ test("KPI V2 daily actual grid rejects actualDate outside plan period", async ()
   await assert.rejects(
     service.getKpiActualDailyGrid(createActor(), {
       kpiPlanId: published.id,
-      actualDate: "01-06-2026",
+      actualDate: "2026-06-01",
     }),
     KpiValidationError,
   );
@@ -5116,11 +5116,11 @@ test("KPI V2 daily actual grid returns missing cells with zero effective value",
 
   const grid = await service.getKpiActualDailyGrid(createActor(), {
     kpiPlanId: published.id,
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
   });
 
   assert.equal(grid.kpiPlanId, published.id);
-  assert.equal(grid.actualDate, "05-05-2026");
+  assert.equal(grid.actualDate, "2026-05-05");
   assert.equal(grid.editability.isDirectEditOpen, true);
   assert.equal(grid.rows.length, 2);
   assert.equal(grid.rows[0]?.metrics[0]?.actualEntryId, null);
@@ -5146,27 +5146,27 @@ test("KPI daily actual status distinguishes timing and entered values", async ()
 
   let grid = await service.getKpiActualDailyGrid(createActor(), {
     kpiPlanId: published.id,
-    actualDate: "06-05-2026",
+    actualDate: "2026-05-06",
   });
   assert.equal(grid.rows[0]?.metrics[0]?.dailyActualStatus, "NOT_DUE");
 
   grid = await service.getKpiActualDailyGrid(createActor(), {
     kpiPlanId: published.id,
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
   });
   assert.equal(grid.rows[0]?.metrics[0]?.dailyActualStatus, "DUE_OPEN");
 
   now.value = MAY_6_2026_10_00_HCM;
   grid = await service.getKpiActualDailyGrid(createActor(), {
     kpiPlanId: published.id,
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
   });
   assert.equal(grid.rows[0]?.metrics[0]?.dailyActualStatus, "DUE_OPEN");
 
   now.value = MAY_5_2026_AFTER_LOCK_HCM;
   grid = await service.getKpiActualDailyGrid(createActor(), {
     kpiPlanId: published.id,
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
   });
   assert.equal(grid.rows[0]?.metrics[0]?.dailyActualStatus, "OVERDUE");
 
@@ -5175,20 +5175,20 @@ test("KPI daily actual status distinguishes timing and entered values", async ()
     kpiPlanId: published.id,
     allocationId: first.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 10,
   });
   await service.createOrSetKpiActual(createActor(), {
     kpiPlanId: published.id,
     allocationId: second.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 0,
   });
 
   grid = await service.getKpiActualDailyGrid(createActor(), {
     kpiPlanId: published.id,
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
   });
   assert.equal(grid.rows[0]?.metrics[0]?.dailyActualStatus, "ENTERED");
   assert.equal(grid.rows[1]?.metrics[0]?.dailyActualStatus, "ENTERED_ZERO");
@@ -5212,7 +5212,7 @@ test("KPI V2 daily actual grid returns existing actual entry identity and effect
     kpiPlanId: published.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
   await service.updateKpiActualDirect(createActor(), {
@@ -5223,7 +5223,7 @@ test("KPI V2 daily actual grid returns existing actual entry identity and effect
 
   const grid = await service.getKpiActualDailyGrid(createActor(), {
     kpiPlanId: published.id,
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
   });
   const cell = grid.rows[0]?.metrics.find(
     (metric) => metric.metricCode === "REVENUE_VND",
@@ -5255,7 +5255,7 @@ test("KPI actual excuses mark, unmark, summarize, and block ambiguous actuals", 
     kpiPlanId: published.id,
     allocationId: first.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     status: "EXCUSED",
     reasonCode: "MEMBER_LEAVE",
     reasonText: "Approved leave",
@@ -5264,7 +5264,7 @@ test("KPI actual excuses mark, unmark, summarize, and block ambiguous actuals", 
     kpiPlanId: published.id,
     allocationId: second.id,
     metricCode: "ONBOARDED_TALENT_COUNT",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     status: "NOT_REQUIRED",
     reasonCode: "NO_OPERATION_REQUIRED",
     reasonText: "No onboarding scheduled",
@@ -5272,7 +5272,7 @@ test("KPI actual excuses mark, unmark, summarize, and block ambiguous actuals", 
 
   let grid = await service.getKpiActualDailyGrid(createActor(), {
     kpiPlanId: published.id,
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
   });
   const excusedCell = grid.rows[0]?.metrics.find(
     (metric) => metric.metricCode === "REVENUE_VND",
@@ -5305,7 +5305,7 @@ test("KPI actual excuses mark, unmark, summarize, and block ambiguous actuals", 
       kpiPlanId: published.id,
       allocationId: first.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 80,
     }),
     KpiConflictError,
@@ -5326,7 +5326,7 @@ test("KPI actual excuses mark, unmark, summarize, and block ambiguous actuals", 
     kpiPlanId: published.id,
     allocationId: first.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
   await assert.rejects(
@@ -5334,7 +5334,7 @@ test("KPI actual excuses mark, unmark, summarize, and block ambiguous actuals", 
       kpiPlanId: published.id,
       allocationId: first.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       status: "EXCUSED",
       reasonCode: "MEMBER_LEAVE",
       reasonText: "Already entered",
@@ -5345,7 +5345,7 @@ test("KPI actual excuses mark, unmark, summarize, and block ambiguous actuals", 
 
   grid = await service.getKpiActualDailyGrid(createActor(), {
     kpiPlanId: published.id,
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
   });
   assert.equal(grid.rows[0]?.metrics[0]?.dailyActualStatus, "ENTERED");
   assert.ok(
@@ -5382,7 +5382,7 @@ test("KPI actual excuses validate authority, slot shape, lifecycle, and body fie
       kpiPlanId: draft.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       status: "EXCUSED",
       reasonCode: "MEMBER_LEAVE",
       reasonText: "Draft plan",
@@ -5394,7 +5394,7 @@ test("KPI actual excuses validate authority, slot shape, lifecycle, and body fie
       kpiPlanId: published.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       status: "EXCUSED",
       reasonCode: "MEMBER_LEAVE",
       reasonText: "No assignment",
@@ -5408,7 +5408,7 @@ test("KPI actual excuses validate authority, slot shape, lifecycle, and body fie
       kpiPlanId: published.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       status: "EXCUSED",
       reasonCode: "MEMBER_LEAVE",
       reasonText: "No scope",
@@ -5420,7 +5420,7 @@ test("KPI actual excuses validate authority, slot shape, lifecycle, and body fie
       kpiPlanId: published.id,
       allocationId: allocation.id,
       metricCode: "LIVE_HOURS",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       status: "EXCUSED",
       reasonCode: "MEMBER_LEAVE",
       reasonText: "Not targeted",
@@ -5432,7 +5432,7 @@ test("KPI actual excuses validate authority, slot shape, lifecycle, and body fie
       kpiPlanId: published.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "01-06-2026",
+      actualDate: "2026-06-01",
       status: "EXCUSED",
       reasonCode: "MEMBER_LEAVE",
       reasonText: "Outside",
@@ -5450,7 +5450,7 @@ test("KPI actual excuses validate authority, slot shape, lifecycle, and body fie
       kpiPlanId: published.id,
       allocationId: draftAllocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       status: "EXCUSED",
       reasonCode: "MEMBER_LEAVE",
       reasonText: "Draft allocation",
@@ -5462,7 +5462,7 @@ test("KPI actual excuses validate authority, slot shape, lifecycle, and body fie
     body: {
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       status: "EXCUSED",
       reasonCode: "MEMBER_LEAVE",
       reasonText: "Unknown field",
@@ -5486,7 +5486,7 @@ test("KPI V2 daily actual grid includes correction summary after correction", as
     kpiPlanId: published.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
   now.value = MAY_5_2026_AFTER_LOCK_HCM;
@@ -5499,7 +5499,7 @@ test("KPI V2 daily actual grid includes correction summary after correction", as
 
   const grid = await service.getKpiActualDailyGrid(createActor(), {
     kpiPlanId: published.id,
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
   });
   const cell = grid.rows[0]?.metrics.find(
     (metric) => metric.metricCode === "REVENUE_VND",
@@ -5520,7 +5520,7 @@ test("KPI V2 daily actual grid editability is false for FINALIZED plan", async (
 
   const grid = await service.getKpiActualDailyGrid(createActor(), {
     kpiPlanId: published.id,
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
   });
 
   assert.equal(grid.editability.isDirectEditOpen, false);
@@ -5539,7 +5539,7 @@ test("KPI V2 backoffice TEAM_MANAGER may read actual grid for managed published 
     createProgressReadOnlyBackofficeTeamManagerActor(),
     {
       kpiPlanId: published.id,
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
     },
   );
 
@@ -5568,7 +5568,7 @@ test("KPI V2 manager needs managedGroup scope in addition to group mapping", asy
   await assert.rejects(
     service.getKpiActualDailyGrid(createManagerActorWithoutKpiScope(), {
       kpiPlanId: published.id,
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
     }),
     KpiPermissionScopeError,
   );
@@ -5581,7 +5581,7 @@ test("KPI V2 actual grid fails closed for manager without group mapping", async 
   await assert.rejects(
     service.getKpiActualDailyGrid(createManagerActor(), {
       kpiPlanId: published.id,
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
     }),
     KpiPermissionScopeError,
   );
@@ -5604,7 +5604,7 @@ test("KPI actual grid managed read denies missing permission, scope, profile, as
   const readGrid = (actor: Actor, kpiPlanId = published.id) =>
     service.getKpiActualDailyGrid(actor, {
       kpiPlanId,
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
     });
 
   seedManagerAssignment(managerRepository);
@@ -5808,7 +5808,7 @@ test("KPI read-progress manager can read actual grid and managed correction hist
     kpiPlanId: published.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
 
@@ -5817,14 +5817,14 @@ test("KPI read-progress manager can read actual grid and managed correction hist
       kpiPlanId: published.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 90,
     }),
     /Missing permission kpi.enterActual/u,
   );
   const grid = await service.getKpiActualDailyGrid(managerActor, {
     kpiPlanId: published.id,
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
   });
   assert.equal(grid.rows.length, 2);
   const history = await service.listKpiActualCorrections(managerActor, {
@@ -6205,7 +6205,7 @@ test("KPI V2 talent with self scope can read own progress but not full grid", as
   await assert.rejects(
     service.getKpiActualDailyGrid(createTalentActor(), {
       kpiPlanId: published.id,
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
     }),
     KpiPermissionScopeError,
   );
@@ -6221,7 +6221,7 @@ test("KPI V2 read-only KPI roles cannot mutate actuals", async () => {
       kpiPlanId: published.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 80,
     }),
     /Missing permission kpi.enterActual/u,
@@ -6236,7 +6236,7 @@ test("KPI V2 correction history rejects actual entry outside plan", async () => 
     kpiPlanId: firstPlan.id,
     allocationId: firstAllocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
   const secondPlan = await createPublishedGroupPlan(service);
@@ -6259,7 +6259,7 @@ test("KPI V2 correction history returns corrections ordered by correctedAt", asy
     kpiPlanId: published.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
   now.value = MAY_5_2026_AFTER_LOCK_HCM + 2;
@@ -6299,7 +6299,7 @@ test("KPI correction rejects the direct-edit window through exact cutoff and all
     kpiPlanId: published.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
 
@@ -6371,7 +6371,7 @@ test("KPI backoffice TEAM_MANAGER can correct and read managed history only unde
     kpiPlanId: published.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
   now.value = MAY_5_2026_AFTER_LOCK_HCM;
@@ -6486,7 +6486,7 @@ test("KPI correction rejects stale entry mismatches, invalid allocation state, a
     kpiPlanId: published.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
   now.value = MAY_5_2026_AFTER_LOCK_HCM;
@@ -6512,7 +6512,7 @@ test("KPI correction rejects stale entry mismatches, invalid allocation state, a
 
   actualRepository.entries[entryIndex] = {
     ...originalEntry,
-    actualDate: "01-06-2026",
+    actualDate: "2026-06-01",
   };
   await assert.rejects(correct(), KpiValidationError);
   actualRepository.entries[entryIndex] = {
@@ -6548,7 +6548,7 @@ test("KPI correction rejects stale entry mismatches, invalid allocation state, a
     kpiPlanId: published.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     status: "EXCUSED",
     reasonCode: "MEMBER_LEAVE",
     reasonText: "Approved leave",
@@ -6638,7 +6638,7 @@ test("KPI V2 manual finalize rejects during closing window and allows after D+1 
     kpiPlanId: published.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
 
@@ -6667,7 +6667,7 @@ test("KPI V2 manual finalize rejects during closing window and allows after D+1 
       kpiPlanId: published.id,
       allocationId: allocation.id,
       metricCode: "ONBOARDED_TALENT_COUNT",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 0,
     }),
     KpiStateError,
@@ -6709,14 +6709,14 @@ test("KPI V2 finalize persists operational final result snapshot", async () => {
     kpiPlanId: published.id,
     allocationId: updatedFirstAllocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
   await service.createOrSetKpiActual(createActor(), {
     kpiPlanId: published.id,
     allocationId: secondAllocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 0,
   });
 
@@ -6731,7 +6731,7 @@ test("KPI V2 finalize persists operational final result snapshot", async () => {
     kpiPlanId: published.id,
     allocationId: updatedFirstAllocation.id,
     metricCode: "ONBOARDED_TALENT_COUNT",
-    actualDate: "06-05-2026",
+    actualDate: "2026-05-06",
     status: "EXCUSED",
     reasonCode: "MEMBER_LEAVE",
     reasonText: "Approved leave before close",
@@ -6740,7 +6740,7 @@ test("KPI V2 finalize persists operational final result snapshot", async () => {
     kpiPlanId: published.id,
     allocationId: secondAllocation.id,
     metricCode: "ONBOARDED_TALENT_COUNT",
-    actualDate: "06-05-2026",
+    actualDate: "2026-05-06",
     status: "NOT_REQUIRED",
     reasonCode: "NO_OPERATION_REQUIRED",
     reasonText: "No operation required before close",
@@ -6768,7 +6768,7 @@ test("KPI V2 finalize persists operational final result snapshot", async () => {
       memberTalentId: requireTestAllocationMemberTalentId(
         nonPublishedAllocation,
       ),
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 700,
       effectiveValue: 700,
     },
@@ -6779,14 +6779,14 @@ test("KPI V2 finalize persists operational final result snapshot", async () => {
       memberTalentId: requireTestAllocationMemberTalentId(
         wrongGroupAllocation,
       ),
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 500,
       effectiveValue: 500,
     },
     {
       ...created.actualEntry,
       id: "actual-out-of-period-final-snapshot",
-      actualDate: "01-06-2026",
+      actualDate: "2026-06-01",
       actualValue: 999,
       effectiveValue: 999,
     },
@@ -6967,7 +6967,7 @@ test("KPI V2 backoffice TEAM_MANAGER may create, direct-update, and post-cutoff 
     kpiPlanId: published.id,
     allocationId: allocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 0,
   });
   const updated = await service.updateKpiActualDirect(managerActor, {
@@ -7011,7 +7011,7 @@ test("KPI managed actual entry denies cutoff, unmanaged, non-published allocatio
       kpiPlanId: published.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 80,
     }),
     KpiStateError,
@@ -7025,7 +7025,7 @@ test("KPI managed actual entry denies cutoff, unmanaged, non-published allocatio
       kpiPlanId: published.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 80,
     }),
     KpiPermissionScopeError,
@@ -7043,7 +7043,7 @@ test("KPI managed actual entry denies cutoff, unmanaged, non-published allocatio
       kpiPlanId: published.id,
       allocationId: draftAllocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 80,
     }),
     KpiInvalidAllocationError,
@@ -7058,7 +7058,7 @@ test("KPI managed actual entry denies cutoff, unmanaged, non-published allocatio
       kpiPlanId: draftPlan.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 80,
     }),
     KpiStateError,
@@ -7071,7 +7071,7 @@ test("KPI managed actual entry denies cutoff, unmanaged, non-published allocatio
         kpiPlanId: published.id,
         allocationId: allocation.id,
         metricCode: "REVENUE_VND",
-        actualDate: "05-05-2026",
+        actualDate: "2026-05-05",
         actualValue: 80,
       },
     ),
@@ -7698,21 +7698,21 @@ test("KPI actual workspace exposes correction-aware revenue, coverage, limited m
     kpiPlanId: published.id,
     allocationId: first.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 80,
   });
   await service.createOrSetKpiActual(createActor(), {
     kpiPlanId: published.id,
     allocationId: second.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 100,
   });
   await service.createOrSetKpiActual(createActor(), {
     kpiPlanId: published.id,
     allocationId: first.id,
     metricCode: "ONBOARDED_TALENT_COUNT",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 1,
   });
   now.value = MAY_5_2026_AFTER_LOCK_HCM;
@@ -7753,7 +7753,7 @@ test("KPI actual workspace exposes correction-aware revenue, coverage, limited m
     {
       ...created.actualEntry,
       id: "out-of-period-actual-ignored",
-      actualDate: "01-06-2026",
+      actualDate: "2026-06-01",
       effectiveValue: 999,
     },
     {
@@ -7957,7 +7957,7 @@ test("KPI actual workspace sorts revenueActual before cursor and page selection"
       kpiPlanId: plan.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: value,
     });
   };
@@ -7985,7 +7985,7 @@ test("KPI actual workspace sorts revenueActual before cursor and page selection"
       id: "derived-out-of-period-actual-ignored",
       kpiPlanId: low.id,
       allocationId: lowAllocation.id,
-      actualDate: "01-06-2026",
+      actualDate: "2026-06-01",
       effectiveValue: 999,
     },
     {
@@ -8058,7 +8058,7 @@ test("KPI actual workspace sorts achievementPercent with nulls last both directi
       kpiPlanId: plan.id,
       allocationId: allocation.id,
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: value,
     });
   };
@@ -8123,7 +8123,7 @@ test("KPI managed actual workspace derived sort does not leak hidden plans or cu
     kpiPlanId: managed.id,
     allocationId: managedAllocation.id,
     metricCode: "REVENUE_VND",
-    actualDate: "05-05-2026",
+    actualDate: "2026-05-05",
     actualValue: 10,
   });
   actualRepository.entries.push({
@@ -8485,7 +8485,7 @@ test("KPI managed actual workspace prevents hidden group summary and detail leak
         requireTestAllocationMemberEmploymentProfileId(visibleAllocation),
       memberTalentId: requireTestAllocationMemberTalentId(visibleAllocation),
       metricCode: "TIKTOK_DIAMOND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 999,
       effectiveValue: 999,
       editCount: 0,
@@ -8506,7 +8506,7 @@ test("KPI managed actual workspace prevents hidden group summary and detail leak
         requireTestAllocationMemberEmploymentProfileId(templateAllocation),
       memberTalentId: requireTestAllocationMemberTalentId(templateAllocation),
       metricCode: "REVENUE_VND",
-      actualDate: "05-05-2026",
+      actualDate: "2026-05-05",
       actualValue: 999,
       effectiveValue: 999,
       editCount: 0,
@@ -8590,19 +8590,19 @@ test("KPI actual workspace status booleans use accepted daily status AND semanti
     repository,
     actualRepository,
     overdueOnly.id,
-    ["05-05-2026"],
+    ["2026-05-05"],
   );
   seedOfficialActualEntriesForDates(
     repository,
     actualRepository,
     pendingOnly.id,
-    ["01-05-2026", "02-05-2026", "03-05-2026", "04-05-2026"],
+    ["2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04"],
   );
   seedOfficialActualEntriesForDates(
     repository,
     actualRepository,
     neither.id,
-    ["01-05-2026", "02-05-2026", "03-05-2026", "04-05-2026", "05-05-2026"],
+    ["2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05"],
     0,
   );
 
@@ -8633,13 +8633,13 @@ test("KPI actual workspace status booleans ignore future, EXCUSED, and NOT_REQUI
   const exempted = await createPublishedGroupPlan(service);
   const future = await createPublishedJune2026GroupPlan(service);
   seedOfficialActualEntriesForDates(repository, actualRepository, exempted.id, [
-    "01-05-2026",
-    "02-05-2026",
-    "03-05-2026",
-    "04-05-2026",
+    "2026-05-01",
+    "2026-05-02",
+    "2026-05-03",
+    "2026-05-04",
   ]);
-  seedOfficialActualExcusesForDate(repository, exempted.id, "05-05-2026");
-  seedOfficialActualExcusesForDate(repository, exempted.id, "06-05-2026");
+  seedOfficialActualExcusesForDate(repository, exempted.id, "2026-05-05");
+  seedOfficialActualExcusesForDate(repository, exempted.id, "2026-05-06");
 
   const neither = await service.listKpiActualWorkspacePlans(createActor(), {
     hasOverdueActuals: false,
@@ -8676,10 +8676,10 @@ test("KPI actual workspace status booleans respect the D+1 10:00 HCM cutoff", as
   );
   const plan = await createPublishedGroupPlan(service);
   seedOfficialActualEntriesForDates(repository, actualRepository, plan.id, [
-    "01-05-2026",
-    "02-05-2026",
-    "03-05-2026",
-    "04-05-2026",
+    "2026-05-01",
+    "2026-05-02",
+    "2026-05-03",
+    "2026-05-04",
   ]);
 
   assert.deepEqual(
@@ -8820,10 +8820,10 @@ test("KPI managed actual workspace status booleans ignore hidden group and wrong
     createHarness(() => MAY_5_2026_NOON_HCM);
   const managed = await createPublishedGroupPlan(service);
   seedOfficialActualEntriesForDates(repository, actualRepository, managed.id, [
-    "01-05-2026",
-    "02-05-2026",
-    "03-05-2026",
-    "04-05-2026",
+    "2026-05-01",
+    "2026-05-02",
+    "2026-05-03",
+    "2026-05-04",
   ]);
   const managedAllocations = repository.allocations.filter(
     (allocation) => allocation.kpiPlanId === managed.id,
@@ -10767,13 +10767,13 @@ function isTestActualEntryWithinPlanPeriod(
   plan: KpiPlan,
   actualDate: string,
 ): boolean {
-  const match = /^(\d{2})-(\d{2})-(\d{4})$/.exec(actualDate);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(actualDate);
   if (!match) {
     return false;
   }
-  const day = Number(match[1]);
+  const year = Number(match[1]);
   const month = Number(match[2]);
-  const year = Number(match[3]);
+  const day = Number(match[3]);
   const startAt = Date.UTC(year, month - 1, day, -7, 0, 0, 0);
   const endAt = Date.UTC(year, month - 1, day + 1, -7, 0, 0, 0) - 1;
   return startAt >= plan.periodStartAt && endAt <= plan.periodEndAt;
