@@ -22,6 +22,7 @@ import {
   StructuredLogger,
 } from "@infra/logger.adapter";
 import {
+  assertRosterMonthWithinPlanningWindow,
   assertWorkScheduleDateOnlyWithinRosterMonth,
   normalizeWorkScheduleDateOnly,
 } from "@modules/work-schedule/domain/work-schedule-date";
@@ -159,6 +160,7 @@ export class MonthlyRosterAdminService {
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
     private readonly logger: StructuredLogger = createStructuredLogger(),
+    private readonly now: () => number = Date.now,
   ) {}
 
   async createMonthlyRosterDraft(
@@ -173,6 +175,10 @@ export class MonthlyRosterAdminService {
     );
     const input =
       normalizeCreateMonthlyRosterDraftCommand(command);
+    assertRosterMonthWithinPlanningWindow(
+      input.rosterMonth,
+      this.now(),
+    );
 
     return this.executeMutation(
       actor,
@@ -359,6 +365,15 @@ export class MonthlyRosterAdminService {
           current.departmentOrgUnitId;
         const candidateRosterMonth =
           input.rosterMonth ?? current.rosterMonth;
+        if (
+          input.rosterMonth !== undefined &&
+          candidateRosterMonth !== current.rosterMonth
+        ) {
+          assertRosterMonthWithinPlanningWindow(
+            candidateRosterMonth,
+            this.now(),
+          );
+        }
         const candidateWorkPatternId =
           input.workPatternId ??
           current.workPatternId;
@@ -607,6 +622,10 @@ export class MonthlyRosterAdminService {
         }
 
         assertDraftRoster(current);
+        assertRosterMonthWithinPlanningWindow(
+          current.rosterMonth,
+          this.now(),
+        );
 
         if (!input.expectedPreviewHash) {
           throw new WorkScheduleValidationError(
@@ -1669,94 +1688,30 @@ export class MonthlyRosterAdminService {
   private async resolveRosterScopeForDepartment(
     actor: Actor,
     requestedScope: WorkShiftScope | undefined,
-    departmentOrgUnitId: string,
-    session: ClientSession,
-  ): Promise<"department" | "global"> {
-    if (requestedScope) {
-      if (
-        requestedScope !== "department" &&
-        requestedScope !== "global"
-      ) {
-        throw new WorkSchedulePermissionScopeError(
-          "Monthly Roster supports only department or global Work Schedule scope in MVP-A",
-        );
-      }
-
-      if (
-        !PermissionGuard.hasWorkScheduleScopeGrant(
-          actor,
-          requestedScope,
-        )
-      ) {
-        throw new WorkSchedulePermissionScopeError(
-          `Scope ${requestedScope} is not authorized for actor`,
-        );
-      }
-
-      if (requestedScope === "department") {
-        await this.assertActorDepartmentScope(
-          actor,
-          departmentOrgUnitId,
-          session,
-        );
-      }
-
-      return requestedScope;
+    _departmentOrgUnitId: string,
+    _session: ClientSession,
+  ): Promise<"global"> {
+    if (
+      requestedScope !== undefined &&
+      requestedScope !== "global"
+    ) {
+      throw new WorkSchedulePermissionScopeError(
+        "Admin Monthly Roster operations require workSchedule.global scope",
+      );
     }
 
     if (
-      PermissionGuard.hasWorkScheduleScopeGrant(
+      !PermissionGuard.hasWorkScheduleScopeGrant(
         actor,
         "global",
       )
     ) {
-      return "global";
-    }
-
-    if (
-      PermissionGuard.hasWorkScheduleScopeGrant(
-        actor,
-        "department",
-      )
-    ) {
-      await this.assertActorDepartmentScope(
-        actor,
-        departmentOrgUnitId,
-        session,
-      );
-      return "department";
-    }
-
-    throw new WorkSchedulePermissionScopeError(
-      "Monthly Roster requires department or global Work Schedule scope",
-    );
-  }
-
-  private async assertActorDepartmentScope(
-    actor: Actor,
-    departmentOrgUnitId: string,
-    session: ClientSession,
-  ): Promise<void> {
-    const actorProfile =
-      await this.employmentProfileReadonlyAccess.findByLinkedUserId(
-        actor.id,
-        session,
-      );
-
-    if (!actorProfile) {
       throw new WorkSchedulePermissionScopeError(
-        "Actor-linked Employment Profile is required for department roster scope",
+        "Admin Monthly Roster operations require workSchedule.global scope",
       );
     }
 
-    if (
-      actorProfile.employmentStatus !== "ACTIVE" ||
-      actorProfile.orgUnitId !== departmentOrgUnitId
-    ) {
-      throw new WorkSchedulePermissionScopeError(
-        "Department roster scope can target only the actor's exact current department",
-      );
-    }
+    return "global";
   }
 
   private async recordAudit(params: {
@@ -2778,29 +2733,25 @@ function normalizeStudioResourceIds(
 
 function parseRequestedScope(
   value: unknown,
-): WorkShiftScope | undefined {
+): "global" | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   if (typeof value !== "string") {
-    throw new WorkScheduleValidationError(
-      "scope must be one of self, team, department, global",
+    throw new WorkSchedulePermissionScopeError(
+      "Admin Monthly Roster operations require workSchedule.global scope",
     );
   }
 
   const normalized = value.trim().toLowerCase();
 
-  if (
-    ["self", "team", "department", "global"].includes(
-      normalized,
-    )
-  ) {
-    return normalized as WorkShiftScope;
+  if (normalized === "global") {
+    return "global";
   }
 
-  throw new WorkScheduleValidationError(
-    "scope must be one of self, team, department, global",
+  throw new WorkSchedulePermissionScopeError(
+    "Admin Monthly Roster operations require workSchedule.global scope",
   );
 }
 

@@ -5,6 +5,8 @@ import { Permission } from "@core/permission/permission.enum";
 import { NativeMongoMonthlyRosterReadRepository } from "@infra/mongo/work-schedule/monthly-roster.read-repository";
 import { NativeMongoWorkShiftReadRepository } from "@infra/mongo/work-schedule/work-schedule.read-repository";
 import { MonthlyRosterAdminQueryService } from "@modules/work-schedule/admin/admin.monthly-roster.query-service";
+import { assertRosterMonthWithinPlanningWindow } from "@modules/work-schedule/domain/work-schedule-date";
+import { WorkScheduleValidationError } from "@modules/work-schedule/domain/work-schedule.errors";
 import {
   MonthlyRosterAdminExposure,
   WorkScheduleAdminDetailExposure,
@@ -15,6 +17,37 @@ type FindCall = {
   readonly query: unknown;
   readonly options: unknown;
 };
+
+test("Monthly Roster planning window allows current month plus two and rejects past or month three", () => {
+  const now = Date.parse("2026-05-15T00:00:00.000Z");
+
+  for (const rosterMonth of [
+    "2026-05",
+    "2026-06",
+    "2026-07",
+  ]) {
+    assert.doesNotThrow(() =>
+      assertRosterMonthWithinPlanningWindow(
+        rosterMonth,
+        now,
+      ),
+    );
+  }
+
+  for (const rosterMonth of [
+    "2026-04",
+    "2026-08",
+  ]) {
+    assert.throws(
+      () =>
+        assertRosterMonthWithinPlanningWindow(
+          rosterMonth,
+          now,
+        ),
+      WorkScheduleValidationError,
+    );
+  }
+});
 
 const workShift = {
   _id: "shift-1",

@@ -1,5 +1,7 @@
 import { WorkScheduleValidationError } from "./work-schedule.errors";
 
+const VIETNAM_UTC_OFFSET_MILLISECONDS = 7 * 60 * 60 * 1000;
+
 export function normalizeWorkScheduleDateOnly(
   value: unknown,
   field: string,
@@ -79,4 +81,41 @@ export function assertWorkScheduleDateOnlyWithinRosterMonth(
   }
 
   return normalized;
+}
+
+export function assertRosterMonthWithinPlanningWindow(
+  rosterMonth: string,
+  now: number = Date.now(),
+): void {
+  const currentMonth = toVietnamRosterMonth(now);
+  const latestMonth = addRosterMonths(currentMonth, 2);
+
+  if (
+    rosterMonth < currentMonth ||
+    rosterMonth > latestMonth
+  ) {
+    throw new WorkScheduleValidationError(
+      `rosterMonth must be between current month ${currentMonth} and ${latestMonth}`,
+    );
+  }
+}
+
+function toVietnamRosterMonth(timestamp: number): string {
+  const date = new Date(
+    timestamp + VIETNAM_UTC_OFFSET_MILLISECONDS,
+  );
+
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function addRosterMonths(
+  rosterMonth: string,
+  monthOffset: number,
+): string {
+  const [year, month] = rosterMonth.split("-").map(Number);
+  const date = new Date(
+    Date.UTC(year, month - 1 + monthOffset, 1),
+  );
+
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }

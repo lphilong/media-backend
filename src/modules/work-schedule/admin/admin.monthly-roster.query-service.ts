@@ -251,83 +251,26 @@ export class MonthlyRosterAdminQueryService {
 
   private async assertRosterReadScope(
     actor: Actor,
-    requestedScope: "department" | "global" | undefined,
-    departmentOrgUnitId: string | undefined,
+    requestedScope: "global" | undefined,
+    _departmentOrgUnitId: string | undefined,
   ): Promise<void> {
-    if (requestedScope) {
-      if (
-        !PermissionGuard.hasWorkScheduleScopeGrant(
-          actor,
-          requestedScope,
-        )
-      ) {
-        throw new WorkSchedulePermissionScopeError(
-          `Scope ${requestedScope} is not authorized for actor`,
-        );
-      }
-
-      if (
-        requestedScope === "department"
-      ) {
-        if (!departmentOrgUnitId) {
-          throw new WorkSchedulePermissionScopeError(
-            "Department Monthly Roster read scope requires departmentOrgUnitId",
-          );
-        }
-
-        await this.assertActorDepartment(
-          actor,
-          departmentOrgUnitId,
-        );
-      }
-
-      return;
+    if (
+      requestedScope !== undefined &&
+      requestedScope !== "global"
+    ) {
+      throw new WorkSchedulePermissionScopeError(
+        "Admin Monthly Roster reads require workSchedule.global scope",
+      );
     }
 
     if (
-      PermissionGuard.hasWorkScheduleScopeGrant(
+      !PermissionGuard.hasWorkScheduleScopeGrant(
         actor,
         "global",
       )
     ) {
-      return;
-    }
-
-    if (
-      PermissionGuard.hasWorkScheduleScopeGrant(
-        actor,
-        "department",
-      ) &&
-      departmentOrgUnitId
-    ) {
-      await this.assertActorDepartment(
-        actor,
-        departmentOrgUnitId,
-      );
-      return;
-    }
-
-    throw new WorkSchedulePermissionScopeError(
-      "Monthly Roster read requires global scope or a department-scoped query for the actor's exact department",
-    );
-  }
-
-  private async assertActorDepartment(
-    actor: Actor,
-    departmentOrgUnitId: string,
-  ): Promise<void> {
-    const actorProfile =
-      await this.employmentProfileReadonlyAccess.findByLinkedUserId(
-        actor.id,
-      );
-
-    if (
-      !actorProfile ||
-      actorProfile.employmentStatus !== "ACTIVE" ||
-      actorProfile.orgUnitId !== departmentOrgUnitId
-    ) {
       throw new WorkSchedulePermissionScopeError(
-        "Department roster scope can read only the actor's exact current department",
+        "Admin Monthly Roster reads require workSchedule.global scope",
       );
     }
   }
@@ -558,28 +501,25 @@ function normalizeRequiredText(
 
 function parseRequestedScope(
   value: unknown,
-): "department" | "global" | undefined {
+): "global" | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   if (typeof value !== "string") {
-    throw new WorkScheduleValidationError(
-      "scope must be department or global for Monthly Roster",
+    throw new WorkSchedulePermissionScopeError(
+      "Admin Monthly Roster reads require workSchedule.global scope",
     );
   }
 
   const normalized = value.trim().toLowerCase();
 
-  if (
-    normalized === "department" ||
-    normalized === "global"
-  ) {
-    return normalized;
+  if (normalized === "global") {
+    return "global";
   }
 
-  throw new WorkScheduleValidationError(
-    "scope must be department or global for Monthly Roster",
+  throw new WorkSchedulePermissionScopeError(
+    "Admin Monthly Roster reads require workSchedule.global scope",
   );
 }
 
