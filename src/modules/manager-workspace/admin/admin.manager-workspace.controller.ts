@@ -26,7 +26,10 @@ import {
   SubmitWorkScheduleRequestBatchCommand,
 } from "@modules/work-schedule/shared/work-schedule.contracts";
 import { WorkScheduleRequestBatchAdminService } from "@modules/work-schedule/admin/admin.work-schedule-request-batch.service";
-import { WorkScheduleAvailabilityBatchAdminService } from "@modules/work-schedule/admin/admin.work-schedule-availability-batch.service";
+import {
+  ManagerAvailabilityTargetMembersView,
+  WorkScheduleAvailabilityBatchAdminService,
+} from "@modules/work-schedule/admin/admin.work-schedule-availability-batch.service";
 import {
   WorkScheduleAvailabilityBatchView,
 } from "@modules/work-schedule/domain/work-schedule-availability.types";
@@ -42,6 +45,7 @@ import {
 type ManagerWorkspaceCommand =
   | "MANAGER_WORKSPACE_CONTEXT"
   | "MANAGER_WORKSPACE_LIST_WORK_SHIFTS"
+  | "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_MEMBERS"
   | "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_REQUEST_BATCH"
   | "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_REQUEST_BATCHES"
   | "MANAGER_WORKSPACE_GET_WORK_SCHEDULE_REQUEST_BATCH"
@@ -59,7 +63,8 @@ type ManagerWorkspaceResult =
   | WorkScheduleRequestBatchView
   | ListWorkScheduleRequestBatchesResult
   | WorkScheduleAvailabilityBatchView
-  | ListWorkScheduleAvailabilityBatchesResult;
+  | ListWorkScheduleAvailabilityBatchesResult
+  | ManagerAvailabilityTargetMembersView;
 
 const SUBMIT_BATCH_BODY_FIELDS = Object.freeze([
   "periodMonth",
@@ -108,6 +113,19 @@ export class ManagerWorkspaceAdminController extends SecureController {
         search: readOptionalQuery(req, "search"),
         cursor: readOptionalQuery(req, "cursor"),
       });
+    }
+
+    if (
+      command ===
+      "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_MEMBERS"
+    ) {
+      return this.workScheduleAvailabilityBatchService.listManagerTargetMembers(
+        actor,
+        {
+          targetType: readOptionalQuery(req, "targetType"),
+          targetId: readOptionalQuery(req, "targetId"),
+        },
+      );
     }
 
     if (

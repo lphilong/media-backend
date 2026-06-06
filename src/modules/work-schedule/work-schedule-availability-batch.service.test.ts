@@ -330,7 +330,7 @@ const profiles: Record<
   },
   "ep-inactive": {
     employmentStatus: "SUSPENDED",
-    orgUnitId: "org-other",
+    orgUnitId: "org-managed",
     managerEmploymentProfileId: null,
     linkedUserId: null,
     displayName: "Inactive Member",
@@ -370,7 +370,10 @@ const employmentAccess: WorkScheduleEmploymentProfileReadonlyAccess = {
   },
   async listByOrgUnitId(orgUnitId: string) {
     return orgUnitId === "org-managed"
-      ? [(await this.findById("ep-org"))!]
+      ? [
+          (await this.findById("ep-org"))!,
+          (await this.findById("ep-inactive"))!,
+        ]
       : orgUnitId === "org-child"
         ? [(await this.findById("ep-descendant"))!]
         : [];
@@ -399,6 +402,24 @@ const employmentAccess: WorkScheduleEmploymentProfileReadonlyAccess = {
         employmentProfile: null,
       },
       {
+        memberId: "member-duplicate-profile",
+        groupId,
+        talentId: "talent-duplicate-profile",
+        membershipStatus: "ACTIVE",
+        talentOperationalStatus: "ACTIVE",
+        linkedEmploymentProfileId: "ep-tg",
+        employmentProfile: await this.findById("ep-tg"),
+      },
+      {
+        memberId: "member-removed",
+        groupId,
+        talentId: "talent-removed",
+        membershipStatus: "REMOVED",
+        talentOperationalStatus: "ACTIVE",
+        linkedEmploymentProfileId: "ep-org",
+        employmentProfile: await this.findById("ep-org"),
+      },
+      {
         memberId: "member-inactive-talent",
         groupId,
         talentId: "talent-inactive",
@@ -422,7 +443,7 @@ const employmentAccess: WorkScheduleEmploymentProfileReadonlyAccess = {
 
 const orgUnitAccess: WorkScheduleOrgUnitReadonlyAccess = {
   async findById(id: string) {
-    return ["org-managed", "org-child"].includes(id)
+    return ["org-managed", "org-child", "org-empty"].includes(id)
       ? {
           id,
           type: "TEAM",
@@ -468,6 +489,22 @@ const orgAssignments: Pick<
             effectiveTo: null,
             status: "ACTIVE",
             isPrimary: true,
+            createdAt: 1,
+            createdByActorId: "seed",
+            updatedAt: 1,
+            updatedByActorId: "seed",
+          },
+          {
+            id: "org-empty-assignment",
+            orgUnitId: "org-empty",
+            managerEmploymentProfileId: managerId,
+            role: "UNIT_MANAGER",
+            includeDescendants: false,
+            actionMask: [],
+            effectiveFrom: 1,
+            effectiveTo: null,
+            status: "ACTIVE",
+            isPrimary: false,
             createdAt: 1,
             createdByActorId: "seed",
             updatedAt: 1,
@@ -656,6 +693,15 @@ test("availability manager and Admin route composition registers the accepted en
     ],
   );
 
+  assert.ok(
+    mountRouteInventory(
+      adminManagerWorkspaceRoutes(controller),
+      "/admin/manager-workspace",
+    ).includes(
+      "GET /admin/manager-workspace/work-schedule/availability-members",
+    ),
+  );
+
   assert.deepEqual(
     mountRouteInventory(
       adminWorkScheduleAvailabilityBatchRoutes(controller),
@@ -668,6 +714,136 @@ test("availability manager and Admin route composition registers the accepted en
       "POST /admin/work-schedule/availability-batches/:batchId/cancel-lines",
       "POST /admin/work-schedule/availability-batches/:batchId/reject-lines",
     ],
+  );
+});
+
+test("manager availability member picker returns safe exact OrgUnit members without WorkShift rows", async () => {
+  const { service } = createService();
+
+  const result = await service.listManagerTargetMembers(managerActor(), {
+    targetType: "ORG_UNIT",
+    targetId: "org-managed",
+  });
+
+  assert.deepEqual(result, {
+    target: {
+      targetType: "ORG_UNIT",
+      targetId: "org-managed",
+      targetMode: "EXACT_ONLY",
+      name: "org-managed",
+      displayName: "org-managed",
+      code: "ORG-MANAGED",
+    },
+    members: [
+      {
+        employmentProfileId: "ep-org",
+        displayName: "Org Member",
+        employeeCode: "EP-ORG",
+      },
+    ],
+    totalMembers: 1,
+  });
+  assert.deepEqual(Object.keys(result.members[0] ?? {}).sort(), [
+    "displayName",
+    "employeeCode",
+    "employmentProfileId",
+  ]);
+});
+
+test("manager availability member picker applies S5B TalentGroup eligibility and dedupe rules", async () => {
+  const { service } = createService();
+
+  const result = await service.listManagerTargetMembers(managerActor(), {
+    targetType: "TALENT_GROUP",
+    targetId: "group-managed",
+  });
+
+  assert.equal(result.target.targetType, "TALENT_GROUP");
+  assert.equal(result.target.displayName, "Managed Group");
+  assert.deepEqual(
+    result.members.map((member) => member.employmentProfileId),
+    ["ep-tg"],
+  );
+  assert.equal(result.totalMembers, 1);
+});
+
+test("manager availability member picker permits an assigned target with zero eligible members", async () => {
+  const { service } = createService();
+
+  const result = await service.listManagerTargetMembers(managerActor(), {
+    targetType: "ORG_UNIT",
+    targetId: "org-empty",
+  });
+
+  assert.deepEqual(result.members, []);
+  assert.equal(result.totalMembers, 0);
+});
+
+test("manager availability member picker validates target shape and fails closed on authority", async () => {
+  const { service } = createService();
+
+  for (const query of [
+    {},
+    { targetType: "ORG_UNIT" },
+    { targetType: "COMPANY", targetId: "company" },
+  ]) {
+    await assert.rejects(
+      service.listManagerTargetMembers(managerActor(), query),
+      WorkScheduleValidationError,
+    );
+  }
+
+  await assert.rejects(
+    service.listManagerTargetMembers(
+      adminActor([], [], ["TEAM_MANAGER"]),
+      {
+        targetType: "ORG_UNIT",
+        targetId: "org-managed",
+      },
+    ),
+  );
+  await assert.rejects(
+    service.listManagerTargetMembers(
+      adminActor([Permission.WORK_SCHEDULE_READ], ["global"], [
+        "ADMIN_FULL",
+      ]),
+      {
+        targetType: "ORG_UNIT",
+        targetId: "org-managed",
+      },
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+  await assert.rejects(
+    service.listManagerTargetMembers(managerActor(), {
+      targetType: "ORG_UNIT",
+      targetId: "org-child",
+    }),
+    WorkSchedulePermissionScopeError,
+  );
+  await assert.rejects(
+    service.listManagerTargetMembers(managerActor("reporting-user"), {
+      targetType: "ORG_UNIT",
+      targetId: "org-managed",
+    }),
+    WorkSchedulePermissionScopeError,
+  );
+  await assert.rejects(
+    service.listManagerTargetMembers(
+      new Actor({
+        id: "staff-user",
+        type: "staff",
+        context: "SELF_SERVICE",
+        roles: [],
+        permissions: [Permission.WORK_SCHEDULE_READ],
+        scopeGrants: {},
+        isActive: true,
+      }),
+      {
+        targetType: "ORG_UNIT",
+        targetId: "org-managed",
+      },
+    ),
   );
 });
 

@@ -18,6 +18,13 @@ export function adminManagerWorkspaceRoutes(
     controller.execute,
   );
   router.get(
+    "/work-schedule/availability-members",
+    withCommand(
+      "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_MEMBERS",
+    ),
+    controller.execute,
+  );
+  router.get(
     "/work-schedule/request-batches",
     withCommand(
       "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_REQUEST_BATCHES",

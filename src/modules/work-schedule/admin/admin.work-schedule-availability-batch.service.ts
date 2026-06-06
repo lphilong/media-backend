@@ -88,6 +88,28 @@ interface TargetResolution {
   readonly profiles: ReadonlyMap<string, WorkScheduleReferencedEmploymentProfile>;
 }
 
+export interface ListManagerAvailabilityTargetMembersQuery {
+  readonly targetType?: string;
+  readonly targetId?: string;
+}
+
+export interface ManagerAvailabilityTargetMembersView {
+  readonly target: {
+    readonly targetType: MonthlyRosterTargetType;
+    readonly targetId: string;
+    readonly targetMode: "EXACT_ONLY";
+    readonly name: string;
+    readonly displayName: string;
+    readonly code?: string;
+  };
+  readonly members: readonly {
+    readonly employmentProfileId: string;
+    readonly displayName: string;
+    readonly employeeCode?: string;
+  }[];
+  readonly totalMembers: number;
+}
+
 export class WorkScheduleAvailabilityBatchAdminService {
   constructor(
     private readonly repository: WorkScheduleAvailabilityBatchRepository,
@@ -107,6 +129,57 @@ export class WorkScheduleAvailabilityBatchAdminService {
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
     private readonly clock: () => number = Date.now,
   ) {}
+
+  async listManagerTargetMembers(
+    actor: Actor,
+    query: ListManagerAvailabilityTargetMembersQuery,
+  ): Promise<ManagerAvailabilityTargetMembersView> {
+    this.assertPermission(actor, Permission.WORK_SCHEDULE_READ);
+    const targetType = normalizeTargetType(query.targetType);
+    const targetId = normalizeRequiredText(query.targetId, "targetId");
+    const manager = await this.requireManagerProfile(actor.id);
+    const target = await this.resolveAssignedTarget(manager.id, {
+      targetType,
+      targetOrgUnitId: targetType === "ORG_UNIT" ? targetId : null,
+      targetTalentGroupId:
+        targetType === "TALENT_GROUP" ? targetId : null,
+    });
+    const targetName =
+      target.targetRef?.name ??
+      target.targetRef?.displayName ??
+      targetId;
+    const members = [...target.profiles.values()]
+      .map((profile) => ({
+        employmentProfileId: profile.id,
+        displayName:
+          profile.ref?.displayName ?? profile.ref?.code ?? profile.id,
+        ...(profile.ref?.code
+          ? { employeeCode: profile.ref.code }
+          : {}),
+      }))
+      .sort(
+        (left, right) =>
+          left.displayName.localeCompare(right.displayName) ||
+          left.employmentProfileId.localeCompare(
+            right.employmentProfileId,
+          ),
+      );
+
+    return {
+      target: {
+        targetType,
+        targetId,
+        targetMode: "EXACT_ONLY",
+        name: targetName,
+        displayName: target.targetRef?.displayName ?? targetName,
+        ...(target.targetRef?.code
+          ? { code: target.targetRef.code }
+          : {}),
+      },
+      members,
+      totalMembers: members.length,
+    };
+  }
 
   async submitManagerBatch(
     actor: Actor,
@@ -517,7 +590,7 @@ export class WorkScheduleAvailabilityBatchAdminService {
       NormalizedSubmitCommand,
       "targetType" | "targetOrgUnitId" | "targetTalentGroupId"
     >,
-    session: ClientSession,
+    session?: ClientSession,
   ): Promise<TargetResolution> {
     const asOf = this.clock();
     if (input.targetType === "ORG_UNIT") {
