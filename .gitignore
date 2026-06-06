@@ -30,66 +30,9 @@ tools/test/*
 **/.codex/
 
 # Test source visibility
-# Keep the broad ignore for now to avoid surfacing unrelated historical tests,
-# but explicitly allow the Mongo partial-index regression tests required for acceptance.
-**/*.test.ts
-**/*.spec.ts
-!src/modules/work-schedule/work-schedule-availability-batch.service.test.ts
-!src/modules/work-schedule/work-schedule-request-batch.service.test.ts
-!src/modules/manager-workspace/manager-workspace.context.service.spec.ts
-!src/modules/mongo-partial-index-compatibility.test.ts
-!src/modules/org-unit/org-unit-live-name-uniqueness.test.ts
-!src/modules/master-data-reference-summaries.test.ts
-!src/app/base/presentation-result.assert.test.ts
-!src/app/http/http-error.map.test.ts
-!src/app/router/admin-auth-boundary.test.ts
-!src/app/router/current-actor-capabilities.test.ts
-!src/app/router/self-service-auth-context.test.ts
-!src/app/auth/local-mock-auth.middleware.test.ts
-!src/config/local-mock-auth.env.test.ts
-!src/modules/dashboard-lite/domain/dashboard-lite.time.test.ts
-!src/modules/dashboard-lite/diagnostics/
-!src/modules/dashboard-lite/diagnostics/dashboard-lite.timing.test.ts
-!src/modules/dashboard-lite/admin/admin.dashboard-lite.query-service.timing.test.ts
-!src/infra/mongo/dashboard-lite/dashboard-lite.read-repository.test.ts
-!src/modules/event-assignment/event-assignment-target-filters.test.ts
-!src/modules/contract-registry/contract-registry-target-filters.test.ts
-!src/modules/talent-kpi/talent-kpi-target-filters.test.ts
-!src/modules/kpi/kpi-admin.service.test.ts
-!src/modules/reference-lookup/reference-lookup.service.test.ts
-!src/modules/talent/admin/admin.talent.service.test.ts
-!src/modules/employment-profile/admin/admin.employment-profile.service.test.ts
-!src/modules/org-unit/org-unit-responsibility.service.test.ts
-!src/modules/talent-group/talent-group-manager-assignment.service.test.ts
-!src/modules/talent-manager-scope.query-service.test.ts
-!src/modules/revenue-ledger/revenue-ledger-target-filters.test.ts
-!src/modules/commission/commission-settlement-target-filters.test.ts
-!src/modules/work-schedule/work-schedule-reference-summaries.test.ts
-!src/modules/work-schedule/work-schedule-shift-code-generation.test.ts
-!src/modules/work-schedule/work-schedule-request.service.test.ts
-!src/modules/work-schedule/work-schedule-monthly-roster.test.ts
-!src/modules/work-schedule/work-schedule-monthly-roster-preview.test.ts
-!src/modules/role/role-assignment-reference-summaries.test.ts
-!src/modules/role/role-template-catalog-preview.test.ts
-!src/modules/role/role-assignment-scope-grants.test.ts
-!src/modules/user/account-provisioning.service.test.ts
-!src/modules/self-service/self-service.current-person.test.ts
-!src/modules/self-service/self-service.events.test.ts
-!src/modules/self-service/self-service.kpi.test.ts
-!src/modules/self-service/self-service.talent-groups.test.ts
-!src/infra/mongo/talent-group/talent-group.self-service-read-repository.test.ts
-!src/bootstrap/db-index.bootstrap.test.ts
-!src/bootstrap/startup-timing.test.ts
-!src/config/db-index-bootstrap.env.test.ts
-!src/tools/
-!src/tools/smoke/
-!src/tools/smoke/seed-real-auth-first-admin.ts
-!src/tools/smoke/seed-real-auth-first-admin.test.ts
-!src/tools/smoke/runtime-role-sync.test.ts
-!src/tools/smoke/runtime-role-cleanup.test.ts
-!src/tools/smoke/access-repair.test.ts
-!src/tools/smoke/seed-smoke-fixtures.ts
-!src/tools/smoke/seed-smoke-fixtures.test.ts
-!src/tools/smoke/seed-smoke-fixtures.adapter.test.ts
-!src/tools/diagnostics/kpi-allocation-data-smoke.test.ts
-!src/tools/smoke/kpi-monthly-cycle-uat-seed.test.ts
+# Test/spec source is visible by default. These historical suites are narrowly
+# ignored until their stale test doubles or result typing are repaired.
+src/modules/phase-2a-business-code-generation.test.ts
+src/modules/scope-auth-hardening.test.ts
+src/modules/work-schedule/work-schedule-holiday-calendar.test.ts
+src/modules/work-schedule/work-schedule-work-pattern.test.ts
