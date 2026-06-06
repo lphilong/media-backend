@@ -769,6 +769,9 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     authoritativeAuditGuard,
     adminMutationBridge,
     workScheduleTalentGroupReadonlyAccess,
+    undefined,
+    undefined,
+    workScheduleAvailabilityBatchRepository,
   );
   const monthlyRosterQueryService = new MonthlyRosterAdminQueryService(
     monthlyRosterReadRepository,

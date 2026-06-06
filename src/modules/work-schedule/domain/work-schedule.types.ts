@@ -1,4 +1,8 @@
 import { ReferenceSummary } from "@modules/reference-summary";
+import type {
+  WorkScheduleAvailabilityTaxonomyCode,
+  WorkScheduleAvailabilityType,
+} from "./work-schedule-availability.types";
 
 export const WORK_SHIFT_SUBJECT_KINDS = [
   "EMPLOYMENT_PROFILE",
@@ -413,6 +417,13 @@ export interface RosterExceptionRecord {
   readonly studioResourceRefs?: readonly ReferenceSummary[];
   readonly reason: string | null;
   readonly sourceNote: string | null;
+  readonly sourceAvailabilityBatchId?: string | null;
+  readonly sourceAvailabilityLineId?: string | null;
+  readonly sourceAvailabilityType?: WorkScheduleAvailabilityType | null;
+  readonly sourceAvailabilityTaxonomyCode?: WorkScheduleAvailabilityTaxonomyCode | null;
+  readonly sourceAppliedAt?: number | null;
+  readonly sourceAppliedByActorId?: string | null;
+  readonly sourceApplyNote?: string | null;
   readonly description: string | null;
   readonly externalRef: string | null;
   readonly removedAt: number | null;

@@ -274,11 +274,52 @@ export class NativeMongoMonthlyRosterRepository
     input: AddRosterExceptionInput,
     session: ClientSession,
   ): Promise<MonthlyRosterRecord | null> {
+    const filter: Record<string, unknown> = {
+      _id: input.monthlyRosterId,
+      status: "DRAFT",
+    };
+    const guardClauses: Record<string, unknown>[] = [];
+
+    if (input.expectedNoActiveSourceAvailabilityLineId) {
+      guardClauses.push({
+        exceptions: {
+          $not: {
+            $elemMatch: {
+              status: "ACTIVE",
+              sourceAvailabilityLineId:
+                input.expectedNoActiveSourceAvailabilityLineId,
+            },
+          },
+        },
+      });
+    }
+
+    if (input.expectedNoActiveStandardException) {
+      guardClauses.push({
+        exceptions: {
+          $not: {
+            $elemMatch: {
+              status: "ACTIVE",
+              subjectEmploymentProfileId:
+                input.expectedNoActiveStandardException
+                  .subjectEmploymentProfileId,
+              exceptionDate:
+                input.expectedNoActiveStandardException.exceptionDate,
+              exceptionType: { $ne: "ADD_SPECIAL_SHIFT" },
+            },
+          },
+        },
+      });
+    }
+
+    if (guardClauses.length === 1) {
+      Object.assign(filter, guardClauses[0]);
+    } else if (guardClauses.length > 1) {
+      filter.$and = guardClauses;
+    }
+
     const updated = await this.collection.findOneAndUpdate(
-      {
-        _id: input.monthlyRosterId,
-        status: "DRAFT",
-      },
+      filter,
       {
         $push: { exceptions: input.exception },
         $set: { updatedAt: input.updatedAt },

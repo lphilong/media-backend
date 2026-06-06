@@ -46,7 +46,8 @@ export type WorkScheduleAvailabilityTaxonomyCode =
 
 export type WorkScheduleAvailabilityApplyStatus =
   | "NOT_APPLIED"
-  | "ADVISORY_ONLY";
+  | "ADVISORY_ONLY"
+  | "APPLIED";
 
 export type WorkScheduleAvailabilityPolicyEvaluationStatus =
   "NOT_EVALUATED";
@@ -97,6 +98,11 @@ export interface WorkScheduleAvailabilityLineRecord {
   readonly status: WorkScheduleAvailabilityLineStatus;
   readonly applyStatus: WorkScheduleAvailabilityApplyStatus;
   readonly policyEvaluationStatus: WorkScheduleAvailabilityPolicyEvaluationStatus;
+  readonly appliedRosterId: string | null;
+  readonly appliedRosterExceptionId: string | null;
+  readonly appliedRosterExceptionIds: readonly string[];
+  readonly appliedAt: number | null;
+  readonly appliedByActorId: string | null;
   readonly adminDecisionNote: string | null;
   readonly rejectionReason: string | null;
   readonly cancellationReason: string | null;

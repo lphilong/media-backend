@@ -27,6 +27,7 @@ import {
   HolidayCalendarMutationResult,
   MonthlyRosterMutationResult,
   PublishMonthlyRosterResult,
+  ApplyAvailabilityLinesToMonthlyRosterResult,
 } from "./work-schedule.contracts";
 import {
   WorkScheduleAdminByResourceListExposure,
@@ -375,15 +376,27 @@ export class HolidayCalendarAdminDetailPresenter extends Presenter<
 }
 
 export class MonthlyRosterAdminMutationPresenter extends Presenter<
-  MonthlyRosterMutationResult | PublishMonthlyRosterResult,
+  | MonthlyRosterMutationResult
+  | PublishMonthlyRosterResult
+  | ApplyAvailabilityLinesToMonthlyRosterResult,
   PresentationResult
 > {
   present(
     input:
       | MonthlyRosterMutationResult
-      | PublishMonthlyRosterResult,
+      | PublishMonthlyRosterResult
+      | ApplyAvailabilityLinesToMonthlyRosterResult,
     _context: ContextType,
   ): PresentationResult {
+    if ("results" in input) {
+      return {
+        data: toPlainObject(
+          input,
+          "monthlyRosterApplyAvailabilityLinesResult",
+        ),
+      };
+    }
+
     if ("generatedWorkShiftCount" in input) {
       return {
         data: toPlainObject(

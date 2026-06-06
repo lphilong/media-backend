@@ -48,6 +48,11 @@ import {
   WorkScheduleValidationError,
 } from "@modules/work-schedule/domain/work-schedule.errors";
 import { WorkScheduleCodeSequenceRepository } from "@modules/work-schedule/domain/work-schedule-code-sequence.repository";
+import { WorkScheduleAvailabilityBatchRepository } from "@modules/work-schedule/domain/work-schedule-availability.repository";
+import {
+  WorkScheduleAvailabilityBatchRecord,
+  WorkScheduleAvailabilityLineRecord,
+} from "@modules/work-schedule/domain/work-schedule-availability.types";
 import {
   HolidayCalendarRepository,
   MonthlyRosterRepository,
@@ -58,6 +63,7 @@ import {
 } from "@modules/work-schedule/domain/work-schedule.repository";
 import {
   HOLIDAY_CALENDAR_TIMEZONE,
+  HolidayCalendarRecord,
   MONTHLY_ROSTER_TARGET_ORG_UNIT_MODE,
   MONTHLY_ROSTER_TARGET_MODES,
   MONTHLY_ROSTER_TARGET_SUBJECT_KIND,
@@ -80,6 +86,9 @@ import {
 } from "@modules/work-schedule/domain/work-schedule.types";
 import {
   AddRosterExceptionCommand,
+  ApplyAvailabilityLineResult,
+  ApplyAvailabilityLinesToMonthlyRosterCommand,
+  ApplyAvailabilityLinesToMonthlyRosterResult,
   CreateMonthlyRosterDraftCommand,
   MonthlyRosterLifecycleCommand,
   MonthlyRosterMutationResult,
@@ -165,6 +174,20 @@ interface NormalizedPublishMonthlyRosterCommand {
   readonly requestedScope?: WorkShiftScope;
 }
 
+interface NormalizedApplyAvailabilityLinesCommand {
+  readonly monthlyRosterId: string;
+  readonly availabilityLineIds: readonly string[];
+  readonly applyNote: string | null;
+  readonly requestedScope?: WorkShiftScope;
+}
+
+interface AvailabilityExceptionDraft {
+  readonly exceptionDate: string;
+  readonly exceptionType: "WORKING_TO_OFF" | "CHANGE_TIME";
+  readonly startLocalTime: string | null;
+  readonly endLocalTime: string | null;
+}
+
 interface NormalizedMonthlyRosterTarget {
   readonly targetType: MonthlyRosterTargetType;
   readonly targetMode: MonthlyRosterTargetMode;
@@ -193,6 +216,7 @@ export class MonthlyRosterAdminService {
     private readonly talentGroupReadonlyAccess: WorkScheduleTalentGroupReadonlyAccess = createMissingTalentGroupReadonlyAccess(),
     private readonly logger: StructuredLogger = createStructuredLogger(),
     private readonly now: () => number = Date.now,
+    private readonly availabilityRepository: WorkScheduleAvailabilityBatchRepository = createMissingAvailabilityRepository(),
   ) {}
 
   async createMonthlyRosterDraft(
@@ -852,6 +876,317 @@ export class MonthlyRosterAdminService {
         status: result.status,
         generatedWorkShiftCount:
           result.generatedWorkShiftCount,
+      }),
+    );
+  }
+
+  async applyAvailabilityLinesToMonthlyRoster(
+    actor: Actor,
+    command: ApplyAvailabilityLinesToMonthlyRosterCommand,
+  ): Promise<ApplyAvailabilityLinesToMonthlyRosterResult> {
+    const operation =
+      "work-schedule.monthly-roster.apply-availability-lines";
+    const permission = this.assertPermission(
+      actor,
+      Permission.WORK_SCHEDULE_UPDATE,
+    );
+    const input =
+      normalizeApplyAvailabilityLinesCommand(command);
+
+    return this.executeMutation(
+      actor,
+      permission,
+      operation,
+      {
+        monthlyRosterId: input.monthlyRosterId,
+        availabilityLineCount:
+          input.availabilityLineIds.length,
+      },
+      async (session) => {
+        let roster = await this.requireMonthlyRoster(
+          input.monthlyRosterId,
+          session,
+        );
+        assertDraftRoster(roster);
+        const scope =
+          await this.resolveRosterScopeForTarget(
+            actor,
+            input.requestedScope,
+            session,
+          );
+        await this.assertActiveRosterTarget(
+          roster,
+          session,
+        );
+        const pattern = await this.requireActivePattern(
+          roster.workPatternId,
+          session,
+        );
+        const calendar =
+          await this.requireActiveCalendar(
+            roster.holidayCalendarId,
+            session,
+          );
+        const members = await this.resolveRosterMembers(
+          roster,
+          session,
+        );
+        const eligibleProfileIds = new Set(
+          members.eligibleProfiles.map((profile) => profile.id),
+        );
+        const lines =
+          await this.availabilityRepository.listLinesByIds(
+            input.availabilityLineIds,
+            session,
+          );
+        const lineById = new Map(
+          lines.map((line) => [line.id, line]),
+        );
+        const batchById = new Map<
+          string,
+          WorkScheduleAvailabilityBatchRecord | null
+        >();
+        const results: ApplyAvailabilityLineResult[] = [];
+        const now = this.now();
+
+        for (const availabilityLineId of input.availabilityLineIds) {
+          const line = lineById.get(availabilityLineId);
+          if (!line) {
+            results.push({
+              availabilityLineId,
+              outcome: "FAILED",
+              rosterExceptionId: null,
+              rosterExceptionIds: [],
+              reason: "Availability line was not found",
+            });
+            continue;
+          }
+
+          let batch = batchById.get(line.batchId);
+          if (batch === undefined) {
+            batch =
+              await this.availabilityRepository.findBatchById(
+                line.batchId,
+                session,
+              );
+            batchById.set(line.batchId, batch);
+          }
+
+          const prepared = prepareAvailabilityApplyLine({
+            line,
+            batch,
+            roster,
+            pattern,
+            calendar,
+            eligibleProfileIds,
+            applyNote: input.applyNote,
+          });
+
+          if (prepared.outcome !== "READY") {
+            if (prepared.outcome === "ADVISORY_ONLY") {
+              await this.availabilityRepository.updateLineApplyState(
+                {
+                  batchId: line.batchId,
+                  lineId: line.id,
+                  fromApplyStatuses: [
+                    "ADVISORY_ONLY",
+                    "NOT_APPLIED",
+                  ],
+                  applyStatus: "ADVISORY_ONLY",
+                  appliedRosterId: null,
+                  appliedRosterExceptionId: null,
+                  appliedRosterExceptionIds: [],
+                  appliedAt: null,
+                  appliedByActorId: null,
+                  updatedAt: now,
+                },
+                session,
+              );
+              results.push({
+                availabilityLineId: line.id,
+                outcome: "ADVISORY_ONLY",
+                rosterExceptionId: null,
+                rosterExceptionIds: [],
+                reason: prepared.reason,
+              });
+              continue;
+            }
+
+            results.push({
+              availabilityLineId: line.id,
+              outcome: "FAILED",
+              rosterExceptionId: null,
+              rosterExceptionIds: [],
+              reason: prepared.reason,
+            });
+            continue;
+          }
+
+          const existingSourceExceptions =
+            findActiveAvailabilitySourceExceptions(
+              roster,
+              line.id,
+            );
+          if (existingSourceExceptions.length > 0) {
+            const exceptionIds = existingSourceExceptions.map(
+              (exception) => exception.rosterExceptionId,
+            );
+            await this.availabilityRepository.updateLineApplyState(
+              {
+                batchId: line.batchId,
+                lineId: line.id,
+                fromApplyStatuses: [
+                  "NOT_APPLIED",
+                  "ADVISORY_ONLY",
+                  "APPLIED",
+                ],
+                applyStatus: "APPLIED",
+                appliedRosterId: roster.monthlyRosterId,
+                appliedRosterExceptionId:
+                  exceptionIds[0] ?? null,
+                appliedRosterExceptionIds: exceptionIds,
+                appliedAt: line.appliedAt ?? now,
+                appliedByActorId:
+                  line.appliedByActorId ?? actor.id,
+                updatedAt: now,
+              },
+              session,
+            );
+            results.push({
+              availabilityLineId: line.id,
+              outcome: "SKIPPED_ALREADY_APPLIED",
+              rosterExceptionId: exceptionIds[0] ?? null,
+              rosterExceptionIds: exceptionIds,
+              reason:
+                "Availability line was already applied to this Monthly Roster",
+            });
+            continue;
+          }
+
+          const conflict = prepared.exceptions.find((draft) =>
+            hasActiveStandardExceptionForDate(
+              roster,
+              line.memberEmploymentProfileId,
+              draft.exceptionDate,
+            ),
+          );
+          if (conflict) {
+            results.push({
+              availabilityLineId: line.id,
+              outcome: "FAILED",
+              rosterExceptionId: null,
+              rosterExceptionIds: [],
+              reason:
+                "An ACTIVE roster exception already exists for the same member/date",
+            });
+            continue;
+          }
+
+          const createdExceptionIds: string[] = [];
+          for (const draft of prepared.exceptions) {
+            const exception =
+              buildRosterExceptionFromAvailability({
+                roster,
+                line,
+                draft,
+                applyNote: input.applyNote,
+                actorId: actor.id,
+                now,
+              });
+            const updated =
+              await this.rosterRepository.addException(
+                {
+                  monthlyRosterId: roster.monthlyRosterId,
+                  exception,
+                  updatedAt: now,
+                  expectedNoActiveSourceAvailabilityLineId:
+                    line.id,
+                  expectedNoActiveStandardException: {
+                    subjectEmploymentProfileId:
+                      line.memberEmploymentProfileId,
+                    exceptionDate: draft.exceptionDate,
+                  },
+                },
+                session,
+              );
+
+            if (!updated) {
+              throw new WorkScheduleConflictError(
+                "Failed to apply availability line because a conflicting roster exception was created concurrently",
+              );
+            }
+
+            roster = updated;
+            createdExceptionIds.push(
+              exception.rosterExceptionId,
+            );
+          }
+
+          const updatedLine =
+            await this.availabilityRepository.updateLineApplyState(
+              {
+                batchId: line.batchId,
+                lineId: line.id,
+                fromApplyStatuses: [
+                  "NOT_APPLIED",
+                  "ADVISORY_ONLY",
+                ],
+                applyStatus: "APPLIED",
+                appliedRosterId: roster.monthlyRosterId,
+                appliedRosterExceptionId:
+                  createdExceptionIds[0] ?? null,
+                appliedRosterExceptionIds:
+                  createdExceptionIds,
+                appliedAt: now,
+                appliedByActorId: actor.id,
+                updatedAt: now,
+              },
+              session,
+            );
+
+          if (!updatedLine) {
+            throw new WorkScheduleConflictError(
+              "Failed to mark availability line as applied",
+            );
+          }
+
+          results.push({
+            availabilityLineId: line.id,
+            outcome: "APPLIED",
+            rosterExceptionId:
+              createdExceptionIds[0] ?? null,
+            rosterExceptionIds: createdExceptionIds,
+            reason:
+              "Availability line applied to Monthly Roster draft",
+          });
+        }
+
+        await this.recordAudit({
+          actor,
+          permission,
+          monthlyRosterId: roster.monthlyRosterId,
+          mutationType: operation,
+          metadata: {
+            availabilityLineIds:
+              input.availabilityLineIds,
+            effectiveScope: scope,
+            appliedCount: results.filter(
+              (result) => result.outcome === "APPLIED",
+            ).length,
+            failedCount: results.filter(
+              (result) => result.outcome === "FAILED",
+            ).length,
+          },
+          session,
+        });
+
+        return buildApplyAvailabilityResult(roster, results);
+      },
+      (result) => ({
+        monthlyRosterId: result.monthlyRosterId,
+        status: result.status,
+        appliedCount: result.appliedCount,
+        failedCount: result.failedCount,
       }),
     );
   }
@@ -2428,6 +2763,65 @@ function normalizeRosterExceptionCommand(
   };
 }
 
+function normalizeApplyAvailabilityLinesCommand(
+  command: ApplyAvailabilityLinesToMonthlyRosterCommand,
+): NormalizedApplyAvailabilityLinesCommand {
+  const availabilityLineIds = normalizeStringIdList(
+    command.availabilityLineIds,
+    "availabilityLineIds",
+  );
+  const applyNote =
+    normalizeOptionalNullableText(
+      command.applyNote ?? command.note,
+      "applyNote",
+    ) ?? null;
+
+  if (applyNote && applyNote.length > 1000) {
+    throw new WorkScheduleValidationError(
+      "applyNote must be at most 1000 characters",
+    );
+  }
+
+  return {
+    monthlyRosterId: normalizeRequiredText(
+      command.monthlyRosterId,
+      "monthlyRosterId",
+    ),
+    availabilityLineIds,
+    applyNote,
+    requestedScope: parseRequestedScope(command.scope),
+  };
+}
+
+function normalizeStringIdList(
+  value: unknown,
+  field: string,
+): readonly string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new WorkScheduleValidationError(
+      `${field} must contain at least one id`,
+    );
+  }
+
+  if (value.length > 50) {
+    throw new WorkScheduleValidationError(
+      `${field} must contain at most 50 ids`,
+    );
+  }
+
+  const ids = value.map((item, index) =>
+    normalizeRequiredText(item, `${field}[${index}]`),
+  );
+
+  if (new Set(ids).size !== ids.length) {
+    throw new WorkScheduleValidationError(
+      `${field} must not contain duplicate ids`,
+    );
+  }
+
+  return ids;
+}
+
 function buildMonthlyRosterDraftPatch(params: {
   readonly current: MonthlyRosterRecord;
   readonly input: NormalizedUpdateMonthlyRosterDraftCommand;
@@ -2608,6 +3002,13 @@ function buildRosterExceptionRecord(params: {
     ],
     reason: params.input.reason,
     sourceNote: params.input.sourceNote,
+    sourceAvailabilityBatchId: null,
+    sourceAvailabilityLineId: null,
+    sourceAvailabilityType: null,
+    sourceAvailabilityTaxonomyCode: null,
+    sourceAppliedAt: null,
+    sourceAppliedByActorId: null,
+    sourceApplyNote: null,
     description: params.input.description,
     externalRef: params.input.externalRef,
     removedAt: null,
@@ -2867,6 +3268,351 @@ function buildPublishSummary(params: {
       ...params.generatedWorkShiftIds,
     ],
   };
+}
+
+function buildApplyAvailabilityResult(
+  roster: MonthlyRosterRecord,
+  results: readonly ApplyAvailabilityLineResult[],
+): ApplyAvailabilityLinesToMonthlyRosterResult {
+  return {
+    monthlyRosterId: roster.monthlyRosterId,
+    rosterCode: roster.rosterCode,
+    rosterMonth: roster.rosterMonth,
+    status: roster.status,
+    targetType: roster.targetType,
+    targetMode: roster.targetMode,
+    targetOrgUnitId: roster.targetOrgUnitId,
+    targetTalentGroupId: roster.targetTalentGroupId,
+    appliedCount: results.filter(
+      (result) => result.outcome === "APPLIED",
+    ).length,
+    advisoryOnlyCount: results.filter(
+      (result) => result.outcome === "ADVISORY_ONLY",
+    ).length,
+    skippedAlreadyAppliedCount: results.filter(
+      (result) =>
+        result.outcome === "SKIPPED_ALREADY_APPLIED",
+    ).length,
+    failedCount: results.filter(
+      (result) => result.outcome === "FAILED",
+    ).length,
+    results: results.map((result) => ({
+      ...result,
+      rosterExceptionIds: [
+        ...result.rosterExceptionIds,
+      ],
+    })),
+  };
+}
+
+function prepareAvailabilityApplyLine(params: {
+  readonly line: WorkScheduleAvailabilityLineRecord;
+  readonly batch: WorkScheduleAvailabilityBatchRecord | null;
+  readonly roster: MonthlyRosterRecord;
+  readonly pattern: WorkPatternRecord;
+  readonly calendar: HolidayCalendarRecord;
+  readonly eligibleProfileIds: ReadonlySet<string>;
+  readonly applyNote: string | null;
+}):
+  | {
+      readonly outcome: "READY";
+      readonly exceptions: readonly AvailabilityExceptionDraft[];
+    }
+  | {
+      readonly outcome: "FAILED" | "ADVISORY_ONLY";
+      readonly reason: string;
+    } {
+  const { line, batch, roster } = params;
+
+  if (!batch) {
+    return {
+      outcome: "FAILED",
+      reason: "Availability batch was not found",
+    };
+  }
+
+  if (line.status !== "APPROVED") {
+    return {
+      outcome: "FAILED",
+      reason:
+        "Only APPROVED availability lines can be applied",
+    };
+  }
+
+  if (line.applyStatus === "APPLIED") {
+    if (line.appliedRosterId === roster.monthlyRosterId) {
+      return {
+        outcome: "FAILED",
+        reason:
+          "Availability line is marked APPLIED but no matching active source exception was found",
+      };
+    }
+
+    return {
+      outcome: "FAILED",
+      reason:
+        "Availability line was already applied to a different Monthly Roster",
+    };
+  }
+
+  if (
+    batch.targetType !== roster.targetType ||
+    batch.targetMode !== roster.targetMode ||
+    batch.targetOrgUnitId !== roster.targetOrgUnitId ||
+    batch.targetTalentGroupId !==
+      roster.targetTalentGroupId ||
+    line.targetType !== roster.targetType ||
+    line.targetOrgUnitId !== roster.targetOrgUnitId ||
+    line.targetTalentGroupId !==
+      roster.targetTalentGroupId
+  ) {
+    return {
+      outcome: "FAILED",
+      reason:
+        "Availability target does not match Monthly Roster target",
+    };
+  }
+
+  if (
+    batch.periodMonth !== roster.rosterMonth ||
+    line.periodMonth !== roster.rosterMonth
+  ) {
+    return {
+      outcome: "FAILED",
+      reason:
+        "Availability periodMonth does not match Monthly Roster month",
+    };
+  }
+
+  if (
+    !params.eligibleProfileIds.has(
+      line.memberEmploymentProfileId,
+    )
+  ) {
+    return {
+      outcome: "FAILED",
+      reason:
+        "Availability member is no longer eligible for the Monthly Roster target",
+    };
+  }
+
+  if (
+    line.dateRangeStart.slice(0, 7) !== roster.rosterMonth ||
+    line.dateRangeEnd.slice(0, 7) !== roster.rosterMonth
+  ) {
+    return {
+      outcome: "FAILED",
+      reason:
+        "Availability date range is outside Monthly Roster month",
+    };
+  }
+
+  if (line.availabilityType === "OTHER_AVAILABILITY_NOTE") {
+    return {
+      outcome: "ADVISORY_ONLY",
+      reason:
+        "OTHER_AVAILABILITY_NOTE is advisory and does not create Monthly Roster exceptions",
+    };
+  }
+
+  const dates = enumerateDateRange(
+    line.dateRangeStart,
+    line.dateRangeEnd,
+  );
+
+  if (line.availabilityType === "UNAVAILABLE_FULL_DAY") {
+    for (const date of dates) {
+      try {
+        assertStandardRosterCandidate({
+          date,
+          pattern: params.pattern,
+          calendar: params.calendar,
+        });
+      } catch (error) {
+        return {
+          outcome: "FAILED",
+          reason:
+            error instanceof Error
+              ? error.message
+              : "Availability date cannot be represented as a roster exception",
+        };
+      }
+    }
+
+    return {
+      outcome: "READY",
+      exceptions: dates.map((date) => ({
+        exceptionDate: date,
+        exceptionType: "WORKING_TO_OFF",
+        startLocalTime: null,
+        endLocalTime: null,
+      })),
+    };
+  }
+
+  if (line.availabilityType === "PREFERRED_TIME") {
+    if (
+      line.preferredStartLocalTime === null ||
+      line.preferredEndLocalTime === null
+    ) {
+      return {
+        outcome: "FAILED",
+        reason:
+          "PREFERRED_TIME line is missing preferred start or end time",
+      };
+    }
+
+    let expectedEnd: string;
+    try {
+      expectedEnd = calculateEndLocalTime({
+        startLocalTime: line.preferredStartLocalTime,
+        workingMinutes: params.pattern.workingMinutes,
+        breakMinutes: params.pattern.breakMinutes,
+      });
+    } catch (error) {
+      return {
+        outcome: "FAILED",
+        reason:
+          error instanceof Error
+            ? error.message
+            : "PREFERRED_TIME cannot be represented safely",
+      };
+    }
+
+    if (expectedEnd !== line.preferredEndLocalTime) {
+      return {
+        outcome: "FAILED",
+        reason:
+          "PREFERRED_TIME preferredEndLocalTime does not match the Monthly Roster pattern duration and cannot be represented without data loss",
+      };
+    }
+
+    for (const date of dates) {
+      try {
+        assertStandardRosterCandidate({
+          date,
+          pattern: params.pattern,
+          calendar: params.calendar,
+        });
+      } catch (error) {
+        return {
+          outcome: "FAILED",
+          reason:
+            error instanceof Error
+              ? error.message
+              : "Availability date cannot be represented as a roster exception",
+        };
+      }
+    }
+
+    return {
+      outcome: "READY",
+      exceptions: dates.map((date) => ({
+        exceptionDate: date,
+        exceptionType: "CHANGE_TIME",
+        startLocalTime: line.preferredStartLocalTime,
+        endLocalTime: expectedEnd,
+      })),
+    };
+  }
+
+  return {
+    outcome: "FAILED",
+    reason: `Unsupported availabilityType: ${line.availabilityType}`,
+  };
+}
+
+function buildRosterExceptionFromAvailability(params: {
+  readonly roster: MonthlyRosterRecord;
+  readonly line: WorkScheduleAvailabilityLineRecord;
+  readonly draft: AvailabilityExceptionDraft;
+  readonly applyNote: string | null;
+  readonly actorId: string;
+  readonly now: number;
+}): RosterExceptionRecord {
+  return {
+    rosterExceptionId: crypto.randomUUID(),
+    monthlyRosterId: params.roster.monthlyRosterId,
+    exceptionType: params.draft.exceptionType,
+    exceptionDate: params.draft.exceptionDate,
+    subjectEmploymentProfileId:
+      params.line.memberEmploymentProfileId,
+    status: "ACTIVE",
+    title: null,
+    startLocalTime: params.draft.startLocalTime,
+    endLocalTime: params.draft.endLocalTime,
+    workingMinutes: null,
+    breakMinutes: null,
+    studioResourceIds: [],
+    reason: params.line.reason,
+    sourceNote: params.applyNote,
+    sourceAvailabilityBatchId: params.line.batchId,
+    sourceAvailabilityLineId: params.line.id,
+    sourceAvailabilityType: params.line.availabilityType,
+    sourceAvailabilityTaxonomyCode:
+      params.line.taxonomyCode,
+    sourceAppliedAt: params.now,
+    sourceAppliedByActorId: params.actorId,
+    sourceApplyNote: params.applyNote,
+    description: null,
+    externalRef: null,
+    removedAt: null,
+    createdAt: params.now,
+    updatedAt: params.now,
+  };
+}
+
+function findActiveAvailabilitySourceExceptions(
+  roster: MonthlyRosterRecord,
+  availabilityLineId: string,
+): readonly RosterExceptionRecord[] {
+  return roster.exceptions.filter(
+    (exception) =>
+      exception.status === "ACTIVE" &&
+      exception.sourceAvailabilityLineId ===
+        availabilityLineId,
+  );
+}
+
+function hasActiveStandardExceptionForDate(
+  roster: MonthlyRosterRecord,
+  subjectEmploymentProfileId: string,
+  exceptionDate: string,
+): boolean {
+  return roster.exceptions.some(
+    (exception) =>
+      exception.status === "ACTIVE" &&
+      exception.subjectEmploymentProfileId ===
+        subjectEmploymentProfileId &&
+      exception.exceptionDate === exceptionDate &&
+      exception.exceptionType !== "ADD_SPECIAL_SHIFT",
+  );
+}
+
+function enumerateDateRange(
+  startDate: string,
+  endDate: string,
+): readonly string[] {
+  const [startYear, startMonth, startDay] = startDate
+    .split("-")
+    .map(Number);
+  const [endYear, endMonth, endDay] = endDate
+    .split("-")
+    .map(Number);
+  const cursor = new Date(
+    Date.UTC(startYear, startMonth - 1, startDay),
+  );
+  const end = Date.UTC(endYear, endMonth - 1, endDay);
+  const dates: string[] = [];
+
+  while (cursor.getTime() <= end) {
+    dates.push(
+      `${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}-${String(cursor.getUTCDate()).padStart(2, "0")}`,
+    );
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return dates;
 }
 
 function requireActiveException(
@@ -3441,6 +4187,29 @@ function createMissingTalentGroupReadonlyAccess(): WorkScheduleTalentGroupReadon
         "WorkScheduleTalentGroupReadonlyAccess is required for Monthly Roster Talent Group targets",
       );
     },
+  };
+}
+
+function createMissingAvailabilityRepository(): WorkScheduleAvailabilityBatchRepository {
+  const fail = async (): Promise<never> => {
+    throw new SystemInvariantError(
+      "SYSTEM_INVARIANT_VIOLATION",
+      "WorkScheduleAvailabilityBatchRepository is required to apply availability lines to Monthly Roster",
+    );
+  };
+
+  return {
+    insertBatchWithLines: fail,
+    findBatchById: fail,
+    findBatchByClientToken: fail,
+    listBatches: fail,
+    listLinesByBatchId: fail,
+    findLineById: fail,
+    listLinesByIds: fail,
+    findPendingDuplicateLine: fail,
+    transitionLineStatus: fail,
+    updateBatchDerived: fail,
+    updateLineApplyState: fail,
   };
 }
 

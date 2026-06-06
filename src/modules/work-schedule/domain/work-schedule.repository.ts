@@ -352,6 +352,11 @@ export interface AddRosterExceptionInput {
   readonly monthlyRosterId: string;
   readonly exception: RosterExceptionRecord;
   readonly updatedAt: number;
+  readonly expectedNoActiveSourceAvailabilityLineId?: string;
+  readonly expectedNoActiveStandardException?: {
+    readonly subjectEmploymentProfileId: string;
+    readonly exceptionDate: string;
+  };
 }
 
 export interface UpdateRosterExceptionInput {
@@ -368,6 +373,13 @@ export interface UpdateRosterExceptionInput {
   readonly studioResourceIds?: readonly string[];
   readonly reason?: string | null;
   readonly sourceNote?: string | null;
+  readonly sourceAvailabilityBatchId?: string | null;
+  readonly sourceAvailabilityLineId?: string | null;
+  readonly sourceAvailabilityType?: RosterExceptionRecord["sourceAvailabilityType"];
+  readonly sourceAvailabilityTaxonomyCode?: RosterExceptionRecord["sourceAvailabilityTaxonomyCode"];
+  readonly sourceAppliedAt?: number | null;
+  readonly sourceAppliedByActorId?: string | null;
+  readonly sourceApplyNote?: string | null;
   readonly description?: string | null;
   readonly externalRef?: string | null;
   readonly updatedAt: number;

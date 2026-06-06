@@ -51,6 +51,14 @@ import type {
   WorkShiftRepository,
 } from "@modules/work-schedule/domain/work-schedule.repository";
 import type {
+  UpdateWorkScheduleAvailabilityLineApplyStateInput,
+  WorkScheduleAvailabilityBatchRepository,
+} from "@modules/work-schedule/domain/work-schedule-availability.repository";
+import type {
+  WorkScheduleAvailabilityBatchRecord,
+  WorkScheduleAvailabilityLineRecord,
+} from "@modules/work-schedule/domain/work-schedule-availability.types";
+import type {
   HolidayCalendarRecord,
   HolidayCalendarStatus,
   MonthlyRosterRecord,
@@ -607,6 +615,113 @@ class MemoryWorkShiftRepository
   }
 }
 
+class MemoryAvailabilityRepository
+  implements WorkScheduleAvailabilityBatchRepository
+{
+  readonly batches: WorkScheduleAvailabilityBatchRecord[] = [];
+  readonly lines: WorkScheduleAvailabilityLineRecord[] = [];
+
+  constructor(params: {
+    readonly batches?: readonly WorkScheduleAvailabilityBatchRecord[];
+    readonly lines?: readonly WorkScheduleAvailabilityLineRecord[];
+  } = {}) {
+    this.batches.push(...(params.batches ?? []));
+    this.lines.push(...(params.lines ?? []));
+  }
+
+  async insertBatchWithLines(
+    batch: WorkScheduleAvailabilityBatchRecord,
+    lines: readonly WorkScheduleAvailabilityLineRecord[],
+  ) {
+    this.batches.push(batch);
+    this.lines.push(...lines);
+    return batch;
+  }
+
+  async findBatchById(batchId: string) {
+    return this.batches.find((batch) => batch.id === batchId) ?? null;
+  }
+
+  async findBatchByClientToken() {
+    return null;
+  }
+
+  async listBatches() {
+    return { items: this.batches };
+  }
+
+  async listLinesByBatchId(batchId: string) {
+    return this.lines.filter((line) => line.batchId === batchId);
+  }
+
+  async findLineById(batchId: string, lineId: string) {
+    return (
+      this.lines.find(
+        (line) => line.batchId === batchId && line.id === lineId,
+      ) ?? null
+    );
+  }
+
+  async listLinesByIds(lineIds: readonly string[]) {
+    const ids = new Set(lineIds);
+    return this.lines.filter((line) => ids.has(line.id));
+  }
+
+  async findPendingDuplicateLine() {
+    return null;
+  }
+
+  async transitionLineStatus() {
+    return null;
+  }
+
+  async updateBatchDerived() {
+    return null;
+  }
+
+  async updateLineApplyState(
+    input: UpdateWorkScheduleAvailabilityLineApplyStateInput,
+  ) {
+    const current = await this.findLineById(input.batchId, input.lineId);
+    if (
+      !current ||
+      !input.fromApplyStatuses.includes(current.applyStatus)
+    ) {
+      return null;
+    }
+    const updated: WorkScheduleAvailabilityLineRecord = {
+      ...current,
+      applyStatus: input.applyStatus,
+      appliedRosterId:
+        input.appliedRosterId === undefined
+          ? current.appliedRosterId
+          : input.appliedRosterId,
+      appliedRosterExceptionId:
+        input.appliedRosterExceptionId === undefined
+          ? current.appliedRosterExceptionId
+          : input.appliedRosterExceptionId,
+      appliedRosterExceptionIds:
+        input.appliedRosterExceptionIds === undefined
+          ? current.appliedRosterExceptionIds
+          : [...input.appliedRosterExceptionIds],
+      appliedAt:
+        input.appliedAt === undefined
+          ? current.appliedAt
+          : input.appliedAt,
+      appliedByActorId:
+        input.appliedByActorId === undefined
+          ? current.appliedByActorId
+          : input.appliedByActorId,
+      updatedAt: input.updatedAt,
+    };
+    const index = this.lines.findIndex(
+      (line) => line.id === updated.id,
+    );
+    this.lines[index] = updated;
+    return updated;
+  }
+}
+
 class MemoryWorkShiftCodeSequenceRepository
   implements WorkScheduleCodeSequenceRepository
 {
@@ -836,6 +951,7 @@ function seedRosterException(params: {
   readonly startLocalTime?: string;
   readonly workingMinutes?: number;
   readonly breakMinutes?: number;
+  readonly sourceAvailabilityLineId?: string | null;
 } = {}): RosterExceptionRecord {
   const exceptionType =
     params.exceptionType ?? "WORKING_TO_OFF";
@@ -874,12 +990,155 @@ function seedRosterException(params: {
     studioResourceIds: [],
     reason: null,
     sourceNote: null,
+    sourceAvailabilityBatchId:
+      params.sourceAvailabilityLineId === undefined
+        ? null
+        : "availability-batch-1",
+    sourceAvailabilityLineId:
+      params.sourceAvailabilityLineId ?? null,
+    sourceAvailabilityType:
+      params.sourceAvailabilityLineId === undefined
+        ? null
+        : "UNAVAILABLE_FULL_DAY",
+    sourceAvailabilityTaxonomyCode:
+      params.sourceAvailabilityLineId === undefined
+        ? null
+        : "AUTHORIZED_LEAVE",
+    sourceAppliedAt:
+      params.sourceAvailabilityLineId === undefined ? null : 1,
+    sourceAppliedByActorId:
+      params.sourceAvailabilityLineId === undefined
+        ? null
+        : "admin-user-1",
+    sourceApplyNote: null,
     description: null,
     externalRef: null,
     removedAt:
       params.status === "REMOVED" ? 2 : null,
     createdAt: 1,
     updatedAt: 1,
+  };
+}
+
+function seedAvailabilityBatch(params: {
+  readonly id?: string;
+  readonly periodMonth?: string;
+  readonly targetType?: MonthlyRosterRecord["targetType"];
+  readonly targetOrgUnitId?: string | null;
+  readonly targetTalentGroupId?: string | null;
+} = {}): WorkScheduleAvailabilityBatchRecord {
+  const targetType = params.targetType ?? "ORG_UNIT";
+  return {
+    id: params.id ?? "availability-batch-1",
+    availabilityBatchCode: "WSAB-202605-000001",
+    submittedByActorId: "manager-user",
+    submittedByEmploymentProfileId: "manager-profile",
+    periodMonth: params.periodMonth ?? "2026-05",
+    targetType,
+    targetMode: "EXACT_ONLY",
+    targetOrgUnitId:
+      targetType === "ORG_UNIT"
+        ? (params.targetOrgUnitId ?? "dept-1")
+        : null,
+    targetTalentGroupId:
+      targetType === "TALENT_GROUP"
+        ? (params.targetTalentGroupId ?? "group-1")
+        : null,
+    targetRef: null,
+    status: "APPROVED",
+    note: null,
+    lineCounts: {
+      total: 1,
+      pending: 0,
+      approved: 1,
+      rejected: 0,
+      cancelled: 0,
+    },
+    clientToken: "availability-client-token",
+    submittedAt: 1,
+    cancelledAt: null,
+    resolvedAt: 2,
+    createdAt: 1,
+    updatedAt: 2,
+  };
+}
+
+function seedAvailabilityLine(params: {
+  readonly id: string;
+  readonly batchId?: string;
+  readonly memberEmploymentProfileId?: string;
+  readonly availabilityType?: WorkScheduleAvailabilityLineRecord["availabilityType"];
+  readonly taxonomyCode?: WorkScheduleAvailabilityLineRecord["taxonomyCode"];
+  readonly dateRangeStart?: string;
+  readonly dateRangeEnd?: string;
+  readonly preferredStartLocalTime?: string | null;
+  readonly preferredEndLocalTime?: string | null;
+  readonly status?: WorkScheduleAvailabilityLineRecord["status"];
+  readonly applyStatus?: WorkScheduleAvailabilityLineRecord["applyStatus"];
+  readonly appliedRosterId?: string | null;
+  readonly appliedRosterExceptionId?: string | null;
+  readonly appliedRosterExceptionIds?: readonly string[];
+  readonly targetType?: MonthlyRosterRecord["targetType"];
+  readonly targetOrgUnitId?: string | null;
+  readonly targetTalentGroupId?: string | null;
+}): WorkScheduleAvailabilityLineRecord {
+  const targetType = params.targetType ?? "ORG_UNIT";
+  return {
+    id: params.id,
+    batchId: params.batchId ?? "availability-batch-1",
+    lineNo: 1,
+    pendingDuplicateKey: "pending-key",
+    memberEmploymentProfileId:
+      params.memberEmploymentProfileId ?? "emp-1",
+    availabilityType:
+      params.availabilityType ?? "UNAVAILABLE_FULL_DAY",
+    taxonomyCode:
+      params.taxonomyCode ?? "AUTHORIZED_LEAVE",
+    dateRangeStart:
+      params.dateRangeStart ?? "2026-05-04",
+    dateRangeEnd:
+      params.dateRangeEnd ??
+      params.dateRangeStart ??
+      "2026-05-04",
+    preferredStartLocalTime:
+      params.preferredStartLocalTime ?? null,
+    preferredEndLocalTime:
+      params.preferredEndLocalTime ?? null,
+    reason:
+      "Approved availability planning signal for roster application",
+    status: params.status ?? "APPROVED",
+    applyStatus: params.applyStatus ?? "NOT_APPLIED",
+    policyEvaluationStatus: "NOT_EVALUATED",
+    appliedRosterId: params.appliedRosterId ?? null,
+    appliedRosterExceptionId:
+      params.appliedRosterExceptionId ?? null,
+    appliedRosterExceptionIds: [
+      ...(params.appliedRosterExceptionIds ?? []),
+    ],
+    appliedAt: null,
+    appliedByActorId: null,
+    adminDecisionNote: null,
+    rejectionReason: null,
+    cancellationReason: null,
+    createdAt: 1,
+    updatedAt: 1,
+    approvedAt: 2,
+    approvedByActorId: "ops-user",
+    rejectedAt: null,
+    rejectedByActorId: null,
+    cancelledAt: null,
+    cancelledByActorId: null,
+    submittedByEmploymentProfileId: "manager-profile",
+    periodMonth: "2026-05",
+    targetType,
+    targetOrgUnitId:
+      targetType === "ORG_UNIT"
+        ? (params.targetOrgUnitId ?? "dept-1")
+        : null,
+    targetTalentGroupId:
+      targetType === "TALENT_GROUP"
+        ? (params.targetTalentGroupId ?? "group-1")
+        : null,
   };
 }
 
@@ -904,6 +1163,7 @@ function createService(params: {
   readonly calendars?: readonly HolidayCalendarRecord[];
   readonly resources?: readonly WorkScheduleReferencedStudioResource[];
   readonly workShiftRepository?: MemoryWorkShiftRepository;
+  readonly availabilityRepository?: MemoryAvailabilityRepository;
   readonly codeSequenceRepository?: WorkScheduleCodeSequenceRepository;
   readonly now?: () => number;
 } = {}): MonthlyRosterAdminService {
@@ -1023,6 +1283,8 @@ function createService(params: {
     } as never,
     params.now ??
       (() => Date.parse("2026-05-15T00:00:00.000Z")),
+    params.availabilityRepository ??
+      new MemoryAvailabilityRepository(),
   );
 }
 
@@ -2379,6 +2641,324 @@ test("Monthly Roster read query normalizes filters and enforces read permission"
     limit: 20,
     cursor: undefined,
     search: "mr",
+  });
+});
+
+test("Admin applies approved availability lines to a DRAFT Monthly Roster without creating WorkShifts", async () => {
+  await bindTraceId("trace-roster-apply-availability-success", async () => {
+    const availabilityRepository =
+      new MemoryAvailabilityRepository({
+        batches: [seedAvailabilityBatch()],
+        lines: [
+          seedAvailabilityLine({
+            id: "line-off",
+            availabilityType: "UNAVAILABLE_FULL_DAY",
+            taxonomyCode: "AUTHORIZED_LEAVE",
+            dateRangeStart: "2026-05-04",
+          }),
+          seedAvailabilityLine({
+            id: "line-time",
+            availabilityType: "PREFERRED_TIME",
+            taxonomyCode: "SHIFT_CHANGE",
+            dateRangeStart: "2026-05-05",
+            preferredStartLocalTime: "09:00",
+            preferredEndLocalTime: "18:00",
+          }),
+          seedAvailabilityLine({
+            id: "line-note",
+            availabilityType: "OTHER_AVAILABILITY_NOTE",
+            taxonomyCode: "OTHER",
+            dateRangeStart: "2026-05-06",
+            applyStatus: "ADVISORY_ONLY",
+          }),
+        ],
+      });
+    const workShiftRepository =
+      new MemoryWorkShiftRepository();
+    const service = createService({
+      rosters: [seedRoster()],
+      availabilityRepository,
+      workShiftRepository,
+      now: () => 1000,
+    });
+
+    const result =
+      await service.applyAvailabilityLinesToMonthlyRoster(
+        createActor([Permission.WORK_SCHEDULE_UPDATE]),
+        {
+          monthlyRosterId: "roster-1",
+          availabilityLineIds: [
+            "line-off",
+            "line-time",
+            "line-note",
+          ],
+          applyNote: "Apply accepted availability to draft roster",
+        },
+      );
+
+    assert.equal(result.appliedCount, 2);
+    assert.equal(result.advisoryOnlyCount, 1);
+    assert.equal(result.failedCount, 0);
+    assert.deepEqual(
+      result.results.map((item) => item.outcome),
+      ["APPLIED", "APPLIED", "ADVISORY_ONLY"],
+    );
+    assert.equal(workShiftRepository.records.length, 0);
+
+    const roster = await (
+      service as unknown as {
+        rosterRepository: MemoryMonthlyRosterRepository;
+      }
+    ).rosterRepository.findById("roster-1");
+    assert.equal(
+      roster?.exceptions.filter(
+        (exception) => exception.status === "ACTIVE",
+      ).length,
+      2,
+    );
+    const off = roster?.exceptions.find(
+      (exception) =>
+        exception.sourceAvailabilityLineId === "line-off",
+    );
+    assert.equal(off?.exceptionType, "WORKING_TO_OFF");
+    assert.equal(off?.sourceAvailabilityBatchId, "availability-batch-1");
+    assert.equal(off?.sourceAvailabilityType, "UNAVAILABLE_FULL_DAY");
+    assert.equal(off?.sourceAvailabilityTaxonomyCode, "AUTHORIZED_LEAVE");
+    assert.equal(off?.sourceAppliedAt, 1000);
+    assert.equal(off?.sourceAppliedByActorId, "admin-user-1");
+    const changed = roster?.exceptions.find(
+      (exception) =>
+        exception.sourceAvailabilityLineId === "line-time",
+    );
+    assert.equal(changed?.exceptionType, "CHANGE_TIME");
+    assert.equal(changed?.startLocalTime, "09:00");
+    assert.equal(changed?.endLocalTime, "18:00");
+
+    const line = availabilityRepository.lines.find(
+      (candidate) => candidate.id === "line-off",
+    );
+    assert.equal(line?.applyStatus, "APPLIED");
+    assert.equal(line?.appliedRosterId, "roster-1");
+    assert.equal(line?.appliedRosterExceptionIds.length, 1);
+    assert.equal(line?.policyEvaluationStatus, "NOT_EVALUATED");
+    assert.equal(
+      availabilityRepository.lines.find(
+        (candidate) => candidate.id === "line-note",
+      )?.applyStatus,
+      "ADVISORY_ONLY",
+    );
+  });
+});
+
+test("Admin apply availability is idempotent, conflict-safe, and fails closed for invalid lines", async () => {
+  await bindTraceId("trace-roster-apply-availability-guards", async () => {
+    const availabilityRepository =
+      new MemoryAvailabilityRepository({
+        batches: [
+          seedAvailabilityBatch(),
+          seedAvailabilityBatch({
+            id: "batch-other",
+            targetOrgUnitId: "dept-other",
+          }),
+        ],
+        lines: [
+          seedAvailabilityLine({
+            id: "line-applied",
+            dateRangeStart: "2026-05-04",
+          }),
+          seedAvailabilityLine({
+            id: "line-pending",
+            dateRangeStart: "2026-05-05",
+            status: "PENDING",
+          }),
+          seedAvailabilityLine({
+            id: "line-unrepresentable-time",
+            availabilityType: "PREFERRED_TIME",
+            taxonomyCode: "SHIFT_CHANGE",
+            dateRangeStart: "2026-05-06",
+            preferredStartLocalTime: "10:00",
+            preferredEndLocalTime: "12:00",
+          }),
+          seedAvailabilityLine({
+            id: "line-target-mismatch",
+            batchId: "batch-other",
+            dateRangeStart: "2026-05-07",
+            targetOrgUnitId: "dept-other",
+          }),
+          seedAvailabilityLine({
+            id: "line-date-range",
+            dateRangeStart: "2026-05-07",
+            dateRangeEnd: "2026-05-08",
+          }),
+        ],
+      });
+    const service = createService({
+      rosters: [
+        seedRoster({
+          exceptions: [
+            seedRosterException({
+              rosterExceptionId: "existing-source",
+              exceptionDate: "2026-05-04",
+              sourceAvailabilityLineId: "line-applied",
+            }),
+            seedRosterException({
+              rosterExceptionId: "existing-conflict",
+              exceptionDate: "2026-05-07",
+            }),
+          ],
+        }),
+      ],
+      availabilityRepository,
+      now: () => 2000,
+    });
+
+    const result =
+      await service.applyAvailabilityLinesToMonthlyRoster(
+        createActor([Permission.WORK_SCHEDULE_UPDATE]),
+        {
+          monthlyRosterId: "roster-1",
+          availabilityLineIds: [
+            "line-applied",
+            "line-pending",
+            "line-unrepresentable-time",
+            "line-target-mismatch",
+            "line-date-range",
+          ],
+        },
+      );
+
+    assert.deepEqual(
+      result.results.map((item) => item.outcome),
+      [
+        "SKIPPED_ALREADY_APPLIED",
+        "FAILED",
+        "FAILED",
+        "FAILED",
+        "FAILED",
+      ],
+    );
+    assert.equal(result.appliedCount, 0);
+    assert.equal(result.skippedAlreadyAppliedCount, 1);
+    assert.equal(result.failedCount, 4);
+    assert.equal(
+      availabilityRepository.lines.find(
+        (line) => line.id === "line-pending",
+      )?.applyStatus,
+      "NOT_APPLIED",
+    );
+
+    const rangeRepository =
+      new MemoryAvailabilityRepository({
+        batches: [seedAvailabilityBatch()],
+        lines: [
+          seedAvailabilityLine({
+            id: "line-range",
+            dateRangeStart: "2026-05-04",
+            dateRangeEnd: "2026-05-05",
+          }),
+        ],
+      });
+    const rangeService = createService({
+      rosters: [seedRoster()],
+      availabilityRepository: rangeRepository,
+      now: () => 3000,
+    });
+    const rangeResult =
+      await rangeService.applyAvailabilityLinesToMonthlyRoster(
+        createActor([Permission.WORK_SCHEDULE_UPDATE]),
+        {
+          monthlyRosterId: "roster-1",
+          availabilityLineIds: ["line-range"],
+        },
+      );
+    assert.equal(rangeResult.appliedCount, 1);
+    assert.equal(
+      rangeResult.results[0]?.rosterExceptionIds.length,
+      2,
+    );
+  });
+});
+
+test("Admin apply availability route exists and requires update plus global scope", async () => {
+  await bindTraceId("trace-roster-apply-availability-authority", async () => {
+    const rosterRoutes = await readFile(
+      "src/modules/work-schedule/admin/admin.monthly-roster.routes.ts",
+      "utf8",
+    );
+    assert.equal(
+      rosterRoutes.includes("/apply-availability-lines"),
+      true,
+    );
+
+    const availabilityRepository =
+      new MemoryAvailabilityRepository({
+        batches: [seedAvailabilityBatch()],
+        lines: [
+          seedAvailabilityLine({
+            id: "line-off",
+            dateRangeStart: "2026-05-04",
+          }),
+        ],
+      });
+    const service = createService({
+      rosters: [seedRoster()],
+      availabilityRepository,
+    });
+
+    await assert.rejects(
+      service.applyAvailabilityLinesToMonthlyRoster(
+        createActor([Permission.WORK_SCHEDULE_READ]),
+        {
+          monthlyRosterId: "roster-1",
+          availabilityLineIds: ["line-off"],
+        },
+      ),
+      SystemInvariantError,
+    );
+    await assert.rejects(
+      service.applyAvailabilityLinesToMonthlyRoster(
+        createActor(
+          [Permission.WORK_SCHEDULE_UPDATE],
+          ["team"],
+        ),
+        {
+          monthlyRosterId: "roster-1",
+          availabilityLineIds: ["line-off"],
+        },
+      ),
+      WorkSchedulePermissionScopeError,
+    );
+    await assert.rejects(
+      service.applyAvailabilityLinesToMonthlyRoster(
+        new Actor({
+          id: "self-user",
+          type: "staff",
+          context: "SELF_SERVICE",
+          roles: [],
+          permissions: [Permission.WORK_SCHEDULE_UPDATE],
+          scopeGrants: { workSchedule: ["global"] },
+          isActive: true,
+        }),
+        {
+          monthlyRosterId: "roster-1",
+          availabilityLineIds: ["line-off"],
+        },
+      ),
+      SystemInvariantError,
+    );
+    await assert.rejects(
+      createService({
+        rosters: [seedRoster({ status: "PUBLISHED" })],
+        availabilityRepository,
+      }).applyAvailabilityLinesToMonthlyRoster(
+        createActor([Permission.WORK_SCHEDULE_UPDATE]),
+        {
+          monthlyRosterId: "roster-1",
+          availabilityLineIds: ["line-off"],
+        },
+      ),
+      WorkScheduleStateError,
+    );
   });
 });
 

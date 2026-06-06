@@ -52,6 +52,12 @@ export function adminMonthlyRosterRoutes(
   );
 
   router.post(
+    "/:monthlyRosterId/apply-availability-lines",
+    withCommand("MONTHLY_ROSTER_APPLY_AVAILABILITY_LINES"),
+    mutationController.execute,
+  );
+
+  router.post(
     "/:monthlyRosterId/exceptions",
     withCommand("ROSTER_EXCEPTION_ADD"),
     mutationController.execute,

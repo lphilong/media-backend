@@ -112,6 +112,7 @@ export const AUTHORITATIVE_ADMIN_MUTATION_IDENTITIES = [
   "work-schedule.monthly-roster.update-draft",
   "work-schedule.monthly-roster.archive",
   "work-schedule.monthly-roster.publish",
+  "work-schedule.monthly-roster.apply-availability-lines",
   "work-schedule.monthly-roster.exception.add",
   "work-schedule.monthly-roster.exception.update",
   "work-schedule.monthly-roster.exception.remove",
@@ -314,6 +315,8 @@ const ADMIN_MUTATION_PERMISSION_BY_IDENTITY: Readonly<
     Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
   "work-schedule.monthly-roster.publish":
     Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+  "work-schedule.monthly-roster.apply-availability-lines":
+    Permission.WORK_SCHEDULE_UPDATE,
   "work-schedule.monthly-roster.exception.add": Permission.WORK_SCHEDULE_UPDATE,
   "work-schedule.monthly-roster.exception.update":
     Permission.WORK_SCHEDULE_UPDATE,

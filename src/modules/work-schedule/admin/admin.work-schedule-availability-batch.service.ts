@@ -184,6 +184,11 @@ export class WorkScheduleAvailabilityBatchAdminService {
                 ? "ADVISORY_ONLY"
                 : "NOT_APPLIED",
             policyEvaluationStatus: "NOT_EVALUATED",
+            appliedRosterId: null,
+            appliedRosterExceptionId: null,
+            appliedRosterExceptionIds: [],
+            appliedAt: null,
+            appliedByActorId: null,
             adminDecisionNote: null,
             rejectionReason: null,
             cancellationReason: null,

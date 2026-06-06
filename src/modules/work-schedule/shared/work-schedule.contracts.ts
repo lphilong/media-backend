@@ -168,6 +168,14 @@ export interface PublishMonthlyRosterCommand {
   readonly scope?: WorkShiftScope | string;
 }
 
+export interface ApplyAvailabilityLinesToMonthlyRosterCommand {
+  readonly monthlyRosterId: string;
+  readonly availabilityLineIds: readonly string[];
+  readonly applyNote?: string | null;
+  readonly note?: string | null;
+  readonly scope?: WorkShiftScope | string;
+}
+
 export interface AddRosterExceptionCommand {
   readonly monthlyRosterId: string;
   readonly exceptionType: RosterExceptionType | string;
@@ -490,6 +498,36 @@ export interface PublishMonthlyRosterResult {
   readonly conflictCount: number;
   readonly computedPreviewHash: string | null;
   readonly generatedWorkShiftIds: readonly string[];
+}
+
+export type ApplyAvailabilityLineOutcome =
+  | "APPLIED"
+  | "ADVISORY_ONLY"
+  | "SKIPPED_ALREADY_APPLIED"
+  | "FAILED";
+
+export interface ApplyAvailabilityLineResult {
+  readonly availabilityLineId: string;
+  readonly outcome: ApplyAvailabilityLineOutcome;
+  readonly rosterExceptionId: string | null;
+  readonly rosterExceptionIds: readonly string[];
+  readonly reason: string;
+}
+
+export interface ApplyAvailabilityLinesToMonthlyRosterResult {
+  readonly monthlyRosterId: string;
+  readonly rosterCode: string;
+  readonly rosterMonth: string;
+  readonly status: MonthlyRosterStatus;
+  readonly targetType: string;
+  readonly targetMode: string;
+  readonly targetOrgUnitId: string | null;
+  readonly targetTalentGroupId: string | null;
+  readonly appliedCount: number;
+  readonly advisoryOnlyCount: number;
+  readonly skippedAlreadyAppliedCount: number;
+  readonly failedCount: number;
+  readonly results: readonly ApplyAvailabilityLineResult[];
 }
 
 export type MonthlyRosterMutationResult =

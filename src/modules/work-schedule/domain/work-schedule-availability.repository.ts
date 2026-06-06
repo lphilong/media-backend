@@ -1,6 +1,7 @@
 import { ClientSession } from "mongodb";
 import { MonthlyRosterTargetType } from "./work-schedule.types";
 import {
+  WorkScheduleAvailabilityApplyStatus,
   WorkScheduleAvailabilityBatchRecord,
   WorkScheduleAvailabilityBatchStatus,
   WorkScheduleAvailabilityLineCounts,
@@ -69,6 +70,19 @@ export interface UpdateWorkScheduleAvailabilityBatchDerivedInput {
   readonly resolvedAt?: number | null;
 }
 
+export interface UpdateWorkScheduleAvailabilityLineApplyStateInput {
+  readonly batchId: string;
+  readonly lineId: string;
+  readonly fromApplyStatuses: readonly WorkScheduleAvailabilityApplyStatus[];
+  readonly applyStatus: WorkScheduleAvailabilityApplyStatus;
+  readonly appliedRosterId?: string | null;
+  readonly appliedRosterExceptionId?: string | null;
+  readonly appliedRosterExceptionIds?: readonly string[];
+  readonly appliedAt?: number | null;
+  readonly appliedByActorId?: string | null;
+  readonly updatedAt: number;
+}
+
 export interface WorkScheduleAvailabilityBatchRepository {
   insertBatchWithLines(
     batch: WorkScheduleAvailabilityBatchRecord,
@@ -103,6 +117,11 @@ export interface WorkScheduleAvailabilityBatchRepository {
     session?: ClientSession,
   ): Promise<WorkScheduleAvailabilityLineRecord | null>;
 
+  listLinesByIds(
+    lineIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly WorkScheduleAvailabilityLineRecord[]>;
+
   findPendingDuplicateLine(
     input: PendingDuplicateWorkScheduleAvailabilityLineInput,
     session?: ClientSession,
@@ -117,4 +136,9 @@ export interface WorkScheduleAvailabilityBatchRepository {
     input: UpdateWorkScheduleAvailabilityBatchDerivedInput,
     session: ClientSession,
   ): Promise<WorkScheduleAvailabilityBatchRecord | null>;
+
+  updateLineApplyState(
+    input: UpdateWorkScheduleAvailabilityLineApplyStateInput,
+    session: ClientSession,
+  ): Promise<WorkScheduleAvailabilityLineRecord | null>;
 }

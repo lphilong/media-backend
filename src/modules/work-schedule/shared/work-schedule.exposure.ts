@@ -265,6 +265,12 @@ const ROSTER_EXCEPTION_ADMIN_FIELDS = [
   "studioResourceRefs",
   "reason",
   "sourceNote",
+  "sourceAvailabilityBatchId",
+  "sourceAvailabilityLineId",
+  "sourceAvailabilityType",
+  "sourceAvailabilityTaxonomyCode",
+  "sourceAppliedAt",
+  "sourceApplyNote",
   "description",
   "externalRef",
   "removedAt",
@@ -926,6 +932,18 @@ export const RosterExceptionAdminExposure =
             studioResourceRefs: input.studioResourceRefs,
             reason: input.reason,
             sourceNote: input.sourceNote,
+            sourceAvailabilityBatchId:
+              input.sourceAvailabilityBatchId ?? null,
+            sourceAvailabilityLineId:
+              input.sourceAvailabilityLineId ?? null,
+            sourceAvailabilityType:
+              input.sourceAvailabilityType ?? null,
+            sourceAvailabilityTaxonomyCode:
+              input.sourceAvailabilityTaxonomyCode ?? null,
+            sourceAppliedAt:
+              input.sourceAppliedAt ?? null,
+            sourceApplyNote:
+              input.sourceApplyNote ?? null,
             description: input.description,
             externalRef: input.externalRef,
             removedAt: input.removedAt,

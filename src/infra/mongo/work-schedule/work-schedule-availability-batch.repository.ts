@@ -3,6 +3,7 @@ import { WorkScheduleValidationError } from "@modules/work-schedule/domain/work-
 import {
   PendingDuplicateWorkScheduleAvailabilityLineInput,
   TransitionWorkScheduleAvailabilityLineInput,
+  UpdateWorkScheduleAvailabilityLineApplyStateInput,
   UpdateWorkScheduleAvailabilityBatchDerivedInput,
   WorkScheduleAvailabilityBatchListInput,
   WorkScheduleAvailabilityBatchListResult,
@@ -143,6 +144,23 @@ export class NativeMongoWorkScheduleAvailabilityBatchRepository
     return doc ? toLineRecord(doc) : null;
   }
 
+  async listLinesByIds(
+    lineIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<readonly WorkScheduleAvailabilityLineRecord[]> {
+    if (lineIds.length === 0) {
+      return [];
+    }
+
+    const docs = await this.lines
+      .find(
+        { _id: { $in: [...lineIds] } },
+        withSession(session),
+      )
+      .toArray();
+    return docs.map(toLineRecord);
+  }
+
   async findPendingDuplicateLine(
     input: PendingDuplicateWorkScheduleAvailabilityLineInput,
     session?: ClientSession,
@@ -211,6 +229,43 @@ export class NativeMongoWorkScheduleAvailabilityBatchRepository
       },
     );
     return updated ? toBatchRecord(updated) : null;
+  }
+
+  async updateLineApplyState(
+    input: UpdateWorkScheduleAvailabilityLineApplyStateInput,
+    session: ClientSession,
+  ): Promise<WorkScheduleAvailabilityLineRecord | null> {
+    const set: Record<string, unknown> = {
+      applyStatus: input.applyStatus,
+      updatedAt: input.updatedAt,
+    };
+    applyOptional(set, "appliedRosterId", input.appliedRosterId);
+    applyOptional(
+      set,
+      "appliedRosterExceptionId",
+      input.appliedRosterExceptionId,
+    );
+    applyOptional(
+      set,
+      "appliedRosterExceptionIds",
+      input.appliedRosterExceptionIds,
+    );
+    applyOptional(set, "appliedAt", input.appliedAt);
+    applyOptional(set, "appliedByActorId", input.appliedByActorId);
+
+    const updated = await this.lines.findOneAndUpdate(
+      {
+        _id: input.lineId,
+        batchId: input.batchId,
+        applyStatus: { $in: [...input.fromApplyStatuses] },
+      },
+      { $set: set },
+      {
+        ...withSession(session),
+        returnDocument: "after",
+      },
+    );
+    return updated ? toLineRecord(updated) : null;
   }
 }
 

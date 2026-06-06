@@ -86,6 +86,12 @@ function exposeAvailabilityLine(input: WorkScheduleAvailabilityLineView) {
     status: input.status,
     applyStatus: input.applyStatus,
     policyEvaluationStatus: input.policyEvaluationStatus,
+    appliedRosterId: input.appliedRosterId,
+    appliedRosterExceptionId: input.appliedRosterExceptionId,
+    appliedRosterExceptionIds: [
+      ...input.appliedRosterExceptionIds,
+    ],
+    appliedAt: input.appliedAt,
     adminDecisionNote: input.adminDecisionNote,
     rejectionReason: input.rejectionReason,
     cancellationReason: input.cancellationReason,

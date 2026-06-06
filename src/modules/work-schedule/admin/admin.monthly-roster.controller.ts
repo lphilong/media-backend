@@ -10,6 +10,7 @@ import { WorkScheduleValidationError } from "@modules/work-schedule/domain/work-
 import { MONTHLY_ROSTER_ADMIN_MUTATION_PRESENTER_KEY } from "@modules/work-schedule/shared/work-schedule.presenter-keys";
 import {
   AddRosterExceptionCommand,
+  ApplyAvailabilityLinesToMonthlyRosterCommand,
   CreateMonthlyRosterDraftCommand,
   MonthlyRosterLifecycleCommand,
   PublishMonthlyRosterCommand,
@@ -24,6 +25,7 @@ type MonthlyRosterMutationCommand =
   | "MONTHLY_ROSTER_UPDATE_DRAFT"
   | "MONTHLY_ROSTER_ARCHIVE"
   | "MONTHLY_ROSTER_PUBLISH"
+  | "MONTHLY_ROSTER_APPLY_AVAILABILITY_LINES"
   | "ROSTER_EXCEPTION_ADD"
   | "ROSTER_EXCEPTION_UPDATE"
   | "ROSTER_EXCEPTION_REMOVE";
@@ -82,6 +84,12 @@ const PUBLISH_BODY_FIELDS = Object.freeze([
   "note",
   "scope",
 ]);
+const APPLY_AVAILABILITY_BODY_FIELDS = Object.freeze([
+  "availabilityLineIds",
+  "applyNote",
+  "note",
+  "scope",
+]);
 
 export class MonthlyRosterAdminController extends SecureController {
   constructor(
@@ -130,6 +138,12 @@ export class MonthlyRosterAdminController extends SecureController {
           parsePublishMonthlyRosterCommand(req),
         );
 
+      case "MONTHLY_ROSTER_APPLY_AVAILABILITY_LINES":
+        return this.service.applyAvailabilityLinesToMonthlyRoster(
+          actor,
+          parseApplyAvailabilityLinesCommand(req),
+        );
+
       case "ROSTER_EXCEPTION_ADD":
         return this.service.addRosterException(
           actor,
@@ -168,6 +182,27 @@ export class MonthlyRosterAdminController extends SecureController {
       )
       .present(result, context);
   }
+}
+
+function parseApplyAvailabilityLinesCommand(
+  req: Request,
+): ApplyAvailabilityLinesToMonthlyRosterCommand {
+  const body = requireRecord(req.body);
+  assertNoUnexpectedFields(
+    body,
+    APPLY_AVAILABILITY_BODY_FIELDS,
+    "applyAvailabilityLinesToMonthlyRoster",
+  );
+
+  return {
+    monthlyRosterId: req.params.monthlyRosterId,
+    availabilityLineIds:
+      body.availabilityLineIds as readonly string[],
+    applyNote:
+      body.applyNote as string | null | undefined,
+    note: body.note as string | null | undefined,
+    scope: body.scope as string | undefined,
+  };
 }
 
 function parseCreateMonthlyRosterDraftCommand(

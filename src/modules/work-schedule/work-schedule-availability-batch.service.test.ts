@@ -28,6 +28,7 @@ import {
 import type {
   PendingDuplicateWorkScheduleAvailabilityLineInput,
   TransitionWorkScheduleAvailabilityLineInput,
+  UpdateWorkScheduleAvailabilityLineApplyStateInput,
   UpdateWorkScheduleAvailabilityBatchDerivedInput,
   WorkScheduleAvailabilityBatchListInput,
   WorkScheduleAvailabilityBatchRepository,
@@ -106,6 +107,11 @@ class MemoryAvailabilityRepository
     );
   }
 
+  async listLinesByIds(lineIds: readonly string[]) {
+    const ids = new Set(lineIds);
+    return this.lines.filter((line) => ids.has(line.id));
+  }
+
   async findPendingDuplicateLine(
     input: PendingDuplicateWorkScheduleAvailabilityLineInput,
   ) {
@@ -167,6 +173,43 @@ class MemoryAvailabilityRepository
       resolvedAt: input.resolvedAt ?? current.resolvedAt,
     };
     this.replaceBatch(updated);
+    return updated;
+  }
+
+  async updateLineApplyState(
+    input: UpdateWorkScheduleAvailabilityLineApplyStateInput,
+  ) {
+    const current = await this.findLineById(input.batchId, input.lineId);
+    if (
+      !current ||
+      !input.fromApplyStatuses.includes(current.applyStatus)
+    ) {
+      return null;
+    }
+    const updated: WorkScheduleAvailabilityLineRecord = {
+      ...current,
+      applyStatus: input.applyStatus,
+      appliedRosterId:
+        input.appliedRosterId === undefined
+          ? current.appliedRosterId
+          : input.appliedRosterId,
+      appliedRosterExceptionId:
+        input.appliedRosterExceptionId === undefined
+          ? current.appliedRosterExceptionId
+          : input.appliedRosterExceptionId,
+      appliedRosterExceptionIds:
+        input.appliedRosterExceptionIds === undefined
+          ? current.appliedRosterExceptionIds
+          : [...input.appliedRosterExceptionIds],
+      appliedAt:
+        input.appliedAt === undefined ? current.appliedAt : input.appliedAt,
+      appliedByActorId:
+        input.appliedByActorId === undefined
+          ? current.appliedByActorId
+          : input.appliedByActorId,
+      updatedAt: input.updatedAt,
+    };
+    this.replaceLine(updated);
     return updated;
   }
 
