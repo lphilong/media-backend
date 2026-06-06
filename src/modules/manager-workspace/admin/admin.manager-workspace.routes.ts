@@ -52,6 +52,41 @@ export function adminManagerWorkspaceRoutes(
     ),
     controller.execute,
   );
+  router.get(
+    "/work-schedule/availability-batches",
+    withCommand(
+      "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_BATCHES",
+    ),
+    controller.execute,
+  );
+  router.post(
+    "/work-schedule/availability-batches",
+    withCommand(
+      "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_AVAILABILITY_BATCH",
+    ),
+    controller.execute,
+  );
+  router.get(
+    "/work-schedule/availability-batches/:batchId",
+    withCommand(
+      "MANAGER_WORKSPACE_GET_WORK_SCHEDULE_AVAILABILITY_BATCH",
+    ),
+    controller.execute,
+  );
+  router.post(
+    "/work-schedule/availability-batches/:batchId/cancel",
+    withCommand(
+      "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_BATCH",
+    ),
+    controller.execute,
+  );
+  router.post(
+    "/work-schedule/availability-batches/:batchId/lines/:lineId/cancel",
+    withCommand(
+      "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_LINE",
+    ),
+    controller.execute,
+  );
 
   return router;
 }

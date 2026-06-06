@@ -44,6 +44,17 @@ export class WorkScheduleRequestBatchNotFoundError extends DomainError {
   }
 }
 
+export class WorkScheduleAvailabilityBatchNotFoundError extends DomainError {
+  constructor(batchId: string) {
+    super(
+      "WORK_SCHEDULE_AVAILABILITY_BATCH_NOT_FOUND",
+      `Work schedule availability batch not found: ${batchId}`,
+      "Work schedule availability batch not found",
+      404,
+    );
+  }
+}
+
 export class WorkScheduleConflictError extends DomainError {
   constructor(message: string) {
     super(

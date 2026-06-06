@@ -41,6 +41,13 @@ import {
   WORK_SCHEDULE_REQUEST_LINE_BATCH_STATUS_INDEX_NAME,
   WORK_SCHEDULE_REQUEST_LINE_MEMBER_STATUS_INDEX_NAME,
   WORK_SCHEDULE_REQUEST_LINE_PENDING_DUPLICATE_INDEX_NAME,
+  WORK_SCHEDULE_AVAILABILITY_BATCH_CODE_UNIQ_INDEX_NAME,
+  WORK_SCHEDULE_AVAILABILITY_BATCH_CLIENT_TOKEN_UNIQ_INDEX_NAME,
+  WORK_SCHEDULE_AVAILABILITY_BATCH_QUEUE_INDEX_NAME,
+  WORK_SCHEDULE_AVAILABILITY_BATCH_SUBMITTER_INDEX_NAME,
+  WORK_SCHEDULE_AVAILABILITY_LINE_BATCH_STATUS_INDEX_NAME,
+  WORK_SCHEDULE_AVAILABILITY_LINE_MEMBER_DATE_STATUS_INDEX_NAME,
+  WORK_SCHEDULE_AVAILABILITY_LINE_PENDING_DUPLICATE_INDEX_NAME,
   WORK_SCHEDULE_REQUEST_REQUESTER_INDEX_NAME,
   WORK_SCHEDULE_REQUEST_STATUS_CREATED_AT_INDEX_NAME,
   WORK_SCHEDULE_REQUEST_TARGET_PROFILE_INDEX_NAME,
@@ -569,6 +576,83 @@ export function createWorkScheduleBootstrapRegistrar(): BootstrapRegistrar {
         },
         {
           status: "PENDING",
+        },
+      );
+
+      await assertRequiredUniqueIndex(
+        db,
+        "work_schedule_availability_batches",
+        WORK_SCHEDULE_AVAILABILITY_BATCH_CODE_UNIQ_INDEX_NAME,
+        { availabilityBatchCode: 1 },
+      );
+
+      await assertRequiredUniqueIndex(
+        db,
+        "work_schedule_availability_batches",
+        WORK_SCHEDULE_AVAILABILITY_BATCH_CLIENT_TOKEN_UNIQ_INDEX_NAME,
+        {
+          submittedByEmploymentProfileId: 1,
+          clientToken: 1,
+        },
+      );
+
+      await assertRequiredIndex(
+        db,
+        "work_schedule_availability_batches",
+        WORK_SCHEDULE_AVAILABILITY_BATCH_QUEUE_INDEX_NAME,
+        {
+          status: 1,
+          periodMonth: 1,
+          targetType: 1,
+          targetOrgUnitId: 1,
+          targetTalentGroupId: 1,
+          createdAt: -1,
+          _id: 1,
+        },
+      );
+
+      await assertRequiredIndex(
+        db,
+        "work_schedule_availability_batches",
+        WORK_SCHEDULE_AVAILABILITY_BATCH_SUBMITTER_INDEX_NAME,
+        {
+          submittedByEmploymentProfileId: 1,
+          status: 1,
+          createdAt: -1,
+          _id: 1,
+        },
+      );
+
+      await assertRequiredIndex(
+        db,
+        "work_schedule_availability_lines",
+        WORK_SCHEDULE_AVAILABILITY_LINE_BATCH_STATUS_INDEX_NAME,
+        { batchId: 1, status: 1, lineNo: 1, _id: 1 },
+      );
+
+      await assertRequiredIndex(
+        db,
+        "work_schedule_availability_lines",
+        WORK_SCHEDULE_AVAILABILITY_LINE_MEMBER_DATE_STATUS_INDEX_NAME,
+        {
+          memberEmploymentProfileId: 1,
+          dateRangeStart: 1,
+          dateRangeEnd: 1,
+          status: 1,
+          _id: 1,
+        },
+      );
+
+      await assertRequiredPartialUniqueIndex(
+        db,
+        "work_schedule_availability_lines",
+        WORK_SCHEDULE_AVAILABILITY_LINE_PENDING_DUPLICATE_INDEX_NAME,
+        {
+          pendingDuplicateKey: 1,
+        },
+        {
+          status: "PENDING",
+          pendingDuplicateKey: { $type: "string" },
         },
       );
     },

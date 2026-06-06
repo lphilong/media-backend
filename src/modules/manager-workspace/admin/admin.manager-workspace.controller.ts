@@ -26,6 +26,18 @@ import {
   SubmitWorkScheduleRequestBatchCommand,
 } from "@modules/work-schedule/shared/work-schedule.contracts";
 import { WorkScheduleRequestBatchAdminService } from "@modules/work-schedule/admin/admin.work-schedule-request-batch.service";
+import { WorkScheduleAvailabilityBatchAdminService } from "@modules/work-schedule/admin/admin.work-schedule-availability-batch.service";
+import {
+  WorkScheduleAvailabilityBatchView,
+} from "@modules/work-schedule/domain/work-schedule-availability.types";
+import {
+  ListWorkScheduleAvailabilityBatchesResult,
+  SubmitWorkScheduleAvailabilityBatchCommand,
+} from "@modules/work-schedule/shared/work-schedule-availability.contracts";
+import {
+  exposeManagerAvailabilityBatch,
+  exposeManagerAvailabilityListItem,
+} from "@modules/work-schedule/shared/work-schedule-availability.exposure";
 
 type ManagerWorkspaceCommand =
   | "MANAGER_WORKSPACE_CONTEXT"
@@ -34,13 +46,20 @@ type ManagerWorkspaceCommand =
   | "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_REQUEST_BATCHES"
   | "MANAGER_WORKSPACE_GET_WORK_SCHEDULE_REQUEST_BATCH"
   | "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_REQUEST_BATCH"
-  | "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_REQUEST_LINE";
+  | "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_REQUEST_LINE"
+  | "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_AVAILABILITY_BATCH"
+  | "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_BATCHES"
+  | "MANAGER_WORKSPACE_GET_WORK_SCHEDULE_AVAILABILITY_BATCH"
+  | "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_BATCH"
+  | "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_LINE";
 
 type ManagerWorkspaceResult =
   | ManagerWorkspaceContextView
   | ManagerWorkShiftListView
   | WorkScheduleRequestBatchView
-  | ListWorkScheduleRequestBatchesResult;
+  | ListWorkScheduleRequestBatchesResult
+  | WorkScheduleAvailabilityBatchView
+  | ListWorkScheduleAvailabilityBatchesResult;
 
 const SUBMIT_BATCH_BODY_FIELDS = Object.freeze([
   "periodMonth",
@@ -50,12 +69,24 @@ const SUBMIT_BATCH_BODY_FIELDS = Object.freeze([
   "lines",
 ]);
 const CANCEL_BODY_FIELDS = Object.freeze(["cancellationReason"]);
+const SUBMIT_AVAILABILITY_BATCH_BODY_FIELDS = Object.freeze([
+  "periodMonth",
+  "targetType",
+  "targetMode",
+  "targetOrgUnitId",
+  "targetTalentGroupId",
+  "clientToken",
+  "idempotencyKey",
+  "note",
+  "lines",
+]);
 
 export class ManagerWorkspaceAdminController extends SecureController {
   constructor(
     private readonly service: ManagerWorkspaceAdminService,
     private readonly workScheduleService: ManagerWorkspaceWorkScheduleAdminService,
     private readonly workScheduleRequestBatchService: WorkScheduleRequestBatchAdminService,
+    private readonly workScheduleAvailabilityBatchService: WorkScheduleAvailabilityBatchAdminService,
   ) {
     super();
   }
@@ -150,6 +181,81 @@ export class ManagerWorkspaceAdminController extends SecureController {
       );
     }
 
+    if (
+      command ===
+      "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_AVAILABILITY_BATCH"
+    ) {
+      return this.workScheduleAvailabilityBatchService.submitManagerBatch(
+        actor,
+        parseSubmitAvailabilityBatchCommand(req),
+      );
+    }
+
+    if (
+      command ===
+      "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_BATCHES"
+    ) {
+      return this.workScheduleAvailabilityBatchService.listManagerBatches(
+        actor,
+        {
+          status: readOptionalQuery(req, "status"),
+          periodMonth: readOptionalQuery(req, "periodMonth"),
+          targetType: readOptionalQuery(req, "targetType"),
+          targetOrgUnitId: readOptionalQuery(req, "targetOrgUnitId"),
+          targetTalentGroupId: readOptionalQuery(
+            req,
+            "targetTalentGroupId",
+          ),
+          limit: readOptionalQuery(req, "limit"),
+          cursor: readOptionalQuery(req, "cursor"),
+        },
+      );
+    }
+
+    if (
+      command ===
+      "MANAGER_WORKSPACE_GET_WORK_SCHEDULE_AVAILABILITY_BATCH"
+    ) {
+      return this.workScheduleAvailabilityBatchService.getManagerBatchDetail(
+        actor,
+        { batchId: req.params.batchId },
+      );
+    }
+
+    if (
+      command ===
+        "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_BATCH" ||
+      command ===
+        "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_LINE"
+    ) {
+      const body = requireRecord(req.body);
+      assertNoUnexpectedFields(
+        body,
+        CANCEL_BODY_FIELDS,
+        "cancelWorkScheduleAvailability",
+      );
+      if (
+        command ===
+        "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_BATCH"
+      ) {
+        return this.workScheduleAvailabilityBatchService.cancelManagerBatch(
+          actor,
+          {
+            batchId: req.params.batchId,
+            cancellationReason: body.cancellationReason as string,
+          },
+        );
+      }
+      return this.workScheduleAvailabilityBatchService.cancelManagerLine(
+        actor,
+        {
+          batchId: req.params.batchId,
+          lineId: req.params.lineId,
+          cancellationReason: body.cancellationReason as string,
+        },
+      );
+    }
+
     throw new SystemInvariantError(
       "SYSTEM_INVARIANT_VIOLATION",
       "Manager workspace command missing",
@@ -182,6 +288,40 @@ export class ManagerWorkspaceAdminController extends SecureController {
               : {}),
           },
           "managerWorkspaceWorkScheduleRequestBatchList",
+        ),
+      };
+    }
+    if (
+      command ===
+      "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_BATCHES"
+    ) {
+      const list = result as ListWorkScheduleAvailabilityBatchesResult;
+      return {
+        data: toPlainObject(
+          {
+            items: list.items.map(exposeManagerAvailabilityListItem),
+            ...(list.nextCursor ? { nextCursor: list.nextCursor } : {}),
+          },
+          "managerWorkspaceWorkScheduleAvailabilityBatchList",
+        ),
+      };
+    }
+    if (
+      command ===
+        "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_AVAILABILITY_BATCH" ||
+      command ===
+        "MANAGER_WORKSPACE_GET_WORK_SCHEDULE_AVAILABILITY_BATCH" ||
+      command ===
+        "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_BATCH" ||
+      command ===
+        "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_LINE"
+    ) {
+      return {
+        data: toPlainObject(
+          exposeManagerAvailabilityBatch(
+            result as WorkScheduleAvailabilityBatchView,
+          ),
+          "managerWorkspaceWorkScheduleAvailabilityBatch",
         ),
       };
     }
@@ -231,6 +371,30 @@ function parseSubmitBatchCommand(
     note: body.note as string | null | undefined,
     lines:
       body.lines as SubmitWorkScheduleRequestBatchCommand["lines"],
+  };
+}
+
+function parseSubmitAvailabilityBatchCommand(
+  req: Request,
+): SubmitWorkScheduleAvailabilityBatchCommand {
+  const body = requireRecord(req.body);
+  assertNoUnexpectedFields(
+    body,
+    SUBMIT_AVAILABILITY_BATCH_BODY_FIELDS,
+    "submitWorkScheduleAvailabilityBatch",
+  );
+  return {
+    periodMonth: body.periodMonth as string,
+    targetType: body.targetType as string,
+    targetMode: body.targetMode as string | null | undefined,
+    targetOrgUnitId: body.targetOrgUnitId as string | null | undefined,
+    targetTalentGroupId:
+      body.targetTalentGroupId as string | null | undefined,
+    clientToken: body.clientToken as string | null | undefined,
+    idempotencyKey: body.idempotencyKey as string | null | undefined,
+    note: body.note as string | null | undefined,
+    lines:
+      body.lines as SubmitWorkScheduleAvailabilityBatchCommand["lines"],
   };
 }
 

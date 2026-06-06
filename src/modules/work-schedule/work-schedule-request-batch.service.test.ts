@@ -328,6 +328,12 @@ class MemoryCodeSequenceRepository
     return this.next(`request:${month}`);
   }
 
+  async allocateNextWorkScheduleAvailabilityCode(
+    month: string,
+  ): Promise<number> {
+    return this.next(`availability:${month}`);
+  }
+
   private next(key: string): number {
     const value = (this.values.get(key) ?? 0) + 1;
     this.values.set(key, value);

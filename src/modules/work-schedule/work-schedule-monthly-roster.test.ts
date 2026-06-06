@@ -651,6 +651,11 @@ class MemoryWorkShiftCodeSequenceRepository
     this.workScheduleRequestValue += 1;
     return this.workScheduleRequestValue;
   }
+
+  async allocateNextWorkScheduleAvailabilityCode(): Promise<number> {
+    this.workScheduleRequestValue += 1;
+    return this.workScheduleRequestValue;
+  }
 }
 
 const mutationBridge: AuthoritativeAdminMutationBridge = {

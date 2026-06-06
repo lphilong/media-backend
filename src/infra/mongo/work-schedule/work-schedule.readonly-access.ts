@@ -58,6 +58,8 @@ interface WorkScheduleTalentGroupMemberReferenceDocument {
 
 interface OrgUnitReferenceDocument {
   readonly _id: string;
+  readonly code: string;
+  readonly name: string;
   readonly type: WorkScheduleReferencedOrgUnit["type"];
   readonly status: WorkScheduleReferencedOrgUnit["status"];
 }
@@ -69,6 +71,8 @@ interface TalentReferenceDocument {
 
 interface TalentGroupReferenceDocument {
   readonly _id: string;
+  readonly groupCode: string;
+  readonly name: string;
   readonly status: WorkScheduleReferencedTalentGroup["status"];
 }
 
@@ -511,6 +515,8 @@ export class NativeMongoWorkScheduleOrgUnitReadonlyAccess
       {
         projection: {
           _id: 1,
+          code: 1,
+          name: 1,
           type: 1,
           status: 1,
         },
@@ -523,6 +529,12 @@ export class NativeMongoWorkScheduleOrgUnitReadonlyAccess
           id: doc._id,
           type: doc.type,
           status: doc.status,
+          ref: {
+            id: doc._id,
+            code: doc.code,
+            name: doc.name,
+            status: doc.status,
+          },
         }
       : null;
   }
@@ -588,6 +600,8 @@ export class NativeMongoWorkScheduleTalentGroupReadonlyAccess
       {
         projection: {
           _id: 1,
+          groupCode: 1,
+          name: 1,
           status: 1,
         },
         ...(session ? { session } : {}),
@@ -598,6 +612,12 @@ export class NativeMongoWorkScheduleTalentGroupReadonlyAccess
       ? {
           id: doc._id,
           status: doc.status,
+          ref: {
+            id: doc._id,
+            code: doc.groupCode,
+            name: doc.name,
+            status: doc.status,
+          },
         }
       : null;
   }

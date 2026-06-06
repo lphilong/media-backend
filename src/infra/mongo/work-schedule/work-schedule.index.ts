@@ -89,6 +89,20 @@ export const WORK_SCHEDULE_REQUEST_LINE_MEMBER_STATUS_INDEX_NAME =
   "idx_work_schedule_request_line_member_status";
 export const WORK_SCHEDULE_REQUEST_LINE_PENDING_DUPLICATE_INDEX_NAME =
   "idx_work_schedule_request_line_pending_duplicate";
+export const WORK_SCHEDULE_AVAILABILITY_BATCH_CODE_UNIQ_INDEX_NAME =
+  "uniq_work_schedule_availability_batch_code";
+export const WORK_SCHEDULE_AVAILABILITY_BATCH_CLIENT_TOKEN_UNIQ_INDEX_NAME =
+  "uniq_work_schedule_availability_batch_client_token";
+export const WORK_SCHEDULE_AVAILABILITY_BATCH_QUEUE_INDEX_NAME =
+  "idx_work_schedule_availability_batch_queue";
+export const WORK_SCHEDULE_AVAILABILITY_BATCH_SUBMITTER_INDEX_NAME =
+  "idx_work_schedule_availability_batch_submitter";
+export const WORK_SCHEDULE_AVAILABILITY_LINE_BATCH_STATUS_INDEX_NAME =
+  "idx_work_schedule_availability_line_batch_status";
+export const WORK_SCHEDULE_AVAILABILITY_LINE_MEMBER_DATE_STATUS_INDEX_NAME =
+  "idx_work_schedule_availability_line_member_date_status";
+export const WORK_SCHEDULE_AVAILABILITY_LINE_PENDING_DUPLICATE_INDEX_NAME =
+  "uniq_work_schedule_availability_line_pending_duplicate";
 
 interface WorkShiftLegacyDocument {
   readonly _id: string;
@@ -289,6 +303,7 @@ export async function initWorkShiftIndexes(
   await initMonthlyRosterIndexes(db);
   await initWorkScheduleRequestIndexes(db);
   await initWorkScheduleRequestBatchIndexes(db);
+  await initWorkScheduleAvailabilityBatchIndexes(db);
 }
 
 async function initWorkShiftCodeSequenceIndexes(
@@ -699,6 +714,80 @@ async function initWorkScheduleRequestBatchIndexes(
         WORK_SCHEDULE_REQUEST_LINE_PENDING_DUPLICATE_INDEX_NAME,
       partialFilterExpression: {
         status: "PENDING",
+      },
+    },
+  );
+}
+
+async function initWorkScheduleAvailabilityBatchIndexes(
+  db: Db,
+): Promise<void> {
+  const batches = db.collection("work_schedule_availability_batches");
+  const lines = db.collection("work_schedule_availability_lines");
+
+  await batches.createIndex(
+    { availabilityBatchCode: 1 },
+    {
+      name: WORK_SCHEDULE_AVAILABILITY_BATCH_CODE_UNIQ_INDEX_NAME,
+      unique: true,
+    },
+  );
+  await batches.createIndex(
+    { submittedByEmploymentProfileId: 1, clientToken: 1 },
+    {
+      name: WORK_SCHEDULE_AVAILABILITY_BATCH_CLIENT_TOKEN_UNIQ_INDEX_NAME,
+      unique: true,
+    },
+  );
+  await batches.createIndex(
+    {
+      status: 1,
+      periodMonth: 1,
+      targetType: 1,
+      targetOrgUnitId: 1,
+      targetTalentGroupId: 1,
+      createdAt: -1,
+      _id: 1,
+    },
+    { name: WORK_SCHEDULE_AVAILABILITY_BATCH_QUEUE_INDEX_NAME },
+  );
+  await batches.createIndex(
+    {
+      submittedByEmploymentProfileId: 1,
+      status: 1,
+      createdAt: -1,
+      _id: 1,
+    },
+    { name: WORK_SCHEDULE_AVAILABILITY_BATCH_SUBMITTER_INDEX_NAME },
+  );
+  await lines.createIndex(
+    { batchId: 1, status: 1, lineNo: 1, _id: 1 },
+    { name: WORK_SCHEDULE_AVAILABILITY_LINE_BATCH_STATUS_INDEX_NAME },
+  );
+  await lines.createIndex(
+    {
+      memberEmploymentProfileId: 1,
+      dateRangeStart: 1,
+      dateRangeEnd: 1,
+      status: 1,
+      _id: 1,
+    },
+    {
+      name:
+        WORK_SCHEDULE_AVAILABILITY_LINE_MEMBER_DATE_STATUS_INDEX_NAME,
+    },
+  );
+  await lines.createIndex(
+    {
+      pendingDuplicateKey: 1,
+    },
+    {
+      name:
+        WORK_SCHEDULE_AVAILABILITY_LINE_PENDING_DUPLICATE_INDEX_NAME,
+      unique: true,
+      partialFilterExpression: {
+        status: "PENDING",
+        pendingDuplicateKey: { $type: "string" },
       },
     },
   );
