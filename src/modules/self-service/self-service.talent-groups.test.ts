@@ -295,6 +295,32 @@ test("GET /self-service/talent-groups returns a safe error when actor is not lin
   }
 });
 
+test("GET /self-service/talent-groups denies non-operational profile before repository read", async () => {
+  const harness = createHarness();
+  const { server, baseUrl } = await listen(
+    createSelfServiceTalentGroupsTestApp(
+      harness,
+      createStaffActor("user-suspended"),
+    ),
+  );
+
+  try {
+    const response = await fetch(`${baseUrl}/self-service/talent-groups`);
+    const body = await response.json();
+
+    assert.equal(response.status, 403);
+    assert.equal(body.error.code, "SELF_SERVICE_PROFILE_NOT_OPERATIONAL");
+    assert.equal(
+      body.error.message,
+      "Self-Service access is not available for this profile status.",
+    );
+    assert.deepEqual(harness.talents.lookupEmploymentProfileIds, []);
+    assert.deepEqual(harness.talentGroups.membershipTalentIds, []);
+  } finally {
+    await close(server);
+  }
+});
+
 test("GET /self-service/talent-groups rejects every client-supplied query field", async () => {
   const harness = createHarness();
   const { server, baseUrl } = await listen(
@@ -402,6 +428,11 @@ function createHarness(): SelfServiceTalentGroupsHarness {
         id: "ep-no-membership",
         linkedUserId: "user-no-membership",
       },
+      {
+        id: "ep-suspended",
+        linkedUserId: "user-suspended",
+        employmentStatus: "SUSPENDED",
+      },
     ]),
     talents: createTalentRepository([
       {
@@ -430,7 +461,10 @@ interface TrackedEmploymentProfileRepository
 }
 
 function createEmploymentProfileRepository(
-  records: ReadonlyArray<Pick<EmploymentProfileRecord, "id" | "linkedUserId">>,
+  records: ReadonlyArray<
+    Pick<EmploymentProfileRecord, "id" | "linkedUserId"> &
+      Partial<Pick<EmploymentProfileRecord, "employmentStatus">>
+  >,
 ): TrackedEmploymentProfileRepository {
   const lookupLinkedUserIds: string[] = [];
 
@@ -440,11 +474,17 @@ function createEmploymentProfileRepository(
       linkedUserId: string,
     ): Promise<EmploymentProfileRecord | null> {
       lookupLinkedUserIds.push(linkedUserId);
-      return (
-        (records.find((record) => record.linkedUserId === linkedUserId) as
-          | EmploymentProfileRecord
-          | undefined) ?? null
+      const record = records.find(
+        (candidate) => candidate.linkedUserId === linkedUserId,
       );
+      if (!record) {
+        return null;
+      }
+
+      return {
+        ...record,
+        employmentStatus: record.employmentStatus ?? "ACTIVE",
+      } as EmploymentProfileRecord;
     },
   } as TrackedEmploymentProfileRepository;
 }

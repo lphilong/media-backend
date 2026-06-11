@@ -12,7 +12,6 @@ import {
   KpiPlan,
 } from "@modules/kpi/domain/kpi.types";
 import { EmploymentProfileRecord } from "@modules/employment-profile/domain/employment-profile.types";
-import { SelfServiceCurrentPersonNotLinkedError } from "@modules/self-service/domain/self-service.errors";
 import {
   SelfServiceKpiItemView,
   SelfServiceKpiListView,
@@ -33,32 +32,10 @@ export class SelfServiceKpiService {
   ) {}
 
   async listCurrentKpi(actor: Actor): Promise<SelfServiceKpiListView> {
-    let resolved:
-      | Awaited<
-          ReturnType<
-            SelfServiceIdentityResolver["resolveEmploymentProfileWithLinkedInternalTalent"]
-          >
-        >
-      | null = null;
-
-    try {
-      resolved =
-        await this.identityResolver.resolveEmploymentProfileWithLinkedInternalTalent(
-          actor,
-        );
-    } catch (error) {
-      if (error instanceof SelfServiceCurrentPersonNotLinkedError) {
-        return emptySelfServiceKpiList();
-      }
-
-      throw error;
-    }
-
-    if (!resolved || !isSelfServiceEmploymentProfileAllowed(resolved.employmentProfile)) {
-      return emptySelfServiceKpiList();
-    }
-
-    const { employmentProfile, linkedInternalTalent } = resolved;
+    const { employmentProfile, linkedInternalTalent } =
+      await this.identityResolver.resolveEmploymentProfileWithLinkedInternalTalent(
+        actor,
+      );
     const allocationResults = await Promise.all([
       linkedInternalTalent
         ? this.kpiPlanRepository.listAllocations({
@@ -174,15 +151,6 @@ export class SelfServiceKpiService {
   }
 }
 
-function emptySelfServiceKpiList(): SelfServiceKpiListView {
-  return {
-    items: [],
-    current: null,
-    latestPrevious: null,
-    history: [],
-  };
-}
-
 function uniqueAllocations(
   allocations: readonly KpiAllocation[],
 ): readonly KpiAllocation[] {
@@ -198,15 +166,6 @@ function uniqueAllocations(
   }
 
   return unique;
-}
-
-function isSelfServiceEmploymentProfileAllowed(
-  employmentProfile: EmploymentProfileRecord,
-): boolean {
-  return (
-    employmentProfile.employmentStatus === "ACTIVE" ||
-    employmentProfile.employmentStatus === "ON_LEAVE"
-  );
 }
 
 function isSelfServiceAllocationCandidate(input: {

@@ -418,6 +418,28 @@ test("GET /self-service/events returns a safe error when no linked EmploymentPro
   }
 });
 
+test("GET /self-service/events denies non-operational profile before repository read", async () => {
+  const harness = createHarness();
+  const { server, baseUrl } = await listen(
+    createSelfServiceTestApp(harness, createStaffActor("user-suspended")),
+  );
+
+  try {
+    const response = await fetch(`${baseUrl}/self-service/events`);
+    const body = await response.json();
+
+    assert.equal(response.status, 403);
+    assert.equal(body.error.code, "SELF_SERVICE_PROFILE_NOT_OPERATIONAL");
+    assert.equal(
+      body.error.message,
+      "Self-Service access is not available for this profile status.",
+    );
+    assert.deepEqual(harness.events.listInputs, []);
+  } finally {
+    await close(server);
+  }
+});
+
 test("self-service events endpoint is GET/read-only and does not expose mutation routes", async () => {
   const harness = createHarness();
   const before = harness.snapshot();
@@ -570,6 +592,14 @@ function createHarness(options?: {
       displayName: "Other Display",
       legalName: "Other Legal",
       employeeCode: "EP-000778",
+    }),
+    employmentProfileRecord({
+      id: "ep-suspended",
+      linkedUserId: "user-suspended",
+      displayName: "Suspended Display",
+      legalName: "Suspended Legal",
+      employeeCode: "EP-000779",
+      employmentStatus: "SUSPENDED",
     }),
   ]);
   const users = new InMemoryUserReadRepository([

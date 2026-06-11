@@ -1,11 +1,20 @@
 import { Actor } from "@core/actor/actor";
 import {
+  EmploymentStatus,
   EmploymentProfileRecord,
 } from "@modules/employment-profile/domain/employment-profile.types";
 import { EmploymentProfileRepository } from "@modules/employment-profile/domain/employment-profile.repository";
-import { SelfServiceCurrentPersonNotLinkedError } from "@modules/self-service/domain/self-service.errors";
+import {
+  SelfServiceCurrentPersonNotLinkedError,
+  SelfServiceProfileNotOperationalError,
+} from "@modules/self-service/domain/self-service.errors";
 import { TalentRepository } from "@modules/talent/domain/talent.repository";
 import { TalentRecord } from "@modules/talent/domain/talent.types";
+
+const SELF_SERVICE_OPERATIONAL_PROFILE_STATUSES = new Set<EmploymentStatus>([
+  "ACTIVE",
+  "ON_LEAVE",
+]);
 
 export interface SelfServiceResolvedEmploymentProfile {
   readonly employmentProfile: EmploymentProfileRecord;
@@ -34,6 +43,8 @@ export class SelfServiceIdentityResolver {
       throw new SelfServiceCurrentPersonNotLinkedError();
     }
 
+    assertSelfServiceOperationalProfile(employmentProfile);
+
     return { employmentProfile };
   }
 
@@ -57,5 +68,17 @@ export class SelfServiceIdentityResolver {
       employmentProfile,
       linkedInternalTalent: linkedTalent,
     };
+  }
+}
+
+function assertSelfServiceOperationalProfile(
+  employmentProfile: EmploymentProfileRecord,
+): void {
+  if (
+    !SELF_SERVICE_OPERATIONAL_PROFILE_STATUSES.has(
+      employmentProfile.employmentStatus,
+    )
+  ) {
+    throw new SelfServiceProfileNotOperationalError();
   }
 }

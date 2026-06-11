@@ -208,6 +208,68 @@ test("GET /self-service/me returns a safe error when no linked EmploymentProfile
   }
 });
 
+test("GET /self-service/me gates current profile status fail-closed", async () => {
+  const allowedHarness = createHarness();
+  const { server: allowedServer, baseUrl: allowedBaseUrl } = await listen(
+    createSelfServiceTestApp(
+      allowedHarness,
+      createStaffActor("user-on-leave"),
+    ),
+  );
+
+  try {
+    const response = await fetch(`${allowedBaseUrl}/self-service/me`);
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.data.employmentProfileId, "ep-on-leave");
+    assert.equal(body.data.employmentStatus, "ON_LEAVE");
+  } finally {
+    await close(allowedServer);
+  }
+
+  for (const [userId, expectedStatus, expectedCode] of [
+    ["user-suspended", 403, "SELF_SERVICE_PROFILE_NOT_OPERATIONAL"],
+    ["user-terminated", 403, "SELF_SERVICE_PROFILE_NOT_OPERATIONAL"],
+    ["user-unknown-status", 403, "SELF_SERVICE_PROFILE_NOT_OPERATIONAL"],
+    ["user-archived", 404, "SELF_SERVICE_CURRENT_PERSON_NOT_LINKED"],
+  ] as const) {
+    const harness = createHarness();
+    const { server, baseUrl } = await listen(
+      createSelfServiceTestApp(harness, createStaffActor(userId)),
+    );
+
+    try {
+      const response = await fetch(`${baseUrl}/self-service/me`);
+      const body = await response.json();
+      const serialized = JSON.stringify(body);
+
+      assert.equal(response.status, expectedStatus);
+      assert.equal(body.error.code, expectedCode);
+      if (expectedCode === "SELF_SERVICE_PROFILE_NOT_OPERATIONAL") {
+        assert.equal(
+          body.error.message,
+          "Self-Service access is not available for this profile status.",
+        );
+      }
+      for (const forbidden of [
+        "ep-",
+        "user-",
+        "auth0|",
+        "Staff Legal",
+        "hr",
+        "payroll",
+        "commission",
+      ]) {
+        assert.equal(serialized.includes(forbidden), false, forbidden);
+      }
+      assert.deepEqual(harness.users.getUserDetailInputs, []);
+    } finally {
+      await close(server);
+    }
+  }
+});
+
 test("self-service current person endpoint does not mutate person, user, or talent records", async () => {
   const harness = createHarness();
   const before = harness.snapshot();
@@ -286,6 +348,35 @@ test("PATCH /self-service/account/preferences updates only current actor locale 
     ]) {
       assert.equal(serialized.includes(forbidden), false, forbidden);
     }
+  } finally {
+    await close(server);
+  }
+});
+
+test("PATCH /self-service/account/preferences denies non-operational profile before mutation", async () => {
+  const harness = createHarness();
+  const { server, baseUrl } = await listen(
+    createSelfServiceTestApp(harness, createStaffActor("user-suspended")),
+  );
+
+  try {
+    const response = await fetch(
+      `${baseUrl}/self-service/account/preferences`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ locale: "vi", timezone: "Asia/Ho_Chi_Minh" }),
+      },
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 403);
+    assert.equal(body.error.code, "SELF_SERVICE_PROFILE_NOT_OPERATIONAL");
+    assert.equal(
+      body.error.message,
+      "Self-Service access is not available for this profile status.",
+    );
+    assert.deepEqual(harness.users.updatedUserIds, []);
   } finally {
     await close(server);
   }
@@ -528,6 +619,28 @@ test("GET /self-service/work-shifts can filter current actor shifts by safe stat
   }
 });
 
+test("GET /self-service/work-shifts denies non-operational profile before repository read", async () => {
+  const harness = createHarness();
+  const { server, baseUrl } = await listen(
+    createSelfServiceTestApp(harness, createStaffActor("user-suspended")),
+  );
+
+  try {
+    const response = await fetch(`${baseUrl}/self-service/work-shifts`);
+    const body = await response.json();
+
+    assert.equal(response.status, 403);
+    assert.equal(body.error.code, "SELF_SERVICE_PROFILE_NOT_OPERATIONAL");
+    assert.equal(
+      body.error.message,
+      "Self-Service access is not available for this profile status.",
+    );
+    assert.deepEqual(harness.workShifts.listInputs, []);
+  } finally {
+    await close(server);
+  }
+});
+
 test("GET /self-service/work-shifts returns a safe error when no linked EmploymentProfile exists", async () => {
   const harness = createHarness();
   const { server, baseUrl } = await listen(
@@ -699,6 +812,46 @@ function createHarness(): SelfServiceHarness {
       displayName: "Other Display",
       legalName: "Other Legal",
       employeeCode: "EP-000778",
+    }),
+    employmentProfileRecord({
+      id: "ep-on-leave",
+      linkedUserId: "user-on-leave",
+      displayName: "On Leave Display",
+      legalName: "On Leave Legal",
+      employeeCode: "EP-000779",
+      employmentStatus: "ON_LEAVE",
+    }),
+    employmentProfileRecord({
+      id: "ep-suspended",
+      linkedUserId: "user-suspended",
+      displayName: "Suspended Display",
+      legalName: "Suspended Legal",
+      employeeCode: "EP-000780",
+      employmentStatus: "SUSPENDED",
+    }),
+    employmentProfileRecord({
+      id: "ep-terminated",
+      linkedUserId: "user-terminated",
+      displayName: "Terminated Display",
+      legalName: "Terminated Legal",
+      employeeCode: "EP-000781",
+      employmentStatus: "TERMINATED",
+    }),
+    employmentProfileRecord({
+      id: "ep-archived",
+      linkedUserId: "user-archived",
+      displayName: "Archived Display",
+      legalName: "Archived Legal",
+      employeeCode: "EP-000782",
+      employmentStatus: "ARCHIVED",
+    }),
+    employmentProfileRecord({
+      id: "ep-unknown-status",
+      linkedUserId: "user-unknown-status",
+      displayName: "Unknown Status Display",
+      legalName: "Unknown Status Legal",
+      employeeCode: "EP-000783",
+      employmentStatus: "FURLOUGHED" as EmploymentStatus,
     }),
   ]);
   const users = new InMemoryUserReadRepository([
@@ -972,6 +1125,7 @@ class InMemoryEmploymentProfileRepository implements EmploymentProfileRepository
 class InMemoryUserReadRepository
   implements UserReadRepository, UserMutationRepository
 {
+  readonly getUserDetailInputs: string[] = [];
   readonly updatedUserIds: string[] = [];
 
   constructor(private readonly records: UserDetailView[]) {}
@@ -991,6 +1145,7 @@ class InMemoryUserReadRepository
   }
 
   async getUserDetail(userId: string): Promise<UserDetailView | null> {
+    this.getUserDetailInputs.push(userId);
     return this.records.find((record) => record.id === userId) ?? null;
   }
 

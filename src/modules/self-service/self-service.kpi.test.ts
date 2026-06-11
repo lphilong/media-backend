@@ -507,7 +507,7 @@ test("GET /self-service/kpi returns safe empty result without linked internal Ta
   }
 });
 
-test("GET /self-service/kpi returns a safe empty result when actor is not linked", async () => {
+test("GET /self-service/kpi returns a safe error when actor is not linked", async () => {
   const harness = createHarness();
   const { server, baseUrl } = await listen(
     createSelfServiceKpiTestApp(harness, createStaffActor("user-unlinked")),
@@ -517,12 +517,10 @@ test("GET /self-service/kpi returns a safe empty result when actor is not linked
     const response = await fetch(`${baseUrl}/self-service/kpi`);
     const body = await response.json();
 
-    assert.equal(response.status, 200);
-    assert.deepEqual(body.data, {
-      items: [],
-      current: null,
-      latestPrevious: null,
-      history: [],
+    assert.equal(response.status, 404);
+    assert.deepEqual(body.error, {
+      code: "SELF_SERVICE_CURRENT_PERSON_NOT_LINKED",
+      message: "No linked Employment Profile",
     });
     assert.deepEqual(harness.kpi.listInputs, []);
   } finally {
@@ -530,7 +528,7 @@ test("GET /self-service/kpi returns a safe empty result when actor is not linked
   }
 });
 
-test("GET /self-service/kpi allows on-leave EmploymentProfile and denies terminated EmploymentProfile", async () => {
+test("GET /self-service/kpi allows on-leave EmploymentProfile and denies terminated EmploymentProfile with unified contract", async () => {
   const onLeaveHarness = createHarness();
   const { server: onLeaveServer, baseUrl: onLeaveBaseUrl } = await listen(
     createSelfServiceKpiTestApp(
@@ -570,15 +568,25 @@ test("GET /self-service/kpi allows on-leave EmploymentProfile and denies termina
   try {
     const response = await fetch(`${terminatedBaseUrl}/self-service/kpi`);
     const body = await response.json();
+    const serialized = JSON.stringify(body);
 
-    assert.equal(response.status, 200);
-    assert.deepEqual(body.data, {
-      items: [],
-      current: null,
-      latestPrevious: null,
-      history: [],
+    assert.equal(response.status, 403);
+    assert.deepEqual(body.error, {
+      code: "SELF_SERVICE_PROFILE_NOT_OPERATIONAL",
+      message: "Self-Service access is not available for this profile status.",
     });
+    for (const forbidden of [
+      "ep-terminated",
+      "user-terminated",
+      "plan-org-terminated-current",
+      "alloc-org-terminated-current",
+      "payroll",
+      "commission",
+    ]) {
+      assert.equal(serialized.includes(forbidden), false, forbidden);
+    }
     assert.deepEqual(terminatedHarness.kpi.listInputs, []);
+    assert.deepEqual(terminatedHarness.actuals.listPlanIdsInputs, []);
   } finally {
     await close(terminatedServer);
   }
