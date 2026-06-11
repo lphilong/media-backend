@@ -33,6 +33,7 @@ import {
   EmploymentTermsView,
   PayrollReadableEmploymentTerms,
 } from "../domain/employment-terms.types";
+import { evaluatePayrollReadableEmploymentTerms } from "../domain/employment-terms-readiness";
 import {
   CreateEmploymentTermsCommand,
   EmploymentTermsLifecycleCommand,
@@ -427,54 +428,11 @@ function assertRecordPayrollReadable(
   record: EmploymentTermsRecord,
   date: number,
 ): readonly EmploymentTermsAllowance[] {
-  if (
-    record.status !== "APPROVED" ||
-    !record.payrollEligible ||
-    record.approvedAt === null ||
-    !isCanonicalDate(record.effectiveFrom) ||
-    (record.effectiveTo !== null && !isCanonicalDate(record.effectiveTo)) ||
-    (record.effectiveTo !== null && record.effectiveTo < record.effectiveFrom) ||
-    record.effectiveFrom > date ||
-    (record.effectiveTo !== null && record.effectiveTo < date) ||
-    !Number.isFinite(record.baseSalaryAmount) ||
-    record.baseSalaryAmount < 0 ||
-    !/^[A-Z]{3}$/u.test(record.currencyCode) ||
-    !EMPLOYMENT_TERMS_PAY_FREQUENCIES.includes(record.payFrequency) ||
-    !Array.isArray(record.allowances)
-  ) {
+  const allowances = evaluatePayrollReadableEmploymentTerms(record, date);
+  if (allowances === null) {
     throw new EmploymentTermsConflictError(`Employment terms ${record.id} are not valid payroll-readable source data`);
   }
-  const payrollAllowances: EmploymentTermsAllowance[] = [];
-  for (const allowance of record.allowances) {
-    if (!allowance || typeof allowance !== "object" || typeof allowance.payrollEligible !== "boolean") {
-      throw new EmploymentTermsConflictError(`Employment terms ${record.id} are not valid payroll-readable source data`);
-    }
-    if (!allowance.payrollEligible) continue;
-    if (
-      !isBoundedRequiredText(allowance.type, MAX_ALLOWANCE_TYPE_LENGTH) ||
-      !isBoundedRequiredText(allowance.label, MAX_ALLOWANCE_LABEL_LENGTH) ||
-      !Number.isFinite(allowance.amount) ||
-      allowance.amount < 0 ||
-      !/^[A-Z]{3}$/u.test(allowance.currencyCode) ||
-      (allowance.effectiveFrom !== null && !isCanonicalDate(allowance.effectiveFrom)) ||
-      (allowance.effectiveTo !== null && !isCanonicalDate(allowance.effectiveTo)) ||
-      !isBoundedNullableText(allowance.sourceNote, MAX_SOURCE_NOTE_LENGTH)
-    ) {
-      throw new EmploymentTermsConflictError(`Employment terms ${record.id} are not valid payroll-readable source data`);
-    }
-    const actualFrom = allowance.effectiveFrom ?? record.effectiveFrom;
-    const actualTo = allowance.effectiveTo ?? record.effectiveTo;
-    if (actualTo !== null && actualTo < actualFrom) {
-      throw new EmploymentTermsConflictError(`Employment terms ${record.id} are not valid payroll-readable source data`);
-    }
-    if (isEffective(allowance, date)) payrollAllowances.push(allowance);
-  }
-  return payrollAllowances;
-}
-
-function isEffective(allowance: EmploymentTermsAllowance, date: number): boolean {
-  return (allowance.effectiveFrom === null || allowance.effectiveFrom <= date)
-    && (allowance.effectiveTo === null || allowance.effectiveTo >= date);
+  return allowances;
 }
 
 function requiredId(value: unknown, field: string): string {
@@ -541,14 +499,4 @@ function isCanonicalDate(value: unknown): value is number {
     && date.getUTCMinutes() === 0
     && date.getUTCSeconds() === 0
     && date.getUTCMilliseconds() === 0;
-}
-
-function isBoundedRequiredText(value: unknown, maxLength: number): value is string {
-  if (typeof value !== "string") return false;
-  const normalized = value.normalize("NFKC").trim().replace(/\s+/gu, " ");
-  return normalized.length > 0 && normalized.length <= maxLength;
-}
-
-function isBoundedNullableText(value: unknown, maxLength: number): value is string | null {
-  return value === null || isBoundedRequiredText(value, maxLength);
 }

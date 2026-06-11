@@ -430,7 +430,10 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   const { dashboardLiteReadRepository } = createDashboardLiteInfra(
     infra.primaryDb,
   );
-  const { peopleReadinessReadRepository } = createPeopleReadinessInfra(
+  const {
+    peopleReadinessReadRepository,
+    employmentTermsReadinessReadonlyAccess,
+  } = createPeopleReadinessInfra(
     infra.primaryDb,
   );
 
@@ -1020,7 +1023,10 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     "/people-readiness",
     adminPeopleReadinessRoutes(
       new PeopleReadinessAdminController(
-        new PeopleReadinessAdminService(peopleReadinessReadRepository),
+        new PeopleReadinessAdminService(
+          peopleReadinessReadRepository,
+          employmentTermsReadinessReadonlyAccess,
+        ),
       ),
     ),
   );

@@ -23,6 +23,11 @@ import {
   PeopleReadinessUser,
 } from "../domain/people-readiness.types";
 import { PeopleReadinessReadRepository } from "../read/people-readiness.read-repository";
+import { EmploymentTermsReadinessReadonlyAccess } from "@modules/employment-terms/domain/employment-terms-readiness-readonly-access";
+import {
+  EmploymentTermsReadinessFacts,
+  toHcmBusinessDateTimestamp,
+} from "@modules/employment-terms/domain/employment-terms-readiness";
 import {
   ListPeopleReadinessIssuesQuery,
   PeopleReadinessAppliedFilters,
@@ -45,13 +50,19 @@ type NowProvider = () => number;
 export class PeopleReadinessAdminService {
   constructor(
     private readonly readRepository: PeopleReadinessReadRepository,
+    private readonly employmentTermsReadiness: EmploymentTermsReadinessReadonlyAccess,
     private readonly now: NowProvider = Date.now,
   ) {}
 
   async getSummary(actor: Actor): Promise<PeopleReadinessSummaryResult> {
     this.assertAccess(actor);
     const generatedAt = this.now();
-    const issues = generateIssues(await this.readRepository.getSnapshot(), generatedAt);
+    const snapshot = await this.readRepository.getSnapshot();
+    const issues = generateIssues(
+      snapshot,
+      generatedAt,
+      await this.readEmploymentTermsFacts(snapshot, generatedAt),
+    );
     return {
       totalIssueCount: issues.length,
       countsByCategory: countBy(issues, (issue) => issue.category),
@@ -71,10 +82,15 @@ export class PeopleReadinessAdminService {
   ): Promise<PeopleReadinessIssueListResult> {
     this.assertAccess(actor);
     const generatedAt = this.now();
+    const snapshot = await this.readRepository.getSnapshot();
     const filters = parseFilters(query);
     const limit = parseLimit(query.limit);
     const offset = parseCursor(query.cursor);
-    const issues = generateIssues(await this.readRepository.getSnapshot(), generatedAt)
+    const issues = generateIssues(
+      snapshot,
+      generatedAt,
+      await this.readEmploymentTermsFacts(snapshot, generatedAt),
+    )
       .filter((issue) => matchesFilters(issue, filters));
     const items = issues.slice(offset, offset + limit);
     const nextOffset = offset + items.length;
@@ -94,11 +110,25 @@ export class PeopleReadinessAdminService {
       PermissionResolver.resolve(Permission.EMPLOYMENT_PROFILE_READ),
     );
   }
+
+  private readEmploymentTermsFacts(
+    snapshot: PeopleReadinessSnapshot,
+    generatedAt: number,
+  ): Promise<ReadonlyMap<string, EmploymentTermsReadinessFacts>> {
+    const profileIds = snapshot.employmentProfiles
+      .filter((profile) => isProfileReady(profile))
+      .map((profile) => profile.id);
+    return this.employmentTermsReadiness.getReadinessFacts(
+      profileIds,
+      toHcmBusinessDateTimestamp(generatedAt),
+    );
+  }
 }
 
 export function generateIssues(
   snapshot: PeopleReadinessSnapshot,
   generatedAt: number,
+  employmentTermsFacts: ReadonlyMap<string, EmploymentTermsReadinessFacts> = new Map(),
 ): readonly PeopleReadinessIssue[] {
   const issues: PeopleReadinessIssue[] = [];
   const users = new Map(snapshot.users.map((user) => [user.id, user]));
@@ -205,6 +235,14 @@ export function generateIssues(
         generatedAt,
         user ? [userSummary(user)] : [],
       ));
+    }
+    if (isProfileReady(profile)) {
+      const termsIssue = employmentTermsIssue(
+        profile,
+        employmentTermsFacts.get(profile.id),
+        generatedAt,
+      );
+      if (termsIssue) issues.push(termsIssue);
     }
   }
 
@@ -343,6 +381,65 @@ export function generateIssues(
   }));
 
   return issues.sort(compareIssues);
+}
+
+function employmentTermsIssue(
+  profile: PeopleReadinessEmploymentProfile,
+  facts: EmploymentTermsReadinessFacts | undefined,
+  generatedAt: number,
+): PeopleReadinessIssue | null {
+  const safeFacts = facts ?? {
+    hasOnlyNonPayrollEligibleTerms: false,
+    hasPendingApproval: false,
+    hasCurrentValidSource: false,
+    hasExpiredApprovedSource: false,
+    hasCurrentCandidateMissingBaseSalary: false,
+    hasOverlap: false,
+  };
+  let code: PeopleReadinessIssueCode;
+  let severity: PeopleReadinessSeverity = "BLOCKER";
+  let summary: string;
+
+  if (safeFacts.hasOverlap) {
+    code = "EMPLOYMENT_TERMS_OVERLAP";
+    summary = "Approved payroll-source Employment Terms have overlapping effective ranges.";
+  } else if (safeFacts.hasCurrentCandidateMissingBaseSalary) {
+    code = "EMPLOYMENT_TERMS_MISSING_BASE_SALARY";
+    summary = "Current payroll-source Employment Terms are missing valid base salary data.";
+  } else if (safeFacts.hasPendingApproval) {
+    code = "EMPLOYMENT_TERMS_PENDING_APPROVAL";
+    severity = safeFacts.hasCurrentValidSource ? "WARNING" : "BLOCKER";
+    summary = "Employment Terms are pending approval.";
+  } else if (safeFacts.hasExpiredApprovedSource && !safeFacts.hasCurrentValidSource) {
+    code = "EMPLOYMENT_TERMS_EXPIRED";
+    summary = "Approved payroll-source Employment Terms have expired without a current replacement.";
+  } else if (
+    !safeFacts.hasCurrentValidSource
+    && !safeFacts.hasOnlyNonPayrollEligibleTerms
+  ) {
+    code = "ACTIVE_PROFILE_MISSING_EMPLOYMENT_TERMS";
+    summary = "Operational EmploymentProfile has no current approved payroll-source Employment Terms.";
+  } else {
+    return null;
+  }
+
+  const primary = profileSummary(profile);
+  return issue({
+    code,
+    category: "EMPLOYMENT_TERMS_READY",
+    severity,
+    primary,
+    related: [],
+    summary,
+    repair: {
+      targetType: "EMPLOYMENT_PROFILE",
+      targetId: profile.id,
+      suggestedSurface: `/employment-profiles/${profile.id}#employment-terms`,
+      suggestedAction: "Review Employment Terms",
+    },
+    generatedAt,
+    blocking: severity === "BLOCKER",
+  });
 }
 
 function addManagerAssignmentIssues(params: {

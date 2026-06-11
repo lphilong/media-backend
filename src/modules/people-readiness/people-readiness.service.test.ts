@@ -4,6 +4,15 @@ import { Actor } from "@core/actor/actor";
 import { PeopleReadinessSnapshot } from "./domain/people-readiness.types";
 import { PeopleReadinessAdminService, generateIssues } from "./admin/admin.people-readiness.service";
 import { adminPeopleReadinessRoutes } from "./admin/admin.people-readiness.routes";
+import {
+  EmploymentTermsReadinessFacts,
+  evaluateEmploymentTermsReadiness,
+} from "@modules/employment-terms/domain/employment-terms-readiness";
+import { EmploymentTermsRecord } from "@modules/employment-terms/domain/employment-terms.types";
+import {
+  PEOPLE_READINESS_CATEGORIES,
+  PEOPLE_READINESS_ISSUE_CODES,
+} from "./domain/people-readiness.types";
 
 const now = Date.UTC(2026, 5, 7);
 
@@ -43,7 +52,7 @@ test("People Readiness generates exact supported issues with deterministic safe 
     "Inactive Person",
   );
   const serialized = JSON.stringify(first);
-  ["authLinkage", "subject", "email", "phone", "payroll", "attendance"].forEach((field) =>
+  ["authLinkage", "subject", "email", "phone", "attendance"].forEach((field) =>
     assert.equal(serialized.includes(field), false, field),
   );
 });
@@ -62,6 +71,12 @@ test("People Readiness summary, filters, and cursor pagination use the same exac
   const specific = await service.listIssues(actor, {
     issueCode: "ACTIVE_USER_WITHOUT_EMPLOYMENT_PROFILE",
   });
+  const employmentTerms = await service.listIssues(actor, {
+    category: "EMPLOYMENT_TERMS_READY",
+  });
+  const missingTerms = await service.listIssues(actor, {
+    issueCode: "ACTIVE_PROFILE_MISSING_EMPLOYMENT_TERMS",
+  });
 
   assert.equal(summary.totalIssueCount, Object.values(summary.countsByIssueCode).reduce((a, b) => a + b, 0));
   assert.equal(blockers.items.length, 2);
@@ -69,7 +84,274 @@ test("People Readiness summary, filters, and cursor pagination use the same exac
   assert.equal(account.items.every((item) => item.category === "ACCOUNT_LOGIN_READY"), true);
   assert.equal(specific.items.length, 1);
   assert.equal(specific.items[0]?.issueCode, "ACTIVE_USER_WITHOUT_EMPLOYMENT_PROFILE");
+  assert.equal(employmentTerms.items.length, missingTerms.items.length);
+  assert.equal(
+    employmentTerms.items.every((item) => item.category === "EMPLOYMENT_TERMS_READY"),
+    true,
+  );
+  assert.equal(
+    summary.countsByCategory.EMPLOYMENT_TERMS_READY,
+    employmentTerms.totalCount,
+  );
+  assert.equal(
+    summary.countsByIssueCode.ACTIVE_PROFILE_MISSING_EMPLOYMENT_TERMS,
+    missingTerms.totalCount,
+  );
   assert.equal(summary.dataCoverage.exactForSupportedIssueCodes, true);
+});
+
+test("People Readiness exposes the Employment Terms category and exactly five HRET issue codes", () => {
+  assert.equal(PEOPLE_READINESS_CATEGORIES.includes("EMPLOYMENT_TERMS_READY"), true);
+  assert.deepEqual(
+    PEOPLE_READINESS_ISSUE_CODES.filter((code) =>
+      code === "ACTIVE_PROFILE_MISSING_EMPLOYMENT_TERMS"
+      || code.startsWith("EMPLOYMENT_TERMS_"),
+    ),
+    [
+      "ACTIVE_PROFILE_MISSING_EMPLOYMENT_TERMS",
+      "EMPLOYMENT_TERMS_PENDING_APPROVAL",
+      "EMPLOYMENT_TERMS_EXPIRED",
+      "EMPLOYMENT_TERMS_MISSING_BASE_SALARY",
+      "EMPLOYMENT_TERMS_OVERLAP",
+    ],
+  );
+  assert.equal(PEOPLE_READINESS_ISSUE_CODES.includes("PAYROLL_ELIGIBLE_PROFILE_NOT_READY" as never), false);
+  assert.equal(PEOPLE_READINESS_ISSUE_CODES.includes("TERMINATED_PROFILE_NEEDS_FINAL_SETTLEMENT_MARKER" as never), false);
+});
+
+test("People Readiness classifies Employment Terms with one explicit precedence row per operational profile", () => {
+  const profileId = "ep-hret";
+  const cases: Array<{
+    name: string;
+    facts: EmploymentTermsReadinessFacts;
+    code: string | null;
+    severity?: string;
+  }> = [
+    {
+      name: "overlap",
+      facts: facts({ hasOverlap: true, hasCurrentCandidateMissingBaseSalary: true }),
+      code: "EMPLOYMENT_TERMS_OVERLAP",
+    },
+    {
+      name: "missing salary",
+      facts: facts({ hasCurrentCandidateMissingBaseSalary: true, hasPendingApproval: true }),
+      code: "EMPLOYMENT_TERMS_MISSING_BASE_SALARY",
+    },
+    {
+      name: "pending blocker",
+      facts: facts({ hasPendingApproval: true }),
+      code: "EMPLOYMENT_TERMS_PENDING_APPROVAL",
+      severity: "BLOCKER",
+    },
+    {
+      name: "pending warning",
+      facts: facts({ hasPendingApproval: true, hasCurrentValidSource: true }),
+      code: "EMPLOYMENT_TERMS_PENDING_APPROVAL",
+      severity: "WARNING",
+    },
+    {
+      name: "expired",
+      facts: facts({ hasExpiredApprovedSource: true }),
+      code: "EMPLOYMENT_TERMS_EXPIRED",
+    },
+    {
+      name: "missing",
+      facts: facts({}),
+      code: "ACTIVE_PROFILE_MISSING_EMPLOYMENT_TERMS",
+    },
+    {
+      name: "ready",
+      facts: facts({ hasCurrentValidSource: true }),
+      code: null,
+    },
+  ];
+
+  for (const item of cases) {
+    const issues = generateIssues(
+      hretSnapshot(profileId, "ACTIVE"),
+      now,
+      new Map([[profileId, item.facts]]),
+    ).filter((issue) => issue.category === "EMPLOYMENT_TERMS_READY");
+    assert.equal(issues.length, item.code ? 1 : 0, item.name);
+    assert.equal(issues[0]?.issueCode ?? null, item.code, item.name);
+    if (item.severity) assert.equal(issues[0]?.severity, item.severity, item.name);
+  }
+});
+
+test("Employment Terms readiness evaluator accepts zero salary and rejects negative or malformed salary", () => {
+  const current = termsRecord({
+    id: "current",
+    effectiveFrom: now - 86_400_000,
+    baseSalaryAmount: 0,
+  });
+  assert.deepEqual(evaluateEmploymentTermsReadiness([current], now), facts({
+    hasCurrentValidSource: true,
+  }));
+
+  const negative = {
+    ...current,
+    id: "negative",
+    baseSalaryAmount: -1,
+  };
+  assert.equal(
+    evaluateEmploymentTermsReadiness([negative], now).hasCurrentCandidateMissingBaseSalary,
+    true,
+  );
+
+  const malformed = {
+    ...current,
+    id: "malformed",
+    baseSalaryAmount: Number.NaN,
+  };
+  assert.equal(
+    evaluateEmploymentTermsReadiness([malformed], now).hasCurrentCandidateMissingBaseSalary,
+    true,
+  );
+});
+
+test("Employment Terms readiness evaluator detects overlap and ignores payrollEligible false alone", () => {
+  const current = termsRecord({
+    id: "current",
+    effectiveFrom: now - 86_400_000,
+  });
+  const overlap = termsRecord({
+    id: "overlap",
+    effectiveFrom: now,
+    effectiveTo: now + 86_400_000,
+  });
+  assert.equal(evaluateEmploymentTermsReadiness([current, overlap], now).hasOverlap, true);
+
+  const notPayrollEligible = termsRecord({
+    id: "not-eligible",
+    payrollEligible: false,
+  });
+  const notEligibleFacts = evaluateEmploymentTermsReadiness([notPayrollEligible], now);
+  assert.deepEqual(notEligibleFacts, facts({ hasOnlyNonPayrollEligibleTerms: true }));
+  assert.equal(
+    generateIssues(
+      hretSnapshot("ep-not-eligible", "ACTIVE"),
+      now,
+      new Map([["ep-not-eligible", notEligibleFacts]]),
+    ).some((issue) => issue.category === "EMPLOYMENT_TERMS_READY"),
+    false,
+  );
+});
+
+test("Employment Terms pending readiness only considers payroll-eligible source candidates", () => {
+  const profileId = "ep-pending";
+  const nonPayrollPending = termsRecord({
+    id: "pending-not-eligible",
+    employmentProfileId: profileId,
+    status: "PENDING_APPROVAL",
+    payrollEligible: false,
+    approvedBy: null,
+    approvedAt: null,
+  });
+  const nonPayrollFacts = evaluateEmploymentTermsReadiness([nonPayrollPending], now);
+  assert.deepEqual(nonPayrollFacts, facts({ hasOnlyNonPayrollEligibleTerms: true }));
+  assert.equal(
+    generateIssues(
+      hretSnapshot(profileId, "ACTIVE"),
+      now,
+      new Map([[profileId, nonPayrollFacts]]),
+    ).some((issue) => issue.category === "EMPLOYMENT_TERMS_READY"),
+    false,
+  );
+
+  const payrollPending = {
+    ...nonPayrollPending,
+    id: "pending-eligible",
+    payrollEligible: true,
+  };
+  const pendingFacts = evaluateEmploymentTermsReadiness([payrollPending], now);
+  assert.equal(pendingFacts.hasPendingApproval, true);
+  const blocker = generateIssues(
+    hretSnapshot(profileId, "ACTIVE"),
+    now,
+    new Map([[profileId, pendingFacts]]),
+  ).find((issue) => issue.category === "EMPLOYMENT_TERMS_READY");
+  assert.equal(blocker?.issueCode, "EMPLOYMENT_TERMS_PENDING_APPROVAL");
+  assert.equal(blocker?.severity, "BLOCKER");
+
+  const current = termsRecord({
+    id: "current",
+    employmentProfileId: profileId,
+    effectiveFrom: now - 86_400_000,
+  });
+  const warningFacts = evaluateEmploymentTermsReadiness([current, payrollPending], now);
+  const warning = generateIssues(
+    hretSnapshot(profileId, "ACTIVE"),
+    now,
+    new Map([[profileId, warningFacts]]),
+  ).find((issue) => issue.category === "EMPLOYMENT_TERMS_READY");
+  assert.equal(warning?.issueCode, "EMPLOYMENT_TERMS_PENDING_APPROVAL");
+  assert.equal(warning?.severity, "WARNING");
+});
+
+test("People Readiness does not generate HRET issues for terminated profiles", () => {
+  const issues = generateIssues(
+    hretSnapshot("ep-terminated", "TERMINATED"),
+    now,
+    new Map([["ep-terminated", facts({})]]),
+  );
+  assert.equal(
+    issues.some((issue) => issue.category === "EMPLOYMENT_TERMS_READY"),
+    false,
+  );
+  assert.equal(
+    issues.some((issue) => issue.issueCode === "TERMINATED_PROFILE_NEEDS_FINAL_SETTLEMENT_MARKER" as never),
+    false,
+  );
+});
+
+test("Employment Terms readiness issue DTO is privacy-safe and uses the anchored EmploymentProfile repair target", () => {
+  const issue = generateIssues(
+    hretSnapshot("ep-private", "ACTIVE"),
+    now,
+    new Map([["ep-private", facts({ hasCurrentCandidateMissingBaseSalary: true })]]),
+  ).find((item) => item.category === "EMPLOYMENT_TERMS_READY");
+  assert.ok(issue);
+  assert.deepEqual(issue.relatedEntities, []);
+  assert.equal(issue.metadata, undefined);
+  assert.deepEqual(issue.repairTarget, {
+    targetType: "EMPLOYMENT_PROFILE",
+    targetId: "ep-private",
+    suggestedSurface: "/employment-profiles/ep-private#employment-terms",
+    suggestedAction: "Review Employment Terms",
+  });
+  const serialized = JSON.stringify(issue);
+  [
+    "baseSalaryAmount",
+    "allowances",
+    "currencyCode",
+    "sourceNote",
+    "approvedBy",
+    "createdBy",
+    "termsCode",
+    "termsId",
+  ].forEach((field) => assert.equal(serialized.includes(field), false, field));
+});
+
+test("People Readiness uses one request-wide HCM business date and one bulk provider call", async () => {
+  const timestamp = Date.UTC(2026, 5, 6, 18, 30);
+  const data = hretSnapshot("ep-date", "ACTIVE");
+  const calls: Array<{ ids: readonly string[]; asOfDate: number }> = [];
+  const service = new PeopleReadinessAdminService(
+    { async getSnapshot() { return data; } },
+    {
+      async getReadinessFacts(ids, asOfDate) {
+        calls.push({ ids, asOfDate });
+        return new Map([["ep-date", facts({})]]);
+      },
+    },
+    () => timestamp,
+  );
+
+  await service.getSummary(allowedActor());
+  assert.deepEqual(calls, [{
+    ids: ["ep-date"],
+    asOfDate: Date.UTC(2026, 5, 7),
+  }]);
 });
 
 test("People Readiness rejects unsupported filters, limits, and cursors", async () => {
@@ -116,7 +398,11 @@ test("People Readiness routes register summary and issues under the module route
 });
 
 function serviceWith(data: PeopleReadinessSnapshot): PeopleReadinessAdminService {
-  return new PeopleReadinessAdminService({ async getSnapshot() { return data; } }, () => now);
+  return new PeopleReadinessAdminService(
+    { async getSnapshot() { return data; } },
+    { async getReadinessFacts() { return new Map(); } },
+    () => now,
+  );
 }
 
 function allowedActor(overrides: Partial<ConstructorParameters<typeof Actor>[0]> = {}): Actor {
@@ -172,5 +458,81 @@ function snapshot(): PeopleReadinessSnapshot {
       { id: "tg-assignment", targetId: "tg-broken", managerEmploymentProfileId: "ep-manager-no-login", role: "MANAGER", status: "ACTIVE", effectiveFrom: now - 1, effectiveTo: null },
       { id: "tg-assignment-inactive", targetId: "tg-broken", managerEmploymentProfileId: "ep-inactive", role: "MANAGER", status: "ACTIVE", effectiveFrom: now - 1, effectiveTo: null },
     ],
+  };
+}
+
+function facts(
+  overrides: Partial<EmploymentTermsReadinessFacts>,
+): EmploymentTermsReadinessFacts {
+  return {
+    hasOnlyNonPayrollEligibleTerms: false,
+    hasPendingApproval: false,
+    hasCurrentValidSource: false,
+    hasExpiredApprovedSource: false,
+    hasCurrentCandidateMissingBaseSalary: false,
+    hasOverlap: false,
+    ...overrides,
+  };
+}
+
+function hretSnapshot(
+  id: string,
+  employmentStatus: string,
+): PeopleReadinessSnapshot {
+  return {
+    users: [],
+    employmentProfiles: [{
+      id,
+      employeeCode: id.toUpperCase(),
+      displayName: "Employment Terms Person",
+      orgUnitId: "ou-hret",
+      linkedUserId: null,
+      employmentStatus,
+    }],
+    talents: [],
+    orgUnits: [{
+      id: "ou-hret",
+      code: "OU-HRET",
+      name: "Employment Terms Unit",
+      type: "TEAM",
+      status: "ACTIVE",
+    }],
+    talentGroups: [],
+    talentGroupMembers: [],
+    orgUnitManagerAssignments: [],
+    talentGroupManagerAssignments: [],
+  };
+}
+
+function termsRecord(
+  overrides: Partial<EmploymentTermsRecord>,
+): EmploymentTermsRecord {
+  return {
+    id: "terms-1",
+    termsCode: "HRET-2026-000001",
+    employmentProfileId: "ep-hret",
+    status: "APPROVED",
+    effectiveFrom: now,
+    effectiveTo: null,
+    baseSalaryAmount: 1,
+    currencyCode: "VND",
+    payFrequency: "MONTHLY",
+    allowances: [],
+    payrollEligible: true,
+    sourceNote: null,
+    createdBy: "creator",
+    createdAt: now,
+    updatedBy: "updater",
+    updatedAt: now,
+    submittedBy: "submitter",
+    submittedAt: now,
+    approvedBy: "approver",
+    approvedAt: now,
+    cancelledBy: null,
+    cancelledAt: null,
+    supersedesTermsId: null,
+    supersededByTermsId: null,
+    version: 1,
+    ...overrides,
   };
 }
