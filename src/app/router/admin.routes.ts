@@ -17,6 +17,7 @@ import { createKpiInfra } from "@infra/providers/kpi.infra";
 import { createCommissionRevenueShareInfra } from "@infra/providers/commission.infra";
 import { createRevenueLedgerInfra } from "@infra/providers/revenue-ledger.infra";
 import { createDashboardLiteInfra } from "@infra/providers/dashboard-lite.infra";
+import { createPeopleReadinessInfra } from "@infra/providers/people-readiness.infra";
 import { NativeMongoReferenceLookupReadRepository } from "@infra/mongo/reference-lookup/reference-lookup.read-repository";
 import { auditScopeMiddleware } from "@core/audit/audit.scope.middleware";
 import { MongoAuthoritativeAdminMutationBridge } from "@core/application/mongo-authoritative-admin-mutation.bridge";
@@ -178,6 +179,9 @@ import { RevenueLedgerAdminQueryService } from "@modules/revenue-ledger/admin/ad
 import { adminDashboardLiteRoutes } from "@modules/dashboard-lite/admin/admin.dashboard-lite.routes";
 import { DashboardLiteAdminQueryController } from "@modules/dashboard-lite/admin/admin.dashboard-lite.query.controller";
 import { DashboardLiteAdminQueryService } from "@modules/dashboard-lite/admin/admin.dashboard-lite.query-service";
+import { adminPeopleReadinessRoutes } from "@modules/people-readiness/admin/admin.people-readiness.routes";
+import { PeopleReadinessAdminController } from "@modules/people-readiness/admin/admin.people-readiness.controller";
+import { PeopleReadinessAdminService } from "@modules/people-readiness/admin/admin.people-readiness.service";
 
 export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   const r = Router();
@@ -414,6 +418,9 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     revenueLedgerCommissionReadonlyAccess,
   } = createRevenueLedgerInfra(infra.primaryDb);
   const { dashboardLiteReadRepository } = createDashboardLiteInfra(
+    infra.primaryDb,
+  );
+  const { peopleReadinessReadRepository } = createPeopleReadinessInfra(
     infra.primaryDb,
   );
 
@@ -982,6 +989,15 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   r.use(
     "/dashboard-lite",
     adminDashboardLiteRoutes(dashboardLiteQueryController),
+  );
+
+  r.use(
+    "/people-readiness",
+    adminPeopleReadinessRoutes(
+      new PeopleReadinessAdminController(
+        new PeopleReadinessAdminService(peopleReadinessReadRepository),
+      ),
+    ),
   );
 
   return r;
