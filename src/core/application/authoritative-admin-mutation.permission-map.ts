@@ -45,6 +45,11 @@ export const AUTHORITATIVE_ADMIN_MUTATION_IDENTITIES = [
   "employment-profile.terminate",
   "employment-profile.archive",
   "employment-profile.update-contract-status",
+  "employment-terms.create",
+  "employment-terms.update-draft",
+  "employment-terms.submit",
+  "employment-terms.approve",
+  "employment-terms.cancel",
   "talent.create",
   "talent.update-core",
   "talent.assign-manager",
@@ -230,6 +235,11 @@ const ADMIN_MUTATION_PERMISSION_BY_IDENTITY: Readonly<
   "employment-profile.archive": Permission.EMPLOYMENT_PROFILE_MANAGE_LIFECYCLE,
   "employment-profile.update-contract-status":
     Permission.EMPLOYMENT_PROFILE_UPDATE,
+  "employment-terms.create": Permission.EMPLOYMENT_TERMS_MANAGE_DRAFT,
+  "employment-terms.update-draft": Permission.EMPLOYMENT_TERMS_MANAGE_DRAFT,
+  "employment-terms.submit": Permission.EMPLOYMENT_TERMS_MANAGE_DRAFT,
+  "employment-terms.approve": Permission.EMPLOYMENT_TERMS_APPROVE,
+  "employment-terms.cancel": Permission.EMPLOYMENT_TERMS_MANAGE_DRAFT,
 
   "talent.create": Permission.TALENT_CREATE,
   "talent.update-core": Permission.TALENT_UPDATE,

@@ -54,6 +54,15 @@ export enum Permission {
   EMPLOYMENT_PROFILE_MANAGE_LIFECYCLE = "employmentProfile.manageLifecycle",
 
   /* =========================
+     EMPLOYMENT TERMS
+  ========================= */
+  EMPLOYMENT_TERMS_READ = "employmentTerms.read",
+  EMPLOYMENT_TERMS_READ_SENSITIVE = "employmentTerms.readSensitive",
+  EMPLOYMENT_TERMS_MANAGE_DRAFT = "employmentTerms.manageDraft",
+  EMPLOYMENT_TERMS_APPROVE = "employmentTerms.approve",
+  EMPLOYMENT_TERMS_AUDIT = "employmentTerms.audit",
+
+  /* =========================
      TALENT
   ========================= */
   TALENT_READ = "talent.read",

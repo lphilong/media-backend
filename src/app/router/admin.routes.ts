@@ -5,6 +5,7 @@ import { createUserInfra } from "@infra/providers/user.infra";
 import { createRoleInfra } from "@infra/providers/role.infra";
 import { createOrgUnitInfra } from "@infra/providers/org-unit.infra";
 import { createEmploymentProfileInfra } from "@infra/providers/employment-profile.infra";
+import { createEmploymentTermsInfra } from "@infra/providers/employment-terms.infra";
 import { createTalentInfra } from "@infra/providers/talent.infra";
 import { createTalentGroupInfra } from "@infra/providers/talent-group.infra";
 import { createPlatformAccountInfra } from "@infra/providers/platform-account.infra";
@@ -68,6 +69,11 @@ import { EmploymentProfileAdminController } from "@modules/employment-profile/ad
 import { EmploymentProfileAdminQueryController } from "@modules/employment-profile/admin/admin.employment-profile.query.controller";
 import { EmploymentProfileAdminService } from "@modules/employment-profile/admin/admin.employment-profile.service";
 import { EmploymentProfileAdminQueryService } from "@modules/employment-profile/admin/admin.employment-profile.query-service";
+
+/* EMPLOYMENT TERMS */
+import { adminEmploymentTermsRoutes } from "@modules/employment-terms/admin/admin.employment-terms.routes";
+import { EmploymentTermsAdminController } from "@modules/employment-terms/admin/admin.employment-terms.controller";
+import { EmploymentTermsAdminService } from "@modules/employment-terms/admin/admin.employment-terms.service";
 
 /* TALENT */
 import { adminTalentRoutes } from "@modules/talent/admin/admin.talent.routes";
@@ -309,6 +315,10 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     employmentProfileEventAssignmentReadonlyAccess,
   } = createEmploymentProfileInfra(infra.primaryDb);
   const {
+    employmentTermsRepository,
+    employmentTermsCodeSequenceRepository,
+  } = createEmploymentTermsInfra(infra.primaryDb);
+  const {
     talentRepository,
     businessCodeSequenceRepository: talentBusinessCodeSequenceRepository,
     talentReadRepository,
@@ -489,6 +499,21 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       employmentProfileController,
       employmentProfileQueryController,
     ),
+  );
+
+  const employmentTermsController = new EmploymentTermsAdminController(
+    new EmploymentTermsAdminService(
+      employmentTermsRepository,
+      employmentTermsCodeSequenceRepository,
+      employmentProfileRepository,
+      authoritativeAuditGuard,
+      adminMutationBridge,
+    ),
+  );
+
+  r.use(
+    "/employment-profiles/:employmentProfileId/employment-terms",
+    adminEmploymentTermsRoutes(employmentTermsController),
   );
 
   /* TALENT */

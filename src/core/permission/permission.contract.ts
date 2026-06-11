@@ -308,6 +308,45 @@ export const PermissionContracts: PermissionContractRegistry =
   },
 
   /* =========================
+     EMPLOYMENT TERMS
+  ========================= */
+  [Permission.EMPLOYMENT_TERMS_READ]: {
+    code: Permission.EMPLOYMENT_TERMS_READ,
+    context: "ADMIN",
+    resource: "EMPLOYMENT_TERMS",
+    auditAction: "employment-terms.read",
+    riskLevel: "HIGH",
+  },
+  [Permission.EMPLOYMENT_TERMS_READ_SENSITIVE]: {
+    code: Permission.EMPLOYMENT_TERMS_READ_SENSITIVE,
+    context: "ADMIN",
+    resource: "EMPLOYMENT_TERMS",
+    auditAction: "employment-terms.read-sensitive",
+    riskLevel: "CRITICAL",
+  },
+  [Permission.EMPLOYMENT_TERMS_MANAGE_DRAFT]: {
+    code: Permission.EMPLOYMENT_TERMS_MANAGE_DRAFT,
+    context: "ADMIN",
+    resource: "EMPLOYMENT_TERMS",
+    auditAction: "employment-terms.manage-draft",
+    riskLevel: "CRITICAL",
+  },
+  [Permission.EMPLOYMENT_TERMS_APPROVE]: {
+    code: Permission.EMPLOYMENT_TERMS_APPROVE,
+    context: "ADMIN",
+    resource: "EMPLOYMENT_TERMS",
+    auditAction: "employment-terms.approve",
+    riskLevel: "CRITICAL",
+  },
+  [Permission.EMPLOYMENT_TERMS_AUDIT]: {
+    code: Permission.EMPLOYMENT_TERMS_AUDIT,
+    context: "ADMIN",
+    resource: "EMPLOYMENT_TERMS",
+    auditAction: "employment-terms.audit",
+    riskLevel: "HIGH",
+  },
+
+  /* =========================
      TALENT
   ========================= */
   [Permission.TALENT_READ]: {

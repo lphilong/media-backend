@@ -9,6 +9,7 @@ import { SystemInvariantError } from "@core/error/system-error";
 import { createUserBootstrapRegistrar } from "@modules/user/shared/user.bootstrap";
 import { createOrgUnitBootstrapRegistrar } from "@modules/org-unit/shared/org-unit.bootstrap";
 import { createEmploymentProfileBootstrapRegistrar } from "@modules/employment-profile/shared/employment-profile.bootstrap";
+import { createEmploymentTermsBootstrapRegistrar } from "@modules/employment-terms/shared/employment-terms.bootstrap";
 import { createTalentBootstrapRegistrar } from "@modules/talent/shared/talent.bootstrap";
 import { createTalentGroupBootstrapRegistrar } from "@modules/talent-group/shared/talent-group.bootstrap";
 import { createPlatformAccountBootstrapRegistrar } from "@modules/platform-account/shared/platform-account.bootstrap";
@@ -55,6 +56,7 @@ const BOOTSTRAP_REGISTRARS: readonly BootstrapRegistrar[] =
     createUserBootstrapRegistrar(),
     createOrgUnitBootstrapRegistrar(),
     createEmploymentProfileBootstrapRegistrar(),
+    createEmploymentTermsBootstrapRegistrar(),
     createTalentBootstrapRegistrar(),
     createTalentGroupBootstrapRegistrar(),
     createPlatformAccountBootstrapRegistrar(),
