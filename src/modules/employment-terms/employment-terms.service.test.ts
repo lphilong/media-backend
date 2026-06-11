@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { ClientSession } from "mongodb";
+import type { ClientSession, Db } from "mongodb";
 import type { Request } from "express";
 import { bindCommand } from "@app/base/command.middleware";
 import { Actor } from "@core/actor/actor";
@@ -21,16 +21,27 @@ import type { EmploymentProfileRecord } from "@modules/employment-profile/domain
 import { EmploymentTermsAdminService } from "./admin/admin.employment-terms.service";
 import { EmploymentTermsAdminController } from "./admin/admin.employment-terms.controller";
 import {
+  adminEmploymentTermsAllProfilesRoutes,
+  adminEmploymentTermsRoutes,
+} from "./admin/admin.employment-terms.routes";
+import {
   EmploymentTermsConflictError,
   EmploymentTermsStateError,
   EmploymentTermsValidationError,
 } from "./domain/employment-terms.errors";
 import type {
   EmploymentTermsRepository,
+  ListEmploymentTermsAdminRecordsInput,
   TransitionEmploymentTermsInput,
   UpdateEmploymentTermsDraftInput,
 } from "./domain/employment-terms.repository";
-import type { EmploymentTermsAllowance, EmploymentTermsRecord } from "./domain/employment-terms.types";
+import type {
+  EmploymentTermsAdminListRecord,
+  EmploymentTermsAllowance,
+  EmploymentTermsOverlapContextRecord,
+  EmploymentTermsRecord,
+} from "./domain/employment-terms.types";
+import { NativeMongoEmploymentTermsRepository } from "@infra/mongo/employment-terms/employment-terms.repository";
 
 const audit = { async record() {} } as unknown as AuditGuard;
 
@@ -285,6 +296,323 @@ test("Employment Terms permissions are Admin-only and employmentProfile.read doe
   });
 });
 
+test("Employment Terms admin all-profiles list enforces dedicated read permission and redacts amounts", async () => {
+  const { service } = adminListFixture();
+  await bindTraceId("hret-admin-list-access", async () => {
+    await assert.rejects(
+      () => service.listAllProfiles(undefined as never, {}),
+      (error: unknown) => {
+        assert.ok(error instanceof SystemInvariantError);
+        assert.equal(error.code, "ACTOR_MISSING");
+        return true;
+      },
+    );
+    await assert.rejects(
+      () => service.listAllProfiles(
+        new Actor({
+          id: "staff",
+          type: "staff",
+          context: "ADMIN",
+          roles: [],
+          permissions: [Permission.EMPLOYMENT_TERMS_READ],
+          scopeGrants: {},
+          isActive: true,
+        }),
+        {},
+      ),
+      permissionDenied,
+    );
+    await assert.rejects(
+      () => service.listAllProfiles(actor("profile-reader", [Permission.EMPLOYMENT_PROFILE_READ]), {}),
+      permissionDenied,
+    );
+
+    const redacted = await service.listAllProfiles(actor("reader", [Permission.EMPLOYMENT_TERMS_READ]), {
+      employmentProfileId: "ep-a",
+      limit: "1",
+    });
+    assert.equal(redacted.items.length, 1);
+    assert.equal(redacted.items[0]?.sensitiveAmountsRedacted, true);
+    assert.equal(redacted.items[0]?.baseSalaryAmount, undefined);
+    assert.equal(redacted.items[0]?.allowances[0]?.amount, undefined);
+    assert.notEqual(redacted.items[0]?.baseSalaryAmount, 0);
+    const serialized = JSON.stringify(redacted);
+    [
+      "createdBy",
+      "updatedBy",
+      "submittedBy",
+      "approvedBy",
+      "cancelledBy",
+      "contractRegistry",
+      "document",
+      "bank",
+      "tax",
+      "payrollRun",
+    ].forEach((field) => assert.equal(serialized.includes(field), false, field));
+
+    const sensitive = await service.listAllProfiles(
+      actor("finance", [
+        Permission.EMPLOYMENT_TERMS_READ,
+        Permission.EMPLOYMENT_TERMS_READ_SENSITIVE,
+      ]),
+      {
+        employmentProfileId: "ep-a",
+        effectiveOn: "2026-02-01",
+        readiness: "CURRENT_EFFECTIVE",
+        limit: "1",
+      },
+    );
+    assert.equal(sensitive.items[0]?.baseSalaryAmount, 0);
+    assert.equal(sensitive.items[0]?.allowances[0]?.amount, 100);
+    assert.equal(sensitive.items[0]?.sensitiveAmountsRedacted, false);
+  });
+});
+
+test("Employment Terms admin all-profiles list supports safe filters and search", async () => {
+  const { service } = adminListFixture();
+  const reader = actor("reader", [Permission.EMPLOYMENT_TERMS_READ]);
+
+  await bindTraceId("hret-admin-list-filters", async () => {
+    assert.deepEqual(
+      (await service.listAllProfiles(reader, { employmentProfileId: "ep-b" })).items.map((item) => item.employmentProfile.id),
+      ["ep-b", "ep-b", "ep-b"],
+    );
+    assert.deepEqual(
+      (await service.listAllProfiles(reader, { orgUnitId: "org-a" })).items.map((item) => item.employmentProfile.id),
+      ["ep-a", "ep-a", "ep-a", "ep-a"],
+    );
+    assert.deepEqual(
+      (await service.listAllProfiles(reader, { employmentStatus: "ON_LEAVE" })).items.map((item) => item.employmentProfile.id),
+      ["ep-b", "ep-b", "ep-b"],
+    );
+    assert.equal((await service.listAllProfiles(reader, { status: "PENDING_APPROVAL" })).items.length, 2);
+    assert.equal((await service.listAllProfiles(reader, { payrollEligible: "false" })).items.length, 2);
+    assert.deepEqual(
+      (await service.listAllProfiles(reader, { effectiveOn: "2026-06-01" })).items.map((item) => item.id),
+      ["pending-ineligible", "pending-a", "overlap-a", "current-a", "ineligible-b", "missing-b"],
+    );
+    assert.deepEqual(
+      (await service.listAllProfiles(reader, { expiringBefore: "2025-12-31" })).items.map((item) => item.id),
+      ["expired-b"],
+    );
+    assert.deepEqual(
+      (await service.listAllProfiles(reader, { search: "alice" })).items.map((item) => item.employmentProfile.id),
+      ["ep-a", "ep-a", "ep-a", "ep-a"],
+    );
+  });
+});
+
+test("Employment Terms admin all-profiles readiness filters preserve accepted evaluator semantics", async () => {
+  const { service } = adminListFixture();
+  const reader = actor("reader", [Permission.EMPLOYMENT_TERMS_READ]);
+  const query = (readiness: string) =>
+    service.listAllProfiles(reader, { readiness, limit: "100" });
+
+  await bindTraceId("hret-admin-list-readiness", async () => {
+    assert.deepEqual(
+      (await query("CURRENT_EFFECTIVE")).items.map((item) => item.id),
+      ["overlap-a", "current-a"],
+    );
+    assert.deepEqual(
+      (await query("PENDING_APPROVAL")).items.map((item) => item.id),
+      ["pending-a"],
+    );
+    assert.deepEqual(
+      (await query("EXPIRED")).items.map((item) => item.id),
+      ["expired-b"],
+    );
+    assert.deepEqual(
+      (await query("MISSING_BASE_SALARY")).items.map((item) => item.id),
+      ["missing-b"],
+    );
+    assert.deepEqual(
+      (await query("OVERLAPPING")).items.map((item) => item.id),
+      ["overlap-a", "current-a"],
+    );
+    assert.equal(
+      (await query("PAYROLL_SOURCE_ELIGIBLE")).items.every((item) => item.payrollEligible),
+      true,
+    );
+    assert.deepEqual(
+      (await query("PAYROLL_SOURCE_INELIGIBLE")).items.map((item) => item.id),
+      ["pending-ineligible", "ineligible-b"],
+    );
+    assert.equal(
+      (await service.listAllProfiles(reader, { readiness: "MISSING_BASE_SALARY", employmentProfileId: "ep-a" })).items.length,
+      0,
+    );
+  });
+});
+
+test("Employment Terms OVERLAPPING readiness derives from full profile context under combined filters", async () => {
+  const { service } = adminListFixture();
+  const reader = actor("reader", [Permission.EMPLOYMENT_TERMS_READ]);
+
+  await bindTraceId("hret-admin-list-overlap-combined", async () => {
+    assert.deepEqual(
+      (await service.listAllProfiles(reader, { readiness: "OVERLAPPING" })).items.map((item) => item.id),
+      ["overlap-a", "current-a"],
+    );
+    assert.deepEqual(
+      (await service.listAllProfiles(reader, {
+        readiness: "OVERLAPPING",
+        effectiveOn: "2026-02-01",
+      })).items.map((item) => item.id),
+      ["current-a"],
+    );
+    assert.deepEqual(
+      (await service.listAllProfiles(reader, {
+        readiness: "OVERLAPPING",
+        expiringBefore: "2026-06-30",
+      })).items.map((item) => item.id),
+      ["overlap-a"],
+    );
+    assert.deepEqual(
+      (await service.listAllProfiles(reader, {
+        readiness: "OVERLAPPING",
+        employmentProfileId: "ep-a",
+      })).items.map((item) => item.id),
+      ["overlap-a", "current-a"],
+    );
+    assert.deepEqual(
+      (await service.listAllProfiles(reader, {
+        readiness: "OVERLAPPING",
+        orgUnitId: "org-a",
+      })).items.map((item) => item.id),
+      ["overlap-a", "current-a"],
+    );
+    assert.deepEqual(
+      (await service.listAllProfiles(reader, {
+        readiness: "OVERLAPPING",
+        status: "APPROVED",
+      })).items.map((item) => item.id),
+      ["overlap-a", "current-a"],
+    );
+    assert.equal(
+      (await service.listAllProfiles(reader, {
+        readiness: "OVERLAPPING",
+        employmentProfileId: "ep-b",
+      })).items.length,
+      0,
+    );
+  });
+});
+
+test("Employment Terms Mongo admin aggregation projects joined summaries and overlap context", async () => {
+  let aggregationPipeline: readonly Record<string, unknown>[] = [];
+  let contextFindOptions: Record<string, unknown> | undefined;
+  const employmentTermsCollection = {
+    aggregate(pipeline: readonly Record<string, unknown>[]) {
+      aggregationPipeline = pipeline;
+      return { async toArray() { return []; } };
+    },
+    find(_filter: Record<string, unknown>, options?: Record<string, unknown>) {
+      contextFindOptions = options;
+      return { async toArray() { return []; } };
+    },
+  };
+  const db = {
+    collection(name: string) {
+      return name === "employment_terms" ? employmentTermsCollection : {};
+    },
+  } as unknown as Db;
+  const repository = new NativeMongoEmploymentTermsRepository(db);
+
+  await repository.listAdminRecords({ readiness: "OVERLAPPING" });
+  await repository.listOverlapContextByEmploymentProfileIds(["ep-a"]);
+
+  const lookupProjects = aggregationPipeline
+    .filter((stage) => "$lookup" in stage)
+    .map((stage) => stage.$lookup as {
+      from: string;
+      pipeline?: readonly Record<string, unknown>[];
+    })
+    .filter((lookup) => ["employment_profiles", "org_units", "users"].includes(lookup.from))
+    .map((lookup) => ({
+      from: lookup.from,
+      project: lookup.pipeline?.find((stage) => "$project" in stage)?.$project,
+    }));
+  assert.deepEqual(lookupProjects, [
+    {
+      from: "employment_profiles",
+      project: {
+        _id: 1,
+        employeeCode: 1,
+        legalName: 1,
+        normalizedLegalName: 1,
+        displayName: 1,
+        normalizedDisplayName: 1,
+        orgUnitId: 1,
+        linkedUserId: 1,
+        employmentStatus: 1,
+      },
+    },
+    {
+      from: "org_units",
+      project: { _id: 1, code: 1, name: 1, status: 1 },
+    },
+    {
+      from: "users",
+      project: {
+        _id: 1,
+        "profile.displayName": 1,
+        "profile.email": 1,
+        accountStatus: 1,
+      },
+    },
+  ]);
+  assert.deepEqual(contextFindOptions?.projection, {
+    _id: 1,
+    employmentProfileId: 1,
+    status: 1,
+    payrollEligible: 1,
+    effectiveFrom: 1,
+    effectiveTo: 1,
+  });
+});
+
+test("Employment Terms admin all-profiles list rejects invalid params and paginates deterministically", async () => {
+  const { service } = adminListFixture();
+  const reader = actor("reader", [Permission.EMPLOYMENT_TERMS_READ]);
+
+  await bindTraceId("hret-admin-list-pagination", async () => {
+    for (const query of [
+      { employmentStatus: "ACTIVE-ish" },
+      { status: "ACTIVE" },
+      { payrollEligible: "yes" },
+      { effectiveOn: "01-06-2026" },
+      { expiringBefore: "2026-02-30" },
+      { readiness: "READY" },
+      { limit: "0" },
+      { limit: "101" },
+      { cursor: "not-a-cursor" },
+    ]) {
+      await assert.rejects(
+        () => service.listAllProfiles(reader, query),
+        EmploymentTermsValidationError,
+        JSON.stringify(query),
+      );
+    }
+
+    const first = await service.listAllProfiles(reader, { limit: "2" });
+    assert.deepEqual(first.items.map((item) => item.id), ["pending-ineligible", "pending-a"]);
+    assert.ok(first.nextCursor);
+    const second = await service.listAllProfiles(reader, {
+      limit: "2",
+      cursor: first.nextCursor ?? undefined,
+    });
+    assert.deepEqual(second.items.map((item) => item.id), ["overlap-a", "current-a"]);
+    await assert.rejects(
+      () => service.listAllProfiles(reader, {
+        limit: "2",
+        cursor: first.nextCursor ?? undefined,
+        employmentProfileId: "ep-a",
+      }),
+      EmploymentTermsValidationError,
+    );
+  });
+});
+
 test("Employment Terms selector excludes draft, pending, cancelled, future, expired, and non-payroll-eligible records", async () => {
   const { service, terms } = fixture();
   const base = record({ status: "APPROVED", approvedAt: 1 });
@@ -319,12 +647,52 @@ test("Employment Terms controller presents list arrays and keeps nested route id
   assert.deepEqual(result, { data: [{ id: "terms-1", sensitiveAmountsRedacted: true }] });
 });
 
+test("Employment Terms controller presents all-profiles list envelope and routes are distinct", async () => {
+  const service = {
+    async listAllProfiles(_actor: Actor, query: Record<string, unknown>) {
+      assert.equal(query.limit, "1");
+      return {
+        items: [{ id: "terms-1", employmentProfileId: "ep-1", sensitiveAmountsRedacted: true }],
+        nextCursor: null,
+        appliedFilters: { effectiveOn: Date.UTC(2026, 0, 1) },
+      };
+    },
+  } as unknown as EmploymentTermsAdminService;
+  const controller = new TestableEmploymentTermsController(service);
+  const req = {
+    params: {},
+    query: { limit: "1" },
+  } as unknown as Request;
+  bindCommand(req, "EMPLOYMENT_TERMS_ADMIN_LIST");
+  const result = await controller.dispatch(req, actor("reader", [Permission.EMPLOYMENT_TERMS_READ]));
+  assert.deepEqual(result, {
+    data: {
+      items: [{ id: "terms-1", employmentProfileId: "ep-1", sensitiveAmountsRedacted: true }],
+      nextCursor: null,
+      appliedFilters: { effectiveOn: Date.UTC(2026, 0, 1) },
+    },
+  });
+
+  const topLevelRouter = adminEmploymentTermsAllProfilesRoutes(controller);
+  const nestedRouter = adminEmploymentTermsRoutes(controller);
+  assert.deepEqual(
+    (topLevelRouter as unknown as { stack: Array<{ route?: { path?: string } }> })
+      .stack.map((layer) => layer.route?.path).filter(Boolean),
+    ["/"],
+  );
+  assert.deepEqual(
+    (nestedRouter as unknown as { stack: Array<{ route?: { path?: string } }> })
+      .stack.map((layer) => layer.route?.path).filter(Boolean),
+    ["/", "/:termsId", "/", "/:termsId", "/:termsId/submit", "/:termsId/approve", "/:termsId/cancel"],
+  );
+});
+
 function fixture() {
-  const terms = new MemoryTermsRepository();
   const profiles = new Map<string, EmploymentProfileRecord>([
     ["ep-1", profile("ep-1", "ACTIVE")],
     ["ep-archived", profile("ep-archived", "ARCHIVED")],
   ]);
+  const terms = new MemoryTermsRepository(profiles);
   const profileRepository = {
     async findById(id: string) {
       return profiles.get(id) ?? null;
@@ -341,10 +709,133 @@ function fixture() {
   return { service, terms };
 }
 
+function adminListFixture() {
+  const profiles = new Map<string, EmploymentProfileRecord>([
+    [
+      "ep-a",
+      profile("ep-a", "ACTIVE", {
+        employeeCode: "EP-A",
+        legalName: "Alice Legal",
+        normalizedLegalName: "alice legal",
+        displayName: "Alice",
+        normalizedDisplayName: "alice",
+        orgUnitId: "org-a",
+      }),
+    ],
+    [
+      "ep-b",
+      profile("ep-b", "ON_LEAVE", {
+        employeeCode: "EP-B",
+        legalName: "Bob Legal",
+        normalizedLegalName: "bob legal",
+        displayName: "Bob",
+        normalizedDisplayName: "bob",
+        orgUnitId: "org-b",
+      }),
+    ],
+    [
+      "ep-archived",
+      profile("ep-archived", "ARCHIVED", {
+        displayName: "Archived",
+        normalizedDisplayName: "archived",
+      }),
+    ],
+  ]);
+  const terms = new MemoryTermsRepository(profiles);
+  terms.records.push(
+    record({
+      id: "current-a",
+      employmentProfileId: "ep-a",
+      effectiveFrom: Date.UTC(2026, 0, 1),
+      effectiveTo: Date.UTC(2026, 11, 31),
+      baseSalaryAmount: 0,
+      approvedAt: Date.UTC(2026, 0, 2),
+      updatedAt: 17,
+      allowances: [allowance({ amount: 100 })],
+    }),
+    record({
+      id: "overlap-a",
+      employmentProfileId: "ep-a",
+      effectiveFrom: Date.UTC(2026, 5, 1),
+      effectiveTo: Date.UTC(2026, 5, 30),
+      baseSalaryAmount: 1,
+      approvedAt: Date.UTC(2026, 5, 2),
+      updatedAt: 18,
+    }),
+    record({
+      id: "pending-a",
+      employmentProfileId: "ep-a",
+      status: "PENDING_APPROVAL",
+      approvedBy: null,
+      approvedAt: null,
+      effectiveFrom: Date.UTC(2026, 5, 1),
+      effectiveTo: null,
+      updatedAt: 19,
+    }),
+    record({
+      id: "pending-ineligible",
+      employmentProfileId: "ep-a",
+      status: "PENDING_APPROVAL",
+      payrollEligible: false,
+      approvedBy: null,
+      approvedAt: null,
+      effectiveFrom: Date.UTC(2026, 5, 1),
+      effectiveTo: null,
+      updatedAt: 20,
+    }),
+    record({
+      id: "missing-b",
+      employmentProfileId: "ep-b",
+      effectiveFrom: Date.UTC(2026, 0, 1),
+      effectiveTo: null,
+      baseSalaryAmount: -1,
+      approvedAt: Date.UTC(2026, 0, 2),
+    }),
+    record({
+      id: "ineligible-b",
+      employmentProfileId: "ep-b",
+      effectiveFrom: Date.UTC(2026, 0, 1),
+      effectiveTo: null,
+      payrollEligible: false,
+      approvedAt: Date.UTC(2026, 0, 2),
+    }),
+    record({
+      id: "expired-b",
+      employmentProfileId: "ep-b",
+      effectiveFrom: Date.UTC(2025, 0, 1),
+      effectiveTo: Date.UTC(2025, 11, 31),
+      approvedAt: Date.UTC(2025, 0, 2),
+    }),
+    record({
+      id: "archived-profile",
+      employmentProfileId: "ep-archived",
+      effectiveFrom: Date.UTC(2026, 0, 1),
+      effectiveTo: null,
+      approvedAt: Date.UTC(2026, 0, 2),
+    }),
+  );
+  const profileRepository = {
+    async findById(id: string) {
+      return profiles.get(id) ?? null;
+    },
+  } as EmploymentProfileRepository;
+  const service = new EmploymentTermsAdminService(
+    terms,
+    new MemorySequence(),
+    profileRepository,
+    audit,
+    new MemoryMutationBridge(terms),
+    () => Date.UTC(2026, 5, 7, 10),
+  );
+  return { service, terms, profiles };
+}
+
 class MemoryTermsRepository implements EmploymentTermsRepository {
   readonly records: EmploymentTermsRecord[] = [];
   private readonly approvalLocks = new Map<string, Promise<void>>();
   private readonly sessionLockReleases = new Map<ClientSession, (() => void)[]>();
+
+  constructor(private readonly profiles: ReadonlyMap<string, EmploymentProfileRecord> = new Map()) {}
 
   async acquireApprovalLock(employmentProfileId: string, sessionValue: ClientSession): Promise<void> {
     const previous = this.approvalLocks.get(employmentProfileId) ?? Promise.resolve();
@@ -414,6 +905,74 @@ class MemoryTermsRepository implements EmploymentTermsRepository {
       && item.payrollEligible
       && item.effectiveFrom <= date
       && (item.effectiveTo === null || item.effectiveTo >= date),
+    );
+  }
+  async listAdminRecords(
+    input: ListEmploymentTermsAdminRecordsInput,
+  ): Promise<readonly EmploymentTermsAdminListRecord[]> {
+    return this.records
+      .map((terms) => {
+        const currentProfile = this.profiles.get(terms.employmentProfileId);
+        return currentProfile ? { terms, profile: currentProfile } : null;
+      })
+      .filter((item): item is { terms: EmploymentTermsRecord; profile: EmploymentProfileRecord } => item !== null)
+      .filter(({ terms, profile: currentProfile }) =>
+        (input.employmentProfileId === undefined || terms.employmentProfileId === input.employmentProfileId)
+        && (input.status === undefined || terms.status === input.status)
+        && (input.payrollEligible === undefined || terms.payrollEligible === input.payrollEligible)
+        && (
+          input.effectiveOn === undefined
+          || (terms.effectiveFrom <= input.effectiveOn && (terms.effectiveTo === null || terms.effectiveTo >= input.effectiveOn))
+        )
+        && (
+          input.expiringBefore === undefined
+          || (terms.effectiveTo !== null && terms.effectiveTo <= input.expiringBefore)
+        )
+        && (
+          input.employmentStatus === undefined
+            ? currentProfile.employmentStatus !== "ARCHIVED"
+            : currentProfile.employmentStatus === input.employmentStatus
+        )
+        && (input.orgUnitId === undefined || currentProfile.orgUnitId === input.orgUnitId)
+        && (
+          input.search === undefined
+          || currentProfile.employeeCode.startsWith(input.search)
+          || currentProfile.normalizedDisplayName.startsWith(input.search.toLowerCase())
+          || currentProfile.normalizedLegalName.startsWith(input.search.toLowerCase())
+        ),
+      )
+      .sort((left, right) =>
+        left.profile.displayName.localeCompare(right.profile.displayName)
+        || left.profile.employeeCode.localeCompare(right.profile.employeeCode)
+        || right.terms.effectiveFrom - left.terms.effectiveFrom
+        || right.terms.updatedAt - left.terms.updatedAt
+        || left.terms.id.localeCompare(right.terms.id),
+      )
+      .map(({ terms, profile: currentProfile }) => ({
+        terms,
+        employmentProfile: {
+          id: currentProfile.id,
+          employeeCode: currentProfile.employeeCode,
+          displayName: currentProfile.displayName,
+          legalName: currentProfile.legalName,
+          employmentStatus: currentProfile.employmentStatus,
+          orgUnitId: currentProfile.orgUnitId,
+          orgUnitRef: {
+            id: currentProfile.orgUnitId,
+            code: currentProfile.orgUnitId.toUpperCase(),
+            name: currentProfile.orgUnitId,
+            status: "ACTIVE",
+          },
+        },
+      }));
+  }
+  async listOverlapContextByEmploymentProfileIds(
+    employmentProfileIds: readonly string[],
+  ): Promise<readonly EmploymentTermsOverlapContextRecord[]> {
+    return this.records.filter((item) =>
+      employmentProfileIds.includes(item.employmentProfileId)
+      && item.status === "APPROVED"
+      && item.payrollEligible,
     );
   }
   async findMaxGeneratedCodeSequence(_policy: Pick<BusinessCodePolicy, "prefix" | "width">): Promise<number> {
@@ -549,7 +1108,11 @@ function allowance(patch: Partial<EmploymentTermsAllowance> = {}): EmploymentTer
   };
 }
 
-function profile(id: string, status: EmploymentProfileRecord["employmentStatus"]): EmploymentProfileRecord {
+function profile(
+  id: string,
+  status: EmploymentProfileRecord["employmentStatus"],
+  patch: Partial<EmploymentProfileRecord> = {},
+): EmploymentProfileRecord {
   return {
     id,
     employeeCode: id,
@@ -576,6 +1139,7 @@ function profile(id: string, status: EmploymentProfileRecord["employmentStatus"]
     onboardedAt: null,
     createdAt: 1,
     updatedAt: 1,
+    ...patch,
   };
 }
 

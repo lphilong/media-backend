@@ -1,11 +1,15 @@
 import { ClientSession } from "mongodb";
 import { BusinessCodePolicy } from "@core/business-code/business-code-sequence.repository";
 import {
+  EmploymentTermsAdminListRecord,
+  EmploymentTermsAdminReadinessFilter,
   EmploymentTermsAllowance,
+  EmploymentTermsOverlapContextRecord,
   EmploymentTermsPayFrequency,
   EmploymentTermsRecord,
   EmploymentTermsStatus,
 } from "./employment-terms.types";
+import { EmploymentStatus } from "@modules/employment-profile/domain/employment-profile.types";
 
 export interface UpdateEmploymentTermsDraftInput {
   readonly id: string;
@@ -37,6 +41,19 @@ export interface TransitionEmploymentTermsInput {
   readonly cancelledAt?: number;
 }
 
+export interface ListEmploymentTermsAdminRecordsInput {
+  readonly employmentProfileId?: string;
+  readonly orgUnitId?: string;
+  readonly employmentStatus?: EmploymentStatus;
+  readonly status?: EmploymentTermsStatus;
+  readonly payrollEligible?: boolean;
+  readonly effectiveOn?: number;
+  readonly expiringBefore?: number;
+  readonly readiness?: EmploymentTermsAdminReadinessFilter;
+  readonly readinessAsOf?: number;
+  readonly search?: string;
+}
+
 export interface EmploymentTermsRepository {
   acquireApprovalLock(employmentProfileId: string, session: ClientSession): Promise<void>;
   insert(record: EmploymentTermsRecord, session: ClientSession): Promise<EmploymentTermsRecord>;
@@ -56,6 +73,12 @@ export interface EmploymentTermsRepository {
     date: number,
     session?: ClientSession,
   ): Promise<readonly EmploymentTermsRecord[]>;
+  listAdminRecords(
+    input: ListEmploymentTermsAdminRecordsInput,
+  ): Promise<readonly EmploymentTermsAdminListRecord[]>;
+  listOverlapContextByEmploymentProfileIds(
+    employmentProfileIds: readonly string[],
+  ): Promise<readonly EmploymentTermsOverlapContextRecord[]>;
   findMaxGeneratedCodeSequence(
     policy: Pick<BusinessCodePolicy, "prefix" | "width">,
     session?: ClientSession,

@@ -17,6 +17,10 @@ import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import { getTraceIdOrThrow } from "@core/trace/trace.context";
 import { EmploymentProfileRepository } from "@modules/employment-profile/domain/employment-profile.repository";
+import {
+  EMPLOYMENT_STATUSES,
+  EmploymentStatus,
+} from "@modules/employment-profile/domain/employment-profile.types";
 import { buildEmploymentTermsCodePolicy } from "../domain/employment-terms-code-policy";
 import {
   EmploymentTermsConflictError,
@@ -26,17 +30,30 @@ import {
 } from "../domain/employment-terms.errors";
 import { EmploymentTermsRepository } from "../domain/employment-terms.repository";
 import {
+  EMPLOYMENT_TERMS_ADMIN_READINESS_FILTERS,
+  EMPLOYMENT_TERMS_STATUSES,
   EMPLOYMENT_TERMS_PAY_FREQUENCIES,
+  EmploymentTermsAdminDerivedFlags,
+  EmploymentTermsAdminListItemView,
+  EmploymentTermsAdminListRecord,
+  EmploymentTermsAdminReadinessFilter,
   EmploymentTermsAllowance,
+  EmploymentTermsOverlapContextRecord,
   EmploymentTermsPayFrequency,
   EmploymentTermsRecord,
+  EmploymentTermsStatus,
   EmploymentTermsView,
   PayrollReadableEmploymentTerms,
 } from "../domain/employment-terms.types";
-import { evaluatePayrollReadableEmploymentTerms } from "../domain/employment-terms-readiness";
+import {
+  evaluatePayrollReadableEmploymentTerms,
+  toHcmBusinessDateTimestamp,
+} from "../domain/employment-terms-readiness";
 import {
   CreateEmploymentTermsCommand,
+  EmploymentTermsAdminListResult,
   EmploymentTermsLifecycleCommand,
+  ListEmploymentTermsAdminQuery,
   UpdateEmploymentTermsCommand,
 } from "../shared/employment-terms.contracts";
 
@@ -44,6 +61,8 @@ const MAX_SOURCE_NOTE_LENGTH = 500;
 const MAX_ALLOWANCE_TYPE_LENGTH = 64;
 const MAX_ALLOWANCE_LABEL_LENGTH = 120;
 const MAX_ALLOWANCE_COUNT = 20;
+const DEFAULT_ADMIN_LIST_LIMIT = 50;
+const MAX_ADMIN_LIST_LIMIT = 100;
 
 export class EmploymentTermsAdminService {
   constructor(
@@ -63,6 +82,62 @@ export class EmploymentTermsAdminService {
     return (await this.repository.listByEmploymentProfileId(profileId)).map((record) =>
       toView(record, sensitive),
     );
+  }
+
+  async listAllProfiles(
+    actor: Actor,
+    query: ListEmploymentTermsAdminQuery,
+  ): Promise<EmploymentTermsAdminListResult> {
+    this.assertRead(actor);
+    const parsed = parseAdminListQuery(query, this.now());
+    const sensitive = this.canReadSensitive(actor);
+    const cursor = parseAdminListCursor(parsed.cursor, buildAdminListCursorScope(parsed));
+    const records = await this.repository.listAdminRecords({
+      employmentProfileId: parsed.employmentProfileId,
+      orgUnitId: parsed.orgUnitId,
+      employmentStatus: parsed.employmentStatus,
+      status: parsed.status,
+      payrollEligible: parsed.payrollEligible,
+      effectiveOn: parsed.effectiveOnFilter,
+      expiringBefore: parsed.expiringBefore,
+      readiness: parsed.readiness,
+      readinessAsOf: parsed.effectiveOn,
+      search: parsed.search,
+    });
+    const overlapContext = await this.repository.listOverlapContextByEmploymentProfileIds(
+      [...new Set(records.map((item) => item.terms.employmentProfileId))],
+    );
+    const profileRecords = groupOverlapContextByEmploymentProfile(overlapContext);
+    const filtered = records
+      .map((item) => toAdminListItem(
+        item,
+        sensitive,
+        parsed.effectiveOn,
+        profileRecords.get(item.terms.employmentProfileId) ?? [],
+      ))
+      .filter((item) => matchesReadinessFilter(item, parsed.readiness));
+    const items = filtered.slice(cursor.offset, cursor.offset + parsed.limit);
+    const nextOffset = cursor.offset + items.length;
+    return {
+      items,
+      nextCursor: nextOffset < filtered.length
+        ? encodeAdminListCursor({
+            scope: buildAdminListCursorScope(parsed),
+            offset: nextOffset,
+          })
+        : null,
+      appliedFilters: {
+        ...(parsed.employmentProfileId ? { employmentProfileId: parsed.employmentProfileId } : {}),
+        ...(parsed.orgUnitId ? { orgUnitId: parsed.orgUnitId } : {}),
+        ...(parsed.employmentStatus ? { employmentStatus: parsed.employmentStatus } : {}),
+        ...(parsed.status ? { status: parsed.status } : {}),
+        ...(parsed.payrollEligible !== undefined ? { payrollEligible: parsed.payrollEligible } : {}),
+        effectiveOn: parsed.effectiveOn,
+        ...(parsed.expiringBefore !== undefined ? { expiringBefore: parsed.expiringBefore } : {}),
+        ...(parsed.readiness ? { readiness: parsed.readiness } : {}),
+        ...(parsed.search ? { search: parsed.search } : {}),
+      },
+    };
   }
 
   async get(actor: Actor, command: EmploymentTermsLifecycleCommand): Promise<EmploymentTermsView> {
@@ -424,6 +499,119 @@ function toView(record: EmploymentTermsRecord, sensitive: boolean): EmploymentTe
   };
 }
 
+function toAdminListItem(
+  record: EmploymentTermsAdminListRecord,
+  sensitive: boolean,
+  asOfDate: number,
+  profileTerms: readonly EmploymentTermsOverlapContextRecord[],
+): EmploymentTermsAdminListItemView {
+  return {
+    ...toView(record.terms, sensitive),
+    employmentProfile: record.employmentProfile,
+    ...deriveAdminFlags(record.terms, asOfDate, profileTerms),
+  };
+}
+
+function deriveAdminFlags(
+  record: EmploymentTermsRecord,
+  asOfDate: number,
+  profileTerms: readonly EmploymentTermsOverlapContextRecord[],
+): EmploymentTermsAdminDerivedFlags {
+  const payrollReadable = evaluatePayrollReadableEmploymentTerms(record, asOfDate);
+  return {
+    isCurrentEffective: payrollReadable !== null,
+    isExpired:
+      record.status === "APPROVED"
+      && record.payrollEligible
+      && record.effectiveTo !== null
+      && record.effectiveTo < asOfDate,
+    isPendingApproval: record.status === "PENDING_APPROVAL",
+    hasMissingBaseSalary:
+      record.payrollEligible
+      && (record.status === "APPROVED" || record.status === "PENDING_APPROVAL")
+      && isRecordEffective(record, asOfDate)
+      && !hasValidBaseSalary(record),
+    hasOverlapForProfile: hasApprovedPayrollEligibleOverlap(record, profileTerms),
+    payrollSourceEligibility: record.payrollEligible ? "ELIGIBLE" : "INELIGIBLE",
+  };
+}
+
+function groupOverlapContextByEmploymentProfile(
+  records: readonly EmploymentTermsOverlapContextRecord[],
+): ReadonlyMap<string, readonly EmploymentTermsOverlapContextRecord[]> {
+  const grouped = new Map<string, EmploymentTermsOverlapContextRecord[]>();
+  for (const record of records) {
+    const current = grouped.get(record.employmentProfileId) ?? [];
+    current.push(record);
+    grouped.set(record.employmentProfileId, current);
+  }
+  return grouped;
+}
+
+function matchesReadinessFilter(
+  item: EmploymentTermsAdminListItemView,
+  readiness: EmploymentTermsAdminReadinessFilter | undefined,
+): boolean {
+  if (!readiness) return true;
+  switch (readiness) {
+    case "CURRENT_EFFECTIVE":
+      return item.isCurrentEffective;
+    case "PENDING_APPROVAL":
+      return item.isPendingApproval && item.payrollEligible;
+    case "EXPIRED":
+      return item.isExpired;
+    case "MISSING_BASE_SALARY":
+      return item.hasMissingBaseSalary;
+    case "OVERLAPPING":
+      return item.hasOverlapForProfile;
+    case "PAYROLL_SOURCE_ELIGIBLE":
+      return item.payrollEligible === true;
+    case "PAYROLL_SOURCE_INELIGIBLE":
+      return item.payrollEligible === false;
+  }
+}
+
+function hasApprovedPayrollEligibleOverlap(
+  record: EmploymentTermsRecord,
+  profileTerms: readonly EmploymentTermsOverlapContextRecord[],
+): boolean {
+  if (record.status !== "APPROVED" || !record.payrollEligible) return false;
+  return profileTerms.some(
+    (candidate) =>
+      candidate.id !== record.id
+      && candidate.status === "APPROVED"
+      && candidate.payrollEligible
+      && rangesOverlap(record, candidate),
+  );
+}
+
+function isRecordEffective(record: EmploymentTermsRecord, date: number): boolean {
+  return isCanonicalDate(record.effectiveFrom)
+    && (record.effectiveTo === null || isCanonicalDate(record.effectiveTo))
+    && record.effectiveFrom <= date
+    && (record.effectiveTo === null || record.effectiveTo >= date);
+}
+
+function rangesOverlap(
+  left: EmploymentTermsOverlapContextRecord,
+  right: EmploymentTermsOverlapContextRecord,
+): boolean {
+  if (
+    !isCanonicalDate(left.effectiveFrom)
+    || !isCanonicalDate(right.effectiveFrom)
+    || (left.effectiveTo !== null && !isCanonicalDate(left.effectiveTo))
+    || (right.effectiveTo !== null && !isCanonicalDate(right.effectiveTo))
+  ) {
+    return false;
+  }
+  return left.effectiveFrom <= (right.effectiveTo ?? Number.MAX_SAFE_INTEGER)
+    && right.effectiveFrom <= (left.effectiveTo ?? Number.MAX_SAFE_INTEGER);
+}
+
+function hasValidBaseSalary(record: EmploymentTermsRecord): boolean {
+  return Number.isFinite(record.baseSalaryAmount) && record.baseSalaryAmount >= 0;
+}
+
 function assertRecordPayrollReadable(
   record: EmploymentTermsRecord,
   date: number,
@@ -499,4 +687,152 @@ function isCanonicalDate(value: unknown): value is number {
     && date.getUTCMinutes() === 0
     && date.getUTCSeconds() === 0
     && date.getUTCMilliseconds() === 0;
+}
+
+interface ParsedAdminListQuery {
+  readonly employmentProfileId?: string;
+  readonly orgUnitId?: string;
+  readonly employmentStatus?: EmploymentStatus;
+  readonly status?: EmploymentTermsStatus;
+  readonly payrollEligible?: boolean;
+  readonly effectiveOn: number;
+  readonly effectiveOnFilter?: number;
+  readonly expiringBefore?: number;
+  readonly readiness?: EmploymentTermsAdminReadinessFilter;
+  readonly search?: string;
+  readonly cursor?: string;
+  readonly limit: number;
+}
+
+interface AdminListCursor {
+  readonly scope: string;
+  readonly offset: number;
+}
+
+function parseAdminListQuery(
+  query: ListEmploymentTermsAdminQuery,
+  now: number,
+): ParsedAdminListQuery {
+  const effectiveOn = query.effectiveOn === undefined
+    ? toHcmBusinessDateTimestamp(now)
+    : canonicalDate(query.effectiveOn, "effectiveOn");
+  return {
+    employmentProfileId: optionalId(query.employmentProfileId, "employmentProfileId"),
+    orgUnitId: optionalId(query.orgUnitId, "orgUnitId"),
+    employmentStatus: optionalEnum(query.employmentStatus, EMPLOYMENT_STATUSES, "employmentStatus"),
+    status: optionalEnum(query.status, EMPLOYMENT_TERMS_STATUSES, "status"),
+    payrollEligible: optionalBoolean(query.payrollEligible, "payrollEligible"),
+    effectiveOn,
+    ...(query.effectiveOn === undefined ? {} : { effectiveOnFilter: effectiveOn }),
+    expiringBefore: query.expiringBefore === undefined
+      ? undefined
+      : canonicalDate(query.expiringBefore, "expiringBefore"),
+    readiness: optionalEnum(query.readiness, EMPLOYMENT_TERMS_ADMIN_READINESS_FILTERS, "readiness"),
+    search: optionalSearch(query.search),
+    cursor: optionalCursorText(query.cursor),
+    limit: parseAdminLimit(query.limit),
+  };
+}
+
+function optionalId(value: unknown, field: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  return requiredId(value, field);
+}
+
+function optionalEnum<T extends string>(
+  value: unknown,
+  values: readonly T[],
+  field: string,
+): T | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw new EmploymentTermsValidationError(`${field} must be one of ${values.join(", ")}`);
+  }
+  const normalized = value.trim();
+  if (values.includes(normalized as T)) return normalized as T;
+  throw new EmploymentTermsValidationError(`${field} must be one of ${values.join(", ")}`);
+}
+
+function optionalBoolean(value: unknown, field: string): boolean | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") {
+    throw new EmploymentTermsValidationError(`${field} must be a boolean`);
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  throw new EmploymentTermsValidationError(`${field} must be a boolean`);
+}
+
+function optionalSearch(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw new EmploymentTermsValidationError("search must be a string");
+  }
+  const normalized = value.normalize("NFKC").trim().replace(/\s+/gu, " ");
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function optionalCursorText(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw new EmploymentTermsValidationError("cursor must be a string");
+  }
+  const normalized = value.trim();
+  if (!normalized) throw new EmploymentTermsValidationError("cursor must not be empty");
+  return normalized;
+}
+
+function parseAdminLimit(value: unknown): number {
+  if (value === undefined || value === null) return DEFAULT_ADMIN_LIST_LIMIT;
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_ADMIN_LIST_LIMIT) {
+    throw new EmploymentTermsValidationError(`limit must be an integer from 1 to ${MAX_ADMIN_LIST_LIMIT}`);
+  }
+  return parsed;
+}
+
+function buildAdminListCursorScope(query: ParsedAdminListQuery): string {
+  return JSON.stringify({
+    query: "employment-terms.admin-list",
+    employmentProfileId: query.employmentProfileId ?? null,
+    orgUnitId: query.orgUnitId ?? null,
+    employmentStatus: query.employmentStatus ?? null,
+    status: query.status ?? null,
+    payrollEligible: query.payrollEligible ?? null,
+    effectiveOn: query.effectiveOn,
+    effectiveOnFilter: query.effectiveOnFilter ?? null,
+    expiringBefore: query.expiringBefore ?? null,
+    readiness: query.readiness ?? null,
+    search: query.search ?? null,
+  });
+}
+
+function parseAdminListCursor(
+  value: string | undefined,
+  scope: string,
+): AdminListCursor {
+  if (value === undefined) return { scope, offset: 0 };
+  try {
+    const decoded = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as unknown;
+    if (
+      typeof decoded === "object"
+      && decoded !== null
+      && !Array.isArray(decoded)
+      && (decoded as { scope?: unknown }).scope === scope
+      && Number.isInteger((decoded as { offset?: unknown }).offset)
+      && Number((decoded as { offset?: unknown }).offset) >= 0
+    ) {
+      return {
+        scope,
+        offset: Number((decoded as { offset: number }).offset),
+      };
+    }
+  } catch {}
+  throw new EmploymentTermsValidationError("cursor is invalid");
+}
+
+function encodeAdminListCursor(cursor: AdminListCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }

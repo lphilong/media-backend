@@ -13,3 +13,9 @@ export function adminEmploymentTermsRoutes(controller: EmploymentTermsAdminContr
   router.post("/:termsId/cancel", withCommand("EMPLOYMENT_TERMS_CANCEL"), controller.execute);
   return router;
 }
+
+export function adminEmploymentTermsAllProfilesRoutes(controller: EmploymentTermsAdminController): Router {
+  const router = Router();
+  router.get("/", withCommand("EMPLOYMENT_TERMS_ADMIN_LIST"), controller.execute);
+  return router;
+}

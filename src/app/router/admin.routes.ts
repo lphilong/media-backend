@@ -71,7 +71,10 @@ import { EmploymentProfileAdminService } from "@modules/employment-profile/admin
 import { EmploymentProfileAdminQueryService } from "@modules/employment-profile/admin/admin.employment-profile.query-service";
 
 /* EMPLOYMENT TERMS */
-import { adminEmploymentTermsRoutes } from "@modules/employment-terms/admin/admin.employment-terms.routes";
+import {
+  adminEmploymentTermsAllProfilesRoutes,
+  adminEmploymentTermsRoutes,
+} from "@modules/employment-terms/admin/admin.employment-terms.routes";
 import { EmploymentTermsAdminController } from "@modules/employment-terms/admin/admin.employment-terms.controller";
 import { EmploymentTermsAdminService } from "@modules/employment-terms/admin/admin.employment-terms.service";
 
@@ -517,6 +520,10 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   r.use(
     "/employment-profiles/:employmentProfileId/employment-terms",
     adminEmploymentTermsRoutes(employmentTermsController),
+  );
+  r.use(
+    "/employment-terms",
+    adminEmploymentTermsAllProfilesRoutes(employmentTermsController),
   );
 
   /* TALENT */

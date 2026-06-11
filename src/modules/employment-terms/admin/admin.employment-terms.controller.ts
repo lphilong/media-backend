@@ -9,6 +9,7 @@ import { EmploymentTermsValidationError } from "../domain/employment-terms.error
 import { EmploymentTermsAdminService } from "./admin.employment-terms.service";
 
 type Command =
+  | "EMPLOYMENT_TERMS_ADMIN_LIST"
   | "EMPLOYMENT_TERMS_LIST"
   | "EMPLOYMENT_TERMS_GET"
   | "EMPLOYMENT_TERMS_CREATE"
@@ -28,6 +29,20 @@ const MUTABLE_FIELDS = [
   "sourceNote",
 ] as const;
 
+const ADMIN_LIST_QUERY_FIELDS = [
+  "employmentProfileId",
+  "orgUnitId",
+  "employmentStatus",
+  "status",
+  "payrollEligible",
+  "effectiveOn",
+  "expiringBefore",
+  "readiness",
+  "search",
+  "cursor",
+  "limit",
+] as const;
+
 export class EmploymentTermsAdminController extends SecureController {
   constructor(private readonly service: EmploymentTermsAdminService) {
     super();
@@ -38,6 +53,9 @@ export class EmploymentTermsAdminController extends SecureController {
     const employmentProfileId = req.params.employmentProfileId;
     const termsId = req.params.termsId;
     switch (command) {
+      case "EMPLOYMENT_TERMS_ADMIN_LIST":
+        assertBodyAndQuery(req, [], ADMIN_LIST_QUERY_FIELDS);
+        return this.service.listAllProfiles(actor, req.query as never);
       case "EMPLOYMENT_TERMS_LIST":
         assertBodyAndQuery(req, [], []);
         return this.service.list(actor, employmentProfileId);
