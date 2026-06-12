@@ -52,6 +52,8 @@ import {
   ContractRecord,
   ContractRecordMutationView,
   ContractRecordStatus,
+  getContractBoundaryMetadata,
+  isCommercialLegalContractKind,
 } from "@modules/contract-registry/domain/contract-registry.types";
 import {
   ActivateContractRecordCommand,
@@ -223,6 +225,10 @@ export class ContractRegistryAdminService {
           input.linkedEntityKind,
           input.linkedEmploymentProfileId,
           input.linkedTalentId,
+        );
+        assertCommercialLegalContractKindForNewSource(
+          input.contractKind,
+          operation,
         );
         assertContractKindCompatibility(
           input.contractKind,
@@ -683,6 +689,10 @@ export class ContractRegistryAdminService {
         assertContractRecordStructuralInvariants(
           current,
         );
+        assertCommercialLegalContractKindForNewSource(
+          current.contractKind,
+          operation,
+        );
 
         const updated =
           await this.repository.transitionStatus(
@@ -834,6 +844,10 @@ export class ContractRegistryAdminService {
 
         assertContractRecordStructuralInvariants(
           current,
+        );
+        assertCommercialLegalContractKindForNewSource(
+          current.contractKind,
+          operation,
         );
         const evaluationDate =
           currentEvaluationDate();
@@ -1945,6 +1959,19 @@ function assertContractKindCompatibility(
   );
 }
 
+function assertCommercialLegalContractKindForNewSource(
+  contractKind: ContractKind,
+  operation: string,
+): void {
+  if (isCommercialLegalContractKind(contractKind)) {
+    return;
+  }
+
+  throw new ContractRegistryValidationError(
+    `${operation} rejects contractKind ${contractKind}; employment/labor contract semantics are legacy-deprecated in commercial Contract Registry and belong under People/HRET Employment Terms`,
+  );
+}
+
 function assertFileReferenceMetadataRule(
   fileReferenceId: string | null,
   fileDisplayName: string | null,
@@ -2505,6 +2532,9 @@ function toContractRecordMutationView(
     fileDisplayName: record.fileDisplayName,
     description: record.description,
     externalRef: record.externalRef,
+    boundaryMetadata: getContractBoundaryMetadata(
+      record.contractKind,
+    ),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };

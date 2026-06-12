@@ -31,6 +31,7 @@ const CONTRACT_RECORD_ADMIN_DETAIL_FIELDS = [
   "fileDisplayName",
   "description",
   "externalRef",
+  "boundaryMetadata",
   "createdAt",
   "updatedAt",
 ] as const;
@@ -51,6 +52,7 @@ const CONTRACT_RECORD_ADMIN_LIST_FIELDS = [
   "status",
   "effectiveStartDate",
   "effectiveEndDate",
+  "boundaryMetadata",
   "createdAt",
 ] as const;
 
@@ -67,6 +69,7 @@ const CONTRACT_RECORD_ADMIN_BY_LINKED_ENTITY_LIST_FIELDS = [
   "status",
   "effectiveStartDate",
   "effectiveEndDate",
+  "boundaryMetadata",
 ] as const;
 
 const CONTRACT_RECORD_ADMIN_BY_OWNER_LIST_FIELDS = [
@@ -80,6 +83,7 @@ const CONTRACT_RECORD_ADMIN_BY_OWNER_LIST_FIELDS = [
   "status",
   "effectiveStartDate",
   "effectiveEndDate",
+  "boundaryMetadata",
 ] as const;
 
 export const ContractRegistryAdminDetailExposure =
@@ -117,6 +121,8 @@ export const ContractRegistryAdminDetailExposure =
               input.fileDisplayName,
             description: input.description,
             externalRef: input.externalRef,
+            boundaryMetadata:
+              input.boundaryMetadata,
             createdAt: input.createdAt,
             updatedAt: input.updatedAt,
           },
@@ -157,6 +163,8 @@ export const ContractRegistryAdminListExposure =
               input.effectiveStartDate,
             effectiveEndDate:
               input.effectiveEndDate,
+            boundaryMetadata:
+              input.boundaryMetadata,
             createdAt: input.createdAt,
           },
           CONTRACT_RECORD_ADMIN_LIST_FIELDS,
@@ -196,6 +204,8 @@ export const ContractRegistryAdminByLinkedEntityListExposure =
               input.effectiveStartDate,
             effectiveEndDate:
               input.effectiveEndDate,
+            boundaryMetadata:
+              input.boundaryMetadata,
           },
           CONTRACT_RECORD_ADMIN_BY_LINKED_ENTITY_LIST_FIELDS,
         ),
@@ -233,6 +243,8 @@ export const ContractRegistryAdminByOwnerListExposure =
               input.effectiveStartDate,
             effectiveEndDate:
               input.effectiveEndDate,
+            boundaryMetadata:
+              input.boundaryMetadata,
           },
           CONTRACT_RECORD_ADMIN_BY_OWNER_LIST_FIELDS,
         ),

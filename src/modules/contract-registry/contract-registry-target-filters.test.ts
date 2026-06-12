@@ -1,9 +1,26 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { ClientSession } from "mongodb";
 import { Actor } from "@core/actor/actor";
+import type {
+  AuthoritativeAdminMutationBridge,
+  AuthoritativeMutationControls,
+} from "@core/application/authoritative-admin-mutation.bridge";
+import type { AuditGuard } from "@core/audit/audit.guard";
+import type { BusinessCodeSequenceRepository } from "@core/business-code/business-code-sequence.repository";
 import { Permission } from "@core/permission/permission.enum";
+import { bindTraceId } from "@core/trace/trace.context";
+import { ContractRegistryAdminService } from "@modules/contract-registry/admin/admin.contract-registry.service";
+import type { ContractRegistryEmploymentProfileReadonlyAccess } from "@modules/contract-registry/domain/contract-registry-employment-profile-readonly-access";
 import { ContractRegistryAdminQueryService } from "@modules/contract-registry/admin/admin.contract-registry.query-service";
 import { ContractRegistryValidationError } from "@modules/contract-registry/domain/contract-registry.errors";
+import type { ContractRegistryRepository } from "@modules/contract-registry/domain/contract-registry.repository";
+import type { ContractRegistryTalentReadonlyAccess } from "@modules/contract-registry/domain/contract-registry-talent-readonly-access";
+import {
+  ContractKind,
+  ContractRecord,
+  getContractBoundaryMetadata,
+} from "@modules/contract-registry/domain/contract-registry.types";
 import type { ContractRegistryReadRepository } from "@modules/contract-registry/read/contract-registry.read-repository";
 import {
   ContractRegistryAdminDetailExposure,
@@ -18,6 +35,24 @@ function createActor(): Actor {
     context: "ADMIN",
     roles: [],
     permissions: [Permission.CONTRACT_REGISTRY_READ],
+    scopeGrants: {
+      contractRegistry: ["global"],
+    },
+    isActive: true,
+  });
+}
+
+function createMutationActor(): Actor {
+  return new Actor({
+    id: "admin-user-1",
+    type: "admin",
+    context: "ADMIN",
+    roles: [],
+    permissions: [
+      Permission.CONTRACT_REGISTRY_CREATE,
+      Permission.CONTRACT_REGISTRY_UPDATE,
+      Permission.CONTRACT_REGISTRY_MANAGE_LIFECYCLE,
+    ],
     scopeGrants: {
       contractRegistry: ["global"],
     },
@@ -280,6 +315,7 @@ test("Contract Registry list/detail enrich linked and owner refs with page-bound
                         {
                           ...contractDocument,
                           _id: "contract-2",
+                          contractKind: "TALENT_SERVICE",
                           linkedEntityKind: "TALENT",
                           linkedEmploymentProfileId: null,
                           linkedTalentId: "talent-missing",
@@ -330,4 +366,527 @@ test("Contract Registry list/detail enrich linked and owner refs with page-bound
       .ownerEmploymentProfileRef !== undefined,
     true,
   );
+  assert.deepEqual(first.boundaryMetadata, {
+    semanticBoundary: "LEGACY_EMPLOYMENT",
+    kindClassification:
+      "LEGACY_EMPLOYMENT_DEPRECATED",
+    commercialLegalRegistry: false,
+    commercialChainContextEligible: false,
+    directRevenueSourceEligible: false,
+    directCommissionSourceEligible: false,
+    payrollSourceEligible: false,
+    obligationAcceptanceImplemented: false,
+    eventEvidenceLinkImplemented: false,
+  });
+  assert.deepEqual(second.boundaryMetadata, {
+    semanticBoundary: "COMMERCIAL_LEGAL",
+    kindClassification:
+      "COMMERCIAL_LEGAL_SUPPORTED",
+    commercialLegalRegistry: true,
+    commercialChainContextEligible: true,
+    directRevenueSourceEligible: false,
+    directCommissionSourceEligible: false,
+    payrollSourceEligible: false,
+    obligationAcceptanceImplemented: false,
+    eventEvidenceLinkImplemented: false,
+  });
 });
+
+test("Contract Registry creates supported commercial/legal talent contracts with boundary metadata", async () => {
+  const harness = createMutationHarness();
+
+  const created = await withTrace(() =>
+    harness.service.createContractRecord(
+      createMutationActor(),
+      {
+        contractCode: "CTR-COM-1",
+        title: "Talent campaign agreement",
+        contractKind: "TALENT_SERVICE",
+        linkedEntityKind: "TALENT",
+        linkedTalentId: "talent-1",
+        ownerEmploymentProfileId: "owner-1",
+        confidentialityTier: "CONFIDENTIAL",
+        effectiveStartDate: "2026-01-01",
+      },
+    ),
+  );
+
+  assert.equal(created.contractKind, "TALENT_SERVICE");
+  assert.equal(created.status, "DRAFT");
+  assert.deepEqual(created.boundaryMetadata, {
+    semanticBoundary: "COMMERCIAL_LEGAL",
+    kindClassification:
+      "COMMERCIAL_LEGAL_SUPPORTED",
+    commercialLegalRegistry: true,
+    commercialChainContextEligible: true,
+    directRevenueSourceEligible: false,
+    directCommissionSourceEligible: false,
+    payrollSourceEligible: false,
+    obligationAcceptanceImplemented: false,
+    eventEvidenceLinkImplemented: false,
+  });
+  assert.equal(harness.repository.records.length, 1);
+});
+
+test("Contract Registry rejects new EMPLOYMENT records as legacy employment semantics", async () => {
+  const harness = createMutationHarness();
+
+  await assert.rejects(
+    withTrace(() =>
+      harness.service.createContractRecord(
+        createMutationActor(),
+        {
+          contractCode: "CTR-EMP-1",
+          title: "Employment contract",
+          contractKind: "EMPLOYMENT",
+          linkedEntityKind: "EMPLOYMENT_PROFILE",
+          linkedEmploymentProfileId: "employee-1",
+          ownerEmploymentProfileId: "owner-1",
+          confidentialityTier: "INTERNAL",
+          effectiveStartDate: "2026-01-01",
+        },
+      ),
+    ),
+    (error: unknown) =>
+      error instanceof ContractRegistryValidationError &&
+      error.message.includes(
+        "employment/labor contract semantics are legacy-deprecated",
+      ),
+  );
+  assert.equal(harness.repository.records.length, 0);
+});
+
+test("Contract Registry keeps legacy EMPLOYMENT records readable but blocks pending-signature and activation promotion", async () => {
+  const harness = createMutationHarness();
+  harness.repository.records.push(
+    contractRecord({
+      id: "legacy-1",
+      contractCode: "CTR-LEGACY-1",
+      contractKind: "EMPLOYMENT",
+      linkedEntityKind: "EMPLOYMENT_PROFILE",
+      linkedEmploymentProfileId: "employee-1",
+      linkedTalentId: null,
+      status: "DRAFT",
+    }),
+  );
+
+  await assert.rejects(
+    withTrace(() =>
+      harness.service.markContractRecordPendingSignature(
+        createMutationActor(),
+        {
+          contractRecordId: "legacy-1",
+        },
+      ),
+    ),
+    (error: unknown) =>
+      error instanceof ContractRegistryValidationError &&
+      error.message.includes(
+        "employment/labor contract semantics are legacy-deprecated",
+      ),
+  );
+
+  await assert.rejects(
+    withTrace(() =>
+      harness.service.activateContractRecord(
+        createMutationActor(),
+        {
+          contractRecordId: "legacy-1",
+        },
+      ),
+    ),
+    (error: unknown) =>
+      error instanceof ContractRegistryValidationError &&
+      error.message.includes(
+        "employment/labor contract semantics are legacy-deprecated",
+      ),
+  );
+
+  const legacy = harness.repository.records[0];
+  assert.equal(legacy.status, "DRAFT");
+  assert.deepEqual(
+    ContractRegistryAdminDetailExposure.expose({
+      ...legacy,
+      linkedEmploymentProfileRef: null,
+      linkedTalentRef: null,
+      ownerEmploymentProfileRef: null,
+      boundaryMetadata: {
+        semanticBoundary: "LEGACY_EMPLOYMENT",
+        kindClassification:
+          "LEGACY_EMPLOYMENT_DEPRECATED",
+        commercialLegalRegistry: false,
+        commercialChainContextEligible: false,
+        directRevenueSourceEligible: false,
+        directCommissionSourceEligible: false,
+        payrollSourceEligible: false,
+        obligationAcceptanceImplemented: false,
+        eventEvidenceLinkImplemented: false,
+      },
+    }).boundaryMetadata,
+    {
+      semanticBoundary: "LEGACY_EMPLOYMENT",
+      kindClassification:
+        "LEGACY_EMPLOYMENT_DEPRECATED",
+      commercialLegalRegistry: false,
+      commercialChainContextEligible: false,
+      directRevenueSourceEligible: false,
+      directCommissionSourceEligible: false,
+      payrollSourceEligible: false,
+      obligationAcceptanceImplemented: false,
+      eventEvidenceLinkImplemented: false,
+    },
+  );
+});
+
+test("Contract Registry preserves legacy boundary classification after a harmless draft metadata edit", async () => {
+  const harness = createMutationHarness();
+  harness.repository.records.push(
+    contractRecord({
+      id: "legacy-edit-1",
+      contractCode: "CTR-LEGACY-EDIT-1",
+      contractKind: "EMPLOYMENT",
+      linkedEntityKind: "EMPLOYMENT_PROFILE",
+      linkedEmploymentProfileId: "employee-1",
+      linkedTalentId: null,
+      status: "DRAFT",
+    }),
+  );
+
+  const updated = await withTrace(() =>
+    harness.service.updateContractRecordDraftCore(
+      createMutationActor(),
+      {
+        contractRecordId: "legacy-edit-1",
+        title: "Updated legacy reference metadata",
+        description: "Compatibility-only metadata update",
+      },
+    ),
+  );
+
+  assert.equal(updated.contractKind, "EMPLOYMENT");
+  assert.equal(updated.linkedEntityKind, "EMPLOYMENT_PROFILE");
+  assert.equal(
+    updated.linkedEmploymentProfileId,
+    "employee-1",
+  );
+  assert.equal(updated.status, "DRAFT");
+  assert.deepEqual(updated.boundaryMetadata, {
+    semanticBoundary: "LEGACY_EMPLOYMENT",
+    kindClassification:
+      "LEGACY_EMPLOYMENT_DEPRECATED",
+    commercialLegalRegistry: false,
+    commercialChainContextEligible: false,
+    directRevenueSourceEligible: false,
+    directCommissionSourceEligible: false,
+    payrollSourceEligible: false,
+    obligationAcceptanceImplemented: false,
+    eventEvidenceLinkImplemented: false,
+  });
+});
+
+test("Contract Registry boundary classification is exhaustive and fails closed for unknown runtime kinds", () => {
+  const commercialKinds: readonly ContractKind[] = [
+    "TALENT_SERVICE",
+    "TALENT_MANAGEMENT",
+  ];
+
+  for (const contractKind of commercialKinds) {
+    assert.deepEqual(
+      getContractBoundaryMetadata(contractKind),
+      {
+        semanticBoundary: "COMMERCIAL_LEGAL",
+        kindClassification:
+          "COMMERCIAL_LEGAL_SUPPORTED",
+        commercialLegalRegistry: true,
+        commercialChainContextEligible: true,
+        directRevenueSourceEligible: false,
+        directCommissionSourceEligible: false,
+        payrollSourceEligible: false,
+        obligationAcceptanceImplemented: false,
+        eventEvidenceLinkImplemented: false,
+      },
+    );
+  }
+
+  assert.deepEqual(
+    getContractBoundaryMetadata("EMPLOYMENT"),
+    {
+      semanticBoundary: "LEGACY_EMPLOYMENT",
+      kindClassification:
+        "LEGACY_EMPLOYMENT_DEPRECATED",
+      commercialLegalRegistry: false,
+      commercialChainContextEligible: false,
+      directRevenueSourceEligible: false,
+      directCommissionSourceEligible: false,
+      payrollSourceEligible: false,
+      obligationAcceptanceImplemented: false,
+      eventEvidenceLinkImplemented: false,
+    },
+  );
+
+  assert.deepEqual(
+    getContractBoundaryMetadata(
+      "FUTURE_CONTRACT_KIND" as ContractKind,
+    ),
+    {
+      semanticBoundary: "UNSUPPORTED",
+      kindClassification:
+        "UNSUPPORTED_CONTRACT_KIND",
+      commercialLegalRegistry: false,
+      commercialChainContextEligible: false,
+      directRevenueSourceEligible: false,
+      directCommissionSourceEligible: false,
+      payrollSourceEligible: false,
+      obligationAcceptanceImplemented: false,
+      eventEvidenceLinkImplemented: false,
+    },
+  );
+});
+
+test("Contract Registry rejects attempts to morph a commercial talent draft into employment-linked semantics", async () => {
+  const harness = createMutationHarness();
+  harness.repository.records.push(
+    contractRecord({
+      id: "commercial-1",
+      contractCode: "CTR-COM-1",
+      contractKind: "TALENT_MANAGEMENT",
+      linkedEntityKind: "TALENT",
+      linkedEmploymentProfileId: null,
+      linkedTalentId: "talent-1",
+      status: "DRAFT",
+    }),
+  );
+
+  await assert.rejects(
+    withTrace(() =>
+      harness.service.updateContractRecordDraftCore(
+        createMutationActor(),
+        {
+          contractRecordId: "commercial-1",
+          linkedEntityKind: "EMPLOYMENT_PROFILE",
+          linkedEmploymentProfileId: "employee-1",
+          linkedTalentId: null,
+        },
+      ),
+    ),
+    /contractKind TALENT_MANAGEMENT is incompatible with linkedEntityKind EMPLOYMENT_PROFILE/,
+  );
+
+  const current = harness.repository.records[0];
+  assert.equal(current.linkedEntityKind, "TALENT");
+  assert.equal(current.linkedTalentId, "talent-1");
+});
+
+function withTrace<T>(fn: () => Promise<T>): Promise<T> {
+  return bindTraceId(
+    "trace-contract-registry-cr-1a",
+    fn,
+  );
+}
+
+function createMutationHarness(): {
+  readonly repository: InMemoryContractRegistryRepository;
+  readonly service: ContractRegistryAdminService;
+} {
+  const repository =
+    new InMemoryContractRegistryRepository();
+  const service = new ContractRegistryAdminService(
+    repository,
+    new InMemoryCodeSequenceRepository(),
+    new StaticEmploymentProfileReadonlyAccess(),
+    new StaticTalentReadonlyAccess(),
+    { async record() {} } as unknown as AuditGuard,
+    immediateMutationBridge,
+    {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {},
+    } as never,
+  );
+
+  return {
+    repository,
+    service,
+  };
+}
+
+function contractRecord(
+  overrides: Partial<ContractRecord>,
+): ContractRecord {
+  return {
+    id: "contract-1",
+    contractCode: "CTR-1",
+    title: "Contract",
+    normalizedTitle: "contract",
+    contractKind: "TALENT_SERVICE",
+    linkedEntityKind: "TALENT",
+    linkedEmploymentProfileId: null,
+    linkedTalentId: "talent-1",
+    ownerEmploymentProfileId: "owner-1",
+    confidentialityTier: "INTERNAL",
+    status: "DRAFT",
+    effectiveStartDate: utcDate("2026-01-01"),
+    effectiveEndDate: null,
+    fileReferenceId: null,
+    fileDisplayName: null,
+    description: null,
+    externalRef: null,
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides,
+  };
+}
+
+const immediateMutationBridge: AuthoritativeAdminMutationBridge =
+  {
+    async execute(_params, mutate) {
+      const controls: AuthoritativeMutationControls = {
+        markAuthSecurityTruthChanged() {},
+        markExplicitNoOpSuccess() {},
+      };
+      return mutate({} as ClientSession, controls);
+    },
+  };
+
+class InMemoryCodeSequenceRepository
+  implements BusinessCodeSequenceRepository
+{
+  async ensureAtLeast(): Promise<void> {}
+
+  async allocateNext(): Promise<number> {
+    return 1;
+  }
+}
+
+class StaticEmploymentProfileReadonlyAccess
+  implements ContractRegistryEmploymentProfileReadonlyAccess
+{
+  async findById(employmentProfileId: string) {
+    if (
+      employmentProfileId === "owner-1" ||
+      employmentProfileId === "employee-1"
+    ) {
+      return {
+        id: employmentProfileId,
+        employmentStatus: "ACTIVE" as const,
+      };
+    }
+
+    return null;
+  }
+}
+
+class StaticTalentReadonlyAccess
+  implements ContractRegistryTalentReadonlyAccess
+{
+  async findById(talentId: string) {
+    if (talentId === "talent-1") {
+      return {
+        id: talentId,
+        operationalStatus: "ACTIVE" as const,
+      };
+    }
+
+    return null;
+  }
+}
+
+class InMemoryContractRegistryRepository
+  implements ContractRegistryRepository
+{
+  readonly records: ContractRecord[] = [];
+
+  async insert(
+    contractRecord: ContractRecord,
+  ): Promise<ContractRecord> {
+    this.records.push(contractRecord);
+    return contractRecord;
+  }
+
+  async findById(
+    contractRecordId: string,
+  ): Promise<ContractRecord | null> {
+    return (
+      this.records.find(
+        (record) => record.id === contractRecordId,
+      ) ?? null
+    );
+  }
+
+  async findByContractCode(
+    contractCode: string,
+  ): Promise<ContractRecord | null> {
+    return (
+      this.records.find(
+        (record) =>
+          record.contractCode === contractCode,
+      ) ?? null
+    );
+  }
+
+  async findMaxGeneratedContractCodeSequence(): Promise<number> {
+    return 0;
+  }
+
+  async updateDraftCore(
+    input: Parameters<
+      ContractRegistryRepository["updateDraftCore"]
+    >[0],
+  ): Promise<ContractRecord | null> {
+    const index = this.records.findIndex(
+      (record) =>
+        record.id === input.contractRecordId &&
+        (record.status === "DRAFT" ||
+          record.status === "PENDING_SIGNATURE"),
+    );
+
+    if (index < 0) {
+      return null;
+    }
+
+    const updated = {
+      ...this.records[index],
+      ...input,
+      id: this.records[index].id,
+      updatedAt: input.updatedAt,
+    };
+    this.records[index] = updated;
+    return updated;
+  }
+
+  async assignOwner(): Promise<ContractRecord | null> {
+    return null;
+  }
+
+  async updateFileReference(): Promise<ContractRecord | null> {
+    return null;
+  }
+
+  async transitionStatus(
+    input: Parameters<
+      ContractRegistryRepository["transitionStatus"]
+    >[0],
+  ): Promise<ContractRecord | null> {
+    const index = this.records.findIndex(
+      (record) =>
+        record.id === input.contractRecordId &&
+        input.fromStatuses.includes(record.status),
+    );
+
+    if (index < 0) {
+      return null;
+    }
+
+    const updated = {
+      ...this.records[index],
+      status: input.toStatus,
+      effectiveEndDate:
+        input.effectiveEndDate ??
+        this.records[index].effectiveEndDate,
+      updatedAt: input.updatedAt,
+    };
+    this.records[index] = updated;
+    return updated;
+  }
+}

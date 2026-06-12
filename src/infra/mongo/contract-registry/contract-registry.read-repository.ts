@@ -9,6 +9,7 @@ import {
   ContractRecordSortDirection,
   ContractRecordSortField,
   ContractRecordStatus,
+  getContractBoundaryMetadata,
 } from "@modules/contract-registry/domain/contract-registry.types";
 import {
   ContractRegistryReadRepository,
@@ -783,6 +784,9 @@ function toContractRecordListItemView(
     status: input.status,
     effectiveStartDate: input.effectiveStartDate,
     effectiveEndDate: input.effectiveEndDate,
+    boundaryMetadata: getContractBoundaryMetadata(
+      input.contractKind,
+    ),
     createdAt: input.createdAt,
   };
 }
@@ -802,6 +806,9 @@ function toContractRecordByLinkedEntityListItemView(
     status: input.status,
     effectiveStartDate: input.effectiveStartDate,
     effectiveEndDate: input.effectiveEndDate,
+    boundaryMetadata: getContractBoundaryMetadata(
+      input.contractKind,
+    ),
   };
 }
 
@@ -819,6 +826,9 @@ function toContractRecordByOwnerListItemView(
     status: input.status,
     effectiveStartDate: input.effectiveStartDate,
     effectiveEndDate: input.effectiveEndDate,
+    boundaryMetadata: getContractBoundaryMetadata(
+      input.contractKind,
+    ),
   };
 }
 
@@ -844,6 +854,9 @@ function toContractRecordDetailView(
     fileDisplayName: input.fileDisplayName,
     description: input.description,
     externalRef: input.externalRef,
+    boundaryMetadata: getContractBoundaryMetadata(
+      input.contractKind,
+    ),
     createdAt: input.createdAt,
     updatedAt: input.updatedAt,
   };
