@@ -56,6 +56,67 @@ test("manager Events use active OrgUnit and TalentGroup assignments only", async
   });
 });
 
+test("manager Event detail returns completion evidence as read-only summary", async () => {
+  const service = new ManagerWorkspaceEventAdminService(
+    {
+      async findNonArchivedByLinkedUserId() {
+        return activeProfile();
+      },
+    },
+    {
+      async listActiveAssignmentsByManagerEmploymentProfile() {
+        return [talentGroupAssignment("tg-managed")];
+      },
+    },
+    {
+      async listActiveByManagerEmploymentProfileId() {
+        return [orgUnitAssignment("ou-managed", "UNIT_MANAGER")];
+      },
+    },
+    {
+      async listManagerEventSummaries() {
+        return [];
+      },
+      async getManagerEventSummary() {
+        return {
+          id: "event-completed",
+          eventCode: "EVT-COMPLETE",
+          title: "Completed event",
+          status: "COMPLETED",
+          eventStartAt: now,
+          eventEndAt: now + 3_600_000,
+          owner: { id: "ep-owner", displayName: "Owner" },
+          participants: [],
+          completionEvidence: {
+            completedAt: now + 3_600_000,
+            completedByActorId: "admin-1",
+            evidenceNote: "Delivered recap package.",
+            evidenceRefs: [
+              {
+                type: "INTERNAL_REFERENCE",
+                label: "Ops ticket",
+                url: null,
+                referenceId: "OPS-123",
+              },
+            ],
+          },
+          studioBookings: [],
+        };
+      },
+    },
+    () => now,
+  );
+
+  const result = await service.getEvent(
+    managerActor({ permissions: ["event.read"], roles: ["TEAM_MANAGER"] }),
+    "event-completed",
+  );
+
+  assert.equal(result.completionEvidence?.evidenceNote, "Delivered recap package.");
+  assert.equal("completeEvent" in service, false);
+  assert.equal("updateCompletionEvidence" in service, false);
+});
+
 test("manager Events fail closed without assignment scope and expose no mutation surface", async () => {
   const service = new ManagerWorkspaceEventAdminService(
     {

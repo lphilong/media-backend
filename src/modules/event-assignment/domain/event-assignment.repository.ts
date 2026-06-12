@@ -2,6 +2,7 @@ import { ClientSession } from "mongodb";
 import { BusinessCodePolicy } from "@core/business-code/business-code-sequence.repository";
 import {
   EventAssignmentKind,
+  EventCompletionEvidenceRef,
   EventAssignmentRecord,
   EventRecord,
   StudioBookingRecord,
@@ -48,6 +49,8 @@ export interface TransitionEventStatusInput {
   readonly toStatus: EventStatus;
   readonly actorId: string;
   readonly reason?: string;
+  readonly completionEvidenceNote?: string;
+  readonly completionEvidenceRefs?: readonly EventCompletionEvidenceRef[];
   readonly updatedAt: number;
 }
 

@@ -23,6 +23,7 @@ import {
 } from "@modules/event-assignment/domain/event-assignment.repository";
 import {
   EventAssignmentKind,
+  EventCompletionEvidenceRef,
   EventAssignmentRecord,
   EventAssignmentStatus,
   EventRecord,
@@ -57,6 +58,8 @@ interface EventDocument {
   readonly confirmedByActorId: string | null;
   readonly completedAt: number | null;
   readonly completedByActorId: string | null;
+  readonly completionEvidenceNote?: string | null;
+  readonly completionEvidenceRefs?: readonly EventCompletionEvidenceRef[];
   readonly cancelledAt: number | null;
   readonly cancelledByActorId: string | null;
   readonly cancellationReason: string | null;
@@ -346,6 +349,11 @@ export class NativeMongoEventAssignmentRepository
     } else if (input.toStatus === "COMPLETED") {
       set.completedAt = input.updatedAt;
       set.completedByActorId = input.actorId;
+      set.completionEvidenceNote =
+        input.completionEvidenceNote ?? null;
+      set.completionEvidenceRefs = [
+        ...(input.completionEvidenceRefs ?? []),
+      ];
     } else if (input.toStatus === "CANCELLED") {
       set.cancelledAt = input.updatedAt;
       set.cancelledByActorId = input.actorId;
@@ -733,6 +741,11 @@ function toEventDocument(
     confirmedByActorId: event.confirmedByActorId,
     completedAt: event.completedAt,
     completedByActorId: event.completedByActorId,
+    completionEvidenceNote:
+      event.completionEvidenceNote,
+    completionEvidenceRefs: [
+      ...event.completionEvidenceRefs,
+    ],
     cancelledAt: event.cancelledAt,
     cancelledByActorId: event.cancelledByActorId,
     cancellationReason: event.cancellationReason,
@@ -772,6 +785,11 @@ function toEventRecord(
     confirmedByActorId: document.confirmedByActorId,
     completedAt: document.completedAt,
     completedByActorId: document.completedByActorId,
+    completionEvidenceNote:
+      document.completionEvidenceNote ?? null,
+    completionEvidenceRefs: [
+      ...(document.completionEvidenceRefs ?? []),
+    ],
     cancelledAt: document.cancelledAt,
     cancelledByActorId: document.cancelledByActorId,
     cancellationReason: document.cancellationReason,

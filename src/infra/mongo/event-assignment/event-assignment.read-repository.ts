@@ -3,6 +3,8 @@ import { BaseRepository } from "@infra/database/repository/base.repository";
 import { EventAssignmentValidationError } from "@modules/event-assignment/domain/event-assignment.errors";
 import {
   EventAssignmentKind,
+  EventCompletionEvidenceRef,
+  EventCompletionSummary,
   EventAssignmentListItemView,
   EventAssignmentStatus,
   EventByAssignmentListItemView,
@@ -46,6 +48,9 @@ interface EventReadDocument {
   readonly plannedAt: number | null;
   readonly confirmedAt: number | null;
   readonly completedAt: number | null;
+  readonly completedByActorId?: string | null;
+  readonly completionEvidenceNote?: string | null;
+  readonly completionEvidenceRefs?: readonly EventCompletionEvidenceRef[];
   readonly cancelledAt: number | null;
   readonly cancellationReason: string | null;
   readonly lastRescheduledAt: number | null;
@@ -613,6 +618,8 @@ export class NativeMongoEventAssignmentReadRepository
       status: event.status,
       eventStartAt: event.eventStartAt,
       eventEndAt: event.eventEndAt,
+      completionEvidence:
+        toCompletionSummary(event),
       owner:
         profileRefs.get(event.ownerEmploymentProfileId) ??
         toFallbackReferenceSummary(event.ownerEmploymentProfileId),
@@ -1485,12 +1492,35 @@ function toEventDetailView(document: EventReadDocument): EventDetailView {
     plannedAt: document.plannedAt,
     confirmedAt: document.confirmedAt,
     completedAt: document.completedAt,
+    completedByActorId:
+      document.completedByActorId ?? null,
+    completionEvidence:
+      toCompletionSummary(document),
     cancelledAt: document.cancelledAt,
     cancellationReason: document.cancellationReason,
     lastRescheduledAt: document.lastRescheduledAt,
     lastRescheduleReason: document.lastRescheduleReason,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
+  };
+}
+
+function toCompletionSummary(
+  document: EventReadDocument,
+): EventCompletionSummary | null {
+  if (document.completedAt === null) {
+    return null;
+  }
+
+  return {
+    completedAt: document.completedAt,
+    completedByActorId:
+      document.completedByActorId ?? null,
+    evidenceNote:
+      document.completionEvidenceNote ?? null,
+    evidenceRefs: [
+      ...(document.completionEvidenceRefs ?? []),
+    ],
   };
 }
 

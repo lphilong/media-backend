@@ -1,5 +1,6 @@
 import {
   EventAssignmentKind,
+  EventCompletionEvidenceRefType,
   EventAssignmentListItemView,
   EventByAssignmentListItemView,
   EventByPlatformListItemView,
@@ -13,6 +14,11 @@ import {
   StudioBookingStatus,
   StudioBookingView,
 } from "@modules/event-assignment/domain/event-assignment.types";
+
+export const EVENT_COMPLETION_EVIDENCE_NOTE_MAX_LENGTH = 2_000;
+export const EVENT_COMPLETION_EVIDENCE_REF_LABEL_MAX_LENGTH = 160;
+export const EVENT_COMPLETION_EVIDENCE_REF_REFERENCE_ID_MAX_LENGTH = 512;
+export const EVENT_COMPLETION_EVIDENCE_REF_URL_MAX_LENGTH = 2_048;
 
 export interface EventAssignmentInput {
   readonly assignmentKind: EventAssignmentKind | string;
@@ -67,8 +73,17 @@ export interface ConfirmEventCommand {
   readonly eventId: string;
 }
 
+export interface EventCompletionEvidenceRefInput {
+  readonly type: EventCompletionEvidenceRefType | string;
+  readonly label?: string | null;
+  readonly url?: string | null;
+  readonly referenceId?: string | null;
+}
+
 export interface CompleteEventCommand {
   readonly eventId: string;
+  readonly evidenceNote: string;
+  readonly evidenceRefs?: readonly EventCompletionEvidenceRefInput[];
 }
 
 export interface CancelEventCommand {

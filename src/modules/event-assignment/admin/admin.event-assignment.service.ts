@@ -1,8 +1,5 @@
 import crypto from "crypto";
-import {
-  ClientSession,
-  MongoServerError,
-} from "mongodb";
+import { ClientSession, MongoServerError } from "mongodb";
 import { Actor } from "@core/actor/actor";
 import {
   AuthoritativeAdminMutationBridge,
@@ -55,6 +52,9 @@ import { EventAssignmentTalentReadonlyAccess } from "@modules/event-assignment/d
 import { EventAssignmentTalentGroupReadonlyAccess } from "@modules/event-assignment/domain/event-assignment-talent-group-readonly-access";
 import {
   EVENT_ASSIGNMENT_KINDS,
+  EVENT_COMPLETION_EVIDENCE_REF_TYPES,
+  EventCompletionEvidenceRef,
+  EventCompletionEvidenceRefType,
   EventAssignmentKind,
   EventAssignmentRecord,
   EventMutationView,
@@ -72,6 +72,10 @@ import {
   CompleteEventCommand,
   CreateStudioBookingCommand,
   CreateEventCommand,
+  EVENT_COMPLETION_EVIDENCE_NOTE_MAX_LENGTH,
+  EVENT_COMPLETION_EVIDENCE_REF_LABEL_MAX_LENGTH,
+  EVENT_COMPLETION_EVIDENCE_REF_REFERENCE_ID_MAX_LENGTH,
+  EVENT_COMPLETION_EVIDENCE_REF_URL_MAX_LENGTH,
   EventAssignmentInput,
   EventMutationResult,
   ReplaceEventAssignmentsCommand,
@@ -96,8 +100,7 @@ type EventAssignmentMutationFailureClassification =
   | "invariant"
   | "unknown";
 
-interface NormalizedAssignmentReference
-  extends EventAssignmentReferenceInput {}
+interface NormalizedAssignmentReference extends EventAssignmentReferenceInput {}
 
 interface NormalizedCreateCommand {
   readonly eventCode: string | undefined;
@@ -143,6 +146,11 @@ interface NormalizedLifecycleCommand {
   readonly eventId: string;
 }
 
+interface NormalizedCompleteEventCommand extends NormalizedLifecycleCommand {
+  readonly evidenceNote: string;
+  readonly evidenceRefs: readonly EventCompletionEvidenceRef[];
+}
+
 interface NormalizedReasonedLifecycleCommand extends NormalizedLifecycleCommand {
   readonly reason: string;
 }
@@ -174,10 +182,7 @@ export class EventAssignmentAdminService {
     command: CreateEventCommand,
   ): Promise<EventMutationResult> {
     const operation = "event-assignment.create";
-    const permission = this.assertPermission(
-      actor,
-      Permission.EVENT_CREATE,
-    );
+    const permission = this.assertPermission(actor, Permission.EVENT_CREATE);
     const input = normalizeCreateCommand(command);
 
     return this.executeMutation(
@@ -185,20 +190,17 @@ export class EventAssignmentAdminService {
       permission,
       operation,
       {
-        eventCode: readOptionalLogString(
-          command.eventCode,
-        ),
+        eventCode: readOptionalLogString(command.eventCode),
         assignmentCount: input.assignments.length,
       },
       async (session) => {
         const scope = resolveRequiredGlobalScope(actor);
 
         if (input.eventCode !== undefined) {
-          const existingByCode =
-            await this.repository.findEventByEventCode(
-              input.eventCode,
-              session,
-            );
+          const existingByCode = await this.repository.findEventByEventCode(
+            input.eventCode,
+            session,
+          );
 
           if (existingByCode) {
             throw new EventAssignmentConflictError(
@@ -207,67 +209,44 @@ export class EventAssignmentAdminService {
           }
         }
 
-        assertHasActiveAssignments(
-          input.assignments,
-          "assignments",
-        );
-        await this.assertAssignmentsEligible(
-          input.assignments,
-          session,
-        );
-        await this.assertOwnerEligible(
-          input.ownerEmploymentProfileId,
-          session,
-        );
+        assertHasActiveAssignments(input.assignments, "assignments");
+        await this.assertAssignmentsEligible(input.assignments, session);
+        await this.assertOwnerEligible(input.ownerEmploymentProfileId, session);
         await this.assertPlatformAccountsEligible(
           input.platformAccountIds,
           session,
         );
 
-        await this.assertNoAssignmentOverlapConflicts(
-          {
-            assignments: input.assignments,
-            eventStartAt: input.eventStartAt,
-            eventEndAt: input.eventEndAt,
-            session,
-          },
-        );
+        await this.assertNoAssignmentOverlapConflicts({
+          assignments: input.assignments,
+          eventStartAt: input.eventStartAt,
+          eventEndAt: input.eventEndAt,
+          session,
+        });
 
         await this.assertNoPlatformOverlapConflicts({
-          platformAccountIds:
-            input.platformAccountIds,
+          platformAccountIds: input.platformAccountIds,
           eventStartAt: input.eventStartAt,
           eventEndAt: input.eventEndAt,
           session,
         });
 
         let createdEvent!: EventRecord;
-        const maxAttempts =
-          input.eventCode === undefined ? 5 : 1;
+        const maxAttempts = input.eventCode === undefined ? 5 : 1;
 
-        for (
-          let attempt = 1;
-          attempt <= maxAttempts;
-          attempt += 1
-        ) {
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
           const eventCode =
             input.eventCode ??
-            (await this.allocateGeneratedCode(
-              input.eventStartAt,
-              session,
-            ));
+            (await this.allocateGeneratedCode(input.eventStartAt, session));
           const now = Date.now();
           const eventRecord: EventRecord = {
             id: crypto.randomUUID(),
             eventCode,
             title: input.title,
-            normalizedTitle:
-              input.normalizedTitle,
+            normalizedTitle: input.normalizedTitle,
             ownerEmploymentProfileId: input.ownerEmploymentProfileId,
             studioResourceIds: [],
-            platformAccountIds: [
-              ...input.platformAccountIds,
-            ],
+            platformAccountIds: [...input.platformAccountIds],
             status: input.status,
             eventStartAt: input.eventStartAt,
             eventEndAt: input.eventEndAt,
@@ -281,6 +260,8 @@ export class EventAssignmentAdminService {
             confirmedByActorId: null,
             completedAt: null,
             completedByActorId: null,
+            completionEvidenceNote: null,
+            completionEvidenceRefs: [],
             cancelledAt: null,
             cancelledByActorId: null,
             cancellationReason: null,
@@ -291,34 +272,26 @@ export class EventAssignmentAdminService {
             updatedAt: now,
           };
 
-          const assignments =
-            input.assignments.map((assignment) => ({
-              id: crypto.randomUUID(),
-              eventId: eventRecord.id,
-              assignmentKind:
-                assignment.assignmentKind,
-              assignmentEmploymentProfileId:
-                assignment.assignmentEmploymentProfileId,
-              assignmentTalentId:
-                assignment.assignmentTalentId,
-              assignmentTalentGroupId:
-                assignment.assignmentTalentGroupId,
-              assignmentStatus: "ACTIVE" as const,
-              createdAt: now,
-              updatedAt: now,
-              removedAt: null,
-            }));
+          const assignments = input.assignments.map((assignment) => ({
+            id: crypto.randomUUID(),
+            eventId: eventRecord.id,
+            assignmentKind: assignment.assignmentKind,
+            assignmentEmploymentProfileId:
+              assignment.assignmentEmploymentProfileId,
+            assignmentTalentId: assignment.assignmentTalentId,
+            assignmentTalentGroupId: assignment.assignmentTalentGroupId,
+            assignmentStatus: "ACTIVE" as const,
+            createdAt: now,
+            updatedAt: now,
+            removedAt: null,
+          }));
 
           try {
-            createdEvent =
-              await this.repository.insertEvent(
-                eventRecord,
-                session,
-              );
-            await this.repository.insertAssignments(
-              assignments,
+            createdEvent = await this.repository.insertEvent(
+              eventRecord,
               session,
             );
+            await this.repository.insertAssignments(assignments, session);
             break;
           } catch (error) {
             if (!isDuplicateKeyError(error)) {
@@ -346,15 +319,11 @@ export class EventAssignmentAdminService {
           mutationType: operation,
           metadata: {
             eventCode: createdEvent.eventCode,
-            assignmentReferences:
-              summarizeAssignmentReferences(
-                input.assignments,
-              ),
-            ownerEmploymentProfileId:
-              createdEvent.ownerEmploymentProfileId,
-            platformAccountIds: [
-              ...createdEvent.platformAccountIds,
-            ],
+            assignmentReferences: summarizeAssignmentReferences(
+              input.assignments,
+            ),
+            ownerEmploymentProfileId: createdEvent.ownerEmploymentProfileId,
+            platformAccountIds: [...createdEvent.platformAccountIds],
             eventStartAt: createdEvent.eventStartAt,
             eventEndAt: createdEvent.eventEndAt,
             effectiveScope: scope,
@@ -376,10 +345,7 @@ export class EventAssignmentAdminService {
     command: UpdateEventCoreCommand,
   ): Promise<EventMutationResult> {
     const operation = "event-assignment.update-core";
-    const permission = this.assertPermission(
-      actor,
-      Permission.EVENT_UPDATE,
-    );
+    const permission = this.assertPermission(actor, Permission.EVENT_UPDATE);
     const input = normalizeUpdateCoreCommand(command);
 
     return this.executeMutation(
@@ -391,15 +357,9 @@ export class EventAssignmentAdminService {
       },
       async (session) => {
         const scope = resolveRequiredGlobalScope(actor);
-        const current = await this.requireEvent(
-          input.eventId,
-          session,
-        );
+        const current = await this.requireEvent(input.eventId, session);
 
-        assertPlanningForStructuralMutation(
-          current,
-          operation,
-        );
+        assertPlanningForStructuralMutation(current, operation);
 
         const patch = buildUpdateEventCoreInput({
           current,
@@ -420,11 +380,10 @@ export class EventAssignmentAdminService {
           );
         }
 
-        const updated =
-          await this.repository.updateEventCore(
-            patch.update,
-            session,
-          );
+        const updated = await this.repository.updateEventCore(
+          patch.update,
+          session,
+        );
 
         if (!updated) {
           throw new EventAssignmentConflictError(
@@ -443,8 +402,7 @@ export class EventAssignmentAdminService {
               ? {
                   previousOwnerEmploymentProfileId:
                     current.ownerEmploymentProfileId,
-                  newOwnerEmploymentProfileId:
-                    updated.ownerEmploymentProfileId,
+                  newOwnerEmploymentProfileId: updated.ownerEmploymentProfileId,
                 }
               : {}),
             effectiveScope: scope,
@@ -466,10 +424,7 @@ export class EventAssignmentAdminService {
     command: RescheduleEventCommand,
   ): Promise<EventMutationResult> {
     const operation = "event-assignment.reschedule";
-    const permission = this.assertPermission(
-      actor,
-      Permission.EVENT_UPDATE,
-    );
+    const permission = this.assertPermission(actor, Permission.EVENT_UPDATE);
     const input = normalizeRescheduleCommand(command);
 
     return this.executeMutation(
@@ -481,15 +436,9 @@ export class EventAssignmentAdminService {
       },
       async (session, controls) => {
         const scope = resolveRequiredGlobalScope(actor);
-        const current = await this.requireEvent(
-          input.eventId,
-          session,
-        );
+        const current = await this.requireEvent(input.eventId, session);
 
-        assertReschedulableEvent(
-          current,
-          operation,
-        );
+        assertReschedulableEvent(current, operation);
 
         const activeAssignments =
           await this.repository.listAssignmentsByEventId(
@@ -507,8 +456,7 @@ export class EventAssignmentAdminService {
         });
 
         await this.assertNoPlatformOverlapConflicts({
-          platformAccountIds:
-            current.platformAccountIds,
+          platformAccountIds: current.platformAccountIds,
           eventStartAt: input.newEventStartAt,
           eventEndAt: input.newEventEndAt,
           excludeEventId: current.id,
@@ -516,10 +464,8 @@ export class EventAssignmentAdminService {
         });
 
         if (
-          current.eventStartAt ===
-            input.newEventStartAt &&
-          current.eventEndAt ===
-            input.newEventEndAt
+          current.eventStartAt === input.newEventStartAt &&
+          current.eventEndAt === input.newEventEndAt
         ) {
           controls.markExplicitNoOpSuccess();
           return toEventMutationView(current);
@@ -533,11 +479,10 @@ export class EventAssignmentAdminService {
           rescheduledByActorId: actor.id,
           updatedAt: Date.now(),
         };
-        const updated =
-          await this.repository.rescheduleEvent(
-            updateInput,
-            session,
-          );
+        const updated = await this.repository.rescheduleEvent(
+          updateInput,
+          session,
+        );
 
         if (!updated) {
           throw new EventAssignmentConflictError(
@@ -551,10 +496,8 @@ export class EventAssignmentAdminService {
           eventId: updated.id,
           mutationType: operation,
           metadata: {
-            previousEventStartAt:
-              current.eventStartAt,
-            previousEventEndAt:
-              current.eventEndAt,
+            previousEventStartAt: current.eventStartAt,
+            previousEventEndAt: current.eventEndAt,
             newEventStartAt: updated.eventStartAt,
             newEventEndAt: updated.eventEndAt,
             reason: input.reason,
@@ -576,14 +519,12 @@ export class EventAssignmentAdminService {
     actor: Actor,
     command: ReplaceEventAssignmentsCommand,
   ): Promise<EventMutationResult> {
-    const operation =
-      "event-assignment.replace-assignments";
+    const operation = "event-assignment.replace-assignments";
     const permission = this.assertPermission(
       actor,
       Permission.EVENT_MANAGE_ASSIGNMENTS,
     );
-    const input =
-      normalizeReplaceAssignmentsCommand(command);
+    const input = normalizeReplaceAssignmentsCommand(command);
 
     return this.executeMutation(
       actor,
@@ -591,20 +532,13 @@ export class EventAssignmentAdminService {
       operation,
       {
         eventId: input.eventId,
-        assignmentCount:
-          input.replacementAssignments.length,
+        assignmentCount: input.replacementAssignments.length,
       },
       async (session, controls) => {
         const scope = resolveRequiredGlobalScope(actor);
-        const current = await this.requireEvent(
-          input.eventId,
-          session,
-        );
+        const current = await this.requireEvent(input.eventId, session);
 
-        assertPlanningForStructuralMutation(
-          current,
-          operation,
-        );
+        assertPlanningForStructuralMutation(current, operation);
 
         assertHasActiveAssignments(
           input.replacementAssignments,
@@ -616,8 +550,7 @@ export class EventAssignmentAdminService {
         );
 
         await this.assertNoAssignmentOverlapConflicts({
-          assignments:
-            input.replacementAssignments,
+          assignments: input.replacementAssignments,
           eventStartAt: current.eventStartAt,
           eventEndAt: current.eventEndAt,
           excludeEventId: current.id,
@@ -625,8 +558,7 @@ export class EventAssignmentAdminService {
         });
 
         await this.assertNoPlatformOverlapConflicts({
-          platformAccountIds:
-            current.platformAccountIds,
+          platformAccountIds: current.platformAccountIds,
           eventStartAt: current.eventStartAt,
           eventEndAt: current.eventEndAt,
           excludeEventId: current.id,
@@ -658,29 +590,22 @@ export class EventAssignmentAdminService {
           ]),
         );
         const replacementSignatureSet = new Set(
-          input.replacementAssignments.map(
-            buildAssignmentSignature,
-          ),
+          input.replacementAssignments.map(buildAssignmentSignature),
         );
 
-        const assignmentIdsToRemove =
-          currentActiveAssignments
-            .filter(
-              (assignment) =>
-                !replacementSignatureSet.has(
-                  buildAssignmentSignature(
-                    assignment,
-                  ),
-                ),
-            )
-            .map((assignment) => assignment.id);
+        const assignmentIdsToRemove = currentActiveAssignments
+          .filter(
+            (assignment) =>
+              !replacementSignatureSet.has(
+                buildAssignmentSignature(assignment),
+              ),
+          )
+          .map((assignment) => assignment.id);
 
-        const assignmentsToCreate: EventAssignmentRecord[] =
-          [];
+        const assignmentsToCreate: EventAssignmentRecord[] = [];
 
         for (const assignment of input.replacementAssignments) {
-          const signature =
-            buildAssignmentSignature(assignment);
+          const signature = buildAssignmentSignature(assignment);
 
           if (currentBySignature.has(signature)) {
             continue;
@@ -689,14 +614,11 @@ export class EventAssignmentAdminService {
           assignmentsToCreate.push({
             id: crypto.randomUUID(),
             eventId: current.id,
-            assignmentKind:
-              assignment.assignmentKind,
+            assignmentKind: assignment.assignmentKind,
             assignmentEmploymentProfileId:
               assignment.assignmentEmploymentProfileId,
-            assignmentTalentId:
-              assignment.assignmentTalentId,
-            assignmentTalentGroupId:
-              assignment.assignmentTalentGroupId,
+            assignmentTalentId: assignment.assignmentTalentId,
+            assignmentTalentGroupId: assignment.assignmentTalentGroupId,
             assignmentStatus: "ACTIVE",
             createdAt: now,
             updatedAt: now,
@@ -705,25 +627,18 @@ export class EventAssignmentAdminService {
         }
 
         if (assignmentIdsToRemove.length > 0) {
-          const removeInput: MarkAssignmentsRemovedInput =
-            {
-              eventId: current.id,
-              assignmentIds: assignmentIdsToRemove,
-              removedAt: now,
-              updatedAt: now,
-            };
+          const removeInput: MarkAssignmentsRemovedInput = {
+            eventId: current.id,
+            assignmentIds: assignmentIdsToRemove,
+            removedAt: now,
+            updatedAt: now,
+          };
 
-          await this.repository.markAssignmentsRemoved(
-            removeInput,
-            session,
-          );
+          await this.repository.markAssignmentsRemoved(removeInput, session);
         }
 
         if (assignmentsToCreate.length > 0) {
-          await this.repository.insertAssignments(
-            assignmentsToCreate,
-            session,
-          );
+          await this.repository.insertAssignments(assignmentsToCreate, session);
         }
 
         const touched = await this.repository.touchEvent(
@@ -744,14 +659,12 @@ export class EventAssignmentAdminService {
           eventId: touched.id,
           mutationType: operation,
           metadata: {
-            previousActiveAssignments:
-              summarizeAssignmentReferences(
-                currentActiveAssignments,
-              ),
-            nextActiveAssignments:
-              summarizeAssignmentReferences(
-                input.replacementAssignments,
-              ),
+            previousActiveAssignments: summarizeAssignmentReferences(
+              currentActiveAssignments,
+            ),
+            nextActiveAssignments: summarizeAssignmentReferences(
+              input.replacementAssignments,
+            ),
             effectiveScope: scope,
           },
           session,
@@ -914,14 +827,9 @@ export class EventAssignmentAdminService {
     actor: Actor,
     command: UpdateEventPlatformAccountsCommand,
   ): Promise<EventMutationResult> {
-    const operation =
-      "event-assignment.update-platform-accounts";
-    const permission = this.assertPermission(
-      actor,
-      Permission.EVENT_UPDATE,
-    );
-    const input =
-      normalizeUpdatePlatformAccountsCommand(command);
+    const operation = "event-assignment.update-platform-accounts";
+    const permission = this.assertPermission(actor, Permission.EVENT_UPDATE);
+    const input = normalizeUpdatePlatformAccountsCommand(command);
 
     return this.executeMutation(
       actor,
@@ -929,28 +837,20 @@ export class EventAssignmentAdminService {
       operation,
       {
         eventId: input.eventId,
-        platformCount:
-          input.newPlatformAccountIds.length,
+        platformCount: input.newPlatformAccountIds.length,
       },
       async (session, controls) => {
         const scope = resolveRequiredGlobalScope(actor);
-        const current = await this.requireEvent(
-          input.eventId,
-          session,
-        );
+        const current = await this.requireEvent(input.eventId, session);
 
-        assertPlanningForStructuralMutation(
-          current,
-          operation,
-        );
+        assertPlanningForStructuralMutation(current, operation);
 
         await this.assertPlatformAccountsEligible(
           input.newPlatformAccountIds,
           session,
         );
         await this.assertNoPlatformOverlapConflicts({
-          platformAccountIds:
-            input.newPlatformAccountIds,
+          platformAccountIds: input.newPlatformAccountIds,
           eventStartAt: current.eventStartAt,
           eventEndAt: current.eventEndAt,
           excludeEventId: current.id,
@@ -967,19 +867,16 @@ export class EventAssignmentAdminService {
           return toEventMutationView(current);
         }
 
-        const updateInput: ReplaceEventPlatformAccountsInput =
-          {
-            eventId: current.id,
-            platformAccountIds:
-              input.newPlatformAccountIds,
-            updatedAt: Date.now(),
-          };
+        const updateInput: ReplaceEventPlatformAccountsInput = {
+          eventId: current.id,
+          platformAccountIds: input.newPlatformAccountIds,
+          updatedAt: Date.now(),
+        };
 
-        const updated =
-          await this.repository.replaceEventPlatformAccounts(
-            updateInput,
-            session,
-          );
+        const updated = await this.repository.replaceEventPlatformAccounts(
+          updateInput,
+          session,
+        );
 
         if (!updated) {
           throw new EventAssignmentConflictError(
@@ -993,12 +890,8 @@ export class EventAssignmentAdminService {
           eventId: updated.id,
           mutationType: operation,
           metadata: {
-            previousPlatformAccountIds: [
-              ...current.platformAccountIds,
-            ],
-            newPlatformAccountIds: [
-              ...updated.platformAccountIds,
-            ],
+            previousPlatformAccountIds: [...current.platformAccountIds],
+            newPlatformAccountIds: [...updated.platformAccountIds],
             effectiveScope: scope,
           },
           session,
@@ -1033,10 +926,7 @@ export class EventAssignmentAdminService {
       },
       async (session) => {
         const scope = resolveRequiredGlobalScope(actor);
-        const current = await this.requireEvent(
-          input.eventId,
-          session,
-        );
+        const current = await this.requireEvent(input.eventId, session);
 
         if (current.status !== "DRAFT") {
           throw new EventAssignmentStateError(
@@ -1044,22 +934,18 @@ export class EventAssignmentAdminService {
           );
         }
 
-        await this.assertEventHasActiveAssignments(
-          current.id,
+        await this.assertEventHasActiveAssignments(current.id, session);
+
+        const updated = await this.repository.transitionEventStatus(
+          {
+            eventId: current.id,
+            fromStatuses: ["DRAFT"],
+            toStatus: "PLANNED",
+            actorId: actor.id,
+            updatedAt: Date.now(),
+          },
           session,
         );
-
-        const updated =
-          await this.repository.transitionEventStatus(
-            {
-              eventId: current.id,
-              fromStatuses: ["DRAFT"],
-              toStatus: "PLANNED",
-              actorId: actor.id,
-              updatedAt: Date.now(),
-            },
-            session,
-          );
 
         if (!updated) {
           throw new EventAssignmentConflictError(
@@ -1118,12 +1004,11 @@ export class EventAssignmentAdminService {
           current.ownerEmploymentProfileId,
           session,
         );
-        const heldBookings =
-          await this.repository.listStudioBookingsByEventId(
-            current.id,
-            ["HELD"],
-            session,
-          );
+        const heldBookings = await this.repository.listStudioBookingsByEventId(
+          current.id,
+          ["HELD"],
+          session,
+        );
         assertNoHeldBookingConflicts(heldBookings);
         for (const studioResourceId of new Set(
           heldBookings.map((booking) => booking.studioResourceId),
@@ -1190,7 +1075,7 @@ export class EventAssignmentAdminService {
       actor,
       Permission.EVENT_MANAGE_LIFECYCLE,
     );
-    const input = normalizeLifecycleCommand(command);
+    const input = normalizeCompleteEventCommand(command);
 
     return this.executeMutation(
       actor,
@@ -1201,10 +1086,7 @@ export class EventAssignmentAdminService {
       },
       async (session) => {
         const scope = resolveRequiredGlobalScope(actor);
-        const current = await this.requireEvent(
-          input.eventId,
-          session,
-        );
+        const current = await this.requireEvent(input.eventId, session);
 
         if (current.status !== "CONFIRMED") {
           throw new EventAssignmentStateError(
@@ -1212,17 +1094,19 @@ export class EventAssignmentAdminService {
           );
         }
 
-        const updated =
-          await this.repository.transitionEventStatus(
-            {
-              eventId: current.id,
-              fromStatuses: ["CONFIRMED"],
-              toStatus: "COMPLETED",
-              actorId: actor.id,
-              updatedAt: Date.now(),
-            },
-            session,
-          );
+        const completedAt = Date.now();
+        const updated = await this.repository.transitionEventStatus(
+          {
+            eventId: current.id,
+            fromStatuses: ["CONFIRMED"],
+            toStatus: "COMPLETED",
+            actorId: actor.id,
+            completionEvidenceNote: input.evidenceNote,
+            completionEvidenceRefs: input.evidenceRefs,
+            updatedAt: completedAt,
+          },
+          session,
+        );
 
         if (!updated) {
           throw new EventAssignmentConflictError(
@@ -1238,6 +1122,13 @@ export class EventAssignmentAdminService {
           metadata: {
             previousStatus: current.status,
             nextStatus: updated.status,
+            completedAt,
+            completedByActorId: actor.id,
+            evidenceNoteLength: input.evidenceNote.length,
+            evidenceRefCount: input.evidenceRefs.length,
+            evidenceRefTypes: [
+              ...new Set(input.evidenceRefs.map((ref) => ref.type)),
+            ],
             effectiveScope: scope,
           },
           session,
@@ -1272,10 +1163,7 @@ export class EventAssignmentAdminService {
       },
       async (session) => {
         const scope = resolveRequiredGlobalScope(actor);
-        const current = await this.requireEvent(
-          input.eventId,
-          session,
-        );
+        const current = await this.requireEvent(input.eventId, session);
 
         if (!["DRAFT", "PLANNED", "CONFIRMED"].includes(current.status)) {
           throw new EventAssignmentStateError(
@@ -1293,18 +1181,17 @@ export class EventAssignmentAdminService {
           now,
           session,
         );
-        const updated =
-          await this.repository.transitionEventStatus(
-            {
-              eventId: current.id,
-              fromStatuses: [current.status],
-              toStatus: "CANCELLED",
-              actorId: actor.id,
-              reason: input.reason,
-              updatedAt: now,
-            },
-            session,
-          );
+        const updated = await this.repository.transitionEventStatus(
+          {
+            eventId: current.id,
+            fromStatuses: [current.status],
+            toStatus: "CANCELLED",
+            actorId: actor.id,
+            reason: input.reason,
+            updatedAt: now,
+          },
+          session,
+        );
 
         if (!updated) {
           throw new EventAssignmentConflictError(
@@ -1355,10 +1242,7 @@ export class EventAssignmentAdminService {
       },
       async (session) => {
         const scope = resolveRequiredGlobalScope(actor);
-        const current = await this.requireEvent(
-          input.eventId,
-          session,
-        );
+        const current = await this.requireEvent(input.eventId, session);
 
         if (current.status === "ARCHIVED") {
           throw new EventAssignmentStateError(
@@ -1366,26 +1250,22 @@ export class EventAssignmentAdminService {
           );
         }
 
-        if (
-          current.status !== "COMPLETED" &&
-          current.status !== "CANCELLED"
-        ) {
+        if (current.status !== "COMPLETED" && current.status !== "CANCELLED") {
           throw new EventAssignmentStateError(
             `archiveEvent is not allowed from status ${current.status}`,
           );
         }
 
-        const updated =
-          await this.repository.transitionEventStatus(
-            {
-              eventId: current.id,
-              fromStatuses: [current.status],
-              toStatus: "ARCHIVED",
-              actorId: actor.id,
-              updatedAt: Date.now(),
-            },
-            session,
-          );
+        const updated = await this.repository.transitionEventStatus(
+          {
+            eventId: current.id,
+            fromStatuses: [current.status],
+            toStatus: "ARCHIVED",
+            actorId: actor.id,
+            updatedAt: Date.now(),
+          },
+          session,
+        );
 
         if (!updated) {
           throw new EventAssignmentConflictError(
@@ -1421,8 +1301,7 @@ export class EventAssignmentAdminService {
   ): PermissionContract {
     assertAdminActorType(actor);
 
-    const permission =
-      PermissionResolver.resolve(permissionCode);
+    const permission = PermissionResolver.resolve(permissionCode);
     PermissionGuard.assert(actor, permission);
 
     return permission;
@@ -1432,15 +1311,10 @@ export class EventAssignmentAdminService {
     eventId: string,
     session: ClientSession,
   ): Promise<EventRecord> {
-    const event = await this.repository.findEventById(
-      eventId,
-      session,
-    );
+    const event = await this.repository.findEventById(eventId, session);
 
     if (!event) {
-      throw new EventAssignmentNotFoundError(
-        eventId,
-      );
+      throw new EventAssignmentNotFoundError(eventId);
     }
 
     return event;
@@ -1592,27 +1466,23 @@ export class EventAssignmentAdminService {
     eventStartAt: number,
     session: ClientSession,
   ): Promise<string> {
-    const bucket =
-      utcMonthBucketFromTimestamp(eventStartAt);
-    const policy =
-      buildEventAssignmentCodePolicy(bucket);
-    const maxExisting =
-      await this.repository.findMaxGeneratedEventCodeSequence(
-        policy,
-        session,
-      );
+    const bucket = utcMonthBucketFromTimestamp(eventStartAt);
+    const policy = buildEventAssignmentCodePolicy(bucket);
+    const maxExisting = await this.repository.findMaxGeneratedEventCodeSequence(
+      policy,
+      session,
+    );
     await this.codeSequenceRepository.ensureAtLeast(
       policy.moduleKey,
       policy.bucket,
       maxExisting,
       session,
     );
-    const next =
-      await this.codeSequenceRepository.allocateNext(
-        policy.moduleKey,
-        policy.bucket,
-        session,
-      );
+    const next = await this.codeSequenceRepository.allocateNext(
+      policy.moduleKey,
+      policy.bucket,
+      session,
+    );
 
     return formatBusinessCode(policy, next);
   }
@@ -1621,12 +1491,11 @@ export class EventAssignmentAdminService {
     eventId: string,
     session: ClientSession,
   ): Promise<void> {
-    const activeAssignments =
-      await this.repository.listAssignmentsByEventId(
-        eventId,
-        "ACTIVE",
-        session,
-      );
+    const activeAssignments = await this.repository.listAssignmentsByEventId(
+      eventId,
+      "ACTIVE",
+      session,
+    );
 
     if (activeAssignments.length > 0) {
       return;
@@ -1658,10 +1527,7 @@ export class EventAssignmentAdminService {
             );
           }
 
-          if (
-            employmentProfile.employmentStatus !==
-            "ACTIVE"
-          ) {
+          if (employmentProfile.employmentStatus !== "ACTIVE") {
             throw new EventAssignmentInvalidAssignmentReferenceError(
               `Employment profile assignment reference must be ACTIVE: ${employmentProfileId}`,
             );
@@ -1671,13 +1537,11 @@ export class EventAssignmentAdminService {
         }
 
         case "TALENT": {
-          const talentId =
-            assignment.assignmentTalentId as string;
-          const talent =
-            await this.talentReadonlyAccess.findById(
-              talentId,
-              session,
-            );
+          const talentId = assignment.assignmentTalentId as string;
+          const talent = await this.talentReadonlyAccess.findById(
+            talentId,
+            session,
+          );
 
           if (!talent) {
             throw new EventAssignmentInvalidAssignmentReferenceError(
@@ -1685,9 +1549,7 @@ export class EventAssignmentAdminService {
             );
           }
 
-          if (
-            talent.operationalStatus !== "ACTIVE"
-          ) {
+          if (talent.operationalStatus !== "ACTIVE") {
             throw new EventAssignmentInvalidAssignmentReferenceError(
               `Talent assignment reference must be ACTIVE: ${talentId}`,
             );
@@ -1697,13 +1559,11 @@ export class EventAssignmentAdminService {
         }
 
         case "TALENT_GROUP": {
-          const talentGroupId =
-            assignment.assignmentTalentGroupId as string;
-          const talentGroup =
-            await this.talentGroupReadonlyAccess.findById(
-              talentGroupId,
-              session,
-            );
+          const talentGroupId = assignment.assignmentTalentGroupId as string;
+          const talentGroup = await this.talentGroupReadonlyAccess.findById(
+            talentGroupId,
+            session,
+          );
 
           if (!talentGroup) {
             throw new EventAssignmentInvalidAssignmentReferenceError(
@@ -1728,11 +1588,10 @@ export class EventAssignmentAdminService {
     session: ClientSession,
   ): Promise<void> {
     for (const studioResourceId of studioResourceIds) {
-      const studioResource =
-        await this.studioResourceReadonlyAccess.findById(
-          studioResourceId,
-          session,
-        );
+      const studioResource = await this.studioResourceReadonlyAccess.findById(
+        studioResourceId,
+        session,
+      );
 
       if (!studioResource) {
         throw new EventAssignmentInvalidResourceReferenceError(
@@ -1740,10 +1599,7 @@ export class EventAssignmentAdminService {
         );
       }
 
-      if (
-        studioResource.operationalStatus !==
-        "ACTIVE"
-      ) {
+      if (studioResource.operationalStatus !== "ACTIVE") {
         throw new EventAssignmentInvalidResourceReferenceError(
           `Studio resource reference must be ACTIVE: ${studioResourceId}`,
         );
@@ -1756,11 +1612,10 @@ export class EventAssignmentAdminService {
     session: ClientSession,
   ): Promise<void> {
     for (const platformAccountId of platformAccountIds) {
-      const platformAccount =
-        await this.platformAccountReadonlyAccess.findById(
-          platformAccountId,
-          session,
-        );
+      const platformAccount = await this.platformAccountReadonlyAccess.findById(
+        platformAccountId,
+        session,
+      );
 
       if (!platformAccount) {
         throw new EventAssignmentInvalidPlatformReferenceError(
@@ -1768,10 +1623,7 @@ export class EventAssignmentAdminService {
         );
       }
 
-      if (
-        platformAccount.operationalStatus !==
-        "ACTIVE"
-      ) {
+      if (platformAccount.operationalStatus !== "ACTIVE") {
         throw new EventAssignmentInvalidPlatformReferenceError(
           `Platform account reference must be ACTIVE: ${platformAccountId}`,
         );
@@ -1797,21 +1649,17 @@ export class EventAssignmentAdminService {
     readonly excludeEventId?: string;
     readonly session: ClientSession;
   }): Promise<void> {
-    const overlapInput:
-      EventOverlapAssignmentCheckInput = {
-      ...toAssignmentOverlapReferenceBuckets(
-        params.assignments,
-      ),
+    const overlapInput: EventOverlapAssignmentCheckInput = {
+      ...toAssignmentOverlapReferenceBuckets(params.assignments),
       eventStartAt: params.eventStartAt,
       eventEndAt: params.eventEndAt,
       excludeEventId: params.excludeEventId,
     };
 
-    const hasOverlap =
-      await this.repository.hasLiveOverlappingAssignmentEvent(
-        overlapInput,
-        params.session,
-      );
+    const hasOverlap = await this.repository.hasLiveOverlappingAssignmentEvent(
+      overlapInput,
+      params.session,
+    );
 
     if (hasOverlap) {
       throw new EventAssignmentOverlapConflictError(
@@ -1827,19 +1675,17 @@ export class EventAssignmentAdminService {
     readonly excludeEventId?: string;
     readonly session: ClientSession;
   }): Promise<void> {
-    const overlapInput:
-      EventOverlapPlatformCheckInput = {
+    const overlapInput: EventOverlapPlatformCheckInput = {
       platformAccountIds: params.platformAccountIds,
       eventStartAt: params.eventStartAt,
       eventEndAt: params.eventEndAt,
       excludeEventId: params.excludeEventId,
     };
 
-    const hasOverlap =
-      await this.repository.hasLiveOverlappingPlatformEvent(
-        overlapInput,
-        params.session,
-      );
+    const hasOverlap = await this.repository.hasLiveOverlappingPlatformEvent(
+      overlapInput,
+      params.session,
+    );
 
     if (hasOverlap) {
       throw new EventAssignmentOverlapConflictError(
@@ -1880,16 +1726,9 @@ export class EventAssignmentAdminService {
       session: ClientSession,
       controls: AuthoritativeMutationControls,
     ) => Promise<T>,
-    onSuccess: (
-      result: T,
-    ) => Readonly<Record<string, unknown>>,
+    onSuccess: (result: T) => Readonly<Record<string, unknown>>,
   ): Promise<T> {
-    this.logMutationEvent(
-      actor,
-      operation,
-      "mutation.start",
-      startMetadata,
-    );
+    this.logMutationEvent(actor, operation, "mutation.start", startMetadata);
 
     try {
       const traceId = getTraceIdOrThrow();
@@ -1900,23 +1739,15 @@ export class EventAssignmentAdminService {
           requiredPermission: permission,
           mutationIdentity: operation,
           mutationTargetDescriptor:
-            buildMutationTargetDescriptor(
-              startMetadata,
-            ),
+            buildMutationTargetDescriptor(startMetadata),
         },
-        async (session, controls) =>
-          fn(session, controls),
+        async (session, controls) => fn(session, controls),
       );
 
-      this.logMutationEvent(
-        actor,
-        operation,
-        "mutation.success",
-        {
-          ...startMetadata,
-          ...onSuccess(result),
-        },
-      );
+      this.logMutationEvent(actor, operation, "mutation.success", {
+        ...startMetadata,
+        ...onSuccess(result),
+      });
 
       return result;
     } catch (error) {
@@ -1929,13 +1760,9 @@ export class EventAssignmentAdminService {
         timestamp: Date.now(),
         metadata: {
           ...startMetadata,
-          classification:
-            classifyEventAssignmentMutationFailure(
-              error,
-            ),
+          classification: classifyEventAssignmentMutationFailure(error),
           errorCode: extractErrorCode(error),
-          errorMessage:
-            truncateLogMessage(error),
+          errorMessage: truncateLogMessage(error),
         },
       });
 
@@ -1946,9 +1773,7 @@ export class EventAssignmentAdminService {
   private logMutationEvent(
     actor: Actor,
     operation: AuthoritativeAdminMutationIdentity,
-    status:
-      | "mutation.start"
-      | "mutation.success",
+    status: "mutation.start" | "mutation.success",
     metadata: Readonly<Record<string, unknown>>,
   ): void {
     this.logger.info({
@@ -1966,27 +1791,15 @@ export class EventAssignmentAdminService {
 function normalizeCreateCommand(
   command: CreateEventCommand,
 ): NormalizedCreateCommand {
-  const eventStartAt = normalizeTimestamp(
-    command.eventStartAt,
-    "eventStartAt",
-  );
-  const eventEndAt = normalizeTimestamp(
-    command.eventEndAt,
-    "eventEndAt",
-  );
+  const eventStartAt = normalizeTimestamp(command.eventStartAt, "eventStartAt");
+  const eventEndAt = normalizeTimestamp(command.eventEndAt, "eventEndAt");
 
   assertValidEventWindow(eventStartAt, eventEndAt);
 
-  const title = normalizeRequiredText(
-    command.title,
-    "title",
-  );
+  const title = normalizeRequiredText(command.title, "title");
 
   return {
-    eventCode: normalizeOptionalCreateCode(
-      command.eventCode,
-      "eventCode",
-    ),
+    eventCode: normalizeOptionalCreateCode(command.eventCode, "eventCode"),
     title,
     normalizedTitle: canonicalizeTitle(title),
     ownerEmploymentProfileId: normalizeRequiredText(
@@ -2007,15 +1820,9 @@ function normalizeCreateCommand(
     eventStartAt,
     eventEndAt,
     description:
-      normalizeOptionalNullableText(
-        command.description,
-        "description",
-      ) ?? null,
+      normalizeOptionalNullableText(command.description, "description") ?? null,
     externalRef:
-      normalizeOptionalNullableText(
-        command.externalRef,
-        "externalRef",
-      ) ?? null,
+      normalizeOptionalNullableText(command.externalRef, "externalRef") ?? null,
   };
 }
 
@@ -2028,35 +1835,22 @@ function normalizeOptionalCreateCode(
   }
 
   if (typeof value !== "string") {
-    throw new EventAssignmentValidationError(
-      `${field} must be a string`,
-    );
+    throw new EventAssignmentValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
-  return normalized.length > 0
-    ? normalized
-    : undefined;
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function normalizeUpdateCoreCommand(
   command: UpdateEventCoreCommand,
 ): NormalizedUpdateCoreCommand {
-  const title = normalizeOptionalNonNullableText(
-    command.title,
-    "title",
-  );
+  const title = normalizeOptionalNonNullableText(command.title, "title");
 
   return {
-    eventId: normalizeRequiredText(
-      command.eventId,
-      "eventId",
-    ),
+    eventId: normalizeRequiredText(command.eventId, "eventId"),
     title,
-    normalizedTitle:
-      title === undefined
-        ? undefined
-        : canonicalizeTitle(title),
+    normalizedTitle: title === undefined ? undefined : canonicalizeTitle(title),
     ownerEmploymentProfileId:
       command.ownerEmploymentProfileId === undefined
         ? undefined
@@ -2064,16 +1858,14 @@ function normalizeUpdateCoreCommand(
             command.ownerEmploymentProfileId,
             "ownerEmploymentProfileId",
           ),
-    description:
-      normalizeOptionalNullableText(
-        command.description,
-        "description",
-      ),
-    externalRef:
-      normalizeOptionalNullableText(
-        command.externalRef,
-        "externalRef",
-      ),
+    description: normalizeOptionalNullableText(
+      command.description,
+      "description",
+    ),
+    externalRef: normalizeOptionalNullableText(
+      command.externalRef,
+      "externalRef",
+    ),
   };
 }
 
@@ -2089,22 +1881,13 @@ function normalizeRescheduleCommand(
     "newEventEndAt",
   );
 
-  assertValidEventWindow(
-    newEventStartAt,
-    newEventEndAt,
-  );
+  assertValidEventWindow(newEventStartAt, newEventEndAt);
 
   return {
-    eventId: normalizeRequiredText(
-      command.eventId,
-      "eventId",
-    ),
+    eventId: normalizeRequiredText(command.eventId, "eventId"),
     newEventStartAt,
     newEventEndAt,
-    reason: normalizeRequiredText(
-      command.reason,
-      "reason",
-    ),
+    reason: normalizeRequiredText(command.reason, "reason"),
   };
 }
 
@@ -2112,16 +1895,12 @@ function normalizeReplaceAssignmentsCommand(
   command: ReplaceEventAssignmentsCommand,
 ): NormalizedReplaceAssignmentsCommand {
   return {
-    eventId: normalizeRequiredText(
-      command.eventId,
-      "eventId",
+    eventId: normalizeRequiredText(command.eventId, "eventId"),
+    replacementAssignments: normalizeAssignments(
+      command.replacementAssignments,
+      "replacementAssignments",
+      false,
     ),
-    replacementAssignments:
-      normalizeAssignments(
-        command.replacementAssignments,
-        "replacementAssignments",
-        false,
-      ),
   };
 }
 
@@ -2129,30 +1908,36 @@ function normalizeUpdatePlatformAccountsCommand(
   command: UpdateEventPlatformAccountsCommand,
 ): NormalizedUpdatePlatformAccountsCommand {
   return {
-    eventId: normalizeRequiredText(
-      command.eventId,
-      "eventId",
+    eventId: normalizeRequiredText(command.eventId, "eventId"),
+    newPlatformAccountIds: normalizeCanonicalIdSet(
+      command.newPlatformAccountIds,
+      "newPlatformAccountIds",
+      false,
     ),
-    newPlatformAccountIds:
-      normalizeCanonicalIdSet(
-        command.newPlatformAccountIds,
-        "newPlatformAccountIds",
-        false,
-      ),
   };
 }
 
 function normalizeLifecycleCommand(
-  command:
-    | PlanEventCommand
-    | ConfirmEventCommand
-    | CompleteEventCommand
-    | ArchiveEventCommand,
+  command: PlanEventCommand | ConfirmEventCommand | ArchiveEventCommand,
 ): NormalizedLifecycleCommand {
   return {
-    eventId: normalizeRequiredText(
-      command.eventId,
-      "eventId",
+    eventId: normalizeRequiredText(command.eventId, "eventId"),
+  };
+}
+
+function normalizeCompleteEventCommand(
+  command: CompleteEventCommand,
+): NormalizedCompleteEventCommand {
+  return {
+    eventId: normalizeRequiredText(command.eventId, "eventId"),
+    evidenceNote: normalizeRequiredText(
+      command.evidenceNote,
+      "evidenceNote",
+      EVENT_COMPLETION_EVIDENCE_NOTE_MAX_LENGTH,
+    ),
+    evidenceRefs: normalizeCompletionEvidenceRefs(
+      command.evidenceRefs,
+      "evidenceRefs",
     ),
   };
 }
@@ -2173,10 +1958,7 @@ function normalizeCreateStudioBookingCommand(
     command.bookingStartAt,
     "bookingStartAt",
   );
-  const bookingEndAt = normalizeTimestamp(
-    command.bookingEndAt,
-    "bookingEndAt",
-  );
+  const bookingEndAt = normalizeTimestamp(command.bookingEndAt, "bookingEndAt");
   assertValidEventWindow(bookingStartAt, bookingEndAt);
   if (command.status !== "HELD" && command.status !== "CONFIRMED") {
     throw new EventAssignmentValidationError(
@@ -2204,9 +1986,7 @@ function normalizeCreateEventStatus(
   if (value === "DRAFT" || value === "PLANNED") {
     return value;
   }
-  throw new EventAssignmentValidationError(
-    "status must be DRAFT or PLANNED",
-  );
+  throw new EventAssignmentValidationError("status must be DRAFT or PLANNED");
 }
 
 function normalizeAssignments(
@@ -2219,30 +1999,21 @@ function normalizeAssignments(
       return [];
     }
 
-    throw new EventAssignmentValidationError(
-      `${field} must be an array`,
-    );
+    throw new EventAssignmentValidationError(`${field} must be an array`);
   }
 
   if (!Array.isArray(value)) {
-    throw new EventAssignmentValidationError(
-      `${field} must be an array`,
-    );
+    throw new EventAssignmentValidationError(`${field} must be an array`);
   }
 
-  const normalized: NormalizedAssignmentReference[] =
-    value.map((item, index) =>
-      normalizeAssignmentInput(
-        item,
-        `${field}[${index}]`,
-      ),
-    );
+  const normalized: NormalizedAssignmentReference[] = value.map((item, index) =>
+    normalizeAssignmentInput(item, `${field}[${index}]`),
+  );
 
   const signatures = new Set<string>();
 
   for (const assignment of normalized) {
-    const signature =
-      buildAssignmentSignature(assignment);
+    const signature = buildAssignmentSignature(assignment);
 
     if (signatures.has(signature)) {
       throw new EventAssignmentValidationError(
@@ -2253,25 +2024,21 @@ function normalizeAssignments(
     signatures.add(signature);
   }
 
-  return [...normalized].sort(
-    compareAssignmentReferences,
-  );
+  return [...normalized].sort(compareAssignmentReferences);
 }
 
-const ASSIGNMENT_INPUT_ALLOWED_FIELDS: readonly string[] =
-  Object.freeze([
-    "assignmentKind",
-    "assignmentEmploymentProfileId",
-    "assignmentTalentId",
-    "assignmentTalentGroupId",
-  ]);
+const ASSIGNMENT_INPUT_ALLOWED_FIELDS: readonly string[] = Object.freeze([
+  "assignmentKind",
+  "assignmentEmploymentProfileId",
+  "assignmentTalentId",
+  "assignmentTalentGroupId",
+]);
 
-const ASSIGNMENT_INPUT_FORBIDDEN_FIELDS: readonly string[] =
-  Object.freeze([
-    "id",
-    "assignmentStatus",
-    "removedAt",
-  ]);
+const ASSIGNMENT_INPUT_FORBIDDEN_FIELDS: readonly string[] = Object.freeze([
+  "id",
+  "assignmentStatus",
+  "removedAt",
+]);
 
 function normalizeAssignmentInput(
   value: unknown,
@@ -2284,21 +2051,18 @@ function normalizeAssignmentInput(
     value.assignmentKind,
     `${field}.assignmentKind`,
   );
-  const assignmentEmploymentProfileId =
-    normalizeOptionalNullableId(
-      value.assignmentEmploymentProfileId,
-      `${field}.assignmentEmploymentProfileId`,
-    );
-  const assignmentTalentId =
-    normalizeOptionalNullableId(
-      value.assignmentTalentId,
-      `${field}.assignmentTalentId`,
-    );
-  const assignmentTalentGroupId =
-    normalizeOptionalNullableId(
-      value.assignmentTalentGroupId,
-      `${field}.assignmentTalentGroupId`,
-    );
+  const assignmentEmploymentProfileId = normalizeOptionalNullableId(
+    value.assignmentEmploymentProfileId,
+    `${field}.assignmentEmploymentProfileId`,
+  );
+  const assignmentTalentId = normalizeOptionalNullableId(
+    value.assignmentTalentId,
+    `${field}.assignmentTalentId`,
+  );
+  const assignmentTalentGroupId = normalizeOptionalNullableId(
+    value.assignmentTalentGroupId,
+    `${field}.assignmentTalentGroupId`,
+  );
 
   assertAssignmentReferenceShape(
     {
@@ -2322,28 +2086,17 @@ function assertPlainAssignmentInputObject(
   value: unknown,
   field: string,
 ): asserts value is Record<string, unknown> {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value)
-  ) {
-    throw new EventAssignmentValidationError(
-      `${field} must be an object`,
-    );
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new EventAssignmentValidationError(`${field} must be an object`);
   }
 
   const prototype = Object.getPrototypeOf(value);
 
-  if (
-    prototype === Object.prototype ||
-    prototype === null
-  ) {
+  if (prototype === Object.prototype || prototype === null) {
     return;
   }
 
-  throw new EventAssignmentValidationError(
-    `${field} must be an object`,
-  );
+  throw new EventAssignmentValidationError(`${field} must be an object`);
 }
 
 function assertAssignmentInputFieldSet(
@@ -2351,11 +2104,8 @@ function assertAssignmentInputFieldSet(
   field: string,
 ): void {
   const fieldNames = Object.keys(value);
-  const forbiddenFields = fieldNames.filter(
-    (name) =>
-      ASSIGNMENT_INPUT_FORBIDDEN_FIELDS.includes(
-        name,
-      ),
+  const forbiddenFields = fieldNames.filter((name) =>
+    ASSIGNMENT_INPUT_FORBIDDEN_FIELDS.includes(name),
   );
 
   if (forbiddenFields.length > 0) {
@@ -2365,8 +2115,7 @@ function assertAssignmentInputFieldSet(
   }
 
   const unexpectedFields = fieldNames.filter(
-    (name) =>
-      !ASSIGNMENT_INPUT_ALLOWED_FIELDS.includes(name),
+    (name) => !ASSIGNMENT_INPUT_ALLOWED_FIELDS.includes(name),
   );
 
   if (unexpectedFields.length === 0) {
@@ -2388,15 +2137,9 @@ function normalizeAssignmentKind(
     );
   }
 
-  const normalized = value
-    .trim()
-    .toUpperCase();
+  const normalized = value.trim().toUpperCase();
 
-  if (
-    EVENT_ASSIGNMENT_KINDS.includes(
-      normalized as EventAssignmentKind,
-    )
-  ) {
+  if (EVENT_ASSIGNMENT_KINDS.includes(normalized as EventAssignmentKind)) {
     return normalized as EventAssignmentKind;
   }
 
@@ -2454,18 +2197,21 @@ function assertAssignmentReferenceShape(
 function normalizeRequiredText(
   value: unknown,
   field: string,
+  maxLength?: number,
 ): string {
   if (typeof value !== "string") {
-    throw new EventAssignmentValidationError(
-      `${field} must be a string`,
-    );
+    throw new EventAssignmentValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
 
   if (!normalized) {
+    throw new EventAssignmentValidationError(`${field} is required`);
+  }
+
+  if (maxLength !== undefined && normalized.length > maxLength) {
     throw new EventAssignmentValidationError(
-      `${field} is required`,
+      `${field} must be at most ${maxLength} characters`,
     );
   }
 
@@ -2475,23 +2221,23 @@ function normalizeRequiredText(
 function normalizeOptionalNonNullableText(
   value: unknown,
   field: string,
+  maxLength?: number,
 ): string | undefined {
   if (value === undefined) {
     return undefined;
   }
 
   if (value === null) {
-    throw new EventAssignmentValidationError(
-      `${field} must not be null`,
-    );
+    throw new EventAssignmentValidationError(`${field} must not be null`);
   }
 
-  return normalizeRequiredText(value, field);
+  return normalizeRequiredText(value, field, maxLength);
 }
 
 function normalizeOptionalNullableText(
   value: unknown,
   field: string,
+  maxLength?: number,
 ): string | null | undefined {
   if (value === undefined) {
     return undefined;
@@ -2501,7 +2247,7 @@ function normalizeOptionalNullableText(
     return null;
   }
 
-  return normalizeRequiredText(value, field);
+  return normalizeRequiredText(value, field, maxLength);
 }
 
 function normalizeOptionalNullableId(
@@ -2515,14 +2261,8 @@ function normalizeOptionalNullableId(
   return normalizeRequiredText(value, field);
 }
 
-function normalizeTimestamp(
-  value: unknown,
-  field: string,
-): number {
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value)
-  ) {
+function normalizeTimestamp(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value)) {
     throw new EventAssignmentValidationError(
       `${field} must be an integer UTC timestamp`,
     );
@@ -2541,23 +2281,15 @@ function normalizeCanonicalIdSet(
       return [];
     }
 
-    throw new EventAssignmentValidationError(
-      `${field} must be an array`,
-    );
+    throw new EventAssignmentValidationError(`${field} must be an array`);
   }
 
   if (!Array.isArray(value)) {
-    throw new EventAssignmentValidationError(
-      `${field} must be an array`,
-    );
+    throw new EventAssignmentValidationError(`${field} must be an array`);
   }
 
-  const normalizedIds = value.map(
-    (item, index) =>
-      normalizeRequiredText(
-        item,
-        `${field}[${index}]`,
-      ),
+  const normalizedIds = value.map((item, index) =>
+    normalizeRequiredText(item, `${field}[${index}]`),
   );
   const distinct = new Set(normalizedIds);
 
@@ -2570,15 +2302,145 @@ function normalizeCanonicalIdSet(
   return [...distinct].sort();
 }
 
-function resolveRequiredGlobalScope(
-  actor: Actor,
-): "global" {
+function normalizeCompletionEvidenceRefs(
+  value: unknown,
+  field: string,
+): readonly EventCompletionEvidenceRef[] {
+  if (value === undefined) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    throw new EventAssignmentValidationError(`${field} must be an array`);
+  }
+
+  if (value.length > 20) {
+    throw new EventAssignmentValidationError(
+      `${field} must contain at most 20 references`,
+    );
+  }
+
+  return value.map((item, index) =>
+    normalizeCompletionEvidenceRef(item, `${field}[${index}]`),
+  );
+}
+
+function normalizeCompletionEvidenceRef(
+  value: unknown,
+  field: string,
+): EventCompletionEvidenceRef {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new EventAssignmentValidationError(`${field} must be an object`);
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const unexpectedFields = Object.keys(candidate).filter(
+    (name) => !["type", "label", "url", "referenceId"].includes(name),
+  );
+
+  if (unexpectedFields.length > 0) {
+    throw new EventAssignmentValidationError(
+      `${field} contains unsupported field(s): ${unexpectedFields.join(", ")}`,
+    );
+  }
+
+  const type = normalizeCompletionEvidenceRefType(
+    candidate.type,
+    `${field}.type`,
+  );
+  const label = normalizeOptionalNullableText(
+    candidate.label,
+    `${field}.label`,
+    EVENT_COMPLETION_EVIDENCE_REF_LABEL_MAX_LENGTH,
+  );
+
+  if (type === "URL") {
+    return {
+      type,
+      label: label ?? null,
+      url: normalizeEvidenceUrl(candidate.url, `${field}.url`),
+      referenceId: null,
+    };
+  }
+
+  if (candidate.url !== undefined && candidate.url !== null) {
+    throw new EventAssignmentValidationError(
+      `${field}.url is only supported for URL evidence references`,
+    );
+  }
+
+  return {
+    type,
+    label: label ?? null,
+    url: null,
+    referenceId: normalizeRequiredText(
+      candidate.referenceId,
+      `${field}.referenceId`,
+      EVENT_COMPLETION_EVIDENCE_REF_REFERENCE_ID_MAX_LENGTH,
+    ),
+  };
+}
+
+function normalizeCompletionEvidenceRefType(
+  value: unknown,
+  field: string,
+): EventCompletionEvidenceRefType {
+  if (typeof value !== "string") {
+    throw new EventAssignmentValidationError(
+      `${field} must be one of ${EVENT_COMPLETION_EVIDENCE_REF_TYPES.join(", ")}`,
+    );
+  }
+
+  const normalized = value.trim().toUpperCase();
+
   if (
-    PermissionGuard.hasEventAssignmentScopeGrant(
-      actor,
-      "global",
+    EVENT_COMPLETION_EVIDENCE_REF_TYPES.includes(
+      normalized as EventCompletionEvidenceRefType,
     )
   ) {
+    return normalized as EventCompletionEvidenceRefType;
+  }
+
+  throw new EventAssignmentValidationError(
+    `${field} must be one of ${EVENT_COMPLETION_EVIDENCE_REF_TYPES.join(", ")}`,
+  );
+}
+
+function normalizeEvidenceUrl(value: unknown, field: string): string {
+  const normalized = normalizeRequiredText(
+    value,
+    field,
+    EVENT_COMPLETION_EVIDENCE_REF_URL_MAX_LENGTH,
+  );
+
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new EventAssignmentValidationError(
+      `${field} must be a valid http(s) URL`,
+    );
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new EventAssignmentValidationError(
+      `${field} must be a valid http(s) URL`,
+    );
+  }
+
+  const serialized = parsed.toString();
+
+  if (serialized.length > EVENT_COMPLETION_EVIDENCE_REF_URL_MAX_LENGTH) {
+    throw new EventAssignmentValidationError(
+      `${field} must be at most ${EVENT_COMPLETION_EVIDENCE_REF_URL_MAX_LENGTH} characters`,
+    );
+  }
+
+  return serialized;
+}
+
+function resolveRequiredGlobalScope(actor: Actor): "global" {
+  if (PermissionGuard.hasEventAssignmentScopeGrant(actor, "global")) {
     return "global";
   }
 
@@ -2620,8 +2482,7 @@ function buildUpdateEventCoreInput(params: {
   readonly changedFields: readonly string[];
 } {
   type MutableUpdateEventCoreInput = {
-    -readonly [K in keyof UpdateEventCoreInput]:
-      UpdateEventCoreInput[K];
+    -readonly [K in keyof UpdateEventCoreInput]: UpdateEventCoreInput[K];
   };
   const changedFields: string[] = [];
   const update: MutableUpdateEventCoreInput = {
@@ -2635,8 +2496,7 @@ function buildUpdateEventCoreInput(params: {
     params.command.title !== params.current.title
   ) {
     update.title = params.command.title;
-    update.normalizedTitle =
-      params.command.normalizedTitle;
+    update.normalizedTitle = params.command.normalizedTitle;
     changedFields.push("title");
   }
 
@@ -2645,28 +2505,23 @@ function buildUpdateEventCoreInput(params: {
     params.command.ownerEmploymentProfileId !==
       params.current.ownerEmploymentProfileId
   ) {
-    update.ownerEmploymentProfileId =
-      params.command.ownerEmploymentProfileId;
+    update.ownerEmploymentProfileId = params.command.ownerEmploymentProfileId;
     changedFields.push("ownerEmploymentProfileId");
   }
 
   if (
     params.command.description !== undefined &&
-    params.command.description !==
-      params.current.description
+    params.command.description !== params.current.description
   ) {
-    update.description =
-      params.command.description;
+    update.description = params.command.description;
     changedFields.push("description");
   }
 
   if (
     params.command.externalRef !== undefined &&
-    params.command.externalRef !==
-      params.current.externalRef
+    params.command.externalRef !== params.current.externalRef
   ) {
-    update.externalRef =
-      params.command.externalRef;
+    update.externalRef = params.command.externalRef;
     changedFields.push("externalRef");
   }
 
@@ -2715,10 +2570,7 @@ function assertBookingCreationStatus(
   ) {
     return;
   }
-  if (
-    bookingStatus === "CONFIRMED" &&
-    event.status === "CONFIRMED"
-  ) {
+  if (bookingStatus === "CONFIRMED" && event.status === "CONFIRMED") {
     return;
   }
   throw new EventAssignmentStateError(
@@ -2762,8 +2614,7 @@ function toAssignmentOverlapReferenceBuckets(
   for (const assignment of assignments) {
     switch (assignment.assignmentKind) {
       case "EMPLOYMENT_PROFILE": {
-        const id =
-          assignment.assignmentEmploymentProfileId;
+        const id = assignment.assignmentEmploymentProfileId;
 
         if (id) {
           employmentProfileIds.add(id);
@@ -2783,8 +2634,7 @@ function toAssignmentOverlapReferenceBuckets(
       }
 
       case "TALENT_GROUP": {
-        const id =
-          assignment.assignmentTalentGroupId;
+        const id = assignment.assignmentTalentGroupId;
 
         if (id) {
           talentGroupIds.add(id);
@@ -2796,13 +2646,9 @@ function toAssignmentOverlapReferenceBuckets(
   }
 
   return {
-    assignmentEmploymentProfileIds: [
-      ...employmentProfileIds,
-    ].sort(),
+    assignmentEmploymentProfileIds: [...employmentProfileIds].sort(),
     assignmentTalentIds: [...talentIds].sort(),
-    assignmentTalentGroupIds: [
-      ...talentGroupIds,
-    ].sort(),
+    assignmentTalentGroupIds: [...talentGroupIds].sort(),
   };
 }
 
@@ -2818,12 +2664,8 @@ function compareAssignmentReferences(
     return 1;
   }
 
-  const leftReference = readAssignmentReferenceId(
-    left,
-  );
-  const rightReference = readAssignmentReferenceId(
-    right,
-  );
+  const leftReference = readAssignmentReferenceId(left);
+  const rightReference = readAssignmentReferenceId(right);
 
   if (leftReference < rightReference) {
     return -1;
@@ -2840,31 +2682,19 @@ function areCanonicalAssignmentSetsEqual(
   currentActiveAssignments: readonly EventAssignmentRecord[],
   replacementAssignments: readonly NormalizedAssignmentReference[],
 ): boolean {
-  if (
-    currentActiveAssignments.length !==
-    replacementAssignments.length
-  ) {
+  if (currentActiveAssignments.length !== replacementAssignments.length) {
     return false;
   }
 
-  const currentSignatures =
-    currentActiveAssignments
-      .map(buildAssignmentSignature)
-      .sort();
-  const replacementSignatures =
-    replacementAssignments
-      .map(buildAssignmentSignature)
-      .sort();
+  const currentSignatures = currentActiveAssignments
+    .map(buildAssignmentSignature)
+    .sort();
+  const replacementSignatures = replacementAssignments
+    .map(buildAssignmentSignature)
+    .sort();
 
-  for (
-    let index = 0;
-    index < currentSignatures.length;
-    index += 1
-  ) {
-    if (
-      currentSignatures[index] !==
-      replacementSignatures[index]
-    ) {
+  for (let index = 0; index < currentSignatures.length; index += 1) {
+    if (currentSignatures[index] !== replacementSignatures[index]) {
       return false;
     }
   }
@@ -2873,9 +2703,7 @@ function areCanonicalAssignmentSetsEqual(
 }
 
 function buildAssignmentSignature(
-  assignment:
-    | NormalizedAssignmentReference
-    | EventAssignmentRecord,
+  assignment: NormalizedAssignmentReference | EventAssignmentRecord,
 ): string {
   return `${assignment.assignmentKind}:${readAssignmentReferenceId(
     assignment,
@@ -2883,24 +2711,17 @@ function buildAssignmentSignature(
 }
 
 function readAssignmentReferenceId(
-  assignment:
-    | NormalizedAssignmentReference
-    | EventAssignmentRecord,
+  assignment: NormalizedAssignmentReference | EventAssignmentRecord,
 ): string {
   switch (assignment.assignmentKind) {
     case "EMPLOYMENT_PROFILE":
-      return (
-        assignment.assignmentEmploymentProfileId ??
-        ""
-      );
+      return assignment.assignmentEmploymentProfileId ?? "";
 
     case "TALENT":
       return assignment.assignmentTalentId ?? "";
 
     case "TALENT_GROUP":
-      return (
-        assignment.assignmentTalentGroupId ?? ""
-      );
+      return assignment.assignmentTalentGroupId ?? "";
   }
 }
 
@@ -2909,9 +2730,7 @@ function summarizeAssignmentReferences(
     | readonly NormalizedAssignmentReference[]
     | readonly EventAssignmentRecord[],
 ): readonly string[] {
-  return assignments
-    .map(buildAssignmentSignature)
-    .sort();
+  return assignments.map(buildAssignmentSignature).sort();
 }
 
 function areCanonicalIdSetsEqual(
@@ -2922,11 +2741,7 @@ function areCanonicalIdSetsEqual(
     return false;
   }
 
-  for (
-    let index = 0;
-    index < left.length;
-    index += 1
-  ) {
+  for (let index = 0; index < left.length; index += 1) {
     if (left[index] !== right[index]) {
       return false;
     }
@@ -2935,19 +2750,11 @@ function areCanonicalIdSetsEqual(
   return true;
 }
 
-function canonicalizeTitle(
-  value: string,
-): string {
-  return value
-    .normalize("NFKC")
-    .trim()
-    .replace(/\s+/gu, " ")
-    .toLowerCase();
+function canonicalizeTitle(value: string): string {
+  return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 }
 
-function assertAdminActorType(
-  actor: Actor,
-): void {
+function assertAdminActorType(actor: Actor): void {
   if (actor.type === "admin") {
     return;
   }
@@ -2958,21 +2765,14 @@ function assertAdminActorType(
   );
 }
 
-function toEventMutationView(
-  record: EventRecord,
-): EventMutationView {
+function toEventMutationView(record: EventRecord): EventMutationView {
   return {
     id: record.id,
     eventCode: record.eventCode,
     title: record.title,
-    ownerEmploymentProfileId:
-      record.ownerEmploymentProfileId,
-    studioResourceIds: [
-      ...record.studioResourceIds,
-    ],
-    platformAccountIds: [
-      ...record.platformAccountIds,
-    ],
+    ownerEmploymentProfileId: record.ownerEmploymentProfileId,
+    studioResourceIds: [...record.studioResourceIds],
+    platformAccountIds: [...record.platformAccountIds],
     status: record.status,
     eventStartAt: record.eventStartAt,
     eventEndAt: record.eventEndAt,
@@ -2981,6 +2781,16 @@ function toEventMutationView(
     plannedAt: record.plannedAt,
     confirmedAt: record.confirmedAt,
     completedAt: record.completedAt,
+    completedByActorId: record.completedByActorId,
+    completionEvidence:
+      record.completedAt === null
+        ? null
+        : {
+            completedAt: record.completedAt,
+            completedByActorId: record.completedByActorId,
+            evidenceNote: record.completionEvidenceNote,
+            evidenceRefs: [...record.completionEvidenceRefs],
+          },
     cancelledAt: record.cancelledAt,
     cancellationReason: record.cancellationReason,
     lastRescheduledAt: record.lastRescheduledAt,
@@ -3000,13 +2810,8 @@ function toStudioBookingMutationView(
   };
 }
 
-function isDuplicateKeyError(
-  error: unknown,
-): error is MongoServerError {
-  return (
-    error instanceof MongoServerError &&
-    error.code === 11000
-  );
+function isDuplicateKeyError(error: unknown): error is MongoServerError {
+  return error instanceof MongoServerError && error.code === 11000;
 }
 
 function buildMutationTargetDescriptor(
@@ -3014,10 +2819,7 @@ function buildMutationTargetDescriptor(
 ): string {
   const encoded = JSON.stringify(metadata);
 
-  if (
-    typeof encoded === "string" &&
-    encoded.length > 2
-  ) {
+  if (typeof encoded === "string" && encoded.length > 2) {
     return encoded;
   }
 
@@ -3027,21 +2829,15 @@ function buildMutationTargetDescriptor(
 function classifyEventAssignmentMutationFailure(
   error: unknown,
 ): EventAssignmentMutationFailureClassification {
-  if (
-    error instanceof EventAssignmentValidationError
-  ) {
+  if (error instanceof EventAssignmentValidationError) {
     return "validation";
   }
 
-  if (
-    error instanceof EventAssignmentConflictError
-  ) {
+  if (error instanceof EventAssignmentConflictError) {
     return "conflict";
   }
 
-  if (
-    error instanceof EventAssignmentNotFoundError
-  ) {
+  if (error instanceof EventAssignmentNotFoundError) {
     return "not_found";
   }
 
@@ -3049,38 +2845,23 @@ function classifyEventAssignmentMutationFailure(
     return "state_error";
   }
 
-  if (
-    error instanceof
-    EventAssignmentInvalidAssignmentReferenceError
-  ) {
+  if (error instanceof EventAssignmentInvalidAssignmentReferenceError) {
     return "invalid_assignment_reference";
   }
 
-  if (
-    error instanceof
-    EventAssignmentInvalidResourceReferenceError
-  ) {
+  if (error instanceof EventAssignmentInvalidResourceReferenceError) {
     return "invalid_resource_reference";
   }
 
-  if (
-    error instanceof
-    EventAssignmentInvalidPlatformReferenceError
-  ) {
+  if (error instanceof EventAssignmentInvalidPlatformReferenceError) {
     return "invalid_platform_reference";
   }
 
-  if (
-    error instanceof
-    EventAssignmentOverlapConflictError
-  ) {
+  if (error instanceof EventAssignmentOverlapConflictError) {
     return "overlap_conflict";
   }
 
-  if (
-    error instanceof
-    EventAssignmentPermissionScopeError
-  ) {
+  if (error instanceof EventAssignmentPermissionScopeError) {
     return "permission_scope";
   }
 
@@ -3091,9 +2872,7 @@ function classifyEventAssignmentMutationFailure(
   return "unknown";
 }
 
-function extractErrorCode(
-  error: unknown,
-): string | undefined {
+function extractErrorCode(error: unknown): string | undefined {
   if (error instanceof BaseAppError) {
     return error.code;
   }
@@ -3105,13 +2884,8 @@ function extractErrorCode(
   return undefined;
 }
 
-function truncateLogMessage(
-  error: unknown,
-): string {
-  const raw =
-    error instanceof Error
-      ? error.message
-      : String(error);
+function truncateLogMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
 
   if (raw.length <= 256) {
     return raw;
@@ -3120,15 +2894,11 @@ function truncateLogMessage(
   return `${raw.slice(0, 253)}...`;
 }
 
-function readOptionalLogString(
-  value: unknown,
-): string | undefined {
+function readOptionalLogString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
   }
 
   const normalized = value.trim();
-  return normalized.length > 0
-    ? normalized
-    : undefined;
+  return normalized.length > 0 ? normalized : undefined;
 }

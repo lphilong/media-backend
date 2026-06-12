@@ -88,6 +88,10 @@ const CREATE_STUDIO_BOOKING_BODY_FIELDS: readonly string[] = Object.freeze([
 ]);
 
 const REASON_BODY_FIELDS: readonly string[] = Object.freeze(["reason"]);
+const COMPLETE_EVENT_BODY_FIELDS: readonly string[] = Object.freeze([
+  "evidenceNote",
+  "evidenceRefs",
+]);
 
 export class EventAssignmentAdminController extends SecureController {
   constructor(
@@ -426,14 +430,14 @@ function parseCancelStudioBookingCommand(
 function parseCompleteEventCommand(
   req: Request,
 ): CompleteEventCommand {
-  assertNoUnexpectedFields(
-    requireRecord(req.body),
-    [],
-    "completeEvent",
-  );
+  const body = requireRecord(req.body);
+  assertNoUnexpectedFields(body, COMPLETE_EVENT_BODY_FIELDS, "completeEvent");
 
   return {
     eventId: req.params.eventId,
+    evidenceNote: body.evidenceNote as string,
+    evidenceRefs:
+      body.evidenceRefs as CompleteEventCommand["evidenceRefs"],
   };
 }
 

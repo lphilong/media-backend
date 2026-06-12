@@ -48,6 +48,30 @@ export const EVENT_SCOPES = ["global", "managedGroup"] as const;
 
 export type EventScope = (typeof EVENT_SCOPES)[number];
 
+export const EVENT_COMPLETION_EVIDENCE_REF_TYPES = [
+  "URL",
+  "PLATFORM_REFERENCE",
+  "EXTERNAL_REFERENCE",
+  "INTERNAL_REFERENCE",
+] as const;
+
+export type EventCompletionEvidenceRefType =
+  (typeof EVENT_COMPLETION_EVIDENCE_REF_TYPES)[number];
+
+export interface EventCompletionEvidenceRef {
+  readonly type: EventCompletionEvidenceRefType;
+  readonly label: string | null;
+  readonly url: string | null;
+  readonly referenceId: string | null;
+}
+
+export interface EventCompletionSummary {
+  readonly completedAt: number | null;
+  readonly completedByActorId: string | null;
+  readonly evidenceNote: string | null;
+  readonly evidenceRefs: readonly EventCompletionEvidenceRef[];
+}
+
 export interface EventRecord {
   readonly id: string;
   readonly eventCode: string;
@@ -70,6 +94,8 @@ export interface EventRecord {
   readonly confirmedByActorId: string | null;
   readonly completedAt: number | null;
   readonly completedByActorId: string | null;
+  readonly completionEvidenceNote: string | null;
+  readonly completionEvidenceRefs: readonly EventCompletionEvidenceRef[];
   readonly cancelledAt: number | null;
   readonly cancelledByActorId: string | null;
   readonly cancellationReason: string | null;
@@ -131,6 +157,8 @@ export interface EventDetailView {
   readonly plannedAt: number | null;
   readonly confirmedAt: number | null;
   readonly completedAt: number | null;
+  readonly completedByActorId: string | null;
+  readonly completionEvidence: EventCompletionSummary | null;
   readonly cancelledAt: number | null;
   readonly cancellationReason: string | null;
   readonly lastRescheduledAt: number | null;
@@ -202,6 +230,7 @@ export interface ManagerEventSummaryView {
   readonly eventEndAt: number;
   readonly owner: ReferenceSummary | null;
   readonly participants: readonly ReferenceSummary[];
+  readonly completionEvidence: EventCompletionSummary | null;
   readonly studioBookings: readonly {
     readonly id: string;
     readonly status: StudioBookingStatus;

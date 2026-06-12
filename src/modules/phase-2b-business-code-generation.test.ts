@@ -666,6 +666,8 @@ function createBaseEventRecord(
     confirmedByActorId: null,
     completedAt: null,
     completedByActorId: null,
+    completionEvidenceNote: null,
+    completionEvidenceRefs: [],
     cancelledAt: null,
     cancelledByActorId: null,
     cancellationReason: null,

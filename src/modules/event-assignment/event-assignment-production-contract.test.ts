@@ -15,9 +15,16 @@ import {
   EventAssignmentValidationError,
 } from "./domain/event-assignment.errors";
 import {
+  EventCompletionEvidenceRef,
   EventRecord,
   StudioBookingRecord,
 } from "./domain/event-assignment.types";
+import {
+  EVENT_COMPLETION_EVIDENCE_NOTE_MAX_LENGTH,
+  EVENT_COMPLETION_EVIDENCE_REF_LABEL_MAX_LENGTH,
+  EVENT_COMPLETION_EVIDENCE_REF_REFERENCE_ID_MAX_LENGTH,
+  EVENT_COMPLETION_EVIDENCE_REF_URL_MAX_LENGTH,
+} from "./shared/event-assignment.contracts";
 
 const bridge: AuthoritativeAdminMutationBridge = {
   async execute(_params, mutate) {
@@ -97,13 +104,48 @@ test("Event lifecycle is explicit and cancellation requires a reason", async () 
         .status,
       "CONFIRMED",
     );
-    assert.equal(
-      (await service.completeEvent(actor(), { eventId: "event-confirmed" }))
-        .status,
-      "COMPLETED",
-    );
     await assert.rejects(
-      service.completeEvent(actor(), { eventId: "event-draft" }),
+      service.completeEvent(actor(), {
+        eventId: "event-confirmed",
+        evidenceNote: "",
+      }),
+      EventAssignmentValidationError,
+    );
+
+    const completed = await service.completeEvent(actor(), {
+      eventId: "event-confirmed",
+      evidenceNote: "Delivered livestream recap and handoff summary.",
+      evidenceRefs: [
+        {
+          type: "URL",
+          label: "Delivery evidence",
+          url: "https://example.com/evidence/event-confirmed",
+        },
+        {
+          type: "EXTERNAL_REFERENCE",
+          label: "Partner ticket",
+          referenceId: "EXT-123",
+        },
+      ],
+    });
+
+    assert.equal(completed.status, "COMPLETED");
+    assert.equal(completed.completedByActorId, "admin-1");
+    assert.equal(typeof completed.completedAt, "number");
+    assert.equal(
+      completed.completionEvidence?.evidenceNote,
+      "Delivered livestream recap and handoff summary.",
+    );
+    assert.deepEqual(
+      completed.completionEvidence?.evidenceRefs.map((ref) => ref.type),
+      ["URL", "EXTERNAL_REFERENCE"],
+    );
+
+    await assert.rejects(
+      service.completeEvent(actor(), {
+        eventId: "event-draft",
+        evidenceNote: "Attempted completion.",
+      }),
       EventAssignmentStateError,
     );
     await assert.rejects(
@@ -112,6 +154,171 @@ test("Event lifecycle is explicit and cancellation requires a reason", async () 
         reason: "",
       }),
       EventAssignmentValidationError,
+    );
+  });
+});
+
+test("Event completion rejects invalid evidence references and non-CONFIRMED states", async () => {
+  await bindTraceId("event-production-completion-evidence", async () => {
+    const repository = new MemoryEventRepository();
+    for (const status of [
+      "DRAFT",
+      "PLANNED",
+      "CANCELLED",
+      "ARCHIVED",
+      "COMPLETED",
+    ] as const) {
+      repository.events.push(
+        eventRecord(`event-${status.toLowerCase()}`, status),
+      );
+    }
+    repository.events.push(
+      eventRecord("event-confirmed-invalid-ref", "CONFIRMED"),
+    );
+    const service = createService(repository);
+
+    await assert.rejects(
+      service.completeEvent(actor(), {
+        eventId: "event-confirmed-invalid-ref",
+        evidenceNote: "Delivered",
+        evidenceRefs: [
+          {
+            type: "URL",
+            referenceId: "not-a-url",
+          },
+        ],
+      }),
+      EventAssignmentValidationError,
+    );
+
+    for (const status of [
+      "DRAFT",
+      "PLANNED",
+      "CANCELLED",
+      "ARCHIVED",
+      "COMPLETED",
+    ] as const) {
+      await assert.rejects(
+        service.completeEvent(actor(), {
+          eventId: `event-${status.toLowerCase()}`,
+          evidenceNote: "Delivered",
+        }),
+        EventAssignmentStateError,
+      );
+    }
+  });
+});
+
+test("Event completion bounds evidence text fields and keeps completion metadata backend-owned", async () => {
+  await bindTraceId("event-production-completion-evidence-bounds", async () => {
+    const repository = new MemoryEventRepository();
+    for (const id of [
+      "event-note-over-limit",
+      "event-url-over-limit",
+      "event-reference-over-limit",
+      "event-label-over-limit",
+      "event-boundary-success",
+    ]) {
+      repository.events.push(eventRecord(id, "CONFIRMED"));
+    }
+    const service = createService(repository);
+
+    await assert.rejects(
+      service.completeEvent(actor(), {
+        eventId: "event-note-over-limit",
+        evidenceNote: "n".repeat(EVENT_COMPLETION_EVIDENCE_NOTE_MAX_LENGTH + 1),
+      }),
+      EventAssignmentValidationError,
+    );
+
+    await assert.rejects(
+      service.completeEvent(actor(), {
+        eventId: "event-url-over-limit",
+        evidenceNote: "Delivered.",
+        evidenceRefs: [
+          {
+            type: "URL",
+            url: makeEvidenceUrl(
+              EVENT_COMPLETION_EVIDENCE_REF_URL_MAX_LENGTH + 1,
+            ),
+          },
+        ],
+      }),
+      EventAssignmentValidationError,
+    );
+
+    await assert.rejects(
+      service.completeEvent(actor(), {
+        eventId: "event-reference-over-limit",
+        evidenceNote: "Delivered.",
+        evidenceRefs: [
+          {
+            type: "INTERNAL_REFERENCE",
+            referenceId: "r".repeat(
+              EVENT_COMPLETION_EVIDENCE_REF_REFERENCE_ID_MAX_LENGTH + 1,
+            ),
+          },
+        ],
+      }),
+      EventAssignmentValidationError,
+    );
+
+    await assert.rejects(
+      service.completeEvent(actor(), {
+        eventId: "event-label-over-limit",
+        evidenceNote: "Delivered.",
+        evidenceRefs: [
+          {
+            type: "EXTERNAL_REFERENCE",
+            label: "l".repeat(
+              EVENT_COMPLETION_EVIDENCE_REF_LABEL_MAX_LENGTH + 1,
+            ),
+            referenceId: "EXT-123",
+          },
+        ],
+      }),
+      EventAssignmentValidationError,
+    );
+
+    const completed = await service.completeEvent(actor(), {
+      eventId: "event-boundary-success",
+      evidenceNote: "n".repeat(EVENT_COMPLETION_EVIDENCE_NOTE_MAX_LENGTH),
+      evidenceRefs: [
+        {
+          type: "URL",
+          label: "l".repeat(EVENT_COMPLETION_EVIDENCE_REF_LABEL_MAX_LENGTH),
+          url: makeEvidenceUrl(EVENT_COMPLETION_EVIDENCE_REF_URL_MAX_LENGTH),
+        },
+        {
+          type: "INTERNAL_REFERENCE",
+          referenceId: "r".repeat(
+            EVENT_COMPLETION_EVIDENCE_REF_REFERENCE_ID_MAX_LENGTH,
+          ),
+        },
+      ],
+      completedAt: 1,
+      completedByActorId: "payload-actor",
+    } as never);
+
+    assert.equal(completed.status, "COMPLETED");
+    assert.equal(completed.completedByActorId, "admin-1");
+    assert.notEqual(completed.completedAt, 1);
+    assert.equal(typeof completed.completedAt, "number");
+    assert.equal(
+      completed.completionEvidence?.evidenceNote?.length,
+      EVENT_COMPLETION_EVIDENCE_NOTE_MAX_LENGTH,
+    );
+    assert.equal(
+      completed.completionEvidence?.evidenceRefs[0]?.label?.length,
+      EVENT_COMPLETION_EVIDENCE_REF_LABEL_MAX_LENGTH,
+    );
+    assert.equal(
+      completed.completionEvidence?.evidenceRefs[0]?.url?.length,
+      EVENT_COMPLETION_EVIDENCE_REF_URL_MAX_LENGTH,
+    );
+    assert.equal(
+      completed.completionEvidence?.evidenceRefs[1]?.referenceId?.length,
+      EVENT_COMPLETION_EVIDENCE_REF_REFERENCE_ID_MAX_LENGTH,
     );
   });
 });
@@ -169,7 +376,11 @@ function createService(repository: MemoryEventRepository) {
         return { id, operationalStatus: "ACTIVE" };
       },
     } as never,
-    { async findById(id: string) { return { id, status: "ACTIVE" }; } } as never,
+    {
+      async findById(id: string) {
+        return { id, status: "ACTIVE" };
+      },
+    } as never,
     {
       async findById(id: string) {
         return { id, operationalStatus: "ACTIVE" };
@@ -215,10 +426,7 @@ function talentAssignment() {
   };
 }
 
-function eventRecord(
-  id: string,
-  status: EventRecord["status"],
-): EventRecord {
+function eventRecord(id: string, status: EventRecord["status"]): EventRecord {
   return {
     id,
     eventCode: id.toUpperCase(),
@@ -238,8 +446,11 @@ function eventRecord(
     plannedByActorId: status === "PLANNED" ? "admin-1" : null,
     confirmedAt: status === "CONFIRMED" ? 1 : null,
     confirmedByActorId: status === "CONFIRMED" ? "admin-1" : null,
-    completedAt: null,
-    completedByActorId: null,
+    completedAt: status === "COMPLETED" ? 1 : null,
+    completedByActorId: status === "COMPLETED" ? "admin-1" : null,
+    completionEvidenceNote:
+      status === "COMPLETED" ? "Already delivered." : null,
+    completionEvidenceRefs: [],
     cancelledAt: null,
     cancelledByActorId: null,
     cancellationReason: null,
@@ -249,6 +460,11 @@ function eventRecord(
     createdAt: 1,
     updatedAt: 1,
   };
+}
+
+function makeEvidenceUrl(length: number): string {
+  const prefix = "https://example.com/";
+  return `${prefix}${"a".repeat(length - prefix.length)}`;
 }
 
 class MemoryEventRepository {
@@ -300,6 +516,8 @@ class MemoryEventRepository {
     updatedAt: number;
     actorId: string;
     reason?: string;
+    completionEvidenceNote?: string;
+    completionEvidenceRefs?: readonly EventCompletionEvidenceRef[];
   }) {
     const index = this.events.findIndex((item) => item.id === input.eventId);
     if (index < 0) return null;
@@ -308,9 +526,25 @@ class MemoryEventRepository {
       status: input.toStatus,
       updatedAt: input.updatedAt,
       updatedByActorId: input.actorId,
+      completedAt:
+        input.toStatus === "COMPLETED"
+          ? input.updatedAt
+          : this.events[index].completedAt,
+      completedByActorId:
+        input.toStatus === "COMPLETED"
+          ? input.actorId
+          : this.events[index].completedByActorId,
+      completionEvidenceNote:
+        input.toStatus === "COMPLETED"
+          ? (input.completionEvidenceNote ?? null)
+          : this.events[index].completionEvidenceNote,
+      completionEvidenceRefs:
+        input.toStatus === "COMPLETED"
+          ? [...(input.completionEvidenceRefs ?? [])]
+          : this.events[index].completionEvidenceRefs,
       cancellationReason:
         input.toStatus === "CANCELLED"
-          ? input.reason ?? null
+          ? (input.reason ?? null)
           : this.events[index].cancellationReason,
     };
     this.events[index] = updated;
