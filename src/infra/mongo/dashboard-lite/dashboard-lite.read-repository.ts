@@ -27,7 +27,7 @@ import {
 } from "@modules/dashboard-lite/read/dashboard-lite.read-repository";
 
 interface EventReadDocument {
-  readonly status: "SCHEDULED" | "IN_PROGRESS";
+  readonly status: "PLANNED" | "CONFIRMED";
   readonly eventStartAt: number;
   readonly eventEndAt: number;
 }
@@ -79,8 +79,8 @@ interface DashboardLiteReadRepositoryOptions {
 }
 
 const ACTIVE_EVENT_STATUSES = Object.freeze([
-  "SCHEDULED",
-  "IN_PROGRESS",
+  "PLANNED",
+  "CONFIRMED",
 ] as const);
 
 const FALLBACK_TIMING_CONTEXT: DashboardLiteTimingContext = Object.freeze({

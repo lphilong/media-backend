@@ -13,11 +13,11 @@ import {
   EventAssignmentRepository,
   EventOverlapAssignmentCheckInput,
   EventOverlapPlatformCheckInput,
-  EventOverlapResourceCheckInput,
   MarkAssignmentsRemovedInput,
   ReplaceEventPlatformAccountsInput,
-  ReplaceEventStudioResourcesInput,
   RescheduleEventInput,
+  StudioBookingOverlapCheckInput,
+  TransitionStudioBookingStatusInput,
   TransitionEventStatusInput,
   UpdateEventCoreInput,
 } from "@modules/event-assignment/domain/event-assignment.repository";
@@ -27,11 +27,13 @@ import {
   EventAssignmentStatus,
   EventRecord,
   EventStatus,
+  StudioBookingRecord,
+  StudioBookingStatus,
 } from "@modules/event-assignment/domain/event-assignment.types";
 
 const LIVE_EVENT_STATUSES: readonly EventStatus[] = [
-  "SCHEDULED",
-  "IN_PROGRESS",
+  "PLANNED",
+  "CONFIRMED",
 ];
 
 interface EventDocument {
@@ -39,6 +41,7 @@ interface EventDocument {
   readonly eventCode: string;
   readonly title: string;
   readonly normalizedTitle: string;
+  readonly ownerEmploymentProfileId: string;
   readonly studioResourceIds: readonly string[];
   readonly platformAccountIds: readonly string[];
   readonly status: EventStatus;
@@ -46,6 +49,39 @@ interface EventDocument {
   readonly eventEndAt: number;
   readonly description: string | null;
   readonly externalRef: string | null;
+  readonly createdByActorId: string;
+  readonly updatedByActorId: string;
+  readonly plannedAt: number | null;
+  readonly plannedByActorId: string | null;
+  readonly confirmedAt: number | null;
+  readonly confirmedByActorId: string | null;
+  readonly completedAt: number | null;
+  readonly completedByActorId: string | null;
+  readonly cancelledAt: number | null;
+  readonly cancelledByActorId: string | null;
+  readonly cancellationReason: string | null;
+  readonly lastRescheduledAt: number | null;
+  readonly lastRescheduledByActorId: string | null;
+  readonly lastRescheduleReason: string | null;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+interface StudioBookingDocument {
+  readonly _id: string;
+  readonly eventId: string;
+  readonly studioResourceId: string;
+  readonly bookingStartAt: number;
+  readonly bookingEndAt: number;
+  readonly status: StudioBookingStatus;
+  readonly createdByActorId: string;
+  readonly updatedByActorId: string;
+  readonly cancelledAt: number | null;
+  readonly cancelledByActorId: string | null;
+  readonly cancellationReason: string | null;
+  readonly releasedAt: number | null;
+  readonly releasedByActorId: string | null;
+  readonly releaseReason: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -68,6 +104,11 @@ export class NativeMongoEventAssignmentRepository
   implements EventAssignmentRepository
 {
   private readonly assignmentCollection: Collection<EventAssignmentDocument>;
+  private readonly bookingCollection: Collection<StudioBookingDocument>;
+  private readonly bookingResourceGuardCollection: Collection<{
+    readonly _id: string;
+    readonly updatedAt: number;
+  }>;
 
   constructor(db: Db) {
     super(db, "events");
@@ -75,6 +116,11 @@ export class NativeMongoEventAssignmentRepository
       db.collection<EventAssignmentDocument>(
         "event_assignments",
       );
+    this.bookingCollection =
+      db.collection<StudioBookingDocument>("studio_bookings");
+    this.bookingResourceGuardCollection = db.collection(
+      "studio_booking_resource_guards",
+    );
   }
 
   async insertEvent(
@@ -177,6 +223,10 @@ export class NativeMongoEventAssignmentRepository
       set.normalizedTitle = input.normalizedTitle;
     }
 
+    if (input.ownerEmploymentProfileId !== undefined) {
+      set.ownerEmploymentProfileId = input.ownerEmploymentProfileId;
+    }
+
     if (input.description !== undefined) {
       set.description = input.description;
     }
@@ -184,6 +234,7 @@ export class NativeMongoEventAssignmentRepository
     if (input.externalRef !== undefined) {
       set.externalRef = input.externalRef;
     }
+    set.updatedByActorId = input.updatedByActorId;
 
     const updated = await this.collection.findOneAndUpdate(
       {
@@ -213,31 +264,10 @@ export class NativeMongoEventAssignmentRepository
         $set: {
           eventStartAt: input.eventStartAt,
           eventEndAt: input.eventEndAt,
-          updatedAt: input.updatedAt,
-        },
-      },
-      {
-        ...this.withSession(session),
-        returnDocument: "after",
-      },
-    );
-
-    return updated ? toEventRecord(updated) : null;
-  }
-
-  async replaceEventStudioResources(
-    input: ReplaceEventStudioResourcesInput,
-    session: ClientSession,
-  ): Promise<EventRecord | null> {
-    const updated = await this.collection.findOneAndUpdate(
-      {
-        _id: input.eventId,
-      },
-      {
-        $set: {
-          studioResourceIds: [
-            ...input.studioResourceIds,
-          ],
+          lastRescheduleReason: input.reason,
+          lastRescheduledAt: input.updatedAt,
+          lastRescheduledByActorId: input.rescheduledByActorId,
+          updatedByActorId: input.rescheduledByActorId,
           updatedAt: input.updatedAt,
         },
       },
@@ -302,6 +332,26 @@ export class NativeMongoEventAssignmentRepository
     input: TransitionEventStatusInput,
     session: ClientSession,
   ): Promise<EventRecord | null> {
+    const set: Record<string, unknown> = {
+      status: input.toStatus,
+      updatedByActorId: input.actorId,
+      updatedAt: input.updatedAt,
+    };
+    if (input.toStatus === "PLANNED") {
+      set.plannedAt = input.updatedAt;
+      set.plannedByActorId = input.actorId;
+    } else if (input.toStatus === "CONFIRMED") {
+      set.confirmedAt = input.updatedAt;
+      set.confirmedByActorId = input.actorId;
+    } else if (input.toStatus === "COMPLETED") {
+      set.completedAt = input.updatedAt;
+      set.completedByActorId = input.actorId;
+    } else if (input.toStatus === "CANCELLED") {
+      set.cancelledAt = input.updatedAt;
+      set.cancelledByActorId = input.actorId;
+      set.cancellationReason = input.reason ?? null;
+    }
+
     const updated = await this.collection.findOneAndUpdate(
       {
         _id: input.eventId,
@@ -310,10 +360,7 @@ export class NativeMongoEventAssignmentRepository
         },
       },
       {
-        $set: {
-          status: input.toStatus,
-          updatedAt: input.updatedAt,
-        },
+        $set: set,
       },
       {
         ...this.withSession(session),
@@ -321,6 +368,158 @@ export class NativeMongoEventAssignmentRepository
       },
     );
 
+    return updated ? toEventRecord(updated) : null;
+  }
+
+  async insertStudioBooking(
+    booking: StudioBookingRecord,
+    session: ClientSession,
+  ): Promise<StudioBookingRecord> {
+    await this.bookingCollection.insertOne(
+      toStudioBookingDocument(booking),
+      this.withSession(session),
+    );
+    return booking;
+  }
+
+  async findStudioBookingById(
+    bookingId: string,
+    session?: ClientSession,
+  ): Promise<StudioBookingRecord | null> {
+    const doc = await this.bookingCollection.findOne(
+      { _id: bookingId },
+      this.withSession(session),
+    );
+    return doc ? toStudioBookingRecord(doc) : null;
+  }
+
+  async listStudioBookingsByEventId(
+    eventId: string,
+    statuses?: readonly StudioBookingStatus[],
+    session?: ClientSession,
+  ): Promise<readonly StudioBookingRecord[]> {
+    const query: Record<string, unknown> = { eventId };
+    if (statuses?.length) {
+      query.status = { $in: [...statuses] };
+    }
+    const docs = await this.bookingCollection
+      .find(query, this.withSession(session))
+      .sort({ bookingStartAt: 1, _id: 1 })
+      .toArray();
+    return docs.map(toStudioBookingRecord);
+  }
+
+  async hasOverlappingStudioBooking(
+    input: StudioBookingOverlapCheckInput,
+    session?: ClientSession,
+  ): Promise<boolean> {
+    const query: Record<string, unknown> = {
+      studioResourceId: input.studioResourceId,
+      status: { $in: [...input.statuses] },
+      bookingStartAt: { $lt: input.bookingEndAt },
+      bookingEndAt: { $gt: input.bookingStartAt },
+    };
+    if (input.excludeBookingId) {
+      query._id = { $ne: input.excludeBookingId };
+    }
+    return (
+      (await this.bookingCollection.findOne(query, {
+        projection: { _id: 1 },
+        ...this.withSession(session),
+      })) !== null
+    );
+  }
+
+  async lockStudioResourceBooking(
+    studioResourceId: string,
+    updatedAt: number,
+    session: ClientSession,
+  ): Promise<void> {
+    await this.bookingResourceGuardCollection.updateOne(
+      { _id: studioResourceId },
+      { $set: { updatedAt } },
+      { ...this.withSession(session), upsert: true },
+    );
+  }
+
+  async transitionStudioBookingStatus(
+    input: TransitionStudioBookingStatusInput,
+    session: ClientSession,
+  ): Promise<StudioBookingRecord | null> {
+    const set: Record<string, unknown> = {
+      status: input.toStatus,
+      updatedByActorId: input.actorId,
+      updatedAt: input.updatedAt,
+    };
+    if (input.toStatus === "CANCELLED") {
+      set.cancelledAt = input.updatedAt;
+      set.cancelledByActorId = input.actorId;
+      set.cancellationReason = input.reason ?? null;
+    } else if (input.toStatus === "RELEASED") {
+      set.releasedAt = input.updatedAt;
+      set.releasedByActorId = input.actorId;
+      set.releaseReason = input.reason ?? null;
+    }
+    const updated = await this.bookingCollection.findOneAndUpdate(
+      {
+        _id: input.bookingId,
+        eventId: input.eventId,
+        status: { $in: [...input.fromStatuses] },
+      },
+      { $set: set },
+      { ...this.withSession(session), returnDocument: "after" },
+    );
+    return updated ? toStudioBookingRecord(updated) : null;
+  }
+
+  async transitionStudioBookingsByEvent(
+    eventId: string,
+    fromStatuses: readonly StudioBookingStatus[],
+    toStatus: StudioBookingStatus,
+    actorId: string,
+    reason: string | undefined,
+    updatedAt: number,
+    session: ClientSession,
+  ): Promise<void> {
+    const set: Record<string, unknown> = {
+      status: toStatus,
+      updatedByActorId: actorId,
+      updatedAt,
+    };
+    if (toStatus === "CANCELLED") {
+      set.cancelledAt = updatedAt;
+      set.cancelledByActorId = actorId;
+      set.cancellationReason = reason ?? null;
+    }
+    await this.bookingCollection.updateMany(
+      { eventId, status: { $in: [...fromStatuses] } },
+      { $set: set },
+      this.withSession(session),
+    );
+  }
+
+  async syncEventStudioResourceIdsFromBookings(
+    eventId: string,
+    updatedByActorId: string,
+    updatedAt: number,
+    session: ClientSession,
+  ): Promise<EventRecord | null> {
+    const studioResourceIds = await this.bookingCollection.distinct(
+      "studioResourceId",
+      { eventId, status: { $in: ["HELD", "CONFIRMED"] } },
+      this.withSession(session),
+    );
+    const updated = await this.collection.findOneAndUpdate(
+      { _id: eventId },
+      {
+        $set: {
+          studioResourceIds: [...studioResourceIds].sort(),
+          updatedByActorId,
+          updatedAt,
+        },
+      },
+      { ...this.withSession(session), returnDocument: "after" },
+    );
     return updated ? toEventRecord(updated) : null;
   }
 
@@ -467,48 +666,6 @@ export class NativeMongoEventAssignmentRepository
     return docs.length > 0;
   }
 
-  async hasLiveOverlappingResourceEvent(
-    input: EventOverlapResourceCheckInput,
-    session?: ClientSession,
-  ): Promise<boolean> {
-    if (input.studioResourceIds.length === 0) {
-      return false;
-    }
-
-    const query: Record<string, unknown> = {
-      status: {
-        $in: [...LIVE_EVENT_STATUSES],
-      },
-      studioResourceIds: {
-        $in: [...input.studioResourceIds],
-      },
-      eventStartAt: {
-        $lt: input.eventEndAt,
-      },
-      eventEndAt: {
-        $gt: input.eventStartAt,
-      },
-    };
-
-    if (input.excludeEventId) {
-      query._id = {
-        $ne: input.excludeEventId,
-      };
-    }
-
-    const doc = await this.collection.findOne(
-      query,
-      {
-        projection: {
-          _id: 1,
-        },
-        ...this.withSession(session),
-      },
-    );
-
-    return doc !== null;
-  }
-
   async hasLiveOverlappingPlatformEvent(
     input: EventOverlapPlatformCheckInput,
     session?: ClientSession,
@@ -560,6 +717,7 @@ function toEventDocument(
     eventCode: event.eventCode,
     title: event.title,
     normalizedTitle: event.normalizedTitle,
+    ownerEmploymentProfileId: event.ownerEmploymentProfileId,
     studioResourceIds: [...event.studioResourceIds],
     platformAccountIds: [...event.platformAccountIds],
     status: event.status,
@@ -567,6 +725,20 @@ function toEventDocument(
     eventEndAt: event.eventEndAt,
     description: event.description,
     externalRef: event.externalRef,
+    createdByActorId: event.createdByActorId,
+    updatedByActorId: event.updatedByActorId,
+    plannedAt: event.plannedAt,
+    plannedByActorId: event.plannedByActorId,
+    confirmedAt: event.confirmedAt,
+    confirmedByActorId: event.confirmedByActorId,
+    completedAt: event.completedAt,
+    completedByActorId: event.completedByActorId,
+    cancelledAt: event.cancelledAt,
+    cancelledByActorId: event.cancelledByActorId,
+    cancellationReason: event.cancellationReason,
+    lastRescheduledAt: event.lastRescheduledAt,
+    lastRescheduledByActorId: event.lastRescheduledByActorId,
+    lastRescheduleReason: event.lastRescheduleReason,
     createdAt: event.createdAt,
     updatedAt: event.updatedAt,
   };
@@ -580,6 +752,7 @@ function toEventRecord(
     eventCode: document.eventCode,
     title: document.title,
     normalizedTitle: document.normalizedTitle,
+    ownerEmploymentProfileId: document.ownerEmploymentProfileId,
     studioResourceIds: [
       ...document.studioResourceIds,
     ],
@@ -591,6 +764,66 @@ function toEventRecord(
     eventEndAt: document.eventEndAt,
     description: document.description,
     externalRef: document.externalRef,
+    createdByActorId: document.createdByActorId,
+    updatedByActorId: document.updatedByActorId,
+    plannedAt: document.plannedAt,
+    plannedByActorId: document.plannedByActorId,
+    confirmedAt: document.confirmedAt,
+    confirmedByActorId: document.confirmedByActorId,
+    completedAt: document.completedAt,
+    completedByActorId: document.completedByActorId,
+    cancelledAt: document.cancelledAt,
+    cancelledByActorId: document.cancelledByActorId,
+    cancellationReason: document.cancellationReason,
+    lastRescheduledAt: document.lastRescheduledAt,
+    lastRescheduledByActorId: document.lastRescheduledByActorId,
+    lastRescheduleReason: document.lastRescheduleReason,
+    createdAt: document.createdAt,
+    updatedAt: document.updatedAt,
+  };
+}
+
+function toStudioBookingDocument(
+  booking: StudioBookingRecord,
+): StudioBookingDocument {
+  return {
+    _id: booking.id,
+    eventId: booking.eventId,
+    studioResourceId: booking.studioResourceId,
+    bookingStartAt: booking.bookingStartAt,
+    bookingEndAt: booking.bookingEndAt,
+    status: booking.status,
+    createdByActorId: booking.createdByActorId,
+    updatedByActorId: booking.updatedByActorId,
+    cancelledAt: booking.cancelledAt,
+    cancelledByActorId: booking.cancelledByActorId,
+    cancellationReason: booking.cancellationReason,
+    releasedAt: booking.releasedAt,
+    releasedByActorId: booking.releasedByActorId,
+    releaseReason: booking.releaseReason,
+    createdAt: booking.createdAt,
+    updatedAt: booking.updatedAt,
+  };
+}
+
+function toStudioBookingRecord(
+  document: StudioBookingDocument,
+): StudioBookingRecord {
+  return {
+    id: document._id,
+    eventId: document.eventId,
+    studioResourceId: document.studioResourceId,
+    bookingStartAt: document.bookingStartAt,
+    bookingEndAt: document.bookingEndAt,
+    status: document.status,
+    createdByActorId: document.createdByActorId,
+    updatedByActorId: document.updatedByActorId,
+    cancelledAt: document.cancelledAt,
+    cancelledByActorId: document.cancelledByActorId,
+    cancellationReason: document.cancellationReason,
+    releasedAt: document.releasedAt,
+    releasedByActorId: document.releasedByActorId,
+    releaseReason: document.releaseReason,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
   };

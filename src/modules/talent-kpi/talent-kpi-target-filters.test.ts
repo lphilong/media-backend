@@ -331,7 +331,7 @@ test("Talent KPI list/detail enrich attribution refs with page-bounded batch loo
                   _id: "event-1",
                   eventCode: "EVT-1",
                   title: "Launch Event",
-                  status: "SCHEDULED",
+                  status: "PLANNED",
                 },
               ],
             };
@@ -392,7 +392,7 @@ test("Talent KPI list/detail enrich attribution refs with page-bounded batch loo
     id: "event-1",
     code: "EVT-1",
     title: "Launch Event",
-    status: "SCHEDULED",
+    status: "PLANNED",
   });
   assert.equal(
     second.attributionPlatformAccountRef,

@@ -1378,6 +1378,18 @@ class EmptyEventAssignmentReadRepository implements EventAssignmentReadRepositor
   async eventHasManagedGroupAssignment(): Promise<boolean> {
     throw new Error("Not implemented");
   }
+
+  async listManagerEventSummaries(): Promise<[]> {
+    return [];
+  }
+
+  async getManagerEventSummary(): Promise<null> {
+    return null;
+  }
+
+  async listStudioBookings(): Promise<[]> {
+    return [];
+  }
 }
 
 type _KeepImportedTypesUsed =

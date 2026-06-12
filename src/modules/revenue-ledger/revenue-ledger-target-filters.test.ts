@@ -349,7 +349,7 @@ test("Revenue Ledger list/detail enrich attribution refs with page-bounded batch
                   _id: "event-1",
                   eventCode: "EVT-1",
                   title: "Launch Event",
-                  status: "SCHEDULED",
+                  status: "PLANNED",
                 },
               ],
             };
@@ -410,7 +410,7 @@ test("Revenue Ledger list/detail enrich attribution refs with page-bounded batch
     id: "event-1",
     code: "EVT-1",
     title: "Launch Event",
-    status: "SCHEDULED",
+    status: "PLANNED",
   });
   assert.equal(
     second.attributionPlatformAccountRef,

@@ -560,6 +560,11 @@ function toCreateEventCommand(
 ): CreateEventCommand {
   return {
     title: readRequiredString(payload, "title"),
+    ownerEmploymentProfileId: readRequiredString(
+      payload,
+      "ownerEmploymentProfileId",
+    ),
+    status: "PLANNED",
     assignments: readRequiredObjectArray(
       payload,
       "assignments",
@@ -581,10 +586,6 @@ function toCreateEventCommand(
         "assignmentTalentGroupId",
       ),
     })),
-    studioResourceIds: readRequiredStringArray(
-      payload,
-      "studioResourceIds",
-    ),
     platformAccountIds: readRequiredStringArray(
       payload,
       "platformAccountIds",

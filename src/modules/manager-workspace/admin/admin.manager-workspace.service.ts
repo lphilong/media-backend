@@ -75,8 +75,10 @@ export interface ManagerWorkspaceContextView {
       readonly reason?: "NO_MANAGED_SCOPE_ASSIGNED" | "MISSING_WORK_SCHEDULE_READ_CAPABILITY";
     };
     readonly events: {
-      readonly visible: false;
-      readonly reason: "NOT_ENABLED_IN_MANAGER_WORKSPACE_YET";
+      readonly visible: boolean;
+      readonly reason?:
+        | "NO_MANAGED_SCOPE_ASSIGNED"
+        | "MISSING_EVENT_READ_CAPABILITY";
     };
     readonly members: {
       readonly visible: false;
@@ -160,6 +162,9 @@ export class ManagerWorkspaceAdminService {
     const workShiftsVisible =
       hasManagedAssignment &&
       actor.permissions.includes(Permission.WORK_SCHEDULE_READ);
+    const eventsVisible =
+      hasManagedAssignment &&
+      actor.permissions.includes(Permission.EVENT_READ);
     const reasons = visible
       ? []
       : [
@@ -194,7 +199,14 @@ export class ManagerWorkspaceAdminService {
                 ? "MISSING_WORK_SCHEDULE_READ_CAPABILITY"
                 : "NO_MANAGED_SCOPE_ASSIGNED",
             },
-        events: disabledModule(),
+        events: eventsVisible
+          ? { visible: true }
+          : {
+              visible: false,
+              reason: hasManagedAssignment
+                ? "MISSING_EVENT_READ_CAPABILITY"
+                : "NO_MANAGED_SCOPE_ASSIGNED",
+            },
         members: disabledModule(),
       },
     };
@@ -243,7 +255,10 @@ function emptyContext(
         visible: false,
         reason: "NO_MANAGED_SCOPE_ASSIGNED",
       },
-      events: disabledModule(),
+      events: {
+        visible: false,
+        reason: "NO_MANAGED_SCOPE_ASSIGNED",
+      },
       members: disabledModule(),
     },
   };

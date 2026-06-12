@@ -11,12 +11,15 @@ import {
   EventDetailView,
   EventListItemView,
   EventMutationView,
+  StudioBookingView,
 } from "@modules/event-assignment/domain/event-assignment.types";
 
 const EVENT_ADMIN_DETAIL_FIELDS = [
   "id",
   "eventCode",
   "title",
+  "ownerEmploymentProfileId",
+  "ownerEmploymentProfileRef",
   "studioResourceIds",
   "platformAccountIds",
   "studioResourceRefs",
@@ -26,6 +29,13 @@ const EVENT_ADMIN_DETAIL_FIELDS = [
   "eventEndAt",
   "description",
   "externalRef",
+  "plannedAt",
+  "confirmedAt",
+  "completedAt",
+  "cancelledAt",
+  "cancellationReason",
+  "lastRescheduledAt",
+  "lastRescheduleReason",
   "createdAt",
   "updatedAt",
 ] as const;
@@ -87,6 +97,8 @@ export const EventAssignmentAdminDetailExposure = Object.freeze({
           id: input.id,
           eventCode: input.eventCode,
           title: input.title,
+          ownerEmploymentProfileId: input.ownerEmploymentProfileId,
+          ownerEmploymentProfileRef: input.ownerEmploymentProfileRef,
           studioResourceIds: [...input.studioResourceIds],
           platformAccountIds: [...input.platformAccountIds],
           studioResourceRefs: input.studioResourceRefs,
@@ -96,6 +108,13 @@ export const EventAssignmentAdminDetailExposure = Object.freeze({
           eventEndAt: input.eventEndAt,
           description: input.description,
           externalRef: input.externalRef,
+          plannedAt: input.plannedAt,
+          confirmedAt: input.confirmedAt,
+          completedAt: input.completedAt,
+          cancelledAt: input.cancelledAt,
+          cancellationReason: input.cancellationReason,
+          lastRescheduledAt: input.lastRescheduledAt,
+          lastRescheduleReason: input.lastRescheduleReason,
           createdAt: input.createdAt,
           updatedAt: input.updatedAt,
         },
@@ -236,5 +255,31 @@ export const EventAssignmentAdminByPlatformListExposure = Object.freeze({
 export const EventAssignmentAdminMutationExposure = Object.freeze({
   expose(input: EventMutationView): PlainObject {
     return EventAssignmentAdminDetailExposure.expose(input);
+  },
+});
+
+export const EventAssignmentAdminStudioBookingExposure = Object.freeze({
+  expose(input: StudioBookingView): PlainObject {
+    return toPlainObject(
+      {
+        id: input.id,
+        eventId: input.eventId,
+        studioResourceId: input.studioResourceId,
+        studioResourceRef: input.studioResourceRef,
+        bookingStartAt: input.bookingStartAt,
+        bookingEndAt: input.bookingEndAt,
+        status: input.status,
+        cancellationReason: input.cancellationReason,
+        releaseReason: input.releaseReason,
+        hasConfirmedConflict: input.hasConfirmedConflict,
+        createdAt: input.createdAt,
+        updatedAt: input.updatedAt,
+      },
+      "EventAssignmentAdminStudioBooking exposure",
+    );
+  },
+
+  exposeMany(items: readonly StudioBookingView[]): readonly PlainObject[] {
+    return items.map((item) => this.expose(item));
   },
 });

@@ -9,8 +9,9 @@ export const EVENT_ASSIGNMENT_KINDS = [
 export type EventAssignmentKind = (typeof EVENT_ASSIGNMENT_KINDS)[number];
 
 export const EVENT_STATUSES = [
-  "SCHEDULED",
-  "IN_PROGRESS",
+  "DRAFT",
+  "PLANNED",
+  "CONFIRMED",
   "COMPLETED",
   "CANCELLED",
   "ARCHIVED",
@@ -21,6 +22,15 @@ export type EventStatus = (typeof EVENT_STATUSES)[number];
 export const EVENT_ASSIGNMENT_STATUSES = ["ACTIVE", "REMOVED"] as const;
 
 export type EventAssignmentStatus = (typeof EVENT_ASSIGNMENT_STATUSES)[number];
+
+export const STUDIO_BOOKING_STATUSES = [
+  "HELD",
+  "CONFIRMED",
+  "RELEASED",
+  "CANCELLED",
+] as const;
+
+export type StudioBookingStatus = (typeof STUDIO_BOOKING_STATUSES)[number];
 
 export const EVENT_SORT_FIELDS = [
   "eventStartAt",
@@ -43,6 +53,8 @@ export interface EventRecord {
   readonly eventCode: string;
   readonly title: string;
   readonly normalizedTitle: string;
+  readonly ownerEmploymentProfileId: string;
+  /** @deprecated Derived from active StudioBooking records. */
   readonly studioResourceIds: readonly string[];
   readonly platformAccountIds: readonly string[];
   readonly status: EventStatus;
@@ -50,6 +62,39 @@ export interface EventRecord {
   readonly eventEndAt: number;
   readonly description: string | null;
   readonly externalRef: string | null;
+  readonly createdByActorId: string;
+  readonly updatedByActorId: string;
+  readonly plannedAt: number | null;
+  readonly plannedByActorId: string | null;
+  readonly confirmedAt: number | null;
+  readonly confirmedByActorId: string | null;
+  readonly completedAt: number | null;
+  readonly completedByActorId: string | null;
+  readonly cancelledAt: number | null;
+  readonly cancelledByActorId: string | null;
+  readonly cancellationReason: string | null;
+  readonly lastRescheduledAt: number | null;
+  readonly lastRescheduledByActorId: string | null;
+  readonly lastRescheduleReason: string | null;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+export interface StudioBookingRecord {
+  readonly id: string;
+  readonly eventId: string;
+  readonly studioResourceId: string;
+  readonly bookingStartAt: number;
+  readonly bookingEndAt: number;
+  readonly status: StudioBookingStatus;
+  readonly createdByActorId: string;
+  readonly updatedByActorId: string;
+  readonly cancelledAt: number | null;
+  readonly cancelledByActorId: string | null;
+  readonly cancellationReason: string | null;
+  readonly releasedAt: number | null;
+  readonly releasedByActorId: string | null;
+  readonly releaseReason: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -71,6 +116,9 @@ export interface EventDetailView {
   readonly id: string;
   readonly eventCode: string;
   readonly title: string;
+  readonly ownerEmploymentProfileId: string;
+  readonly ownerEmploymentProfileRef?: ReferenceSummary | null;
+  /** @deprecated Derived from active StudioBooking records. */
   readonly studioResourceIds: readonly string[];
   readonly platformAccountIds: readonly string[];
   readonly studioResourceRefs?: readonly ReferenceSummary[];
@@ -80,6 +128,13 @@ export interface EventDetailView {
   readonly eventEndAt: number;
   readonly description: string | null;
   readonly externalRef: string | null;
+  readonly plannedAt: number | null;
+  readonly confirmedAt: number | null;
+  readonly completedAt: number | null;
+  readonly cancelledAt: number | null;
+  readonly cancellationReason: string | null;
+  readonly lastRescheduledAt: number | null;
+  readonly lastRescheduleReason: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -131,6 +186,29 @@ export interface EventByPlatformListItemView {
   readonly status: EventStatus;
   readonly eventStartAt: number;
   readonly eventEndAt: number;
+}
+
+export interface StudioBookingView extends StudioBookingRecord {
+  readonly studioResourceRef?: ReferenceSummary | null;
+  readonly hasConfirmedConflict: boolean;
+}
+
+export interface ManagerEventSummaryView {
+  readonly id: string;
+  readonly eventCode: string;
+  readonly title: string;
+  readonly status: EventStatus;
+  readonly eventStartAt: number;
+  readonly eventEndAt: number;
+  readonly owner: ReferenceSummary | null;
+  readonly participants: readonly ReferenceSummary[];
+  readonly studioBookings: readonly {
+    readonly id: string;
+    readonly status: StudioBookingStatus;
+    readonly bookingStartAt: number;
+    readonly bookingEndAt: number;
+    readonly resource: ReferenceSummary | null;
+  }[];
 }
 
 export interface EventMutationView extends EventDetailView {}

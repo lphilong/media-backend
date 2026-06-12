@@ -10,6 +10,8 @@ import {
   EventSortDirection,
   EventSortField,
   EventStatus,
+  StudioBookingStatus,
+  StudioBookingView,
 } from "@modules/event-assignment/domain/event-assignment.types";
 
 export interface EventAssignmentInput {
@@ -22,8 +24,9 @@ export interface EventAssignmentInput {
 export interface CreateEventCommand {
   readonly eventCode?: string | null;
   readonly title: string;
+  readonly ownerEmploymentProfileId: string;
+  readonly status?: Extract<EventStatus, "DRAFT" | "PLANNED"> | string;
   readonly assignments: readonly EventAssignmentInput[];
-  readonly studioResourceIds?: readonly string[];
   readonly platformAccountIds?: readonly string[];
   readonly eventStartAt: number;
   readonly eventEndAt: number;
@@ -34,6 +37,7 @@ export interface CreateEventCommand {
 export interface UpdateEventCoreCommand {
   readonly eventId: string;
   readonly title?: string;
+  readonly ownerEmploymentProfileId?: string;
   readonly description?: string | null;
   readonly externalRef?: string | null;
 }
@@ -42,6 +46,7 @@ export interface RescheduleEventCommand {
   readonly eventId: string;
   readonly newEventStartAt: number;
   readonly newEventEndAt: number;
+  readonly reason: string;
 }
 
 export interface ReplaceEventAssignmentsCommand {
@@ -49,17 +54,16 @@ export interface ReplaceEventAssignmentsCommand {
   readonly replacementAssignments: readonly EventAssignmentInput[];
 }
 
-export interface UpdateEventStudioResourcesCommand {
-  readonly eventId: string;
-  readonly newStudioResourceIds: readonly string[];
-}
-
 export interface UpdateEventPlatformAccountsCommand {
   readonly eventId: string;
   readonly newPlatformAccountIds: readonly string[];
 }
 
-export interface StartEventCommand {
+export interface PlanEventCommand {
+  readonly eventId: string;
+}
+
+export interface ConfirmEventCommand {
   readonly eventId: string;
 }
 
@@ -69,9 +73,39 @@ export interface CompleteEventCommand {
 
 export interface CancelEventCommand {
   readonly eventId: string;
+  readonly reason: string;
 }
 
 export interface ArchiveEventCommand {
+  readonly eventId: string;
+}
+
+export interface CreateStudioBookingCommand {
+  readonly eventId: string;
+  readonly studioResourceId: string;
+  readonly bookingStartAt: number;
+  readonly bookingEndAt: number;
+  readonly status: Extract<StudioBookingStatus, "HELD" | "CONFIRMED"> | string;
+}
+
+export interface ConfirmStudioBookingCommand {
+  readonly eventId: string;
+  readonly bookingId: string;
+}
+
+export interface ReleaseStudioBookingCommand {
+  readonly eventId: string;
+  readonly bookingId: string;
+  readonly reason: string;
+}
+
+export interface CancelStudioBookingCommand {
+  readonly eventId: string;
+  readonly bookingId: string;
+  readonly reason: string;
+}
+
+export interface ListStudioBookingsQuery {
   readonly eventId: string;
 }
 
@@ -142,6 +176,7 @@ export interface ListEventsByPlatformQuery {
 }
 
 export type EventMutationResult = EventMutationView;
+export type StudioBookingMutationResult = StudioBookingView;
 
 export type GetEventDetailResult = EventDetailView;
 
@@ -167,4 +202,8 @@ export interface ListEventsByResourceResult {
 export interface ListEventsByPlatformResult {
   readonly items: readonly EventByPlatformListItemView[];
   readonly nextCursor?: string;
+}
+
+export interface ListStudioBookingsResult {
+  readonly items: readonly StudioBookingView[];
 }

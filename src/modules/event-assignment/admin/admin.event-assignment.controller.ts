@@ -12,16 +12,21 @@ import {
 } from "@modules/event-assignment/shared/event-assignment.presenter-keys";
 import {
   ArchiveEventCommand,
+  CancelStudioBookingCommand,
   CancelEventCommand,
+  ConfirmEventCommand,
+  ConfirmStudioBookingCommand,
   CompleteEventCommand,
+  CreateStudioBookingCommand,
   CreateEventCommand,
+  PlanEventCommand,
+  ReleaseStudioBookingCommand,
   ReplaceEventAssignmentsCommand,
   RescheduleEventCommand,
-  StartEventCommand,
   UpdateEventCoreCommand,
   UpdateEventPlatformAccountsCommand,
-  UpdateEventStudioResourcesCommand,
 } from "@modules/event-assignment/shared/event-assignment.contracts";
+import { EventAssignmentAdminStudioBookingExposure } from "@modules/event-assignment/shared/event-assignment.exposure";
 import { EventAssignmentAdminService } from "./admin.event-assignment.service";
 
 type EventAssignmentMutationCommand =
@@ -29,9 +34,13 @@ type EventAssignmentMutationCommand =
   | "EVENT_UPDATE_CORE"
   | "EVENT_RESCHEDULE"
   | "EVENT_REPLACE_ASSIGNMENTS"
-  | "EVENT_UPDATE_STUDIO_RESOURCES"
   | "EVENT_UPDATE_PLATFORM_ACCOUNTS"
-  | "EVENT_START"
+  | "EVENT_BOOKING_CREATE"
+  | "EVENT_BOOKING_CONFIRM"
+  | "EVENT_BOOKING_RELEASE"
+  | "EVENT_BOOKING_CANCEL"
+  | "EVENT_PLAN"
+  | "EVENT_CONFIRM"
   | "EVENT_COMPLETE"
   | "EVENT_CANCEL"
   | "EVENT_ARCHIVE";
@@ -40,8 +49,9 @@ const CREATE_EVENT_BODY_FIELDS: readonly string[] =
   Object.freeze([
     "eventCode",
     "title",
+    "ownerEmploymentProfileId",
+    "status",
     "assignments",
-    "studioResourceIds",
     "platformAccountIds",
     "eventStartAt",
     "eventEndAt",
@@ -52,6 +62,7 @@ const CREATE_EVENT_BODY_FIELDS: readonly string[] =
 const UPDATE_EVENT_CORE_BODY_FIELDS: readonly string[] =
   Object.freeze([
     "title",
+    "ownerEmploymentProfileId",
     "description",
     "externalRef",
   ]);
@@ -60,16 +71,23 @@ const RESCHEDULE_EVENT_BODY_FIELDS: readonly string[] =
   Object.freeze([
     "newEventStartAt",
     "newEventEndAt",
+    "reason",
   ]);
 
 const REPLACE_EVENT_ASSIGNMENTS_BODY_FIELDS: readonly string[] =
   Object.freeze(["replacementAssignments"]);
 
-const UPDATE_EVENT_STUDIO_RESOURCES_BODY_FIELDS: readonly string[] =
-  Object.freeze(["newStudioResourceIds"]);
-
 const UPDATE_EVENT_PLATFORM_ACCOUNTS_BODY_FIELDS: readonly string[] =
   Object.freeze(["newPlatformAccountIds"]);
+
+const CREATE_STUDIO_BOOKING_BODY_FIELDS: readonly string[] = Object.freeze([
+  "studioResourceId",
+  "bookingStartAt",
+  "bookingEndAt",
+  "status",
+]);
+
+const REASON_BODY_FIELDS: readonly string[] = Object.freeze(["reason"]);
 
 export class EventAssignmentAdminController extends SecureController {
   constructor(
@@ -120,14 +138,6 @@ export class EventAssignmentAdminController extends SecureController {
           parseReplaceEventAssignmentsCommand(req),
         );
 
-      case "EVENT_UPDATE_STUDIO_RESOURCES":
-        return this.service.updateEventStudioResources(
-          actor,
-          parseUpdateEventStudioResourcesCommand(
-            req,
-          ),
-        );
-
       case "EVENT_UPDATE_PLATFORM_ACCOUNTS":
         return this.service.updateEventPlatformAccounts(
           actor,
@@ -136,10 +146,40 @@ export class EventAssignmentAdminController extends SecureController {
           ),
         );
 
-      case "EVENT_START":
-        return this.service.startEvent(
+      case "EVENT_BOOKING_CREATE":
+        return this.service.createStudioBooking(
           actor,
-          parseStartEventCommand(req),
+          parseCreateStudioBookingCommand(req),
+        );
+
+      case "EVENT_BOOKING_CONFIRM":
+        return this.service.confirmStudioBooking(
+          actor,
+          parseConfirmStudioBookingCommand(req),
+        );
+
+      case "EVENT_BOOKING_RELEASE":
+        return this.service.releaseStudioBooking(
+          actor,
+          parseReleaseStudioBookingCommand(req),
+        );
+
+      case "EVENT_BOOKING_CANCEL":
+        return this.service.cancelStudioBooking(
+          actor,
+          parseCancelStudioBookingCommand(req),
+        );
+
+      case "EVENT_PLAN":
+        return this.service.planEvent(
+          actor,
+          parsePlanEventCommand(req),
+        );
+
+      case "EVENT_CONFIRM":
+        return this.service.confirmEvent(
+          actor,
+          parseConfirmEventCommand(req),
         );
 
       case "EVENT_COMPLETE":
@@ -174,6 +214,16 @@ export class EventAssignmentAdminController extends SecureController {
     _actor: Actor,
     context: ContextType,
   ): Promise<PresentationResult> {
+    const command = readCommand<EventAssignmentMutationCommand>(req);
+    if (command?.startsWith("EVENT_BOOKING_")) {
+      return {
+        data: EventAssignmentAdminStudioBookingExposure.expose(
+          result as Parameters<
+            typeof EventAssignmentAdminStudioBookingExposure.expose
+          >[0],
+        ),
+      };
+    }
     return getPresenterRegistryFromRequest(req)
       .get<unknown, PresentationResult>(
         EVENT_ASSIGNMENT_ADMIN_MUTATION_PRESENTER_KEY,
@@ -195,12 +245,11 @@ function parseCreateEventCommand(
   return {
     eventCode: body.eventCode as string,
     title: body.title as string,
+    ownerEmploymentProfileId:
+      body.ownerEmploymentProfileId as string,
+    status: body.status as CreateEventCommand["status"],
     assignments:
       body.assignments as CreateEventCommand["assignments"],
-    studioResourceIds:
-      body.studioResourceIds as
-        | readonly string[]
-        | undefined,
     platformAccountIds:
       body.platformAccountIds as
         | readonly string[]
@@ -233,6 +282,8 @@ function parseUpdateEventCoreCommand(
   return {
     eventId: req.params.eventId,
     title: body.title as string | undefined,
+    ownerEmploymentProfileId:
+      body.ownerEmploymentProfileId as string | undefined,
     description:
       body.description as
         | string
@@ -260,6 +311,7 @@ function parseRescheduleEventCommand(
     eventId: req.params.eventId,
     newEventStartAt: body.newEventStartAt as number,
     newEventEndAt: body.newEventEndAt as number,
+    reason: body.reason as string,
   };
 }
 
@@ -280,20 +332,22 @@ function parseReplaceEventAssignmentsCommand(
   };
 }
 
-function parseUpdateEventStudioResourcesCommand(
+function parseCreateStudioBookingCommand(
   req: Request,
-): UpdateEventStudioResourcesCommand {
+): CreateStudioBookingCommand {
   const body = requireRecord(req.body);
   assertNoUnexpectedFields(
     body,
-    UPDATE_EVENT_STUDIO_RESOURCES_BODY_FIELDS,
-    "updateEventStudioResources",
+    CREATE_STUDIO_BOOKING_BODY_FIELDS,
+    "createStudioBooking",
   );
 
   return {
     eventId: req.params.eventId,
-    newStudioResourceIds:
-      body.newStudioResourceIds as readonly string[],
+    studioResourceId: body.studioResourceId as string,
+    bookingStartAt: body.bookingStartAt as number,
+    bookingEndAt: body.bookingEndAt as number,
+    status: body.status as CreateStudioBookingCommand["status"],
   };
 }
 
@@ -314,17 +368,58 @@ function parseUpdateEventPlatformAccountsCommand(
   };
 }
 
-function parseStartEventCommand(
+function parsePlanEventCommand(
   req: Request,
-): StartEventCommand {
+): PlanEventCommand {
   assertNoUnexpectedFields(
     requireRecord(req.body),
     [],
-    "startEvent",
+    "planEvent",
   );
 
   return {
     eventId: req.params.eventId,
+  };
+}
+
+function parseConfirmEventCommand(
+  req: Request,
+): ConfirmEventCommand {
+  assertNoUnexpectedFields(requireRecord(req.body), [], "confirmEvent");
+  return { eventId: req.params.eventId };
+}
+
+function parseConfirmStudioBookingCommand(
+  req: Request,
+): ConfirmStudioBookingCommand {
+  assertNoUnexpectedFields(requireRecord(req.body), [], "confirmStudioBooking");
+  return {
+    eventId: req.params.eventId,
+    bookingId: req.params.bookingId,
+  };
+}
+
+function parseReleaseStudioBookingCommand(
+  req: Request,
+): ReleaseStudioBookingCommand {
+  const body = requireRecord(req.body);
+  assertNoUnexpectedFields(body, REASON_BODY_FIELDS, "releaseStudioBooking");
+  return {
+    eventId: req.params.eventId,
+    bookingId: req.params.bookingId,
+    reason: body.reason as string,
+  };
+}
+
+function parseCancelStudioBookingCommand(
+  req: Request,
+): CancelStudioBookingCommand {
+  const body = requireRecord(req.body);
+  assertNoUnexpectedFields(body, REASON_BODY_FIELDS, "cancelStudioBooking");
+  return {
+    eventId: req.params.eventId,
+    bookingId: req.params.bookingId,
+    reason: body.reason as string,
   };
 }
 
@@ -345,14 +440,12 @@ function parseCompleteEventCommand(
 function parseCancelEventCommand(
   req: Request,
 ): CancelEventCommand {
-  assertNoUnexpectedFields(
-    requireRecord(req.body),
-    [],
-    "cancelEvent",
-  );
+  const body = requireRecord(req.body);
+  assertNoUnexpectedFields(body, REASON_BODY_FIELDS, "cancelEvent");
 
   return {
     eventId: req.params.eventId,
+    reason: body.reason as string,
   };
 }
 

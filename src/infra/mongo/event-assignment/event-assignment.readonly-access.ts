@@ -30,8 +30,8 @@ import { TalentEventAssignmentReadonlyAccess } from "@modules/talent/domain/tale
 import { TalentGroupEventAssignmentReadonlyAccess } from "@modules/talent-group/domain/talent-group-event-assignment-readonly-access";
 
 const LIVE_EVENT_STATUSES = [
-  "SCHEDULED",
-  "IN_PROGRESS",
+  "PLANNED",
+  "CONFIRMED",
 ] as const;
 
 type LiveEventStatus =
@@ -66,10 +66,22 @@ interface PlatformAccountReferenceDocument {
 
 interface EventGuardDocument {
   readonly _id: string;
-  readonly status: LiveEventStatus | "COMPLETED" | "CANCELLED" | "ARCHIVED";
+  readonly status:
+    | "DRAFT"
+    | LiveEventStatus
+    | "COMPLETED"
+    | "CANCELLED"
+    | "ARCHIVED";
   readonly eventEndAt: number;
   readonly studioResourceIds: readonly string[];
   readonly platformAccountIds: readonly string[];
+}
+
+interface StudioBookingGuardDocument {
+  readonly _id: string;
+  readonly studioResourceId: string;
+  readonly bookingEndAt: number;
+  readonly status: "HELD" | "CONFIRMED" | "RELEASED" | "CANCELLED";
 }
 
 interface EventAssignmentGuardDocument {
@@ -387,11 +399,11 @@ export class NativeMongoTalentGroupEventAssignmentReadonlyAccess
 export class NativeMongoStudioResourceEventAssignmentReadonlyAccess
   implements StudioResourceEventAssignmentReadonlyAccess
 {
-  private readonly eventCollection: Collection<EventGuardDocument>;
+  private readonly bookingCollection: Collection<StudioBookingGuardDocument>;
 
   constructor(db: Db) {
-    this.eventCollection =
-      db.collection<EventGuardDocument>("events");
+    this.bookingCollection =
+      db.collection<StudioBookingGuardDocument>("studio_bookings");
   }
 
   async hasLiveEventAllocationForStudioResource(
@@ -399,15 +411,13 @@ export class NativeMongoStudioResourceEventAssignmentReadonlyAccess
     evaluationTime: number,
     session?: ClientSession,
   ): Promise<boolean> {
-    const doc = await this.eventCollection.findOne(
+    const doc = await this.bookingCollection.findOne(
       {
-        status: {
-          $in: [...LIVE_EVENT_STATUSES],
-        },
-        eventEndAt: {
+        status: { $in: ["HELD", "CONFIRMED"] },
+        bookingEndAt: {
           $gt: evaluationTime,
         },
-        studioResourceIds: studioResourceId,
+        studioResourceId,
       },
       {
         projection: {

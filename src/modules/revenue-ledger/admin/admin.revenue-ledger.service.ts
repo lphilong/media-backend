@@ -69,8 +69,8 @@ import {
 
 const EVENT_STATUSES_ALLOWED_FOR_ATTRIBUTION =
   new Set<EventStatus>([
-    "SCHEDULED",
-    "IN_PROGRESS",
+    "PLANNED",
+    "CONFIRMED",
     "COMPLETED",
   ]);
 
@@ -994,7 +994,7 @@ export class RevenueLedgerAdminService {
       )
     ) {
       throw new RevenueLedgerInvalidEventAttributionError(
-        `Attributed event must be SCHEDULED, IN_PROGRESS, or COMPLETED: ${attributionEventId}`,
+        `Attributed event must be PLANNED, CONFIRMED, or COMPLETED: ${attributionEventId}`,
       );
     }
 

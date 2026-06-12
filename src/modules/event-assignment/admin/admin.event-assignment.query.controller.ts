@@ -22,7 +22,9 @@ import {
   ListEventsByPlatformQuery,
   ListEventsByResourceQuery,
   ListEventsQuery,
+  ListStudioBookingsQuery,
 } from "@modules/event-assignment/shared/event-assignment.contracts";
+import { EventAssignmentAdminStudioBookingExposure } from "@modules/event-assignment/shared/event-assignment.exposure";
 import { EventAssignmentAdminQueryService } from "./admin.event-assignment.query-service";
 
 type EventAssignmentQueryCommand =
@@ -31,6 +33,7 @@ type EventAssignmentQueryCommand =
   | "EVENT_LIST_BY_RESOURCE"
   | "EVENT_LIST_BY_PLATFORM"
   | "EVENT_ASSIGNMENT_LIST"
+  | "EVENT_BOOKING_LIST"
   | "EVENT_GET_DETAIL";
 
 const LIST_EVENTS_QUERY_FIELDS: readonly string[] =
@@ -154,6 +157,12 @@ export class EventAssignmentAdminQueryController extends SecureController {
           parseListEventAssignmentsQuery(req),
         );
 
+      case "EVENT_BOOKING_LIST":
+        return this.service.listStudioBookings(
+          actor,
+          parseListStudioBookingsQuery(req),
+        );
+
       case "EVENT_GET_DETAIL":
         return this.service.getEventDetail(
           actor,
@@ -221,6 +230,15 @@ export class EventAssignmentAdminQueryController extends SecureController {
             EVENT_ASSIGNMENT_ADMIN_ASSIGNMENT_LIST_PRESENTER_KEY,
           )
           .present(result, context);
+
+      case "EVENT_BOOKING_LIST":
+        return {
+          data: EventAssignmentAdminStudioBookingExposure.exposeMany(
+            (result as { items: Parameters<
+              typeof EventAssignmentAdminStudioBookingExposure.exposeMany
+            >[0] }).items,
+          ),
+        };
 
       case "EVENT_GET_DETAIL":
         return registry
@@ -426,6 +444,17 @@ function parseGetEventDetailQuery(
   return {
     eventId: req.params.eventId,
   };
+}
+
+function parseListStudioBookingsQuery(
+  req: Request,
+): ListStudioBookingsQuery {
+  assertNoUnexpectedQueryFields(
+    req.query as Record<string, unknown>,
+    [],
+    "listStudioBookings",
+  );
+  return { eventId: req.params.eventId };
 }
 
 function assertNoUnexpectedQueryFields(

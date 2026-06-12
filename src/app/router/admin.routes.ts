@@ -169,6 +169,7 @@ import { adminManagerWorkspaceRoutes } from "@modules/manager-workspace/admin/ad
 import { ManagerWorkspaceAdminController } from "@modules/manager-workspace/admin/admin.manager-workspace.controller";
 import { ManagerWorkspaceAdminService } from "@modules/manager-workspace/admin/admin.manager-workspace.service";
 import { ManagerWorkspaceWorkScheduleAdminService } from "@modules/manager-workspace/admin/admin.manager-workspace-work-schedule.service";
+import { ManagerWorkspaceEventAdminService } from "@modules/manager-workspace/admin/admin.manager-workspace-event.service";
 
 /* COMMISSION */
 import { adminCommissionRoutes } from "@modules/commission/admin/admin.commission.routes";
@@ -853,10 +854,6 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   );
   const eventAssignmentQueryService = new EventAssignmentAdminQueryService(
     eventAssignmentReadRepository,
-    {
-      subjectReadonlyAccess: kpiSubjectReadonlyAccess,
-      managerAssignmentRepository: talentGroupManagerAssignmentRepository,
-    },
   );
   const eventAssignmentController = new EventAssignmentAdminController(
     eventAssignmentService,
@@ -953,6 +950,12 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     ),
     workScheduleRequestBatchService,
     workScheduleAvailabilityBatchService,
+    new ManagerWorkspaceEventAdminService(
+      employmentProfileRepository,
+      talentGroupManagerAssignmentRepository,
+      orgUnitManagerAssignmentRepository,
+      eventAssignmentReadRepository,
+    ),
   );
 
   r.use(

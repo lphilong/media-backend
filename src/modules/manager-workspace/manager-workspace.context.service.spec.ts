@@ -10,8 +10,92 @@ import { WorkScheduleReferencedEmploymentProfile } from "@modules/work-schedule/
 import { WorkShiftListReadInput } from "@modules/work-schedule/read/work-schedule.read-repository";
 import { ManagerWorkspaceAdminService } from "./admin/admin.manager-workspace.service";
 import { ManagerWorkspaceWorkScheduleAdminService } from "./admin/admin.manager-workspace-work-schedule.service";
+import { ManagerWorkspaceEventAdminService } from "./admin/admin.manager-workspace-event.service";
+import { EventAssignmentPermissionScopeError } from "@modules/event-assignment/domain/event-assignment.errors";
 
 const now = Date.UTC(2026, 5, 4, 0, 0, 0, 0);
+
+test("manager Events use active OrgUnit and TalentGroup assignments only", async () => {
+  let capturedScope: unknown;
+  const service = new ManagerWorkspaceEventAdminService(
+    {
+      async findNonArchivedByLinkedUserId() {
+        return activeProfile();
+      },
+    },
+    {
+      async listActiveAssignmentsByManagerEmploymentProfile() {
+        return [talentGroupAssignment("tg-managed")];
+      },
+    },
+    {
+      async listActiveByManagerEmploymentProfileId() {
+        return [orgUnitAssignment("ou-managed", "UNIT_MANAGER")];
+      },
+    },
+    {
+      async listManagerEventSummaries(scope) {
+        capturedScope = scope;
+        return [];
+      },
+      async getManagerEventSummary() {
+        return null;
+      },
+    },
+    () => now,
+  );
+
+  const result = await service.listEvents(
+    managerActor({ permissions: ["event.read"], roles: ["TEAM_MANAGER"] }),
+  );
+
+  assert.deepEqual(result.items, []);
+  assert.deepEqual(capturedScope, {
+    orgUnitIds: ["ou-managed"],
+    talentGroupIds: ["tg-managed"],
+  });
+});
+
+test("manager Events fail closed without assignment scope and expose no mutation surface", async () => {
+  const service = new ManagerWorkspaceEventAdminService(
+    {
+      async findNonArchivedByLinkedUserId() {
+        return activeProfile();
+      },
+    },
+    {
+      async listActiveAssignmentsByManagerEmploymentProfile() {
+        return [];
+      },
+    },
+    {
+      async listActiveByManagerEmploymentProfileId() {
+        return [];
+      },
+    },
+    {
+      async listManagerEventSummaries() {
+        return [];
+      },
+      async getManagerEventSummary() {
+        return null;
+      },
+    },
+    () => now,
+  );
+  const actor = managerActor({
+    permissions: ["event.read"],
+    roles: ["TEAM_MANAGER"],
+  });
+
+  assert.deepEqual((await service.listEvents(actor)).items, []);
+  await assert.rejects(
+    service.getEvent(actor, "event-out-of-scope"),
+    EventAssignmentPermissionScopeError,
+  );
+  assert.equal("createEvent" in service, false);
+  assert.equal("cancelEvent" in service, false);
+});
 
 test("manager workspace context fail-closes without linked EmploymentProfile", async () => {
   const service = createService({ profile: null });

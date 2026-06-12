@@ -9,6 +9,8 @@ import {
   EventSortDirection,
   EventSortField,
   EventStatus,
+  ManagerEventSummaryView,
+  StudioBookingView,
 } from "@modules/event-assignment/domain/event-assignment.types";
 
 export interface EventListReadInput {
@@ -123,4 +125,19 @@ export interface EventAssignmentReadRepository {
     eventId: string,
     managedTalentGroupIds: readonly string[],
   ): Promise<boolean>;
+
+  listManagerEventSummaries(input: {
+    readonly orgUnitIds: readonly string[];
+    readonly talentGroupIds: readonly string[];
+  }): Promise<readonly ManagerEventSummaryView[]>;
+
+  getManagerEventSummary(input: {
+    readonly eventId: string;
+    readonly orgUnitIds: readonly string[];
+    readonly talentGroupIds: readonly string[];
+  }): Promise<ManagerEventSummaryView | null>;
+
+  listStudioBookings(
+    eventId: string,
+  ): Promise<readonly StudioBookingView[]>;
 }

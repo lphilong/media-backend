@@ -89,6 +89,15 @@ function createServiceCapture(): {
     async eventHasManagedGroupAssignment() {
       return false;
     },
+    async listManagerEventSummaries() {
+      return [];
+    },
+    async getManagerEventSummary() {
+      return null;
+    },
+    async listStudioBookings() {
+      return [];
+    },
   };
 
   return {
@@ -103,7 +112,7 @@ test("Event Assignment target filters parse statusGroup and timestamp ranges wit
   const capture = createServiceCapture();
 
   await capture.service.listEvents(createActor(), {
-    status: "SCHEDULED",
+    status: "PLANNED",
     statusGroup: "ACTIVE",
     windowStartAt: "1000",
     windowEndAt: "2000",
@@ -115,7 +124,7 @@ test("Event Assignment target filters parse statusGroup and timestamp ranges wit
   });
 
   assert.deepEqual(capture.capturedInput, {
-    status: "SCHEDULED",
+    status: "PLANNED",
     statuses: undefined,
     assignmentKind: undefined,
     assignmentEmploymentProfileId: undefined,
@@ -134,11 +143,10 @@ test("Event Assignment target filters parse statusGroup and timestamp ranges wit
     search: undefined,
     sortField: undefined,
     sortDirection: undefined,
-    managedTalentGroupIds: undefined,
   });
 });
 
-test("Event Assignment statusGroup ACTIVE expands exactly to scheduled and in-progress", async () => {
+test("Event Assignment statusGroup ACTIVE expands exactly to planned and confirmed", async () => {
   const capture = createServiceCapture();
 
   await capture.service.listEvents(createActor(), {
@@ -147,7 +155,7 @@ test("Event Assignment statusGroup ACTIVE expands exactly to scheduled and in-pr
 
   assert.deepEqual(
     (capture.capturedInput as { statuses?: readonly string[] }).statuses,
-    ["SCHEDULED", "IN_PROGRESS"],
+    ["PLANNED", "CONFIRMED"],
   );
 });
 
@@ -168,192 +176,16 @@ test("Event Assignment statusGroup rejects unsupported and conflicting status co
   );
 });
 
-test("TEAM_MANAGER managedGroup scope narrows Event list to active managed talent groups", async () => {
-  const capture: { capturedInput: unknown } = {
-    capturedInput: undefined,
-  };
-  const repository: EventAssignmentReadRepository = {
-    async listEvents(input) {
-      capture.capturedInput = input;
-      return { items: [] };
-    },
-    async listEventsByAssignment() {
-      return { items: [] };
-    },
-    async listEventsByResource() {
-      return { items: [] };
-    },
-    async listEventsByPlatform() {
-      return { items: [] };
-    },
-    async listActiveAssignmentsForEvent() {
-      return [];
-    },
-    async getEventDetail() {
-      return null;
-    },
-    async eventHasManagedGroupAssignment() {
-      return false;
-    },
-  };
-  const service = new EventAssignmentAdminQueryService(repository, {
-    subjectReadonlyAccess: {
-      async findActiveEmploymentProfileByLinkedUserId(linkedUserId) {
-        assert.equal(linkedUserId, "manager-user-1");
-        return {
-          employmentProfileId: "ep-manager",
-        };
-      },
-    },
-    managerAssignmentRepository: {
-      async listActiveAssignmentsByManagerEmploymentProfile(
-        managerEmploymentProfileId,
-      ) {
-        assert.equal(managerEmploymentProfileId, "ep-manager");
-        return [
-          managedAssignment("group-managed-1"),
-          managedAssignment("group-managed-1"),
-          managedAssignment("group-managed-2"),
-        ];
-      },
-    },
-  });
-
-  await service.listEvents(createManagedGroupActor(), {});
-
-  assert.deepEqual(
-    (
-      capture.capturedInput as {
-        managedTalentGroupIds?: readonly string[];
-      }
-    ).managedTalentGroupIds,
-    ["group-managed-1", "group-managed-2"],
-  );
-});
-
-test("TEAM_MANAGER managedGroup scope with no linked employment profile returns empty Event list", async () => {
-  const service = new EventAssignmentAdminQueryService(
-    {
-      async listEvents(input) {
-        return {
-          items:
-            input.managedTalentGroupIds?.length === 0
-              ? []
-              : [
-                  {
-                    id: "leak",
-                    eventCode: "EVT-LEAK",
-                    title: "Leak",
-                    status: "SCHEDULED",
-                    eventStartAt: 1,
-                    eventEndAt: 2,
-                    createdAt: 1,
-                  },
-                ],
-        };
-      },
-      async listEventsByAssignment() {
-        return { items: [] };
-      },
-      async listEventsByResource() {
-        return { items: [] };
-      },
-      async listEventsByPlatform() {
-        return { items: [] };
-      },
-      async listActiveAssignmentsForEvent() {
-        return [];
-      },
-      async getEventDetail() {
-        return null;
-      },
-      async eventHasManagedGroupAssignment() {
-        return false;
-      },
-    },
-    {
-      subjectReadonlyAccess: {
-        async findActiveEmploymentProfileByLinkedUserId() {
-          return null;
-        },
-      },
-      managerAssignmentRepository: {
-        async listActiveAssignmentsByManagerEmploymentProfile() {
-          return [];
-        },
-      },
-    },
-  );
-
-  const result = await service.listEvents(createManagedGroupActor(), {});
-
-  assert.deepEqual(result.items, []);
-});
-
-test("TEAM_MANAGER managedGroup scope denies unmanaged Event detail and assignments", async () => {
-  const repository: EventAssignmentReadRepository = {
-    async listEvents() {
-      return { items: [] };
-    },
-    async listEventsByAssignment() {
-      return { items: [] };
-    },
-    async listEventsByResource() {
-      return { items: [] };
-    },
-    async listEventsByPlatform() {
-      return { items: [] };
-    },
-    async listActiveAssignmentsForEvent() {
-      return [];
-    },
-    async getEventDetail(eventId) {
-      return {
-        id: eventId,
-        eventCode: "EVT-UNMANAGED",
-        title: "Unmanaged",
-        studioResourceIds: [],
-        platformAccountIds: [],
-        status: "SCHEDULED",
-        eventStartAt: 1,
-        eventEndAt: 2,
-        description: null,
-        externalRef: null,
-        createdAt: 1,
-        updatedAt: 1,
-      };
-    },
-    async eventHasManagedGroupAssignment() {
-      return false;
-    },
-  };
-  const service = new EventAssignmentAdminQueryService(repository, {
-    subjectReadonlyAccess: {
-      async findActiveEmploymentProfileByLinkedUserId() {
-        return {
-          employmentProfileId: "ep-manager",
-        };
-      },
-    },
-    managerAssignmentRepository: {
-      async listActiveAssignmentsByManagerEmploymentProfile() {
-        return [managedAssignment("group-managed")];
-      },
-    },
-  });
-
+test("manager-only scope cannot use global Admin Event routes", async () => {
+  const service = createServiceCapture().service;
   await assert.rejects(
-    () =>
-      service.getEventDetail(createManagedGroupActor(), {
-        eventId: "event-unmanaged",
-      }),
+    service.listEvents(createManagedGroupActor(), {}),
     EventAssignmentPermissionScopeError,
   );
   await assert.rejects(
-    () =>
-      service.listEventAssignments(createManagedGroupActor(), {
-        eventId: "event-unmanaged",
-      }),
+    service.getEventDetail(createManagedGroupActor(), {
+      eventId: "event-1",
+    }),
     EventAssignmentPermissionScopeError,
   );
 });
@@ -392,7 +224,7 @@ test("Event Assignment target filters build additive Mongo predicates and preser
   } as never);
 
   await repository.listEvents({
-    statuses: ["SCHEDULED", "IN_PROGRESS"],
+    statuses: ["PLANNED", "CONFIRMED"],
     windowStartAt: 1000,
     windowEndAt: 2000,
     eventOverlapStartAt: 3000,
@@ -404,7 +236,7 @@ test("Event Assignment target filters build additive Mongo predicates and preser
 
   assert.deepEqual(capturedQuery, {
     $and: [
-      { status: { $in: ["SCHEDULED", "IN_PROGRESS"] } },
+      { status: { $in: ["PLANNED", "CONFIRMED"] } },
       { eventEndAt: { $gt: 1000 } },
       { eventStartAt: { $lt: 2000 } },
       { eventEndAt: { $gt: 3000 } },
@@ -436,7 +268,7 @@ test("Event Assignment read repository enriches assignment subject refs and even
     normalizedTitle: "launch event",
     studioResourceIds: ["studio-2", "missing-studio", "studio-1"],
     platformAccountIds: ["platform-2", "missing-platform", "platform-1"],
-    status: "SCHEDULED",
+    status: "PLANNED",
     eventStartAt: 100,
     eventEndAt: 200,
     description: null,

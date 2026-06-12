@@ -45,10 +45,8 @@ import {
   EventAssignmentRepository,
   EventOverlapAssignmentCheckInput,
   EventOverlapPlatformCheckInput,
-  EventOverlapResourceCheckInput,
   MarkAssignmentsRemovedInput,
   ReplaceEventPlatformAccountsInput,
-  ReplaceEventStudioResourcesInput,
   RescheduleEventInput,
   UpdateEventCoreInput,
 } from "@modules/event-assignment/domain/event-assignment.repository";
@@ -61,20 +59,28 @@ import {
   EventAssignmentRecord,
   EventMutationView,
   EventRecord,
+  EventStatus,
+  StudioBookingRecord,
+  StudioBookingStatus,
 } from "@modules/event-assignment/domain/event-assignment.types";
 import {
   ArchiveEventCommand,
   CancelEventCommand,
+  CancelStudioBookingCommand,
+  ConfirmEventCommand,
+  ConfirmStudioBookingCommand,
   CompleteEventCommand,
+  CreateStudioBookingCommand,
   CreateEventCommand,
   EventAssignmentInput,
   EventMutationResult,
   ReplaceEventAssignmentsCommand,
   RescheduleEventCommand,
-  StartEventCommand,
+  PlanEventCommand,
+  ReleaseStudioBookingCommand,
+  StudioBookingMutationResult,
   UpdateEventCoreCommand,
   UpdateEventPlatformAccountsCommand,
-  UpdateEventStudioResourcesCommand,
 } from "@modules/event-assignment/shared/event-assignment.contracts";
 
 type EventAssignmentMutationFailureClassification =
@@ -97,8 +103,9 @@ interface NormalizedCreateCommand {
   readonly eventCode: string | undefined;
   readonly title: string;
   readonly normalizedTitle: string;
+  readonly ownerEmploymentProfileId: string;
+  readonly status: Extract<EventStatus, "DRAFT" | "PLANNED">;
   readonly assignments: readonly NormalizedAssignmentReference[];
-  readonly studioResourceIds: readonly string[];
   readonly platformAccountIds: readonly string[];
   readonly eventStartAt: number;
   readonly eventEndAt: number;
@@ -110,6 +117,7 @@ interface NormalizedUpdateCoreCommand {
   readonly eventId: string;
   readonly title?: string;
   readonly normalizedTitle?: string;
+  readonly ownerEmploymentProfileId?: string;
   readonly description?: string | null;
   readonly externalRef?: string | null;
 }
@@ -118,16 +126,12 @@ interface NormalizedRescheduleCommand {
   readonly eventId: string;
   readonly newEventStartAt: number;
   readonly newEventEndAt: number;
+  readonly reason: string;
 }
 
 interface NormalizedReplaceAssignmentsCommand {
   readonly eventId: string;
   readonly replacementAssignments: readonly NormalizedAssignmentReference[];
-}
-
-interface NormalizedUpdateStudioResourcesCommand {
-  readonly eventId: string;
-  readonly newStudioResourceIds: readonly string[];
 }
 
 interface NormalizedUpdatePlatformAccountsCommand {
@@ -137,6 +141,18 @@ interface NormalizedUpdatePlatformAccountsCommand {
 
 interface NormalizedLifecycleCommand {
   readonly eventId: string;
+}
+
+interface NormalizedReasonedLifecycleCommand extends NormalizedLifecycleCommand {
+  readonly reason: string;
+}
+
+interface NormalizedCreateStudioBookingCommand {
+  readonly eventId: string;
+  readonly studioResourceId: string;
+  readonly bookingStartAt: number;
+  readonly bookingEndAt: number;
+  readonly status: Extract<StudioBookingStatus, "HELD" | "CONFIRMED">;
 }
 
 export class EventAssignmentAdminService {
@@ -199,8 +215,8 @@ export class EventAssignmentAdminService {
           input.assignments,
           session,
         );
-        await this.assertStudioResourcesEligible(
-          input.studioResourceIds,
+        await this.assertOwnerEligible(
+          input.ownerEmploymentProfileId,
           session,
         );
         await this.assertPlatformAccountsEligible(
@@ -216,13 +232,6 @@ export class EventAssignmentAdminService {
             session,
           },
         );
-
-        await this.assertNoResourceOverlapConflicts({
-          studioResourceIds: input.studioResourceIds,
-          eventStartAt: input.eventStartAt,
-          eventEndAt: input.eventEndAt,
-          session,
-        });
 
         await this.assertNoPlatformOverlapConflicts({
           platformAccountIds:
@@ -254,17 +263,30 @@ export class EventAssignmentAdminService {
             title: input.title,
             normalizedTitle:
               input.normalizedTitle,
-            studioResourceIds: [
-              ...input.studioResourceIds,
-            ],
+            ownerEmploymentProfileId: input.ownerEmploymentProfileId,
+            studioResourceIds: [],
             platformAccountIds: [
               ...input.platformAccountIds,
             ],
-            status: "SCHEDULED",
+            status: input.status,
             eventStartAt: input.eventStartAt,
             eventEndAt: input.eventEndAt,
             description: input.description,
             externalRef: input.externalRef,
+            createdByActorId: actor.id,
+            updatedByActorId: actor.id,
+            plannedAt: input.status === "PLANNED" ? now : null,
+            plannedByActorId: input.status === "PLANNED" ? actor.id : null,
+            confirmedAt: null,
+            confirmedByActorId: null,
+            completedAt: null,
+            completedByActorId: null,
+            cancelledAt: null,
+            cancelledByActorId: null,
+            cancellationReason: null,
+            lastRescheduledAt: null,
+            lastRescheduledByActorId: null,
+            lastRescheduleReason: null,
             createdAt: now,
             updatedAt: now,
           };
@@ -328,9 +350,8 @@ export class EventAssignmentAdminService {
               summarizeAssignmentReferences(
                 input.assignments,
               ),
-            studioResourceIds: [
-              ...createdEvent.studioResourceIds,
-            ],
+            ownerEmploymentProfileId:
+              createdEvent.ownerEmploymentProfileId,
             platformAccountIds: [
               ...createdEvent.platformAccountIds,
             ],
@@ -375,7 +396,7 @@ export class EventAssignmentAdminService {
           session,
         );
 
-        assertScheduledForStructuralMutation(
+        assertPlanningForStructuralMutation(
           current,
           operation,
         );
@@ -383,7 +404,15 @@ export class EventAssignmentAdminService {
         const patch = buildUpdateEventCoreInput({
           current,
           command: input,
+          actorId: actor.id,
         });
+
+        if (patch.update.ownerEmploymentProfileId !== undefined) {
+          await this.assertOwnerEligible(
+            patch.update.ownerEmploymentProfileId,
+            session,
+          );
+        }
 
         if (patch.changedFields.length === 0) {
           throw new EventAssignmentValidationError(
@@ -410,6 +439,14 @@ export class EventAssignmentAdminService {
           mutationType: operation,
           metadata: {
             changedFields: patch.changedFields,
+            ...(patch.changedFields.includes("ownerEmploymentProfileId")
+              ? {
+                  previousOwnerEmploymentProfileId:
+                    current.ownerEmploymentProfileId,
+                  newOwnerEmploymentProfileId:
+                    updated.ownerEmploymentProfileId,
+                }
+              : {}),
             effectiveScope: scope,
           },
           session,
@@ -449,7 +486,7 @@ export class EventAssignmentAdminService {
           session,
         );
 
-        assertScheduledForStructuralMutation(
+        assertReschedulableEvent(
           current,
           operation,
         );
@@ -463,15 +500,6 @@ export class EventAssignmentAdminService {
 
         await this.assertNoAssignmentOverlapConflicts({
           assignments: activeAssignments,
-          eventStartAt: input.newEventStartAt,
-          eventEndAt: input.newEventEndAt,
-          excludeEventId: current.id,
-          session,
-        });
-
-        await this.assertNoResourceOverlapConflicts({
-          studioResourceIds:
-            current.studioResourceIds,
           eventStartAt: input.newEventStartAt,
           eventEndAt: input.newEventEndAt,
           excludeEventId: current.id,
@@ -501,6 +529,8 @@ export class EventAssignmentAdminService {
           eventId: current.id,
           eventStartAt: input.newEventStartAt,
           eventEndAt: input.newEventEndAt,
+          reason: input.reason,
+          rescheduledByActorId: actor.id,
           updatedAt: Date.now(),
         };
         const updated =
@@ -527,6 +557,7 @@ export class EventAssignmentAdminService {
               current.eventEndAt,
             newEventStartAt: updated.eventStartAt,
             newEventEndAt: updated.eventEndAt,
+            reason: input.reason,
             effectiveScope: scope,
           },
           session,
@@ -570,7 +601,7 @@ export class EventAssignmentAdminService {
           session,
         );
 
-        assertScheduledForStructuralMutation(
+        assertPlanningForStructuralMutation(
           current,
           operation,
         );
@@ -587,15 +618,6 @@ export class EventAssignmentAdminService {
         await this.assertNoAssignmentOverlapConflicts({
           assignments:
             input.replacementAssignments,
-          eventStartAt: current.eventStartAt,
-          eventEndAt: current.eventEndAt,
-          excludeEventId: current.id,
-          session,
-        });
-
-        await this.assertNoResourceOverlapConflicts({
-          studioResourceIds:
-            current.studioResourceIds,
           eventStartAt: current.eventStartAt,
           eventEndAt: current.eventEndAt,
           excludeEventId: current.id,
@@ -744,18 +766,13 @@ export class EventAssignmentAdminService {
     );
   }
 
-  async updateEventStudioResources(
+  async createStudioBooking(
     actor: Actor,
-    command: UpdateEventStudioResourcesCommand,
-  ): Promise<EventMutationResult> {
-    const operation =
-      "event-assignment.update-resources";
-    const permission = this.assertPermission(
-      actor,
-      Permission.EVENT_UPDATE,
-    );
-    const input =
-      normalizeUpdateStudioResourcesCommand(command);
+    command: CreateStudioBookingCommand,
+  ): Promise<StudioBookingMutationResult> {
+    const operation = "event-assignment.booking.create";
+    const permission = this.assertPermission(actor, Permission.EVENT_UPDATE);
+    const input = normalizeCreateStudioBookingCommand(command);
 
     return this.executeMutation(
       actor,
@@ -763,87 +780,133 @@ export class EventAssignmentAdminService {
       operation,
       {
         eventId: input.eventId,
-        resourceCount:
-          input.newStudioResourceIds.length,
+        studioResourceId: input.studioResourceId,
       },
-      async (session, controls) => {
+      async (session) => {
         const scope = resolveRequiredGlobalScope(actor);
-        const current = await this.requireEvent(
-          input.eventId,
-          session,
-        );
-
-        assertScheduledForStructuralMutation(
-          current,
-          operation,
-        );
-
+        const event = await this.requireEvent(input.eventId, session);
+        assertBookingCreationStatus(event, input.status);
         await this.assertStudioResourcesEligible(
-          input.newStudioResourceIds,
+          [input.studioResourceId],
           session,
         );
-        await this.assertNoResourceOverlapConflicts({
-          studioResourceIds:
-            input.newStudioResourceIds,
-          eventStartAt: current.eventStartAt,
-          eventEndAt: current.eventEndAt,
-          excludeEventId: current.id,
+        await this.repository.lockStudioResourceBooking(
+          input.studioResourceId,
+          Date.now(),
           session,
-        });
-
-        if (
-          areCanonicalIdSetsEqual(
-            current.studioResourceIds,
-            input.newStudioResourceIds,
-          )
-        ) {
-          controls.markExplicitNoOpSuccess();
-          return toEventMutationView(current);
-        }
-
-        const updateInput: ReplaceEventStudioResourcesInput =
-          {
-            eventId: current.id,
-            studioResourceIds:
-              input.newStudioResourceIds,
-            updatedAt: Date.now(),
-          };
-
-        const updated =
-          await this.repository.replaceEventStudioResources(
-            updateInput,
+        );
+        const hasConfirmedConflict =
+          await this.repository.hasOverlappingStudioBooking(
+            {
+              studioResourceId: input.studioResourceId,
+              bookingStartAt: input.bookingStartAt,
+              bookingEndAt: input.bookingEndAt,
+              statuses: ["CONFIRMED"],
+            },
             session,
           );
-
-        if (!updated) {
-          throw new EventAssignmentConflictError(
-            `Failed to update event studio resources: ${current.id}`,
+        if (input.status === "CONFIRMED" && hasConfirmedConflict) {
+          throw new EventAssignmentOverlapConflictError(
+            "Confirmed studio booking overlaps another confirmed booking",
           );
         }
 
+        const now = Date.now();
+        const booking: StudioBookingRecord = {
+          id: crypto.randomUUID(),
+          eventId: event.id,
+          studioResourceId: input.studioResourceId,
+          bookingStartAt: input.bookingStartAt,
+          bookingEndAt: input.bookingEndAt,
+          status: input.status,
+          createdByActorId: actor.id,
+          updatedByActorId: actor.id,
+          cancelledAt: null,
+          cancelledByActorId: null,
+          cancellationReason: null,
+          releasedAt: null,
+          releasedByActorId: null,
+          releaseReason: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        const created = await this.repository.insertStudioBooking(
+          booking,
+          session,
+        );
+        await this.repository.syncEventStudioResourceIdsFromBookings(
+          event.id,
+          actor.id,
+          now,
+          session,
+        );
         await this.recordAudit({
           actor,
           permission,
-          eventId: updated.id,
+          eventId: event.id,
           mutationType: operation,
           metadata: {
-            previousStudioResourceIds: [
-              ...current.studioResourceIds,
-            ],
-            newStudioResourceIds: [
-              ...updated.studioResourceIds,
-            ],
+            bookingId: created.id,
+            studioResourceId: created.studioResourceId,
+            bookingStartAt: created.bookingStartAt,
+            bookingEndAt: created.bookingEndAt,
+            status: created.status,
+            hasConfirmedConflict,
             effectiveScope: scope,
           },
           session,
         });
-
-        return toEventMutationView(updated);
+        return toStudioBookingMutationView(created, hasConfirmedConflict);
       },
       (result) => ({
-        eventId: result.id,
+        eventId: result.eventId,
+        bookingId: result.id,
         status: result.status,
       }),
+    );
+  }
+
+  async confirmStudioBooking(
+    actor: Actor,
+    command: ConfirmStudioBookingCommand,
+  ): Promise<StudioBookingMutationResult> {
+    return this.transitionStudioBooking(
+      actor,
+      "event-assignment.booking.confirm",
+      command.eventId,
+      command.bookingId,
+      ["HELD"],
+      "CONFIRMED",
+    );
+  }
+
+  async releaseStudioBooking(
+    actor: Actor,
+    command: ReleaseStudioBookingCommand,
+  ): Promise<StudioBookingMutationResult> {
+    return this.transitionStudioBooking(
+      actor,
+      "event-assignment.booking.release",
+      command.eventId,
+      command.bookingId,
+      ["HELD", "CONFIRMED"],
+      "RELEASED",
+      normalizeRequiredText(command.reason, "reason"),
+    );
+  }
+
+  async cancelStudioBooking(
+    actor: Actor,
+    command: CancelStudioBookingCommand,
+  ): Promise<StudioBookingMutationResult> {
+    return this.transitionStudioBooking(
+      actor,
+      "event-assignment.booking.cancel",
+      command.eventId,
+      command.bookingId,
+      ["HELD", "CONFIRMED"],
+      "CANCELLED",
+      normalizeRequiredText(command.reason, "reason"),
     );
   }
 
@@ -876,7 +939,7 @@ export class EventAssignmentAdminService {
           session,
         );
 
-        assertScheduledForStructuralMutation(
+        assertPlanningForStructuralMutation(
           current,
           operation,
         );
@@ -950,11 +1013,11 @@ export class EventAssignmentAdminService {
     );
   }
 
-  async startEvent(
+  async planEvent(
     actor: Actor,
-    command: StartEventCommand,
+    command: PlanEventCommand,
   ): Promise<EventMutationResult> {
-    const operation = "event-assignment.start";
+    const operation = "event-assignment.plan";
     const permission = this.assertPermission(
       actor,
       Permission.EVENT_MANAGE_LIFECYCLE,
@@ -975,9 +1038,9 @@ export class EventAssignmentAdminService {
           session,
         );
 
-        if (current.status !== "SCHEDULED") {
+        if (current.status !== "DRAFT") {
           throw new EventAssignmentStateError(
-            `startEvent requires status SCHEDULED, received ${current.status}`,
+            `planEvent requires status DRAFT, received ${current.status}`,
           );
         }
 
@@ -990,8 +1053,9 @@ export class EventAssignmentAdminService {
           await this.repository.transitionEventStatus(
             {
               eventId: current.id,
-              fromStatuses: ["SCHEDULED"],
-              toStatus: "IN_PROGRESS",
+              fromStatuses: ["DRAFT"],
+              toStatus: "PLANNED",
+              actorId: actor.id,
               updatedAt: Date.now(),
             },
             session,
@@ -1025,6 +1089,98 @@ export class EventAssignmentAdminService {
     );
   }
 
+  async confirmEvent(
+    actor: Actor,
+    command: ConfirmEventCommand,
+  ): Promise<EventMutationResult> {
+    const operation = "event-assignment.confirm";
+    const permission = this.assertPermission(
+      actor,
+      Permission.EVENT_MANAGE_LIFECYCLE,
+    );
+    const input = normalizeLifecycleCommand(command);
+
+    return this.executeMutation(
+      actor,
+      permission,
+      operation,
+      { eventId: input.eventId },
+      async (session) => {
+        const scope = resolveRequiredGlobalScope(actor);
+        const current = await this.requireEvent(input.eventId, session);
+        if (current.status !== "PLANNED") {
+          throw new EventAssignmentStateError(
+            `confirmEvent requires status PLANNED, received ${current.status}`,
+          );
+        }
+        await this.assertEventHasActiveAssignments(current.id, session);
+        await this.assertOwnerEligible(
+          current.ownerEmploymentProfileId,
+          session,
+        );
+        const heldBookings =
+          await this.repository.listStudioBookingsByEventId(
+            current.id,
+            ["HELD"],
+            session,
+          );
+        assertNoHeldBookingConflicts(heldBookings);
+        for (const studioResourceId of new Set(
+          heldBookings.map((booking) => booking.studioResourceId),
+        )) {
+          await this.repository.lockStudioResourceBooking(
+            studioResourceId,
+            Date.now(),
+            session,
+          );
+        }
+        for (const booking of heldBookings) {
+          await this.assertNoConfirmedBookingConflict(booking, session);
+        }
+        const now = Date.now();
+        await this.repository.transitionStudioBookingsByEvent(
+          current.id,
+          ["HELD"],
+          "CONFIRMED",
+          actor.id,
+          undefined,
+          now,
+          session,
+        );
+        const updated = await this.repository.transitionEventStatus(
+          {
+            eventId: current.id,
+            fromStatuses: ["PLANNED"],
+            toStatus: "CONFIRMED",
+            actorId: actor.id,
+            updatedAt: now,
+          },
+          session,
+        );
+        if (!updated) {
+          throw new EventAssignmentConflictError(
+            `Event state transition conflict for ${current.id}`,
+          );
+        }
+        await this.recordAudit({
+          actor,
+          permission,
+          eventId: updated.id,
+          mutationType: operation,
+          metadata: {
+            previousStatus: current.status,
+            nextStatus: updated.status,
+            confirmedStudioBookingCount: heldBookings.length,
+            effectiveScope: scope,
+          },
+          session,
+        });
+        return toEventMutationView(updated);
+      },
+      (result) => ({ eventId: result.id, status: result.status }),
+    );
+  }
+
   async completeEvent(
     actor: Actor,
     command: CompleteEventCommand,
@@ -1050,9 +1206,9 @@ export class EventAssignmentAdminService {
           session,
         );
 
-        if (current.status !== "IN_PROGRESS") {
+        if (current.status !== "CONFIRMED") {
           throw new EventAssignmentStateError(
-            `completeEvent requires status IN_PROGRESS, received ${current.status}`,
+            `completeEvent requires status CONFIRMED, received ${current.status}`,
           );
         }
 
@@ -1060,8 +1216,9 @@ export class EventAssignmentAdminService {
           await this.repository.transitionEventStatus(
             {
               eventId: current.id,
-              fromStatuses: ["IN_PROGRESS"],
+              fromStatuses: ["CONFIRMED"],
               toStatus: "COMPLETED",
+              actorId: actor.id,
               updatedAt: Date.now(),
             },
             session,
@@ -1104,7 +1261,7 @@ export class EventAssignmentAdminService {
       actor,
       Permission.EVENT_MANAGE_LIFECYCLE,
     );
-    const input = normalizeLifecycleCommand(command);
+    const input = normalizeReasonedLifecycleCommand(command);
 
     return this.executeMutation(
       actor,
@@ -1120,22 +1277,31 @@ export class EventAssignmentAdminService {
           session,
         );
 
-        if (
-          current.status !== "SCHEDULED" &&
-          current.status !== "IN_PROGRESS"
-        ) {
+        if (!["DRAFT", "PLANNED", "CONFIRMED"].includes(current.status)) {
           throw new EventAssignmentStateError(
-            `cancelEvent requires status SCHEDULED or IN_PROGRESS, received ${current.status}`,
+            `cancelEvent requires status DRAFT, PLANNED, or CONFIRMED, received ${current.status}`,
           );
         }
 
+        const now = Date.now();
+        await this.repository.transitionStudioBookingsByEvent(
+          current.id,
+          ["HELD", "CONFIRMED"],
+          "CANCELLED",
+          actor.id,
+          input.reason,
+          now,
+          session,
+        );
         const updated =
           await this.repository.transitionEventStatus(
             {
               eventId: current.id,
               fromStatuses: [current.status],
               toStatus: "CANCELLED",
-              updatedAt: Date.now(),
+              actorId: actor.id,
+              reason: input.reason,
+              updatedAt: now,
             },
             session,
           );
@@ -1154,6 +1320,7 @@ export class EventAssignmentAdminService {
           metadata: {
             previousStatus: current.status,
             nextStatus: updated.status,
+            reason: input.reason,
             effectiveScope: scope,
           },
           session,
@@ -1199,25 +1366,9 @@ export class EventAssignmentAdminService {
           );
         }
 
-        if (current.status === "IN_PROGRESS") {
-          throw new EventAssignmentStateError(
-            `archiveEvent cannot transition from IN_PROGRESS for ${current.id}`,
-          );
-        }
-
-        if (
-          current.status === "SCHEDULED" &&
-          current.eventEndAt > Date.now()
-        ) {
-          throw new EventAssignmentStateError(
-            `archiveEvent requires a historical SCHEDULED event where eventEndAt is not later than current evaluation time: ${current.id}`,
-          );
-        }
-
         if (
           current.status !== "COMPLETED" &&
-          current.status !== "CANCELLED" &&
-          current.status !== "SCHEDULED"
+          current.status !== "CANCELLED"
         ) {
           throw new EventAssignmentStateError(
             `archiveEvent is not allowed from status ${current.status}`,
@@ -1230,6 +1381,7 @@ export class EventAssignmentAdminService {
               eventId: current.id,
               fromStatuses: [current.status],
               toStatus: "ARCHIVED",
+              actorId: actor.id,
               updatedAt: Date.now(),
             },
             session,
@@ -1292,6 +1444,148 @@ export class EventAssignmentAdminService {
     }
 
     return event;
+  }
+
+  private async requireStudioBooking(
+    eventId: string,
+    bookingId: string,
+    session: ClientSession,
+  ): Promise<StudioBookingRecord> {
+    const booking = await this.repository.findStudioBookingById(
+      bookingId,
+      session,
+    );
+    if (!booking || booking.eventId !== eventId) {
+      throw new EventAssignmentNotFoundError(bookingId);
+    }
+    return booking;
+  }
+
+  private async assertOwnerEligible(
+    employmentProfileId: string,
+    session: ClientSession,
+  ): Promise<void> {
+    const profile = await this.employmentProfileReadonlyAccess.findById(
+      employmentProfileId,
+      session,
+    );
+    if (!profile || profile.employmentStatus !== "ACTIVE") {
+      throw new EventAssignmentInvalidAssignmentReferenceError(
+        `Event owner EmploymentProfile must exist and be ACTIVE: ${employmentProfileId}`,
+      );
+    }
+  }
+
+  private async assertNoConfirmedBookingConflict(
+    booking: StudioBookingRecord,
+    session: ClientSession,
+  ): Promise<void> {
+    await this.repository.lockStudioResourceBooking(
+      booking.studioResourceId,
+      Date.now(),
+      session,
+    );
+    const conflict = await this.repository.hasOverlappingStudioBooking(
+      {
+        studioResourceId: booking.studioResourceId,
+        bookingStartAt: booking.bookingStartAt,
+        bookingEndAt: booking.bookingEndAt,
+        statuses: ["CONFIRMED"],
+        excludeBookingId: booking.id,
+      },
+      session,
+    );
+    if (conflict) {
+      throw new EventAssignmentOverlapConflictError(
+        "Confirmed studio booking overlaps another confirmed booking",
+      );
+    }
+  }
+
+  private async transitionStudioBooking(
+    actor: Actor,
+    operation: AuthoritativeAdminMutationIdentity,
+    eventIdValue: string,
+    bookingIdValue: string,
+    fromStatuses: readonly StudioBookingStatus[],
+    toStatus: StudioBookingStatus,
+    reason?: string,
+  ): Promise<StudioBookingMutationResult> {
+    const permission = this.assertPermission(actor, Permission.EVENT_UPDATE);
+    const eventId = normalizeRequiredText(eventIdValue, "eventId");
+    const bookingId = normalizeRequiredText(bookingIdValue, "bookingId");
+
+    return this.executeMutation(
+      actor,
+      permission,
+      operation,
+      { eventId, bookingId },
+      async (session) => {
+        const scope = resolveRequiredGlobalScope(actor);
+        const event = await this.requireEvent(eventId, session);
+        const current = await this.requireStudioBooking(
+          event.id,
+          bookingId,
+          session,
+        );
+        if (toStatus === "CONFIRMED") {
+          if (event.status !== "CONFIRMED") {
+            throw new EventAssignmentStateError(
+              "Studio booking can be confirmed only for a CONFIRMED event",
+            );
+          }
+          await this.assertStudioResourcesEligible(
+            [current.studioResourceId],
+            session,
+          );
+          await this.assertNoConfirmedBookingConflict(current, session);
+        }
+        const now = Date.now();
+        const updated = await this.repository.transitionStudioBookingStatus(
+          {
+            bookingId: current.id,
+            eventId: event.id,
+            fromStatuses,
+            toStatus,
+            actorId: actor.id,
+            reason,
+            updatedAt: now,
+          },
+          session,
+        );
+        if (!updated) {
+          throw new EventAssignmentConflictError(
+            `Studio booking state transition conflict for ${current.id}`,
+          );
+        }
+        await this.repository.syncEventStudioResourceIdsFromBookings(
+          event.id,
+          actor.id,
+          now,
+          session,
+        );
+        await this.recordAudit({
+          actor,
+          permission,
+          eventId: event.id,
+          mutationType: operation,
+          metadata: {
+            bookingId: updated.id,
+            previousStatus: current.status,
+            nextStatus: updated.status,
+            reason,
+            effectiveScope: scope,
+          },
+          session,
+        });
+        return toStudioBookingMutationView(updated, false);
+      },
+      (result) => ({
+        eventId: result.eventId,
+        bookingId: result.id,
+        status: result.status,
+      }),
+    );
   }
 
   private async allocateGeneratedCode(
@@ -1521,35 +1815,7 @@ export class EventAssignmentAdminService {
 
     if (hasOverlap) {
       throw new EventAssignmentOverlapConflictError(
-        "Assignment overlap conflict detected with another SCHEDULED or IN_PROGRESS event",
-      );
-    }
-  }
-
-  private async assertNoResourceOverlapConflicts(params: {
-    readonly studioResourceIds: readonly string[];
-    readonly eventStartAt: number;
-    readonly eventEndAt: number;
-    readonly excludeEventId?: string;
-    readonly session: ClientSession;
-  }): Promise<void> {
-    const overlapInput:
-      EventOverlapResourceCheckInput = {
-      studioResourceIds: params.studioResourceIds,
-      eventStartAt: params.eventStartAt,
-      eventEndAt: params.eventEndAt,
-      excludeEventId: params.excludeEventId,
-    };
-
-    const hasOverlap =
-      await this.repository.hasLiveOverlappingResourceEvent(
-        overlapInput,
-        params.session,
-      );
-
-    if (hasOverlap) {
-      throw new EventAssignmentOverlapConflictError(
-        "Studio resource overlap conflict detected with another SCHEDULED or IN_PROGRESS event",
+        "Assignment overlap conflict detected with another PLANNED or CONFIRMED event",
       );
     }
   }
@@ -1577,7 +1843,7 @@ export class EventAssignmentAdminService {
 
     if (hasOverlap) {
       throw new EventAssignmentOverlapConflictError(
-        "Platform account overlap conflict detected with another SCHEDULED or IN_PROGRESS event",
+        "Platform account overlap conflict detected with another PLANNED or CONFIRMED event",
       );
     }
   }
@@ -1723,15 +1989,15 @@ function normalizeCreateCommand(
     ),
     title,
     normalizedTitle: canonicalizeTitle(title),
+    ownerEmploymentProfileId: normalizeRequiredText(
+      command.ownerEmploymentProfileId,
+      "ownerEmploymentProfileId",
+    ),
+    status: normalizeCreateEventStatus(command.status),
     assignments: normalizeAssignments(
       command.assignments,
       "assignments",
       false,
-    ),
-    studioResourceIds: normalizeCanonicalIdSet(
-      command.studioResourceIds,
-      "studioResourceIds",
-      true,
     ),
     platformAccountIds: normalizeCanonicalIdSet(
       command.platformAccountIds,
@@ -1791,6 +2057,13 @@ function normalizeUpdateCoreCommand(
       title === undefined
         ? undefined
         : canonicalizeTitle(title),
+    ownerEmploymentProfileId:
+      command.ownerEmploymentProfileId === undefined
+        ? undefined
+        : normalizeRequiredText(
+            command.ownerEmploymentProfileId,
+            "ownerEmploymentProfileId",
+          ),
     description:
       normalizeOptionalNullableText(
         command.description,
@@ -1828,6 +2101,10 @@ function normalizeRescheduleCommand(
     ),
     newEventStartAt,
     newEventEndAt,
+    reason: normalizeRequiredText(
+      command.reason,
+      "reason",
+    ),
   };
 }
 
@@ -1843,23 +2120,6 @@ function normalizeReplaceAssignmentsCommand(
       normalizeAssignments(
         command.replacementAssignments,
         "replacementAssignments",
-        false,
-      ),
-  };
-}
-
-function normalizeUpdateStudioResourcesCommand(
-  command: UpdateEventStudioResourcesCommand,
-): NormalizedUpdateStudioResourcesCommand {
-  return {
-    eventId: normalizeRequiredText(
-      command.eventId,
-      "eventId",
-    ),
-    newStudioResourceIds:
-      normalizeCanonicalIdSet(
-        command.newStudioResourceIds,
-        "newStudioResourceIds",
         false,
       ),
   };
@@ -1884,9 +2144,9 @@ function normalizeUpdatePlatformAccountsCommand(
 
 function normalizeLifecycleCommand(
   command:
-    | StartEventCommand
+    | PlanEventCommand
+    | ConfirmEventCommand
     | CompleteEventCommand
-    | CancelEventCommand
     | ArchiveEventCommand,
 ): NormalizedLifecycleCommand {
   return {
@@ -1895,6 +2155,58 @@ function normalizeLifecycleCommand(
       "eventId",
     ),
   };
+}
+
+function normalizeReasonedLifecycleCommand(
+  command: CancelEventCommand,
+): NormalizedReasonedLifecycleCommand {
+  return {
+    eventId: normalizeRequiredText(command.eventId, "eventId"),
+    reason: normalizeRequiredText(command.reason, "reason"),
+  };
+}
+
+function normalizeCreateStudioBookingCommand(
+  command: CreateStudioBookingCommand,
+): NormalizedCreateStudioBookingCommand {
+  const bookingStartAt = normalizeTimestamp(
+    command.bookingStartAt,
+    "bookingStartAt",
+  );
+  const bookingEndAt = normalizeTimestamp(
+    command.bookingEndAt,
+    "bookingEndAt",
+  );
+  assertValidEventWindow(bookingStartAt, bookingEndAt);
+  if (command.status !== "HELD" && command.status !== "CONFIRMED") {
+    throw new EventAssignmentValidationError(
+      "status must be HELD or CONFIRMED",
+    );
+  }
+  return {
+    eventId: normalizeRequiredText(command.eventId, "eventId"),
+    studioResourceId: normalizeRequiredText(
+      command.studioResourceId,
+      "studioResourceId",
+    ),
+    bookingStartAt,
+    bookingEndAt,
+    status: command.status,
+  };
+}
+
+function normalizeCreateEventStatus(
+  value: CreateEventCommand["status"],
+): Extract<EventStatus, "DRAFT" | "PLANNED"> {
+  if (value === undefined) {
+    return "DRAFT";
+  }
+  if (value === "DRAFT" || value === "PLANNED") {
+    return value;
+  }
+  throw new EventAssignmentValidationError(
+    "status must be DRAFT or PLANNED",
+  );
 }
 
 function normalizeAssignments(
@@ -2302,6 +2614,7 @@ function assertHasActiveAssignments(
 function buildUpdateEventCoreInput(params: {
   readonly current: EventRecord;
   readonly command: NormalizedUpdateCoreCommand;
+  readonly actorId: string;
 }): {
   readonly update: UpdateEventCoreInput;
   readonly changedFields: readonly string[];
@@ -2313,6 +2626,7 @@ function buildUpdateEventCoreInput(params: {
   const changedFields: string[] = [];
   const update: MutableUpdateEventCoreInput = {
     eventId: params.current.id,
+    updatedByActorId: params.actorId,
     updatedAt: Date.now(),
   };
 
@@ -2324,6 +2638,16 @@ function buildUpdateEventCoreInput(params: {
     update.normalizedTitle =
       params.command.normalizedTitle;
     changedFields.push("title");
+  }
+
+  if (
+    params.command.ownerEmploymentProfileId !== undefined &&
+    params.command.ownerEmploymentProfileId !==
+      params.current.ownerEmploymentProfileId
+  ) {
+    update.ownerEmploymentProfileId =
+      params.command.ownerEmploymentProfileId;
+    changedFields.push("ownerEmploymentProfileId");
   }
 
   if (
@@ -2352,17 +2676,74 @@ function buildUpdateEventCoreInput(params: {
   };
 }
 
-function assertScheduledForStructuralMutation(
+function assertPlanningForStructuralMutation(
   current: EventRecord,
   operation: string,
 ): void {
-  if (current.status === "SCHEDULED") {
+  if (current.status === "DRAFT" || current.status === "PLANNED") {
     return;
   }
 
   throw new EventAssignmentStateError(
-    `${operation} requires status SCHEDULED, received ${current.status}`,
+    `${operation} requires status DRAFT or PLANNED, received ${current.status}`,
   );
+}
+
+function assertReschedulableEvent(
+  current: EventRecord,
+  operation: string,
+): void {
+  if (
+    current.status === "DRAFT" ||
+    current.status === "PLANNED" ||
+    current.status === "CONFIRMED"
+  ) {
+    return;
+  }
+  throw new EventAssignmentStateError(
+    `${operation} requires status DRAFT, PLANNED, or CONFIRMED, received ${current.status}`,
+  );
+}
+
+function assertBookingCreationStatus(
+  event: EventRecord,
+  bookingStatus: Extract<StudioBookingStatus, "HELD" | "CONFIRMED">,
+): void {
+  if (
+    bookingStatus === "HELD" &&
+    (event.status === "DRAFT" || event.status === "PLANNED")
+  ) {
+    return;
+  }
+  if (
+    bookingStatus === "CONFIRMED" &&
+    event.status === "CONFIRMED"
+  ) {
+    return;
+  }
+  throw new EventAssignmentStateError(
+    `HELD bookings require DRAFT/PLANNED events and CONFIRMED bookings require CONFIRMED events; received event ${event.status} and booking ${bookingStatus}`,
+  );
+}
+
+function assertNoHeldBookingConflicts(
+  bookings: readonly StudioBookingRecord[],
+): void {
+  for (let left = 0; left < bookings.length; left += 1) {
+    for (let right = left + 1; right < bookings.length; right += 1) {
+      const first = bookings[left];
+      const second = bookings[right];
+      if (
+        first.studioResourceId === second.studioResourceId &&
+        first.bookingStartAt < second.bookingEndAt &&
+        first.bookingEndAt > second.bookingStartAt
+      ) {
+        throw new EventAssignmentOverlapConflictError(
+          "Held studio bookings for the event overlap and cannot be confirmed",
+        );
+      }
+    }
+  }
 }
 
 function toAssignmentOverlapReferenceBuckets(
@@ -2584,6 +2965,8 @@ function toEventMutationView(
     id: record.id,
     eventCode: record.eventCode,
     title: record.title,
+    ownerEmploymentProfileId:
+      record.ownerEmploymentProfileId,
     studioResourceIds: [
       ...record.studioResourceIds,
     ],
@@ -2595,8 +2978,25 @@ function toEventMutationView(
     eventEndAt: record.eventEndAt,
     description: record.description,
     externalRef: record.externalRef,
+    plannedAt: record.plannedAt,
+    confirmedAt: record.confirmedAt,
+    completedAt: record.completedAt,
+    cancelledAt: record.cancelledAt,
+    cancellationReason: record.cancellationReason,
+    lastRescheduledAt: record.lastRescheduledAt,
+    lastRescheduleReason: record.lastRescheduleReason,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+  };
+}
+
+function toStudioBookingMutationView(
+  record: StudioBookingRecord,
+  hasConfirmedConflict: boolean,
+): StudioBookingMutationResult {
+  return {
+    ...record,
+    hasConfirmedConflict,
   };
 }
 

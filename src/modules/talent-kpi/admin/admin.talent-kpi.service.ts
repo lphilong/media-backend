@@ -81,8 +81,8 @@ const METRIC_CODES_REQUIRING_NON_NEGATIVE_INTEGER =
 
 const EVENT_STATUSES_ALLOWED_FOR_ATTRIBUTION =
   new Set<EventStatus>([
-    "SCHEDULED",
-    "IN_PROGRESS",
+    "PLANNED",
+    "CONFIRMED",
     "COMPLETED",
   ]);
 
@@ -941,7 +941,7 @@ export class TalentKpiAdminService {
       )
     ) {
       throw new TalentKpiInvalidEventAttributionError(
-        `Attributed event must be SCHEDULED, IN_PROGRESS, or COMPLETED: ${attributionEventId}`,
+        `Attributed event must be PLANNED, CONFIRMED, or COMPLETED: ${attributionEventId}`,
       );
     }
 

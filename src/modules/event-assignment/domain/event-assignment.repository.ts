@@ -4,6 +4,8 @@ import {
   EventAssignmentKind,
   EventAssignmentRecord,
   EventRecord,
+  StudioBookingRecord,
+  StudioBookingStatus,
   EventStatus,
 } from "./event-assignment.types";
 
@@ -18,8 +20,10 @@ export interface UpdateEventCoreInput {
   readonly eventId: string;
   readonly title?: string;
   readonly normalizedTitle?: string;
+  readonly ownerEmploymentProfileId?: string;
   readonly description?: string | null;
   readonly externalRef?: string | null;
+  readonly updatedByActorId: string;
   readonly updatedAt: number;
 }
 
@@ -27,12 +31,8 @@ export interface RescheduleEventInput {
   readonly eventId: string;
   readonly eventStartAt: number;
   readonly eventEndAt: number;
-  readonly updatedAt: number;
-}
-
-export interface ReplaceEventStudioResourcesInput {
-  readonly eventId: string;
-  readonly studioResourceIds: readonly string[];
+  readonly reason: string;
+  readonly rescheduledByActorId: string;
   readonly updatedAt: number;
 }
 
@@ -46,6 +46,26 @@ export interface TransitionEventStatusInput {
   readonly eventId: string;
   readonly fromStatuses: readonly EventStatus[];
   readonly toStatus: EventStatus;
+  readonly actorId: string;
+  readonly reason?: string;
+  readonly updatedAt: number;
+}
+
+export interface StudioBookingOverlapCheckInput {
+  readonly studioResourceId: string;
+  readonly bookingStartAt: number;
+  readonly bookingEndAt: number;
+  readonly statuses: readonly StudioBookingStatus[];
+  readonly excludeBookingId?: string;
+}
+
+export interface TransitionStudioBookingStatusInput {
+  readonly bookingId: string;
+  readonly eventId: string;
+  readonly fromStatuses: readonly StudioBookingStatus[];
+  readonly toStatus: StudioBookingStatus;
+  readonly actorId: string;
+  readonly reason?: string;
   readonly updatedAt: number;
 }
 
@@ -60,13 +80,6 @@ export interface EventOverlapAssignmentCheckInput {
   readonly assignmentEmploymentProfileIds: readonly string[];
   readonly assignmentTalentIds: readonly string[];
   readonly assignmentTalentGroupIds: readonly string[];
-  readonly eventStartAt: number;
-  readonly eventEndAt: number;
-  readonly excludeEventId?: string;
-}
-
-export interface EventOverlapResourceCheckInput {
-  readonly studioResourceIds: readonly string[];
   readonly eventStartAt: number;
   readonly eventEndAt: number;
   readonly excludeEventId?: string;
@@ -115,11 +128,6 @@ export interface EventAssignmentRepository {
     session: ClientSession,
   ): Promise<EventRecord | null>;
 
-  replaceEventStudioResources(
-    input: ReplaceEventStudioResourcesInput,
-    session: ClientSession,
-  ): Promise<EventRecord | null>;
-
   replaceEventPlatformAccounts(
     input: ReplaceEventPlatformAccountsInput,
     session: ClientSession,
@@ -136,6 +144,55 @@ export interface EventAssignmentRepository {
     session: ClientSession,
   ): Promise<EventRecord | null>;
 
+  insertStudioBooking(
+    booking: StudioBookingRecord,
+    session: ClientSession,
+  ): Promise<StudioBookingRecord>;
+
+  findStudioBookingById(
+    bookingId: string,
+    session?: ClientSession,
+  ): Promise<StudioBookingRecord | null>;
+
+  listStudioBookingsByEventId(
+    eventId: string,
+    statuses?: readonly StudioBookingStatus[],
+    session?: ClientSession,
+  ): Promise<readonly StudioBookingRecord[]>;
+
+  hasOverlappingStudioBooking(
+    input: StudioBookingOverlapCheckInput,
+    session?: ClientSession,
+  ): Promise<boolean>;
+
+  lockStudioResourceBooking(
+    studioResourceId: string,
+    updatedAt: number,
+    session: ClientSession,
+  ): Promise<void>;
+
+  transitionStudioBookingStatus(
+    input: TransitionStudioBookingStatusInput,
+    session: ClientSession,
+  ): Promise<StudioBookingRecord | null>;
+
+  transitionStudioBookingsByEvent(
+    eventId: string,
+    fromStatuses: readonly StudioBookingStatus[],
+    toStatus: StudioBookingStatus,
+    actorId: string,
+    reason: string | undefined,
+    updatedAt: number,
+    session: ClientSession,
+  ): Promise<void>;
+
+  syncEventStudioResourceIdsFromBookings(
+    eventId: string,
+    updatedByActorId: string,
+    updatedAt: number,
+    session: ClientSession,
+  ): Promise<EventRecord | null>;
+
   listAssignmentsByEventId(
     eventId: string,
     assignmentStatus?: EventAssignmentRecord["assignmentStatus"],
@@ -149,11 +206,6 @@ export interface EventAssignmentRepository {
 
   hasLiveOverlappingAssignmentEvent(
     input: EventOverlapAssignmentCheckInput,
-    session?: ClientSession,
-  ): Promise<boolean>;
-
-  hasLiveOverlappingResourceEvent(
-    input: EventOverlapResourceCheckInput,
     session?: ClientSession,
   ): Promise<boolean>;
 

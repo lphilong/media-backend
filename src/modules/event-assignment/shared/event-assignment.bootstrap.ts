@@ -12,10 +12,13 @@ import {
   EVENT_CREATED_AT_ID_INDEX_NAME,
   EVENT_EVENT_START_AT_ID_INDEX_NAME,
   EVENT_NORMALIZED_TITLE_INDEX_NAME,
+  EVENT_OWNER_STATUS_WINDOW_INDEX_NAME,
   EVENT_PLATFORM_STATUS_WINDOW_INDEX_NAME,
   EVENT_RESOURCE_STATUS_WINDOW_INDEX_NAME,
   EVENT_STATUS_WINDOW_INDEX_NAME,
   EVENT_UNIQ_CODE_INDEX_NAME,
+  STUDIO_BOOKING_EVENT_STATUS_INDEX_NAME,
+  STUDIO_BOOKING_RESOURCE_STATUS_WINDOW_INDEX_NAME,
   initEventAssignmentIndexes,
 } from "@infra/mongo/event-assignment/event-assignment.index";
 import { registerPresenters } from "./event-assignment.presenter.register";
@@ -86,6 +89,17 @@ export function createEventAssignmentBootstrapRegistrar(): BootstrapRegistrar {
           status: 1,
           eventStartAt: 1,
           eventEndAt: 1,
+        },
+      );
+
+      await assertRequiredIndex(
+        db,
+        "events",
+        EVENT_OWNER_STATUS_WINDOW_INDEX_NAME,
+        {
+          ownerEmploymentProfileId: 1,
+          status: 1,
+          eventStartAt: 1,
         },
       );
 
@@ -209,6 +223,29 @@ export function createEventAssignmentBootstrapRegistrar(): BootstrapRegistrar {
         {
           eventId: 1,
           assignmentStatus: 1,
+        },
+      );
+
+      await assertRequiredIndex(
+        db,
+        "studio_bookings",
+        STUDIO_BOOKING_EVENT_STATUS_INDEX_NAME,
+        {
+          eventId: 1,
+          status: 1,
+          bookingStartAt: 1,
+        },
+      );
+
+      await assertRequiredIndex(
+        db,
+        "studio_bookings",
+        STUDIO_BOOKING_RESOURCE_STATUS_WINDOW_INDEX_NAME,
+        {
+          studioResourceId: 1,
+          status: 1,
+          bookingStartAt: 1,
+          bookingEndAt: 1,
         },
       );
 

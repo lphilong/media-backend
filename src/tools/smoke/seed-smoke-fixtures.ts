@@ -958,12 +958,14 @@ function eventFixtures(
     externalRef: externalRef(ctx, "event-assignment", item),
     dependsOn: [
       `talent-${item}`,
+      "employment-1",
       `studio-resource-${Math.min(item, 5)}`,
       `platform-account-${Math.min(item, 6)}`,
     ],
     payload: {
       externalRef: externalRef(ctx, "event-assignment", item),
       title: `Smoke Catalog Event ${item}`,
+      ownerEmploymentProfileId: ref("employment-1"),
       assignments: [
         {
           assignmentKind: "TALENT",

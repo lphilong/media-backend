@@ -10,6 +10,8 @@ import {
   EventByResourceListItemView,
   EventDetailView,
   EventListItemView,
+  ManagerEventSummaryView,
+  StudioBookingView,
   EventSortDirection,
   EventSortField,
   EventStatus,
@@ -33,6 +35,7 @@ interface EventReadDocument {
   readonly eventCode: string;
   readonly title: string;
   readonly normalizedTitle: string;
+  readonly ownerEmploymentProfileId: string;
   readonly studioResourceIds: readonly string[];
   readonly platformAccountIds: readonly string[];
   readonly status: EventStatus;
@@ -40,6 +43,13 @@ interface EventReadDocument {
   readonly eventEndAt: number;
   readonly description: string | null;
   readonly externalRef: string | null;
+  readonly plannedAt: number | null;
+  readonly confirmedAt: number | null;
+  readonly completedAt: number | null;
+  readonly cancelledAt: number | null;
+  readonly cancellationReason: string | null;
+  readonly lastRescheduledAt: number | null;
+  readonly lastRescheduleReason: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -68,6 +78,7 @@ interface EmploymentProfileReferenceReadDocument {
   readonly legalName: string;
   readonly displayName: string;
   readonly employmentStatus: string;
+  readonly orgUnitId: string;
 }
 
 interface TalentReferenceReadDocument {
@@ -103,6 +114,25 @@ interface PlatformAccountReferenceReadDocument {
   readonly displayName: string;
   readonly handle: string | null;
   readonly operationalStatus: string;
+}
+
+interface StudioBookingReadDocument {
+  readonly _id: string;
+  readonly eventId: string;
+  readonly studioResourceId: string;
+  readonly bookingStartAt: number;
+  readonly bookingEndAt: number;
+  readonly status: "HELD" | "CONFIRMED" | "RELEASED" | "CANCELLED";
+  readonly createdByActorId: string;
+  readonly updatedByActorId: string;
+  readonly cancelledAt: number | null;
+  readonly cancelledByActorId: string | null;
+  readonly cancellationReason: string | null;
+  readonly releasedAt: number | null;
+  readonly releasedByActorId: string | null;
+  readonly releaseReason: string | null;
+  readonly createdAt: number;
+  readonly updatedAt: number;
 }
 
 type ReadViewKind = "list" | "by-assignment" | "by-resource" | "by-platform";
@@ -156,6 +186,7 @@ export class NativeMongoEventAssignmentReadRepository
   private readonly talentGroupCollection: Collection<TalentGroupReferenceReadDocument>;
   private readonly studioResourceCollection: Collection<StudioResourceReferenceReadDocument>;
   private readonly platformAccountCollection: Collection<PlatformAccountReferenceReadDocument>;
+  private readonly studioBookingCollection: Collection<StudioBookingReadDocument>;
 
   constructor(db: Db) {
     super(db, "events");
@@ -175,6 +206,8 @@ export class NativeMongoEventAssignmentReadRepository
       db.collection<StudioResourceReferenceReadDocument>("studio_resources");
     this.platformAccountCollection =
       db.collection<PlatformAccountReferenceReadDocument>("platform_accounts");
+    this.studioBookingCollection =
+      db.collection<StudioBookingReadDocument>("studio_bookings");
   }
 
   async listEvents(input: EventListReadInput): Promise<EventListReadResult> {
@@ -344,6 +377,7 @@ export class NativeMongoEventAssignmentReadRepository
     const [detail] = await enrichEventDetailReferenceSummaries(
       [toEventDetailView(doc)],
       {
+        employmentProfileCollection: this.employmentProfileCollection,
         studioResourceCollection: this.studioResourceCollection,
         platformAccountCollection: this.platformAccountCollection,
       },
@@ -379,6 +413,235 @@ export class NativeMongoEventAssignmentReadRepository
     );
 
     return doc !== null;
+  }
+
+  async listManagerEventSummaries(input: {
+    readonly orgUnitIds: readonly string[];
+    readonly talentGroupIds: readonly string[];
+  }): Promise<readonly ManagerEventSummaryView[]> {
+    const eventIds = await this.resolveManagerEventIds(input);
+    if (eventIds.length === 0) {
+      return [];
+    }
+    const events = await this.collection
+      .find({ _id: { $in: [...eventIds] } })
+      .sort({ eventStartAt: 1, _id: 1 })
+      .limit(200)
+      .toArray();
+    return this.buildManagerEventSummaries(events);
+  }
+
+  async listStudioBookings(
+    eventId: string,
+  ): Promise<readonly StudioBookingView[]> {
+    const bookings = await this.studioBookingCollection
+      .find({ eventId })
+      .sort({ bookingStartAt: 1, _id: 1 })
+      .toArray();
+    const refs = await loadStudioResourceReferenceSummaries(
+      new Set(bookings.map((item) => item.studioResourceId)),
+      this.studioResourceCollection,
+    );
+    return bookings.map((booking) => ({
+      id: booking._id,
+      eventId: booking.eventId,
+      studioResourceId: booking.studioResourceId,
+      studioResourceRef:
+        refs.get(booking.studioResourceId) ??
+        toFallbackReferenceSummary(booking.studioResourceId),
+      bookingStartAt: booking.bookingStartAt,
+      bookingEndAt: booking.bookingEndAt,
+      status: booking.status,
+      createdByActorId: booking.createdByActorId,
+      updatedByActorId: booking.updatedByActorId,
+      cancelledAt: booking.cancelledAt,
+      cancelledByActorId: booking.cancelledByActorId,
+      cancellationReason: booking.cancellationReason,
+      releasedAt: booking.releasedAt,
+      releasedByActorId: booking.releasedByActorId,
+      releaseReason: booking.releaseReason,
+      createdAt: booking.createdAt,
+      updatedAt: booking.updatedAt,
+      hasConfirmedConflict: false,
+    }));
+  }
+
+  async getManagerEventSummary(input: {
+    readonly eventId: string;
+    readonly orgUnitIds: readonly string[];
+    readonly talentGroupIds: readonly string[];
+  }): Promise<ManagerEventSummaryView | null> {
+    const eventIds = await this.resolveManagerEventIds(input);
+    if (!eventIds.includes(input.eventId)) {
+      return null;
+    }
+    const event = await this.collection.findOne({ _id: input.eventId });
+    if (!event) {
+      return null;
+    }
+    const [summary] = await this.buildManagerEventSummaries([event]);
+    return summary ?? null;
+  }
+
+  private async resolveManagerEventIds(input: {
+    readonly orgUnitIds: readonly string[];
+    readonly talentGroupIds: readonly string[];
+  }): Promise<readonly string[]> {
+    const groupMembers = input.talentGroupIds.length
+      ? await this.talentGroupMemberCollection
+          .find({
+            groupId: { $in: [...input.talentGroupIds] },
+            membershipStatus: "ACTIVE",
+          })
+          .toArray()
+      : [];
+    const talentIds = [...new Set(groupMembers.map((item) => item.talentId))];
+    const talents = talentIds.length
+      ? await this.talentCollection
+          .find({
+            _id: { $in: talentIds },
+            operationalStatus: "ACTIVE",
+          })
+          .toArray()
+      : [];
+    const linkedProfileIds = talents
+      .map((talent) => talent.linkedEmploymentProfileId)
+      .filter((id): id is string => typeof id === "string");
+    const orgProfiles = input.orgUnitIds.length
+      ? await this.employmentProfileCollection
+          .find({
+            orgUnitId: { $in: [...input.orgUnitIds] },
+            employmentStatus: "ACTIVE",
+          })
+          .toArray()
+      : [];
+    const employmentProfileIds = [
+      ...new Set([
+        ...linkedProfileIds,
+        ...orgProfiles.map((profile) => profile._id),
+      ]),
+    ];
+    const assignmentScope: Array<Record<string, unknown>> = [];
+    if (input.talentGroupIds.length) {
+      assignmentScope.push({
+        assignmentTalentGroupId: { $in: [...input.talentGroupIds] },
+      });
+    }
+    if (talentIds.length) {
+      assignmentScope.push({ assignmentTalentId: { $in: talentIds } });
+    }
+    if (employmentProfileIds.length) {
+      assignmentScope.push({
+        assignmentEmploymentProfileId: { $in: employmentProfileIds },
+      });
+    }
+    const assignmentEventIds = assignmentScope.length
+      ? await this.assignmentCollection.distinct("eventId", {
+          assignmentStatus: "ACTIVE",
+          $or: assignmentScope,
+        })
+      : [];
+    const ownedEventIds = employmentProfileIds.length
+      ? await this.collection.distinct("_id", {
+          ownerEmploymentProfileId: { $in: employmentProfileIds },
+        })
+      : [];
+    return [...new Set([...assignmentEventIds, ...ownedEventIds])];
+  }
+
+  private async buildManagerEventSummaries(
+    events: readonly EventReadDocument[],
+  ): Promise<readonly ManagerEventSummaryView[]> {
+    if (events.length === 0) {
+      return [];
+    }
+    const eventIds = events.map((event) => event._id);
+    const [assignments, bookings] = await Promise.all([
+      this.assignmentCollection
+        .find({ eventId: { $in: eventIds }, assignmentStatus: "ACTIVE" })
+        .toArray(),
+      this.studioBookingCollection
+        .find({
+          eventId: { $in: eventIds },
+          status: { $in: ["HELD", "CONFIRMED"] },
+        })
+        .sort({ bookingStartAt: 1, _id: 1 })
+        .toArray(),
+    ]);
+    const employmentProfileIds = new Set(
+      events.map((event) => event.ownerEmploymentProfileId),
+    );
+    const talentIds = new Set<string>();
+    const talentGroupIds = new Set<string>();
+    for (const assignment of assignments) {
+      addOptionalReferenceId(
+        employmentProfileIds,
+        assignment.assignmentEmploymentProfileId,
+      );
+      addOptionalReferenceId(talentIds, assignment.assignmentTalentId);
+      addOptionalReferenceId(
+        talentGroupIds,
+        assignment.assignmentTalentGroupId,
+      );
+    }
+    const resourceIds = new Set(bookings.map((item) => item.studioResourceId));
+    const [profileRefs, talentRefs, groupRefs, resourceRefs] =
+      await Promise.all([
+        loadEmploymentProfileReferenceSummaries(
+          employmentProfileIds,
+          this.employmentProfileCollection,
+        ),
+        loadTalentReferenceSummaries(
+          talentIds,
+          this.talentCollection,
+          this.employmentProfileCollection,
+        ),
+        loadTalentGroupReferenceSummaries(
+          talentGroupIds,
+          this.talentGroupCollection,
+        ),
+        loadStudioResourceReferenceSummaries(
+          resourceIds,
+          this.studioResourceCollection,
+        ),
+      ]);
+
+    return events.map((event) => ({
+      id: event._id,
+      eventCode: event.eventCode,
+      title: event.title,
+      status: event.status,
+      eventStartAt: event.eventStartAt,
+      eventEndAt: event.eventEndAt,
+      owner:
+        profileRefs.get(event.ownerEmploymentProfileId) ??
+        toFallbackReferenceSummary(event.ownerEmploymentProfileId),
+      participants: assignments
+        .filter((assignment) => assignment.eventId === event._id)
+        .map((assignment) =>
+          assignment.assignmentKind === "EMPLOYMENT_PROFILE"
+            ? profileRefs.get(
+                assignment.assignmentEmploymentProfileId as string,
+              )
+            : assignment.assignmentKind === "TALENT"
+              ? talentRefs.get(assignment.assignmentTalentId as string)
+              : groupRefs.get(
+                  assignment.assignmentTalentGroupId as string,
+                ),
+        )
+        .filter((ref): ref is ReferenceSummary => ref !== undefined),
+      studioBookings: bookings
+        .filter((booking) => booking.eventId === event._id)
+        .map((booking) => ({
+          id: booking._id,
+          status: booking.status,
+          bookingStartAt: booking.bookingStartAt,
+          bookingEndAt: booking.bookingEndAt,
+          resource:
+            resourceRefs.get(booking.studioResourceId) ??
+            toFallbackReferenceSummary(booking.studioResourceId),
+        })),
+    }));
   }
 
   private async listDocuments<
@@ -535,6 +798,7 @@ async function enrichAssignmentSubjectReferenceSummaries<
 async function enrichEventDetailReferenceSummaries<T extends EventDetailView>(
   items: readonly T[],
   collections: {
+    readonly employmentProfileCollection: Collection<EmploymentProfileReferenceReadDocument>;
     readonly studioResourceCollection: Collection<StudioResourceReferenceReadDocument>;
     readonly platformAccountCollection: Collection<PlatformAccountReferenceReadDocument>;
   },
@@ -545,8 +809,13 @@ async function enrichEventDetailReferenceSummaries<T extends EventDetailView>(
 
   const studioResourceIds = new Set<string>();
   const platformAccountIds = new Set<string>();
+  const ownerEmploymentProfileIds = new Set<string>();
 
   for (const item of items) {
+    addOptionalReferenceId(
+      ownerEmploymentProfileIds,
+      item.ownerEmploymentProfileId,
+    );
     for (const studioResourceId of item.studioResourceIds) {
       addOptionalReferenceId(studioResourceIds, studioResourceId);
     }
@@ -556,7 +825,15 @@ async function enrichEventDetailReferenceSummaries<T extends EventDetailView>(
     }
   }
 
-  const [studioResourceRefMap, platformAccountRefMap] = await Promise.all([
+  const [
+    ownerEmploymentProfileRefMap,
+    studioResourceRefMap,
+    platformAccountRefMap,
+  ] = await Promise.all([
+    loadEmploymentProfileReferenceSummaries(
+      ownerEmploymentProfileIds,
+      collections.employmentProfileCollection,
+    ),
     loadStudioResourceReferenceSummaries(
       studioResourceIds,
       collections.studioResourceCollection,
@@ -569,6 +846,9 @@ async function enrichEventDetailReferenceSummaries<T extends EventDetailView>(
 
   return items.map((item) => ({
     ...item,
+    ownerEmploymentProfileRef:
+      ownerEmploymentProfileRefMap.get(item.ownerEmploymentProfileId) ??
+      toFallbackReferenceSummary(item.ownerEmploymentProfileId),
     studioResourceRefs: item.studioResourceIds.map(
       (id) => studioResourceRefMap.get(id) ?? toFallbackReferenceSummary(id),
     ),
@@ -1194,6 +1474,7 @@ function toEventDetailView(document: EventReadDocument): EventDetailView {
     id: document._id,
     eventCode: document.eventCode,
     title: document.title,
+    ownerEmploymentProfileId: document.ownerEmploymentProfileId,
     studioResourceIds: [...document.studioResourceIds],
     platformAccountIds: [...document.platformAccountIds],
     status: document.status,
@@ -1201,6 +1482,13 @@ function toEventDetailView(document: EventReadDocument): EventDetailView {
     eventEndAt: document.eventEndAt,
     description: document.description,
     externalRef: document.externalRef,
+    plannedAt: document.plannedAt,
+    confirmedAt: document.confirmedAt,
+    completedAt: document.completedAt,
+    cancelledAt: document.cancelledAt,
+    cancellationReason: document.cancellationReason,
+    lastRescheduledAt: document.lastRescheduledAt,
+    lastRescheduleReason: document.lastRescheduleReason,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
   };

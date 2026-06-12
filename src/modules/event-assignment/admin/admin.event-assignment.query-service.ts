@@ -3,7 +3,6 @@ import { SystemInvariantError } from "@core/error/system-error";
 import { Permission } from "@core/permission/permission.enum";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
-import { ManagedGroupScopeDependencies } from "@modules/kpi/domain/managed-group-scope";
 import {
   EventAssignmentNotFoundError,
   EventAssignmentPermissionScopeError,
@@ -28,6 +27,8 @@ import {
   GetEventDetailResult,
   ListEventAssignmentsQuery,
   ListEventAssignmentsResult,
+  ListStudioBookingsQuery,
+  ListStudioBookingsResult,
   ListEventsByAssignmentQuery,
   ListEventsByAssignmentResult,
   ListEventsByPlatformQuery,
@@ -68,23 +69,17 @@ interface ParsedEventTargetFilters {
 }
 
 const ACTIVE_EVENT_STATUSES: readonly EventStatus[] = [
-  "SCHEDULED",
-  "IN_PROGRESS",
+  "PLANNED",
+  "CONFIRMED",
 ] as const;
 
-type EventAssignmentReadScope =
-  | {
-      readonly kind: "global";
-    }
-  | {
-      readonly kind: "managedGroup";
-      readonly managedTalentGroupIds: readonly string[];
-    };
+type EventAssignmentReadScope = {
+  readonly kind: "global";
+};
 
 export class EventAssignmentAdminQueryService {
   constructor(
     private readonly readRepository: EventAssignmentReadRepository,
-    private readonly managedGroupScopeDependencies?: ManagedGroupScopeDependencies,
   ) {}
 
   async listEvents(
@@ -92,7 +87,7 @@ export class EventAssignmentAdminQueryService {
     query: ListEventsQuery,
   ): Promise<ListEventsResult> {
     this.assertReadPermission(actor);
-    const scope = await this.resolveReadScope(actor);
+    await this.resolveReadScope(actor);
 
     const assignmentFilter = parseAssignmentFilter({
       assignmentKind: query.assignmentKind,
@@ -153,10 +148,6 @@ export class EventAssignmentAdminQueryService {
       sortDirection: parseOptionalSortDirection(
         query.sortDirection,
       ),
-      managedTalentGroupIds:
-        scope.kind === "managedGroup"
-          ? scope.managedTalentGroupIds
-          : undefined,
     });
   }
 
@@ -165,7 +156,7 @@ export class EventAssignmentAdminQueryService {
     query: ListEventsByAssignmentQuery,
   ): Promise<ListEventsByAssignmentResult> {
     this.assertReadPermission(actor);
-    const scope = await this.resolveReadScope(actor);
+    await this.resolveReadScope(actor);
 
     const assignment = parseExactAssignment(query);
     const window = parseWindowFilter({
@@ -191,10 +182,6 @@ export class EventAssignmentAdminQueryService {
       sortDirection: parseOptionalSortDirection(
         query.sortDirection,
       ),
-      managedTalentGroupIds:
-        scope.kind === "managedGroup"
-          ? scope.managedTalentGroupIds
-          : undefined,
     };
 
     return this.readRepository.listEventsByAssignment(
@@ -207,7 +194,7 @@ export class EventAssignmentAdminQueryService {
     query: ListEventsByResourceQuery,
   ): Promise<ListEventsByResourceResult> {
     this.assertReadPermission(actor);
-    const scope = await this.resolveReadScope(actor);
+    await this.resolveReadScope(actor);
 
     const window = parseWindowFilter({
       windowStartAt: query.windowStartAt,
@@ -230,10 +217,6 @@ export class EventAssignmentAdminQueryService {
       sortDirection: parseOptionalSortDirection(
         query.sortDirection,
       ),
-      managedTalentGroupIds:
-        scope.kind === "managedGroup"
-          ? scope.managedTalentGroupIds
-          : undefined,
     });
   }
 
@@ -242,7 +225,7 @@ export class EventAssignmentAdminQueryService {
     query: ListEventsByPlatformQuery,
   ): Promise<ListEventsByPlatformResult> {
     this.assertReadPermission(actor);
-    const scope = await this.resolveReadScope(actor);
+    await this.resolveReadScope(actor);
 
     const window = parseWindowFilter({
       windowStartAt: query.windowStartAt,
@@ -265,10 +248,6 @@ export class EventAssignmentAdminQueryService {
       sortDirection: parseOptionalSortDirection(
         query.sortDirection,
       ),
-      managedTalentGroupIds:
-        scope.kind === "managedGroup"
-          ? scope.managedTalentGroupIds
-          : undefined,
     });
   }
 
@@ -277,7 +256,7 @@ export class EventAssignmentAdminQueryService {
     query: ListEventAssignmentsQuery,
   ): Promise<ListEventAssignmentsResult> {
     this.assertReadPermission(actor);
-    const scope = await this.resolveReadScope(actor);
+    await this.resolveReadScope(actor);
 
     const eventId = normalizeRequiredText(
       query.eventId,
@@ -291,14 +270,9 @@ export class EventAssignmentAdminQueryService {
       throw new EventAssignmentNotFoundError(eventId);
     }
 
-    await this.assertEventVisibleForScope(eventId, scope);
-
     const items =
       await this.readRepository.listActiveAssignmentsForEvent(
         eventId,
-        scope.kind === "managedGroup"
-          ? scope.managedTalentGroupIds
-          : undefined,
       );
 
     return {
@@ -311,7 +285,7 @@ export class EventAssignmentAdminQueryService {
     query: GetEventDetailQuery,
   ): Promise<GetEventDetailResult> {
     this.assertReadPermission(actor);
-    const scope = await this.resolveReadScope(actor);
+    await this.resolveReadScope(actor);
 
     const eventId = normalizeRequiredText(
       query.eventId,
@@ -324,9 +298,23 @@ export class EventAssignmentAdminQueryService {
       throw new EventAssignmentNotFoundError(eventId);
     }
 
-    await this.assertEventVisibleForScope(eventId, scope);
-
     return detail;
+  }
+
+  async listStudioBookings(
+    actor: Actor,
+    query: ListStudioBookingsQuery,
+  ): Promise<ListStudioBookingsResult> {
+    this.assertReadPermission(actor);
+    await this.resolveReadScope(actor);
+    const eventId = normalizeRequiredText(query.eventId, "eventId");
+    const detail = await this.readRepository.getEventDetail(eventId);
+    if (!detail) {
+      throw new EventAssignmentNotFoundError(eventId);
+    }
+    return {
+      items: await this.readRepository.listStudioBookings(eventId),
+    };
   }
 
   private assertReadPermission(actor: Actor): void {
@@ -345,65 +333,8 @@ export class EventAssignmentAdminQueryService {
       };
     }
 
-    if (!PermissionGuard.hasEventAssignmentScopeGrant(actor, "managedGroup")) {
-      throw new EventAssignmentPermissionScopeError(
-        "Event assignment queries require global or managedGroup scope",
-      );
-    }
-
-    if (!this.managedGroupScopeDependencies) {
-      throw new SystemInvariantError(
-        "SYSTEM_INVARIANT_VIOLATION",
-        "Event assignment managedGroup scope dependencies are not configured",
-      );
-    }
-
-    const employmentProfile =
-      await this.managedGroupScopeDependencies.subjectReadonlyAccess.findActiveEmploymentProfileByLinkedUserId(
-        actor.id,
-      );
-
-    if (!employmentProfile) {
-      return {
-        kind: "managedGroup",
-        managedTalentGroupIds: [],
-      };
-    }
-
-    const assignments =
-      await this.managedGroupScopeDependencies.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-        employmentProfile.employmentProfileId,
-        Date.now(),
-      );
-
-    return {
-      kind: "managedGroup",
-      managedTalentGroupIds: [
-        ...new Set(assignments.map((assignment) => assignment.groupId)),
-      ],
-    };
-  }
-
-  private async assertEventVisibleForScope(
-    eventId: string,
-    scope: EventAssignmentReadScope,
-  ): Promise<void> {
-    if (scope.kind === "global") {
-      return;
-    }
-
-    const isVisible =
-      await this.readRepository.eventHasManagedGroupAssignment(
-        eventId,
-        scope.managedTalentGroupIds,
-      );
-
-    if (isVisible) {
-      return;
-    }
-
     throw new EventAssignmentPermissionScopeError(
-      `Actor is not an active manager for any assignment on event ${eventId}`,
+      "Global Admin Event routes require global eventAssignment scope",
     );
   }
 }

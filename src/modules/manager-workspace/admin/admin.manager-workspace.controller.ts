@@ -41,9 +41,13 @@ import {
   exposeManagerAvailabilityBatch,
   exposeManagerAvailabilityListItem,
 } from "@modules/work-schedule/shared/work-schedule-availability.exposure";
+import { ManagerEventSummaryView } from "@modules/event-assignment/domain/event-assignment.types";
+import { ManagerWorkspaceEventAdminService } from "./admin.manager-workspace-event.service";
 
 type ManagerWorkspaceCommand =
   | "MANAGER_WORKSPACE_CONTEXT"
+  | "MANAGER_WORKSPACE_LIST_EVENTS"
+  | "MANAGER_WORKSPACE_GET_EVENT"
   | "MANAGER_WORKSPACE_LIST_WORK_SHIFTS"
   | "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_MEMBERS"
   | "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_REQUEST_BATCH"
@@ -64,7 +68,9 @@ type ManagerWorkspaceResult =
   | ListWorkScheduleRequestBatchesResult
   | WorkScheduleAvailabilityBatchView
   | ListWorkScheduleAvailabilityBatchesResult
-  | ManagerAvailabilityTargetMembersView;
+  | ManagerAvailabilityTargetMembersView
+  | ManagerEventSummaryView
+  | { readonly items: readonly ManagerEventSummaryView[] };
 
 const SUBMIT_BATCH_BODY_FIELDS = Object.freeze([
   "periodMonth",
@@ -92,6 +98,7 @@ export class ManagerWorkspaceAdminController extends SecureController {
     private readonly workScheduleService: ManagerWorkspaceWorkScheduleAdminService,
     private readonly workScheduleRequestBatchService: WorkScheduleRequestBatchAdminService,
     private readonly workScheduleAvailabilityBatchService: WorkScheduleAvailabilityBatchAdminService,
+    private readonly eventService: ManagerWorkspaceEventAdminService,
   ) {
     super();
   }
@@ -104,6 +111,12 @@ export class ManagerWorkspaceAdminController extends SecureController {
     const command = readCommand<ManagerWorkspaceCommand>(req);
     if (command === "MANAGER_WORKSPACE_CONTEXT") {
       return this.service.getContext(actor);
+    }
+    if (command === "MANAGER_WORKSPACE_LIST_EVENTS") {
+      return this.eventService.listEvents(actor);
+    }
+    if (command === "MANAGER_WORKSPACE_GET_EVENT") {
+      return this.eventService.getEvent(actor, req.params.eventId);
     }
 
     if (command === "MANAGER_WORKSPACE_LIST_WORK_SHIFTS") {

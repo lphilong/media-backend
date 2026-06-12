@@ -17,6 +17,12 @@ export const EVENT_EVENT_START_AT_ID_INDEX_NAME =
   "idx_event_event_start_at";
 export const EVENT_CREATED_AT_ID_INDEX_NAME =
   "idx_event_created_at";
+export const EVENT_OWNER_STATUS_WINDOW_INDEX_NAME =
+  "idx_event_owner_status_window";
+export const STUDIO_BOOKING_EVENT_STATUS_INDEX_NAME =
+  "idx_studio_booking_event_status";
+export const STUDIO_BOOKING_RESOURCE_STATUS_WINDOW_INDEX_NAME =
+  "idx_studio_booking_resource_status_window";
 
 export const EVENT_ASSIGNMENT_ACTIVE_EMPLOYMENT_PROFILE_UNIQ_INDEX_NAME =
   "uniq_event_assignment_active_event_employment_profile";
@@ -55,6 +61,17 @@ export async function initEventAssignmentIndexes(
     {
       name: EVENT_UNIQ_CODE_INDEX_NAME,
       unique: true,
+    },
+  );
+
+  await eventCollection.createIndex(
+    {
+      ownerEmploymentProfileId: 1,
+      status: 1,
+      eventStartAt: 1,
+    },
+    {
+      name: EVENT_OWNER_STATUS_WINDOW_INDEX_NAME,
     },
   );
 
@@ -247,6 +264,21 @@ export async function initEventAssignmentIndexes(
       name:
         EVENT_ASSIGNMENT_KIND_STATUS_EVENT_INDEX_NAME,
     },
+  );
+
+  const studioBookingCollection = db.collection("studio_bookings");
+  await studioBookingCollection.createIndex(
+    { eventId: 1, status: 1, bookingStartAt: 1 },
+    { name: STUDIO_BOOKING_EVENT_STATUS_INDEX_NAME },
+  );
+  await studioBookingCollection.createIndex(
+    {
+      studioResourceId: 1,
+      status: 1,
+      bookingStartAt: 1,
+      bookingEndAt: 1,
+    },
+    { name: STUDIO_BOOKING_RESOURCE_STATUS_WINDOW_INDEX_NAME },
   );
 }
 

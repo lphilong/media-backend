@@ -120,7 +120,7 @@ test("GET /self-service/events returns only active direct current staff event as
         eventId: "event-own-talent",
         eventCode: "EVT-SELF-TAL",
         title: "Own internal Talent event",
-        status: "SCHEDULED",
+        status: "PLANNED",
         startsAt: 2_000,
         endsAt: 3_000,
         ownAssignmentKind: "TALENT",
@@ -130,7 +130,7 @@ test("GET /self-service/events returns only active direct current staff event as
         eventId: "event-own-employment-profile",
         eventCode: "EVT-SELF-EP",
         title: "Own EmploymentProfile event",
-        status: "IN_PROGRESS",
+        status: "CONFIRMED",
         startsAt: 4_000,
         endsAt: 5_000,
         ownAssignmentKind: "EMPLOYMENT_PROFILE",
@@ -224,7 +224,7 @@ test("GET /self-service/events marks the bounded response as truncated when more
         eventId: "event-own-talent",
         eventCode: "EVT-SELF-TAL",
         title: "Own internal Talent event",
-        status: "SCHEDULED",
+        status: "PLANNED",
         startsAt: 2_000,
         endsAt: 3_000,
         ownAssignmentKind: "TALENT",
@@ -270,7 +270,7 @@ test("GET /self-service/events de-dupes the same event assigned to current Emplo
         id: "event-dual-direct",
         eventCode: "EVT-DUAL",
         title: "Dual direct assignment event",
-        status: "SCHEDULED",
+        status: "PLANNED",
         eventStartAt: 1_500,
         eventEndAt: 1_900,
       }),
@@ -311,7 +311,7 @@ test("GET /self-service/events de-dupes the same event assigned to current Emplo
       eventId: "event-dual-direct",
       eventCode: "EVT-DUAL",
       title: "Dual direct assignment event",
-      status: "SCHEDULED",
+      status: "PLANNED",
       startsAt: 1_500,
       endsAt: 1_900,
       ownAssignmentKind: "EMPLOYMENT_PROFILE",
@@ -345,7 +345,7 @@ test("GET /self-service/events can filter current staff events by safe status an
 
   try {
     const response = await fetch(
-      `${baseUrl}/self-service/events?status=SCHEDULED&windowStartAt=1000&windowEndAt=3500&limit=10`,
+      `${baseUrl}/self-service/events?status=PLANNED&windowStartAt=1000&windowEndAt=3500&limit=10`,
     );
     const body = await response.json();
 
@@ -354,7 +354,7 @@ test("GET /self-service/events can filter current staff events by safe status an
       body.data.map((item: { readonly eventId: string }) => item.eventId),
       ["event-own-talent"],
     );
-    assert.equal(harness.events.listInputs[0]?.status, "SCHEDULED");
+    assert.equal(harness.events.listInputs[0]?.status, "PLANNED");
     assert.equal(harness.events.listInputs[0]?.windowStartAt, 1_000);
     assert.equal(harness.events.listInputs[0]?.windowEndAt, 3_500);
     assert.deepEqual(body.meta.window, {
@@ -637,7 +637,7 @@ function createHarness(options?: {
         id: "event-own-talent",
         eventCode: "EVT-SELF-TAL",
         title: "Own internal Talent event",
-        status: "SCHEDULED",
+        status: "PLANNED",
         eventStartAt: 2_000,
         eventEndAt: 3_000,
       }),
@@ -645,7 +645,7 @@ function createHarness(options?: {
         id: "event-own-employment-profile",
         eventCode: "EVT-SELF-EP",
         title: "Own EmploymentProfile event",
-        status: "IN_PROGRESS",
+        status: "CONFIRMED",
         eventStartAt: 4_000,
         eventEndAt: 5_000,
       }),
@@ -840,14 +840,29 @@ function eventRecord(overrides: Partial<EventRecord>): EventRecord {
     eventCode: "EVT-000001",
     title: "Event",
     normalizedTitle: "event",
+    ownerEmploymentProfileId: "ep-owner",
     studioResourceIds: ["studio-private-room"],
     platformAccountIds: [],
-    status: "SCHEDULED",
+    status: "PLANNED",
     eventStartAt: 1_000,
     eventEndAt: 2_000,
     description:
       "Internal production note with full roster, manager only note, HR attribution, and client budget",
     externalRef: "externalRef-secret",
+    createdByActorId: "admin-1",
+    updatedByActorId: "admin-1",
+    plannedAt: 1,
+    plannedByActorId: "admin-1",
+    confirmedAt: null,
+    confirmedByActorId: null,
+    completedAt: null,
+    completedByActorId: null,
+    cancelledAt: null,
+    cancelledByActorId: null,
+    cancellationReason: null,
+    lastRescheduledAt: null,
+    lastRescheduledByActorId: null,
+    lastRescheduleReason: null,
     createdAt: 1,
     updatedAt: 2,
     ...overrides,
@@ -1148,6 +1163,18 @@ class InMemoryEventAssignmentReadRepository implements EventAssignmentReadReposi
 
   async eventHasManagedGroupAssignment(): Promise<boolean> {
     throw new Error("Not implemented");
+  }
+
+  async listManagerEventSummaries(): Promise<[]> {
+    return [];
+  }
+
+  async getManagerEventSummary(): Promise<null> {
+    return null;
+  }
+
+  async listStudioBookings(): Promise<[]> {
+    return [];
   }
 }
 

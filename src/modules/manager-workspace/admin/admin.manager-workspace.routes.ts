@@ -13,6 +13,16 @@ export function adminManagerWorkspaceRoutes(
     controller.execute,
   );
   router.get(
+    "/events",
+    withCommand("MANAGER_WORKSPACE_LIST_EVENTS"),
+    controller.execute,
+  );
+  router.get(
+    "/events/:eventId",
+    withCommand("MANAGER_WORKSPACE_GET_EVENT"),
+    controller.execute,
+  );
+  router.get(
     "/work-schedule/work-shifts",
     withCommand("MANAGER_WORKSPACE_LIST_WORK_SHIFTS"),
     controller.execute,

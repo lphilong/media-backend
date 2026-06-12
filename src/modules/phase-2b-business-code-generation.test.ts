@@ -178,6 +178,7 @@ test("Phase 2B modules generate, trim, preserve, retry, and keep business codes 
         eventId: retried.id,
         newEventStartAt: Date.UTC(2024, 4, 1, 10),
         newEventEndAt: Date.UTC(2024, 4, 1, 12),
+        reason: "Production schedule changed",
       });
       assert.equal(rescheduled.eventCode, retried.eventCode);
     });
@@ -433,13 +434,14 @@ function createEventCommand(
   return {
     eventCode,
     title: `Event ${suffix}`,
+    ownerEmploymentProfileId: "ep-1",
+    status: "PLANNED",
     assignments: [
       {
         assignmentKind: "TALENT",
         assignmentTalentId: "talent-1",
       },
     ],
-    studioResourceIds: ["studio-1"],
     platformAccountIds: ["platform-1"],
     eventStartAt: Date.UTC(2024, 2, 31, 23, 30),
     eventEndAt: Date.UTC(2024, 3, 1, 1, 30),
@@ -648,13 +650,28 @@ function createBaseEventRecord(
     eventCode,
     title: "Event",
     normalizedTitle: "event",
+    ownerEmploymentProfileId: "ep-1",
     studioResourceIds: ["studio-1"],
     platformAccountIds: ["platform-1"],
-    status: "SCHEDULED",
+    status: "PLANNED",
     eventStartAt: Date.UTC(2024, 2, 31, 23),
     eventEndAt: Date.UTC(2024, 3, 1),
     description: null,
     externalRef: null,
+    createdByActorId: "actor-1",
+    updatedByActorId: "actor-1",
+    plannedAt: 1,
+    plannedByActorId: "actor-1",
+    confirmedAt: null,
+    confirmedByActorId: null,
+    completedAt: null,
+    completedByActorId: null,
+    cancelledAt: null,
+    cancelledByActorId: null,
+    cancellationReason: null,
+    lastRescheduledAt: null,
+    lastRescheduledByActorId: null,
+    lastRescheduleReason: null,
     createdAt: 1,
     updatedAt: 1,
   };

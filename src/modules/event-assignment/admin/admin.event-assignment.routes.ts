@@ -70,20 +70,49 @@ export function adminEventAssignmentRoutes(
   );
 
   router.post(
-    "/:eventId/studio-resources",
-    withCommand("EVENT_UPDATE_STUDIO_RESOURCES"),
-    mutationController.execute,
-  );
-
-  router.post(
     "/:eventId/platform-accounts",
     withCommand("EVENT_UPDATE_PLATFORM_ACCOUNTS"),
     mutationController.execute,
   );
 
   router.post(
-    "/:eventId/start",
-    withCommand("EVENT_START"),
+    "/:eventId/bookings",
+    withCommand("EVENT_BOOKING_CREATE"),
+    mutationController.execute,
+  );
+  router.get(
+    "/:eventId/bookings",
+    withCommand("EVENT_BOOKING_LIST"),
+    queryController.execute,
+  );
+
+  router.post(
+    "/:eventId/bookings/:bookingId/confirm",
+    withCommand("EVENT_BOOKING_CONFIRM"),
+    mutationController.execute,
+  );
+
+  router.post(
+    "/:eventId/bookings/:bookingId/release",
+    withCommand("EVENT_BOOKING_RELEASE"),
+    mutationController.execute,
+  );
+
+  router.post(
+    "/:eventId/bookings/:bookingId/cancel",
+    withCommand("EVENT_BOOKING_CANCEL"),
+    mutationController.execute,
+  );
+
+  router.post(
+    "/:eventId/plan",
+    withCommand("EVENT_PLAN"),
+    mutationController.execute,
+  );
+
+  router.post(
+    "/:eventId/confirm",
+    withCommand("EVENT_CONFIRM"),
     mutationController.execute,
   );
 
