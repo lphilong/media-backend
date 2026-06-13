@@ -27,9 +27,18 @@ interface RevenueEntryDocument {
   readonly normalizedTitle: string;
   readonly subjectTalentId: string;
   readonly attributionPlatformAccountId: string | null;
+  readonly attributionTalentGroupId?: string | null;
+  readonly attributionEmploymentProfileId?: string | null;
   readonly attributionEventId: string | null;
   readonly revenueKind: RevenueKind;
   readonly entrySource: RevenueEntrySource;
+  readonly sourceBatchIds?: readonly string[];
+  readonly sourceSummaryRef?: string | null;
+  readonly sourceLineCount?: number | null;
+  readonly sourceSummarySnapshot?: RevenueEntry["sourceSummarySnapshot"];
+  readonly conversionSnapshot?: RevenueEntry["conversionSnapshot"];
+  readonly platformCutSnapshot?: RevenueEntry["platformCutSnapshot"];
+  readonly commissionableBasisSnapshot?: RevenueEntry["commissionableBasisSnapshot"];
   readonly status: RevenueEntryStatus;
   readonly currencyCode: string;
   readonly recognizedAmount: number;
@@ -256,9 +265,22 @@ function toRevenueEntryDocument(
     subjectTalentId: input.subjectTalentId,
     attributionPlatformAccountId:
       input.attributionPlatformAccountId,
+    attributionTalentGroupId:
+      input.attributionTalentGroupId,
+    attributionEmploymentProfileId:
+      input.attributionEmploymentProfileId,
     attributionEventId: input.attributionEventId,
     revenueKind: input.revenueKind,
     entrySource: input.entrySource,
+    sourceBatchIds: input.sourceBatchIds,
+    sourceSummaryRef: input.sourceSummaryRef,
+    sourceLineCount: input.sourceLineCount,
+    sourceSummarySnapshot:
+      input.sourceSummarySnapshot,
+    conversionSnapshot: input.conversionSnapshot,
+    platformCutSnapshot: input.platformCutSnapshot,
+    commissionableBasisSnapshot:
+      input.commissionableBasisSnapshot,
     status: input.status,
     currencyCode: input.currencyCode,
     recognizedAmount: input.recognizedAmount,
@@ -286,9 +308,26 @@ function toRevenueEntry(
     subjectTalentId: document.subjectTalentId,
     attributionPlatformAccountId:
       document.attributionPlatformAccountId,
+    attributionTalentGroupId:
+      document.attributionTalentGroupId ?? null,
+    attributionEmploymentProfileId:
+      document.attributionEmploymentProfileId ?? null,
     attributionEventId: document.attributionEventId,
     revenueKind: document.revenueKind,
     entrySource: document.entrySource,
+    sourceBatchIds: document.sourceBatchIds ?? [],
+    sourceSummaryRef:
+      document.sourceSummaryRef ?? null,
+    sourceLineCount:
+      document.sourceLineCount ?? null,
+    sourceSummarySnapshot:
+      document.sourceSummarySnapshot ?? null,
+    conversionSnapshot:
+      document.conversionSnapshot ?? null,
+    platformCutSnapshot:
+      document.platformCutSnapshot ?? null,
+    commissionableBasisSnapshot:
+      document.commissionableBasisSnapshot ?? null,
     status: document.status,
     currencyCode: document.currencyCode,
     recognizedAmount: document.recognizedAmount,

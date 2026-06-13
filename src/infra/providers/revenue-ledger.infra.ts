@@ -7,9 +7,11 @@ import {
   NativeMongoRevenueLedgerPlatformAccountReadonlyAccess,
   NativeMongoRevenueLedgerTalentReadonlyAccess,
 } from "@infra/mongo/revenue-ledger/revenue-ledger.readonly-access";
+import { NativeMongoPlatformEarningRepository } from "@infra/mongo/revenue-ledger/platform-earning.repository";
 import { NativeMongoRevenueEntryRepository } from "@infra/mongo/revenue-ledger/revenue-ledger.repository";
 
 export interface RevenueLedgerInfra {
+  readonly platformEarningRepository: NativeMongoPlatformEarningRepository;
   readonly revenueEntryRepository: NativeMongoRevenueEntryRepository;
   readonly businessCodeSequenceRepository: NativeMongoBusinessCodeSequenceRepository;
   readonly revenueLedgerReadRepository: NativeMongoRevenueLedgerReadRepository;
@@ -23,6 +25,8 @@ export function createRevenueLedgerInfra(
   db: Db,
 ): RevenueLedgerInfra {
   return {
+    platformEarningRepository:
+      new NativeMongoPlatformEarningRepository(db),
     revenueEntryRepository:
       new NativeMongoRevenueEntryRepository(db),
     businessCodeSequenceRepository:

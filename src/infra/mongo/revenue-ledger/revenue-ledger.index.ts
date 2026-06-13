@@ -29,6 +29,16 @@ export const REVENUE_ENTRY_FLAT_LIST_REVENUE_ENTRY_CODE_ASC_NON_ARCHIVED_SORT_IN
   "idx_revenue_entry_flat_list_revenue_entry_code_asc_non_archived_sort";
 export const REVENUE_ENTRY_FLAT_LIST_REVENUE_ENTRY_CODE_DESC_NON_ARCHIVED_SORT_INDEX_NAME =
   "idx_revenue_entry_flat_list_revenue_entry_code_desc_non_archived_sort";
+export const PLATFORM_EARNING_BATCH_UNIQ_CODE_INDEX_NAME =
+  "uniq_platform_earning_batch_code";
+export const PLATFORM_EARNING_BATCH_CURSOR_INDEX_NAME =
+  "idx_platform_earning_batch_cursor";
+export const PLATFORM_EARNING_LINE_UNIQ_DUPLICATE_KEY_INDEX_NAME =
+  "uniq_platform_earning_line_duplicate_key";
+export const PLATFORM_EARNING_LINE_BATCH_CURSOR_INDEX_NAME =
+  "idx_platform_earning_line_batch_cursor";
+export const PLATFORM_EARNING_LINE_FILTER_CURSOR_INDEX_NAME =
+  "idx_platform_earning_line_filter_cursor";
 
 interface RevenueEntryLegacyDocument {
   readonly _id: string;
@@ -250,6 +260,56 @@ export async function initRevenueLedgerIndexes(
           ],
         },
       },
+    },
+  );
+
+  const platformBatchCollection = db.collection(
+    "platform_earning_batches",
+  );
+  const platformLineCollection = db.collection(
+    "platform_earning_lines",
+  );
+
+  await platformBatchCollection.createIndex(
+    { batchCode: 1 },
+    {
+      name: PLATFORM_EARNING_BATCH_UNIQ_CODE_INDEX_NAME,
+      unique: true,
+    },
+  );
+  await platformBatchCollection.createIndex(
+    {
+      status: 1,
+      platformAccountId: 1,
+      periodMonth: 1,
+      _id: 1,
+    },
+    { name: PLATFORM_EARNING_BATCH_CURSOR_INDEX_NAME },
+  );
+  await platformLineCollection.createIndex(
+    { duplicateDetectionKey: 1 },
+    {
+      name:
+        PLATFORM_EARNING_LINE_UNIQ_DUPLICATE_KEY_INDEX_NAME,
+      unique: true,
+    },
+  );
+  await platformLineCollection.createIndex(
+    { batchId: 1, _id: 1 },
+    {
+      name: PLATFORM_EARNING_LINE_BATCH_CURSOR_INDEX_NAME,
+    },
+  );
+  await platformLineCollection.createIndex(
+    {
+      batchStatus: 1,
+      platformAccountId: 1,
+      periodMonth: 1,
+      memberTalentId: 1,
+      _id: 1,
+    },
+    {
+      name: PLATFORM_EARNING_LINE_FILTER_CURSOR_INDEX_NAME,
     },
   );
 }

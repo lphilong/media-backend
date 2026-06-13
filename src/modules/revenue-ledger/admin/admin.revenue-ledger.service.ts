@@ -267,10 +267,19 @@ export class RevenueLedgerAdminService {
                 input.subjectTalentId,
               attributionPlatformAccountId:
                 input.attributionPlatformAccountId,
+              attributionTalentGroupId: null,
+              attributionEmploymentProfileId: null,
               attributionEventId:
                 input.attributionEventId,
               revenueKind: input.revenueKind,
               entrySource: input.entrySource,
+              sourceBatchIds: [],
+              sourceSummaryRef: null,
+              sourceLineCount: null,
+              sourceSummarySnapshot: null,
+              conversionSnapshot: null,
+              platformCutSnapshot: null,
+              commissionableBasisSnapshot: null,
               status: "DRAFT",
               currencyCode: input.currencyCode,
               recognizedAmount:
@@ -1571,9 +1580,22 @@ function toRevenueEntryMutationView(
     subjectTalentId: record.subjectTalentId,
     attributionPlatformAccountId:
       record.attributionPlatformAccountId,
+    attributionTalentGroupId:
+      record.attributionTalentGroupId,
+    attributionEmploymentProfileId:
+      record.attributionEmploymentProfileId,
     attributionEventId: record.attributionEventId,
     revenueKind: record.revenueKind,
     entrySource: record.entrySource,
+    sourceBatchIds: record.sourceBatchIds,
+    sourceSummaryRef: record.sourceSummaryRef,
+    sourceLineCount: record.sourceLineCount,
+    sourceSummarySnapshot:
+      record.sourceSummarySnapshot,
+    conversionSnapshot: record.conversionSnapshot,
+    platformCutSnapshot: record.platformCutSnapshot,
+    commissionableBasisSnapshot:
+      record.commissionableBasisSnapshot,
     status: record.status,
     currencyCode: record.currencyCode,
     recognizedAmount: record.recognizedAmount,

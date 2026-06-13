@@ -187,6 +187,10 @@ export enum Permission {
   REVENUE_LEDGER_UPDATE = "revenueLedger.update",
   REVENUE_LEDGER_MANAGE_LIFECYCLE = "revenueLedger.manageLifecycle",
   REVENUE_LEDGER_RECONCILE = "revenueLedger.reconcile",
+  REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT = "revenueLedger.platformEarning.submit",
+  REVENUE_LEDGER_PLATFORM_EARNING_REVIEW = "revenueLedger.platformEarning.review",
+  REVENUE_LEDGER_PLATFORM_EARNING_APPROVE = "revenueLedger.platformEarning.approve",
+  REVENUE_LEDGER_PLATFORM_EARNING_VOID = "revenueLedger.platformEarning.void",
 
   /* =========================
      DASHBOARD LITE

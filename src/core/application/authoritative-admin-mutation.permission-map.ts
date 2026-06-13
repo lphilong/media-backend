@@ -189,6 +189,17 @@ export const AUTHORITATIVE_ADMIN_MUTATION_IDENTITIES = [
   "revenue-ledger.reconcile",
   "revenue-ledger.void",
   "revenue-ledger.archive",
+  "revenue-ledger.platform-earning.create-batch",
+  "revenue-ledger.platform-earning.update-batch",
+  "revenue-ledger.platform-earning.add-line",
+  "revenue-ledger.platform-earning.update-line",
+  "revenue-ledger.platform-earning.submit",
+  "revenue-ledger.platform-earning.start-review",
+  "revenue-ledger.platform-earning.approve",
+  "revenue-ledger.platform-earning.reject",
+  "revenue-ledger.platform-earning.void",
+  "revenue-ledger.platform-earning.archive",
+  "revenue-ledger.platform-earning.create-revenue-entry",
 ] as const;
 
 export type AuthoritativeAdminMutationIdentity =
@@ -439,6 +450,28 @@ const ADMIN_MUTATION_PERMISSION_BY_IDENTITY: Readonly<
   "revenue-ledger.reconcile": Permission.REVENUE_LEDGER_RECONCILE,
   "revenue-ledger.void": Permission.REVENUE_LEDGER_MANAGE_LIFECYCLE,
   "revenue-ledger.archive": Permission.REVENUE_LEDGER_MANAGE_LIFECYCLE,
+  "revenue-ledger.platform-earning.create-batch":
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+  "revenue-ledger.platform-earning.update-batch":
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+  "revenue-ledger.platform-earning.add-line":
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+  "revenue-ledger.platform-earning.update-line":
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+  "revenue-ledger.platform-earning.submit":
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+  "revenue-ledger.platform-earning.start-review":
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW,
+  "revenue-ledger.platform-earning.approve":
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+  "revenue-ledger.platform-earning.reject":
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW,
+  "revenue-ledger.platform-earning.void":
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_VOID,
+  "revenue-ledger.platform-earning.archive":
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW,
+  "revenue-ledger.platform-earning.create-revenue-entry":
+    Permission.REVENUE_LEDGER_CREATE,
 });
 
 export function resolveAuthoritativePermissionForMutationIdentity(

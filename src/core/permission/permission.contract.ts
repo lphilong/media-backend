@@ -963,6 +963,34 @@ export const PermissionContracts: PermissionContractRegistry =
     auditAction: "revenue-ledger.reconcile",
     riskLevel: "HIGH",
   },
+  [Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT]: {
+    code: Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+    context: "ADMIN",
+    resource: "REVENUE_LEDGER",
+    auditAction: "revenue-ledger.platform-earning.submit",
+    riskLevel: "HIGH",
+  },
+  [Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW]: {
+    code: Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW,
+    context: "ADMIN",
+    resource: "REVENUE_LEDGER",
+    auditAction: "revenue-ledger.platform-earning.review",
+    riskLevel: "HIGH",
+  },
+  [Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE]: {
+    code: Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+    context: "ADMIN",
+    resource: "REVENUE_LEDGER",
+    auditAction: "revenue-ledger.platform-earning.approve",
+    riskLevel: "CRITICAL",
+  },
+  [Permission.REVENUE_LEDGER_PLATFORM_EARNING_VOID]: {
+    code: Permission.REVENUE_LEDGER_PLATFORM_EARNING_VOID,
+    context: "ADMIN",
+    resource: "REVENUE_LEDGER",
+    auditAction: "revenue-ledger.platform-earning.void",
+    riskLevel: "CRITICAL",
+  },
 
   /* =========================
      DASHBOARD LITE

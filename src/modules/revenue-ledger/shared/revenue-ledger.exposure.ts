@@ -18,12 +18,21 @@ const REVENUE_LEDGER_ADMIN_DETAIL_FIELDS = [
   "title",
   "subjectTalentId",
   "attributionPlatformAccountId",
+  "attributionTalentGroupId",
+  "attributionEmploymentProfileId",
   "attributionEventId",
   "subjectTalentRef",
   "attributionPlatformAccountRef",
   "attributionEventRef",
   "revenueKind",
   "entrySource",
+  "sourceBatchIds",
+  "sourceSummaryRef",
+  "sourceLineCount",
+  "sourceSummarySnapshot",
+  "conversionSnapshot",
+  "platformCutSnapshot",
+  "commissionableBasisSnapshot",
   "status",
   "currencyCode",
   "recognizedAmount",
@@ -44,12 +53,17 @@ const REVENUE_LEDGER_ADMIN_LIST_FIELDS = [
   "title",
   "subjectTalentId",
   "attributionPlatformAccountId",
+  "attributionTalentGroupId",
+  "attributionEmploymentProfileId",
   "attributionEventId",
   "subjectTalentRef",
   "attributionPlatformAccountRef",
   "attributionEventRef",
   "revenueKind",
   "entrySource",
+  "sourceBatchIds",
+  "sourceSummaryRef",
+  "sourceLineCount",
   "status",
   "currencyCode",
   "recognizedAmount",
@@ -109,6 +123,10 @@ export const RevenueLedgerAdminDetailExposure =
             subjectTalentId: input.subjectTalentId,
             attributionPlatformAccountId:
               input.attributionPlatformAccountId,
+            attributionTalentGroupId:
+              input.attributionTalentGroupId,
+            attributionEmploymentProfileId:
+              input.attributionEmploymentProfileId,
             attributionEventId:
               input.attributionEventId,
             subjectTalentRef: input.subjectTalentRef,
@@ -118,6 +136,20 @@ export const RevenueLedgerAdminDetailExposure =
               input.attributionEventRef,
             revenueKind: input.revenueKind,
             entrySource: input.entrySource,
+            sourceBatchIds:
+              input.sourceBatchIds,
+            sourceSummaryRef:
+              input.sourceSummaryRef,
+            sourceLineCount:
+              input.sourceLineCount,
+            sourceSummarySnapshot:
+              input.sourceSummarySnapshot,
+            conversionSnapshot:
+              input.conversionSnapshot,
+            platformCutSnapshot:
+              input.platformCutSnapshot,
+            commissionableBasisSnapshot:
+              input.commissionableBasisSnapshot,
             status: input.status,
             currencyCode: input.currencyCode,
             recognizedAmount:
@@ -154,6 +186,10 @@ export const RevenueLedgerAdminListExposure =
             subjectTalentId: input.subjectTalentId,
             attributionPlatformAccountId:
               input.attributionPlatformAccountId,
+            attributionTalentGroupId:
+              input.attributionTalentGroupId,
+            attributionEmploymentProfileId:
+              input.attributionEmploymentProfileId,
             attributionEventId:
               input.attributionEventId,
             subjectTalentRef: input.subjectTalentRef,
@@ -163,6 +199,12 @@ export const RevenueLedgerAdminListExposure =
               input.attributionEventRef,
             revenueKind: input.revenueKind,
             entrySource: input.entrySource,
+            sourceBatchIds:
+              input.sourceBatchIds,
+            sourceSummaryRef:
+              input.sourceSummaryRef,
+            sourceLineCount:
+              input.sourceLineCount,
             status: input.status,
             currencyCode: input.currencyCode,
             recognizedAmount:

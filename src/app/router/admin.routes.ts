@@ -186,6 +186,9 @@ import { CommissionAdminQueryService } from "@modules/commission/admin/admin.com
 
 /* REVENUE LEDGER */
 import { adminRevenueLedgerRoutes } from "@modules/revenue-ledger/admin/admin.revenue-ledger.routes";
+import { adminPlatformEarningRoutes } from "@modules/revenue-ledger/admin/admin.platform-earning.routes";
+import { PlatformEarningAdminController } from "@modules/revenue-ledger/admin/admin.platform-earning.controller";
+import { PlatformEarningAdminService } from "@modules/revenue-ledger/admin/admin.platform-earning.service";
 import { RevenueLedgerAdminController } from "@modules/revenue-ledger/admin/admin.revenue-ledger.controller";
 import { RevenueLedgerAdminQueryController } from "@modules/revenue-ledger/admin/admin.revenue-ledger.query.controller";
 import { RevenueLedgerAdminService } from "@modules/revenue-ledger/admin/admin.revenue-ledger.service";
@@ -433,6 +436,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     commissionRevenueLedgerReadonlyAccess,
   } = createCommissionRevenueShareInfra(infra.primaryDb);
   const {
+    platformEarningRepository,
     revenueEntryRepository,
     businessCodeSequenceRepository: revenueLedgerBusinessCodeSequenceRepository,
     revenueLedgerReadRepository,
@@ -1049,12 +1053,32 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   const revenueLedgerQueryController = new RevenueLedgerAdminQueryController(
     revenueLedgerQueryService,
   );
+  const platformEarningService = new PlatformEarningAdminService(
+    platformEarningRepository,
+    revenueEntryRepository,
+    revenueLedgerBusinessCodeSequenceRepository,
+    revenueLedgerTalentReadonlyAccess,
+    revenueLedgerPlatformAccountReadonlyAccess,
+    revenueLedgerEventReadonlyAccess,
+    authoritativeAuditGuard,
+    adminMutationBridge,
+  );
+  const platformEarningController =
+    new PlatformEarningAdminController(
+      platformEarningService,
+    );
 
   r.use(
     "/revenue-entries",
     adminRevenueLedgerRoutes(
       revenueLedgerController,
       revenueLedgerQueryController,
+    ),
+  );
+  r.use(
+    "/revenue-ledger",
+    adminPlatformEarningRoutes(
+      platformEarningController,
     ),
   );
 

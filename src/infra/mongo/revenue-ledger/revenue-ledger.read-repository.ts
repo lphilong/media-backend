@@ -37,9 +37,18 @@ interface RevenueEntryReadDocument {
   readonly normalizedTitle: string;
   readonly subjectTalentId: string;
   readonly attributionPlatformAccountId: string | null;
+  readonly attributionTalentGroupId?: string | null;
+  readonly attributionEmploymentProfileId?: string | null;
   readonly attributionEventId: string | null;
   readonly revenueKind: RevenueKind;
   readonly entrySource: RevenueEntrySource;
+  readonly sourceBatchIds?: readonly string[];
+  readonly sourceSummaryRef?: string | null;
+  readonly sourceLineCount?: number | null;
+  readonly sourceSummarySnapshot?: RevenueEntryDetailView["sourceSummarySnapshot"];
+  readonly conversionSnapshot?: RevenueEntryDetailView["conversionSnapshot"];
+  readonly platformCutSnapshot?: RevenueEntryDetailView["platformCutSnapshot"];
+  readonly commissionableBasisSnapshot?: RevenueEntryDetailView["commissionableBasisSnapshot"];
   readonly status: RevenueEntryStatus;
   readonly currencyCode: string;
   readonly recognizedAmount: number;
@@ -811,9 +820,26 @@ function toRevenueEntryDetailView(
     subjectTalentId: input.subjectTalentId,
     attributionPlatformAccountId:
       input.attributionPlatformAccountId,
+    attributionTalentGroupId:
+      input.attributionTalentGroupId ?? null,
+    attributionEmploymentProfileId:
+      input.attributionEmploymentProfileId ?? null,
     attributionEventId: input.attributionEventId,
     revenueKind: input.revenueKind,
     entrySource: input.entrySource,
+    sourceBatchIds: input.sourceBatchIds ?? [],
+    sourceSummaryRef:
+      input.sourceSummaryRef ?? null,
+    sourceLineCount:
+      input.sourceLineCount ?? null,
+    sourceSummarySnapshot:
+      input.sourceSummarySnapshot ?? null,
+    conversionSnapshot:
+      input.conversionSnapshot ?? null,
+    platformCutSnapshot:
+      input.platformCutSnapshot ?? null,
+    commissionableBasisSnapshot:
+      input.commissionableBasisSnapshot ?? null,
     status: input.status,
     currencyCode: input.currencyCode,
     recognizedAmount: input.recognizedAmount,
@@ -840,9 +866,18 @@ function toRevenueEntryListItemView(
     subjectTalentId: input.subjectTalentId,
     attributionPlatformAccountId:
       input.attributionPlatformAccountId,
+    attributionTalentGroupId:
+      input.attributionTalentGroupId ?? null,
+    attributionEmploymentProfileId:
+      input.attributionEmploymentProfileId ?? null,
     attributionEventId: input.attributionEventId,
     revenueKind: input.revenueKind,
     entrySource: input.entrySource,
+    sourceBatchIds: input.sourceBatchIds ?? [],
+    sourceSummaryRef:
+      input.sourceSummaryRef ?? null,
+    sourceLineCount:
+      input.sourceLineCount ?? null,
     status: input.status,
     currencyCode: input.currencyCode,
     recognizedAmount: input.recognizedAmount,
