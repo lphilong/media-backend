@@ -12,6 +12,11 @@ import {
   CONTRACT_RECORD_OWNER_EMPLOYMENT_PROFILE_ID_INDEX_NAME,
   CONTRACT_RECORD_STATUS_EFFECTIVE_WINDOW_INDEX_NAME,
   CONTRACT_RECORD_STATUS_FILE_REFERENCE_ID_INDEX_NAME,
+  CONTRACT_OBLIGATION_CODE_UNIQ_INDEX_NAME,
+  CONTRACT_OBLIGATION_CONTRACT_STATUS_CREATED_INDEX_NAME,
+  CONTRACT_OBLIGATION_DUE_DATE_INDEX_NAME,
+  CONTRACT_OBLIGATION_RESPONSIBLE_OWNER_INDEX_NAME,
+  CONTRACT_OBLIGATION_STATUS_TYPE_INDEX_NAME,
   initContractRegistryIndexes,
 } from "@infra/mongo/contract-registry/contract-registry.index";
 import { registerPresenters } from "./contract-registry.presenter.register";
@@ -151,6 +156,42 @@ export function createContractRegistryBootstrapRegistrar(): BootstrapRegistrar {
           createdAt: 1,
           _id: 1,
         },
+      );
+
+      await assertRequiredUniqueIndex(
+        db,
+        "contract_obligations",
+        CONTRACT_OBLIGATION_CODE_UNIQ_INDEX_NAME,
+        { code: 1 },
+      );
+      await assertRequiredIndex(
+        db,
+        "contract_obligations",
+        CONTRACT_OBLIGATION_CONTRACT_STATUS_CREATED_INDEX_NAME,
+        {
+          contractRecordId: 1,
+          status: 1,
+          createdAt: -1,
+          _id: 1,
+        },
+      );
+      await assertRequiredIndex(
+        db,
+        "contract_obligations",
+        CONTRACT_OBLIGATION_STATUS_TYPE_INDEX_NAME,
+        { status: 1, obligationType: 1 },
+      );
+      await assertRequiredIndex(
+        db,
+        "contract_obligations",
+        CONTRACT_OBLIGATION_RESPONSIBLE_OWNER_INDEX_NAME,
+        { responsibleOwnerEmploymentProfileId: 1 },
+      );
+      await assertRequiredIndex(
+        db,
+        "contract_obligations",
+        CONTRACT_OBLIGATION_DUE_DATE_INDEX_NAME,
+        { dueDate: 1 },
       );
     },
   });

@@ -10,6 +10,7 @@ import {
   ContractRecordListItemView,
   ContractRecordMutationView,
 } from "@modules/contract-registry/domain/contract-registry.types";
+import { ContractObligationView } from "@modules/contract-registry/domain/contract-obligation.types";
 
 const CONTRACT_RECORD_ADMIN_DETAIL_FIELDS = [
   "id",
@@ -267,5 +268,54 @@ export const ContractRegistryAdminMutationExposure =
       return ContractRegistryAdminDetailExposure.expose(
         input,
       );
+    },
+  });
+
+const CONTRACT_OBLIGATION_FIELDS = [
+  "id",
+  "code",
+  "contractRecordId",
+  "obligationType",
+  "title",
+  "description",
+  "dueDate",
+  "responsibleOwnerEmploymentProfileId",
+  "evidencePolicy",
+  "status",
+  "latestDeliveryNote",
+  "latestEvidenceRefs",
+  "latestDeliveredByActorId",
+  "latestDeliveredAt",
+  "latestReviewedByActorId",
+  "latestReviewedAt",
+  "acceptedByActorId",
+  "acceptedAt",
+  "rejectedByActorId",
+  "rejectedAt",
+  "rejectionReason",
+  "statusHistory",
+  "createdByActorId",
+  "createdAt",
+  "updatedByActorId",
+  "updatedAt",
+  "boundaryMetadata",
+] as const;
+
+export const ContractObligationAdminExposure =
+  Object.freeze({
+    expose(input: ContractObligationView): PlainObject {
+      return toPlainObject(
+        ExposurePolicy.expose(
+          { ...input },
+          CONTRACT_OBLIGATION_FIELDS,
+        ),
+        "ContractObligationAdmin exposure",
+      );
+    },
+
+    exposeMany(
+      items: readonly ContractObligationView[],
+    ): readonly PlainObject[] {
+      return items.map((item) => this.expose(item));
     },
   });

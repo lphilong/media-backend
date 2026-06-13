@@ -221,6 +221,7 @@ function composePhaseAServices(
     ),
     contractRegistryService: new ContractRegistryAdminService(
       contractRegistryInfra.contractRegistryRepository,
+      contractRegistryInfra.contractObligationRepository,
       contractRegistryInfra.businessCodeSequenceRepository,
       contractRegistryInfra.contractRegistryEmploymentProfileReadonlyAccess,
       contractRegistryInfra.contractRegistryTalentReadonlyAccess,

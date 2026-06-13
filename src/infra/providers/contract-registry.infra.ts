@@ -6,6 +6,8 @@ import {
   NativeMongoContractRegistryTalentReadonlyAccess,
 } from "@infra/mongo/contract-registry/contract-registry.readonly-access";
 import { NativeMongoContractRegistryRepository } from "@infra/mongo/contract-registry/contract-registry.repository";
+import { NativeMongoContractObligationRepository } from "@infra/mongo/contract-registry/contract-obligation.repository";
+import { NativeMongoContractObligationReadRepository } from "@infra/mongo/contract-registry/contract-obligation.read-repository";
 
 export interface ContractRegistryInfra {
   readonly contractRegistryRepository: NativeMongoContractRegistryRepository;
@@ -13,6 +15,8 @@ export interface ContractRegistryInfra {
   readonly contractRegistryReadRepository: NativeMongoContractRegistryReadRepository;
   readonly contractRegistryEmploymentProfileReadonlyAccess: NativeMongoContractRegistryEmploymentProfileReadonlyAccess;
   readonly contractRegistryTalentReadonlyAccess: NativeMongoContractRegistryTalentReadonlyAccess;
+  readonly contractObligationRepository: NativeMongoContractObligationRepository;
+  readonly contractObligationReadRepository: NativeMongoContractObligationReadRepository;
 }
 
 export function createContractRegistryInfra(
@@ -35,5 +39,9 @@ export function createContractRegistryInfra(
       new NativeMongoContractRegistryTalentReadonlyAccess(
         db,
       ),
+    contractObligationRepository:
+      new NativeMongoContractObligationRepository(db),
+    contractObligationReadRepository:
+      new NativeMongoContractObligationReadRepository(db),
   };
 }

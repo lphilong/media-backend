@@ -187,6 +187,7 @@ test("Phase 2B modules generate, trim, preserve, retry, and keep business codes 
       const repo = new MemoryContractRepository();
       const service = new ContractRegistryAdminService(
         repo as never,
+        { async hasUnresolvedByContractRecordId() { return false; } } as never,
         new MemoryBusinessCodeSequenceRepository(),
         { async findById() { return { id: "ep-1", employmentStatus: "ACTIVE" }; } } as never,
         { async findById() { return { id: "talent-1", operationalStatus: "ACTIVE" }; } } as never,
@@ -458,10 +459,10 @@ function createContractCommand(
   return {
     contractCode,
     title: `Contract ${suffix}`,
-    contractKind: "EMPLOYMENT",
-    linkedEntityKind: "EMPLOYMENT_PROFILE",
-    linkedEmploymentProfileId: "ep-1",
-    linkedTalentId: null,
+    contractKind: "TALENT_SERVICE",
+    linkedEntityKind: "TALENT",
+    linkedEmploymentProfileId: null,
+    linkedTalentId: "talent-1",
     ownerEmploymentProfileId: "ep-1",
     confidentialityTier: "INTERNAL",
     effectiveStartDate: "2024-12-31",

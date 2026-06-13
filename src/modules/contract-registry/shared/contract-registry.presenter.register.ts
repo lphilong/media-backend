@@ -5,6 +5,9 @@ import {
   CONTRACT_REGISTRY_ADMIN_DETAIL_PRESENTER_KEY,
   CONTRACT_REGISTRY_ADMIN_LIST_PRESENTER_KEY,
   CONTRACT_REGISTRY_ADMIN_MUTATION_PRESENTER_KEY,
+  CONTRACT_OBLIGATION_ADMIN_DETAIL_PRESENTER_KEY,
+  CONTRACT_OBLIGATION_ADMIN_LIST_PRESENTER_KEY,
+  CONTRACT_OBLIGATION_ADMIN_MUTATION_PRESENTER_KEY,
 } from "./contract-registry.presenter-keys";
 import {
   ContractRegistryAdminByLinkedEntityListPresenter,
@@ -12,6 +15,9 @@ import {
   ContractRegistryAdminDetailPresenter,
   ContractRegistryAdminListPresenter,
   ContractRegistryAdminMutationPresenter,
+  ContractObligationAdminDetailPresenter,
+  ContractObligationAdminListPresenter,
+  ContractObligationAdminMutationPresenter,
 } from "./contract-registry.presenter";
 
 export function registerPresenters(
@@ -40,5 +46,18 @@ export function registerPresenters(
   registry.register(
     CONTRACT_REGISTRY_ADMIN_DETAIL_PRESENTER_KEY,
     new ContractRegistryAdminDetailPresenter(),
+  );
+
+  registry.register(
+    CONTRACT_OBLIGATION_ADMIN_MUTATION_PRESENTER_KEY,
+    new ContractObligationAdminMutationPresenter(),
+  );
+  registry.register(
+    CONTRACT_OBLIGATION_ADMIN_LIST_PRESENTER_KEY,
+    new ContractObligationAdminListPresenter(),
+  );
+  registry.register(
+    CONTRACT_OBLIGATION_ADMIN_DETAIL_PRESENTER_KEY,
+    new ContractObligationAdminDetailPresenter(),
   );
 }

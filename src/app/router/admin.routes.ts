@@ -152,6 +152,9 @@ import { ContractRegistryAdminController } from "@modules/contract-registry/admi
 import { ContractRegistryAdminQueryController } from "@modules/contract-registry/admin/admin.contract-registry.query.controller";
 import { ContractRegistryAdminService } from "@modules/contract-registry/admin/admin.contract-registry.service";
 import { ContractRegistryAdminQueryService } from "@modules/contract-registry/admin/admin.contract-registry.query-service";
+import { ContractObligationAdminController } from "@modules/contract-registry/admin/admin.contract-obligation.controller";
+import { ContractObligationAdminService } from "@modules/contract-registry/admin/admin.contract-obligation.service";
+import { ContractObligationAdminQueryService } from "@modules/contract-registry/admin/admin.contract-obligation.query-service";
 
 /* TALENT KPI */
 import { adminTalentKpiRoutes } from "@modules/talent-kpi/admin/admin.talent-kpi.routes";
@@ -396,6 +399,8 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     contractRegistryReadRepository,
     contractRegistryEmploymentProfileReadonlyAccess,
     contractRegistryTalentReadonlyAccess,
+    contractObligationRepository,
+    contractObligationReadRepository,
   } = createContractRegistryInfra(infra.primaryDb);
   const {
     talentKpiRepository,
@@ -872,6 +877,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   /* CONTRACT REGISTRY */
   const contractRegistryService = new ContractRegistryAdminService(
     contractRegistryRepository,
+    contractObligationRepository,
     contractRegistryBusinessCodeSequenceRepository,
     contractRegistryEmploymentProfileReadonlyAccess,
     contractRegistryTalentReadonlyAccess,
@@ -886,12 +892,27 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   );
   const contractRegistryQueryController =
     new ContractRegistryAdminQueryController(contractRegistryQueryService);
+  const contractObligationController =
+    new ContractObligationAdminController(
+      new ContractObligationAdminService(
+        contractObligationRepository,
+        contractRegistryRepository,
+        contractRegistryBusinessCodeSequenceRepository,
+        contractRegistryEmploymentProfileReadonlyAccess,
+        authoritativeAuditGuard,
+        adminMutationBridge,
+      ),
+      new ContractObligationAdminQueryService(
+        contractObligationReadRepository,
+      ),
+    );
 
   r.use(
     "/contract-records",
     adminContractRegistryRoutes(
       contractRegistryController,
       contractRegistryQueryController,
+      contractObligationController,
     ),
   );
 

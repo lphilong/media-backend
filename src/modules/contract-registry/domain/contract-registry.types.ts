@@ -50,7 +50,7 @@ export interface ContractBoundaryMetadata {
   readonly directRevenueSourceEligible: false;
   readonly directCommissionSourceEligible: false;
   readonly payrollSourceEligible: false;
-  readonly obligationAcceptanceImplemented: false;
+  readonly obligationAcceptanceImplemented: boolean;
   readonly eventEvidenceLinkImplemented: false;
 }
 
@@ -252,7 +252,7 @@ export function getContractBoundaryMetadata(
         directRevenueSourceEligible: false,
         directCommissionSourceEligible: false,
         payrollSourceEligible: false,
-        obligationAcceptanceImplemented: false,
+        obligationAcceptanceImplemented: true,
         eventEvidenceLinkImplemented: false,
       };
 

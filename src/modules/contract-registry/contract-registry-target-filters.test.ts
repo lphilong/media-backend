@@ -387,7 +387,7 @@ test("Contract Registry list/detail enrich linked and owner refs with page-bound
     directRevenueSourceEligible: false,
     directCommissionSourceEligible: false,
     payrollSourceEligible: false,
-    obligationAcceptanceImplemented: false,
+    obligationAcceptanceImplemented: true,
     eventEvidenceLinkImplemented: false,
   });
 });
@@ -422,7 +422,7 @@ test("Contract Registry creates supported commercial/legal talent contracts with
     directRevenueSourceEligible: false,
     directCommissionSourceEligible: false,
     payrollSourceEligible: false,
-    obligationAcceptanceImplemented: false,
+    obligationAcceptanceImplemented: true,
     eventEvidenceLinkImplemented: false,
   });
   assert.equal(harness.repository.records.length, 1);
@@ -602,7 +602,7 @@ test("Contract Registry boundary classification is exhaustive and fails closed f
         directRevenueSourceEligible: false,
         directCommissionSourceEligible: false,
         payrollSourceEligible: false,
-        obligationAcceptanceImplemented: false,
+        obligationAcceptanceImplemented: true,
         eventEvidenceLinkImplemented: false,
       },
     );
@@ -692,6 +692,7 @@ function createMutationHarness(): {
     new InMemoryContractRegistryRepository();
   const service = new ContractRegistryAdminService(
     repository,
+    { async hasUnresolvedByContractRecordId() { return false; } } as never,
     new InMemoryCodeSequenceRepository(),
     new StaticEmploymentProfileReadonlyAccess(),
     new StaticTalentReadonlyAccess(),

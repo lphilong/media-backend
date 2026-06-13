@@ -80,6 +80,85 @@ test("role template catalog contains exactly the seven core templates with valid
   );
 });
 
+test("CR-3A role templates keep contract obligation mutation authority admin-global first", () => {
+  const obligationCapabilities = [
+    Permission.CONTRACT_OBLIGATION_READ,
+    Permission.CONTRACT_OBLIGATION_MANAGE_DRAFT,
+    Permission.CONTRACT_OBLIGATION_DELIVER,
+    Permission.CONTRACT_OBLIGATION_REVIEW,
+    Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
+  ];
+  const obligationMutationCapabilities =
+    obligationCapabilities.filter(
+      (permission) =>
+        permission !== Permission.CONTRACT_OBLIGATION_READ,
+    );
+
+  const admin = getRoleTemplate("ADMIN_FULL");
+  assert.notEqual(admin, null);
+  for (const permission of obligationCapabilities) {
+    assert.equal(
+      admin?.permissions.includes(permission),
+      true,
+      `ADMIN_FULL must include ${permission}`,
+    );
+  }
+
+  const manager = getRoleTemplate("TEAM_MANAGER");
+  const self = getRoleTemplate("TALENT_STAFF_SELF");
+  const auditor = getRoleTemplate("VIEWER_AUDITOR");
+  for (const template of [manager, self, auditor]) {
+    assert.notEqual(template, null);
+    for (const permission of obligationMutationCapabilities) {
+      assert.equal(
+        template?.permissions.includes(permission),
+        false,
+        `${template?.code} must not include ${permission}`,
+      );
+    }
+  }
+
+  const finance = getRoleTemplate("COMMERCIAL_FINANCE");
+  assert.notEqual(finance, null);
+  assert.equal(
+    finance?.permissions.includes(
+      Permission.CONTRACT_OBLIGATION_READ,
+    ),
+    true,
+  );
+  assert.equal(
+    finance?.permissions.includes(
+      Permission.CONTRACT_OBLIGATION_MANAGE_DRAFT,
+    ),
+    true,
+  );
+  assert.equal(
+    finance?.permissions.includes(
+      Permission.CONTRACT_OBLIGATION_REVIEW,
+    ),
+    true,
+  );
+  assert.equal(
+    finance?.permissions.includes(
+      Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
+    ),
+    true,
+  );
+  assert.equal(
+    finance?.permissions.includes(
+      Permission.CONTRACT_OBLIGATION_DELIVER,
+    ),
+    false,
+  );
+
+  const externalTalentTemplates = ROLE_TEMPLATE_CATALOG.filter(
+    (template) =>
+      template.category === "EXTERNAL" ||
+      template.code.includes("EXTERNAL"),
+  );
+  assert.equal(externalTalentTemplates.length, 0);
+});
+
 test("seven role templates align KPI V2 permissions with runtime scope recommendations", () => {
   const admin = getRoleTemplate("ADMIN_FULL");
   const hr = getRoleTemplate("HR_OPERATIONS");

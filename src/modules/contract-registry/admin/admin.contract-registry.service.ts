@@ -42,6 +42,7 @@ import {
 import { buildContractRegistryCodePolicy } from "@modules/contract-registry/domain/contract-registry-code-policy";
 import { ContractRegistryRepository } from "@modules/contract-registry/domain/contract-registry.repository";
 import { ContractRegistryTalentReadonlyAccess } from "@modules/contract-registry/domain/contract-registry-talent-readonly-access";
+import { ContractObligationRepository } from "@modules/contract-registry/domain/contract-obligation.repository";
 import {
   CONTRACT_CONFIDENTIALITY_TIERS,
   CONTRACT_KINDS,
@@ -172,6 +173,7 @@ interface DraftCorePatchBuildResult {
 export class ContractRegistryAdminService {
   constructor(
     private readonly repository: ContractRegistryRepository,
+    private readonly obligationRepository: ContractObligationRepository,
     private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
     private readonly employmentProfileReadonlyAccess: ContractRegistryEmploymentProfileReadonlyAccess,
     private readonly talentReadonlyAccess: ContractRegistryTalentReadonlyAccess,
@@ -1154,6 +1156,17 @@ export class ContractRegistryAdminService {
         assertContractRecordStructuralInvariants(
           current,
         );
+
+        if (
+          await this.obligationRepository.hasUnresolvedByContractRecordId(
+            current.id,
+            session,
+          )
+        ) {
+          throw new ContractRegistryStateError(
+            "Contract record cannot be archived while related obligations are unresolved",
+          );
+        }
 
         const updated =
           await this.repository.transitionStatus(

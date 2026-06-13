@@ -139,6 +139,15 @@ export const AUTHORITATIVE_ADMIN_MUTATION_IDENTITIES = [
   "contract-registry.expire",
   "contract-registry.terminate",
   "contract-registry.archive",
+  "contract-obligation.create",
+  "contract-obligation.update",
+  "contract-obligation.open",
+  "contract-obligation.deliver",
+  "contract-obligation.reject",
+  "contract-obligation.reopen",
+  "contract-obligation.accept",
+  "contract-obligation.cancel",
+  "contract-obligation.archive",
   "talent-kpi.create",
   "talent-kpi.update-draft-core",
   "talent-kpi.replace-metrics",
@@ -358,6 +367,24 @@ const ADMIN_MUTATION_PERMISSION_BY_IDENTITY: Readonly<
   "contract-registry.expire": Permission.CONTRACT_REGISTRY_MANAGE_LIFECYCLE,
   "contract-registry.terminate": Permission.CONTRACT_REGISTRY_MANAGE_LIFECYCLE,
   "contract-registry.archive": Permission.CONTRACT_REGISTRY_MANAGE_LIFECYCLE,
+  "contract-obligation.create":
+    Permission.CONTRACT_OBLIGATION_MANAGE_DRAFT,
+  "contract-obligation.update":
+    Permission.CONTRACT_OBLIGATION_MANAGE_DRAFT,
+  "contract-obligation.open":
+    Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
+  "contract-obligation.deliver":
+    Permission.CONTRACT_OBLIGATION_DELIVER,
+  "contract-obligation.reject":
+    Permission.CONTRACT_OBLIGATION_REVIEW,
+  "contract-obligation.reopen":
+    Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
+  "contract-obligation.accept":
+    Permission.CONTRACT_OBLIGATION_REVIEW,
+  "contract-obligation.cancel":
+    Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
+  "contract-obligation.archive":
+    Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
 
   "talent-kpi.create": Permission.TALENT_KPI_CREATE,
   "talent-kpi.update-draft-core": Permission.TALENT_KPI_UPDATE,

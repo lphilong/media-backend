@@ -9,11 +9,17 @@ import {
   ListContractRecordsResult,
 } from "./contract-registry.contracts";
 import {
+  ContractObligationMutationResult,
+  GetContractObligationDetailResult,
+  ListContractObligationsResult,
+} from "./contract-obligation.contracts";
+import {
   ContractRegistryAdminByLinkedEntityListExposure,
   ContractRegistryAdminByOwnerListExposure,
   ContractRegistryAdminDetailExposure,
   ContractRegistryAdminListExposure,
   ContractRegistryAdminMutationExposure,
+  ContractObligationAdminExposure,
 } from "./contract-registry.exposure";
 
 export class ContractRegistryAdminMutationPresenter extends Presenter<
@@ -120,6 +126,54 @@ export class ContractRegistryAdminDetailPresenter extends Presenter<
         ContractRegistryAdminDetailExposure.expose(
           input,
         ),
+    };
+  }
+}
+
+export class ContractObligationAdminMutationPresenter extends Presenter<
+  ContractObligationMutationResult,
+  PresentationResult
+> {
+  present(
+    input: ContractObligationMutationResult,
+    _context: ContextType,
+  ): PresentationResult {
+    return {
+      data: ContractObligationAdminExposure.expose(input),
+    };
+  }
+}
+
+export class ContractObligationAdminListPresenter extends Presenter<
+  ListContractObligationsResult,
+  PresentationResult
+> {
+  present(
+    input: ListContractObligationsResult,
+    _context: ContextType,
+  ): PresentationResult {
+    const output: PresentationResult = {
+      data: ContractObligationAdminExposure.exposeMany(
+        input.items,
+      ),
+    };
+    if (input.nextCursor) {
+      output.meta = { nextCursor: input.nextCursor };
+    }
+    return output;
+  }
+}
+
+export class ContractObligationAdminDetailPresenter extends Presenter<
+  GetContractObligationDetailResult,
+  PresentationResult
+> {
+  present(
+    input: GetContractObligationDetailResult,
+    _context: ContextType,
+  ): PresentationResult {
+    return {
+      data: ContractObligationAdminExposure.expose(input),
     };
   }
 }

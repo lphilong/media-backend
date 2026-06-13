@@ -133,6 +133,11 @@ export enum Permission {
   CONTRACT_REGISTRY_MANAGE_OWNER = "contractRegistry.manageOwner",
   CONTRACT_REGISTRY_MANAGE_FILE_REFERENCE = "contractRegistry.manageFileReference",
   CONTRACT_REGISTRY_MANAGE_LIFECYCLE = "contractRegistry.manageLifecycle",
+  CONTRACT_OBLIGATION_READ = "contractObligation.read",
+  CONTRACT_OBLIGATION_MANAGE_DRAFT = "contractObligation.manageDraft",
+  CONTRACT_OBLIGATION_DELIVER = "contractObligation.deliver",
+  CONTRACT_OBLIGATION_REVIEW = "contractObligation.review",
+  CONTRACT_OBLIGATION_MANAGE_LIFECYCLE = "contractObligation.manageLifecycle",
 
   /* =========================
      TALENT KPI

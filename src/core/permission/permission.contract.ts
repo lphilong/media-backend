@@ -681,6 +681,41 @@ export const PermissionContracts: PermissionContractRegistry =
     auditAction: "contract-registry.manage-lifecycle",
     riskLevel: "CRITICAL",
   },
+  [Permission.CONTRACT_OBLIGATION_READ]: {
+    code: Permission.CONTRACT_OBLIGATION_READ,
+    context: "ADMIN",
+    resource: "CONTRACT_OBLIGATION",
+    auditAction: "contract-obligation.read",
+    riskLevel: "LOW",
+  },
+  [Permission.CONTRACT_OBLIGATION_MANAGE_DRAFT]: {
+    code: Permission.CONTRACT_OBLIGATION_MANAGE_DRAFT,
+    context: "ADMIN",
+    resource: "CONTRACT_OBLIGATION",
+    auditAction: "contract-obligation.manage-draft",
+    riskLevel: "HIGH",
+  },
+  [Permission.CONTRACT_OBLIGATION_DELIVER]: {
+    code: Permission.CONTRACT_OBLIGATION_DELIVER,
+    context: "ADMIN",
+    resource: "CONTRACT_OBLIGATION",
+    auditAction: "contract-obligation.deliver",
+    riskLevel: "HIGH",
+  },
+  [Permission.CONTRACT_OBLIGATION_REVIEW]: {
+    code: Permission.CONTRACT_OBLIGATION_REVIEW,
+    context: "ADMIN",
+    resource: "CONTRACT_OBLIGATION",
+    auditAction: "contract-obligation.review",
+    riskLevel: "CRITICAL",
+  },
+  [Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE]: {
+    code: Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
+    context: "ADMIN",
+    resource: "CONTRACT_OBLIGATION",
+    auditAction: "contract-obligation.manage-lifecycle",
+    riskLevel: "CRITICAL",
+  },
 
   /* =========================
      TALENT KPI

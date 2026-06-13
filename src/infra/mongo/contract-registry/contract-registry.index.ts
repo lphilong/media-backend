@@ -25,6 +25,16 @@ export const CONTRACT_RECORD_STATUS_FILE_REFERENCE_ID_INDEX_NAME =
   "idx_contract_record_status_file_reference_id";
 export const CONTRACT_RECORD_CREATED_AT_ID_INDEX_NAME =
   "idx_contract_record_created_at";
+export const CONTRACT_OBLIGATION_CODE_UNIQ_INDEX_NAME =
+  "uniq_contract_obligation_code";
+export const CONTRACT_OBLIGATION_CONTRACT_STATUS_CREATED_INDEX_NAME =
+  "idx_contract_obligation_contract_status_created";
+export const CONTRACT_OBLIGATION_STATUS_TYPE_INDEX_NAME =
+  "idx_contract_obligation_status_type";
+export const CONTRACT_OBLIGATION_RESPONSIBLE_OWNER_INDEX_NAME =
+  "idx_contract_obligation_responsible_owner";
+export const CONTRACT_OBLIGATION_DUE_DATE_INDEX_NAME =
+  "idx_contract_obligation_due_date";
 
 interface ContractRecordLegacyDocument {
   readonly _id: string;
@@ -172,6 +182,49 @@ export async function initContractRegistryIndexes(
     },
     {
       name: CONTRACT_RECORD_CREATED_AT_ID_INDEX_NAME,
+    },
+  );
+
+  const obligations = db.collection(
+    "contract_obligations",
+  );
+  await obligations.createIndex(
+    { code: 1 },
+    {
+      name: CONTRACT_OBLIGATION_CODE_UNIQ_INDEX_NAME,
+      unique: true,
+    },
+  );
+  await obligations.createIndex(
+    {
+      contractRecordId: 1,
+      status: 1,
+      createdAt: -1,
+      _id: 1,
+    },
+    {
+      name:
+        CONTRACT_OBLIGATION_CONTRACT_STATUS_CREATED_INDEX_NAME,
+    },
+  );
+  await obligations.createIndex(
+    { status: 1, obligationType: 1 },
+    {
+      name:
+        CONTRACT_OBLIGATION_STATUS_TYPE_INDEX_NAME,
+    },
+  );
+  await obligations.createIndex(
+    { responsibleOwnerEmploymentProfileId: 1 },
+    {
+      name:
+        CONTRACT_OBLIGATION_RESPONSIBLE_OWNER_INDEX_NAME,
+    },
+  );
+  await obligations.createIndex(
+    { dueDate: 1 },
+    {
+      name: CONTRACT_OBLIGATION_DUE_DATE_INDEX_NAME,
     },
   );
 }
