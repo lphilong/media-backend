@@ -54,6 +54,7 @@ export interface DeliverContractObligationCommand {
   readonly obligationId: string;
   readonly deliveryNote?: string | null;
   readonly evidenceRefs?: readonly ContractObligationEvidenceRefInput[];
+  readonly eventEvidenceLinkIds?: readonly string[];
 }
 
 export interface RejectContractObligationCommand {

@@ -6,6 +6,9 @@ import {
   CONTRACT_REGISTRY_ADMIN_LIST_PRESENTER_KEY,
   CONTRACT_REGISTRY_ADMIN_MUTATION_PRESENTER_KEY,
   CONTRACT_OBLIGATION_ADMIN_DETAIL_PRESENTER_KEY,
+  CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_ADMIN_DETAIL_PRESENTER_KEY,
+  CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_ADMIN_LIST_PRESENTER_KEY,
+  CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_ADMIN_MUTATION_PRESENTER_KEY,
   CONTRACT_OBLIGATION_ADMIN_LIST_PRESENTER_KEY,
   CONTRACT_OBLIGATION_ADMIN_MUTATION_PRESENTER_KEY,
 } from "./contract-registry.presenter-keys";
@@ -16,6 +19,9 @@ import {
   ContractRegistryAdminListPresenter,
   ContractRegistryAdminMutationPresenter,
   ContractObligationAdminDetailPresenter,
+  ContractObligationEventEvidenceLinkAdminDetailPresenter,
+  ContractObligationEventEvidenceLinkAdminListPresenter,
+  ContractObligationEventEvidenceLinkAdminMutationPresenter,
   ContractObligationAdminListPresenter,
   ContractObligationAdminMutationPresenter,
 } from "./contract-registry.presenter";
@@ -59,5 +65,17 @@ export function registerPresenters(
   registry.register(
     CONTRACT_OBLIGATION_ADMIN_DETAIL_PRESENTER_KEY,
     new ContractObligationAdminDetailPresenter(),
+  );
+  registry.register(
+    CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_ADMIN_MUTATION_PRESENTER_KEY,
+    new ContractObligationEventEvidenceLinkAdminMutationPresenter(),
+  );
+  registry.register(
+    CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_ADMIN_LIST_PRESENTER_KEY,
+    new ContractObligationEventEvidenceLinkAdminListPresenter(),
+  );
+  registry.register(
+    CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_ADMIN_DETAIL_PRESENTER_KEY,
+    new ContractObligationEventEvidenceLinkAdminDetailPresenter(),
   );
 }

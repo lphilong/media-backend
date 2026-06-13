@@ -51,7 +51,7 @@ export interface ContractBoundaryMetadata {
   readonly directCommissionSourceEligible: false;
   readonly payrollSourceEligible: false;
   readonly obligationAcceptanceImplemented: boolean;
-  readonly eventEvidenceLinkImplemented: false;
+  readonly eventEvidenceLinkImplemented: boolean;
 }
 
 export const CONTRACT_LINKED_ENTITY_KINDS = [
@@ -253,7 +253,7 @@ export function getContractBoundaryMetadata(
         directCommissionSourceEligible: false,
         payrollSourceEligible: false,
         obligationAcceptanceImplemented: true,
-        eventEvidenceLinkImplemented: false,
+        eventEvidenceLinkImplemented: true,
       };
 
     default:

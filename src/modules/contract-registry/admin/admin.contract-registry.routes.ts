@@ -3,11 +3,13 @@ import { withCommand } from "@app/base/command.middleware";
 import { ContractRegistryAdminController } from "./admin.contract-registry.controller";
 import { ContractRegistryAdminQueryController } from "./admin.contract-registry.query.controller";
 import { ContractObligationAdminController } from "./admin.contract-obligation.controller";
+import { ContractObligationEventEvidenceLinkAdminController } from "./admin.contract-obligation-event-evidence-link.controller";
 
 export function adminContractRegistryRoutes(
   mutationController: ContractRegistryAdminController,
   queryController: ContractRegistryAdminQueryController,
   obligationController: ContractObligationAdminController,
+  eventEvidenceLinkController: ContractObligationEventEvidenceLinkAdminController,
 ): Router {
   const router = Router();
 
@@ -113,6 +115,30 @@ export function adminContractRegistryRoutes(
     "/obligations/:obligationId",
     withCommand("CONTRACT_OBLIGATION_GET_DETAIL"),
     obligationController.execute,
+  );
+
+  router.get(
+    "/obligations/:obligationId/event-evidence-links",
+    withCommand("CONTRACT_OBLIGATION_EVENT_EVIDENCE_LIST"),
+    eventEvidenceLinkController.execute,
+  );
+
+  router.post(
+    "/obligations/:obligationId/event-evidence-links",
+    withCommand("CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK"),
+    eventEvidenceLinkController.execute,
+  );
+
+  router.get(
+    "/obligations/event-evidence-links/:linkId",
+    withCommand("CONTRACT_OBLIGATION_EVENT_EVIDENCE_GET_DETAIL"),
+    eventEvidenceLinkController.execute,
+  );
+
+  router.post(
+    "/obligations/event-evidence-links/:linkId/remove",
+    withCommand("CONTRACT_OBLIGATION_EVENT_EVIDENCE_REMOVE"),
+    eventEvidenceLinkController.execute,
   );
 
   router.patch(

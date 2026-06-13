@@ -716,6 +716,27 @@ export const PermissionContracts: PermissionContractRegistry =
     auditAction: "contract-obligation.manage-lifecycle",
     riskLevel: "CRITICAL",
   },
+  [Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_READ]: {
+    code: Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_READ,
+    context: "ADMIN",
+    resource: "CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK",
+    auditAction: "contract-obligation.event-evidence-link.read",
+    riskLevel: "LOW",
+  },
+  [Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK]: {
+    code: Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK,
+    context: "ADMIN",
+    resource: "CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK",
+    auditAction: "contract-obligation.event-evidence-link.link",
+    riskLevel: "HIGH",
+  },
+  [Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_REMOVE]: {
+    code: Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_REMOVE,
+    context: "ADMIN",
+    resource: "CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK",
+    auditAction: "contract-obligation.event-evidence-link.remove",
+    riskLevel: "HIGH",
+  },
 
   /* =========================
      TALENT KPI

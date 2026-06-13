@@ -8,6 +8,8 @@ import {
 import { NativeMongoContractRegistryRepository } from "@infra/mongo/contract-registry/contract-registry.repository";
 import { NativeMongoContractObligationRepository } from "@infra/mongo/contract-registry/contract-obligation.repository";
 import { NativeMongoContractObligationReadRepository } from "@infra/mongo/contract-registry/contract-obligation.read-repository";
+import { NativeMongoContractObligationEventEvidenceLinkRepository } from "@infra/mongo/contract-registry/contract-obligation-event-evidence-link.repository";
+import { NativeMongoContractObligationEventEvidenceLinkReadRepository } from "@infra/mongo/contract-registry/contract-obligation-event-evidence-link.read-repository";
 
 export interface ContractRegistryInfra {
   readonly contractRegistryRepository: NativeMongoContractRegistryRepository;
@@ -17,6 +19,8 @@ export interface ContractRegistryInfra {
   readonly contractRegistryTalentReadonlyAccess: NativeMongoContractRegistryTalentReadonlyAccess;
   readonly contractObligationRepository: NativeMongoContractObligationRepository;
   readonly contractObligationReadRepository: NativeMongoContractObligationReadRepository;
+  readonly contractObligationEventEvidenceLinkRepository: NativeMongoContractObligationEventEvidenceLinkRepository;
+  readonly contractObligationEventEvidenceLinkReadRepository: NativeMongoContractObligationEventEvidenceLinkReadRepository;
 }
 
 export function createContractRegistryInfra(
@@ -43,5 +47,13 @@ export function createContractRegistryInfra(
       new NativeMongoContractObligationRepository(db),
     contractObligationReadRepository:
       new NativeMongoContractObligationReadRepository(db),
+    contractObligationEventEvidenceLinkRepository:
+      new NativeMongoContractObligationEventEvidenceLinkRepository(
+        db,
+      ),
+    contractObligationEventEvidenceLinkReadRepository:
+      new NativeMongoContractObligationEventEvidenceLinkReadRepository(
+        db,
+      ),
   };
 }

@@ -35,6 +35,14 @@ export const CONTRACT_OBLIGATION_RESPONSIBLE_OWNER_INDEX_NAME =
   "idx_contract_obligation_responsible_owner";
 export const CONTRACT_OBLIGATION_DUE_DATE_INDEX_NAME =
   "idx_contract_obligation_due_date";
+export const CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_OBLIGATION_STATUS_CREATED_INDEX_NAME =
+  "idx_contract_obligation_event_evidence_link_obligation_status_created";
+export const CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_EVENT_STATUS_INDEX_NAME =
+  "idx_contract_obligation_event_evidence_link_event_status";
+export const CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_CONTRACT_RECORD_STATUS_INDEX_NAME =
+  "idx_contract_obligation_event_evidence_link_contract_record_status";
+export const CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_ACTIVE_UNIQ_INDEX_NAME =
+  "uniq_contract_obligation_event_evidence_link_active";
 
 interface ContractRecordLegacyDocument {
   readonly _id: string;
@@ -225,6 +233,50 @@ export async function initContractRegistryIndexes(
     { dueDate: 1 },
     {
       name: CONTRACT_OBLIGATION_DUE_DATE_INDEX_NAME,
+    },
+  );
+
+  const eventEvidenceLinks = db.collection(
+    "contract_obligation_event_evidence_links",
+  );
+  await eventEvidenceLinks.createIndex(
+    {
+      contractObligationId: 1,
+      status: 1,
+      createdAt: -1,
+      _id: 1,
+    },
+    {
+      name:
+        CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_OBLIGATION_STATUS_CREATED_INDEX_NAME,
+    },
+  );
+  await eventEvidenceLinks.createIndex(
+    { eventId: 1, status: 1 },
+    {
+      name:
+        CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_EVENT_STATUS_INDEX_NAME,
+    },
+  );
+  await eventEvidenceLinks.createIndex(
+    { contractRecordId: 1, status: 1 },
+    {
+      name:
+        CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_CONTRACT_RECORD_STATUS_INDEX_NAME,
+    },
+  );
+  await eventEvidenceLinks.createIndex(
+    {
+      contractObligationId: 1,
+      eventId: 1,
+    },
+    {
+      name:
+        CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_ACTIVE_UNIQ_INDEX_NAME,
+      unique: true,
+      partialFilterExpression: {
+        status: "ACTIVE",
+      },
     },
   );
 }

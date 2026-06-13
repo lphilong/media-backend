@@ -20,8 +20,12 @@ import {
 } from "@modules/contract-registry/domain/contract-obligation.types";
 
 interface ContractObligationDocument
-  extends Omit<ContractObligation, "id"> {
+  extends Omit<
+    ContractObligation,
+    "id" | "latestEventEvidenceLinkIds"
+  > {
   readonly _id: string;
+  readonly latestEventEvidenceLinkIds?: readonly string[];
 }
 
 export class NativeMongoContractObligationRepository
@@ -142,6 +146,7 @@ export class NativeMongoContractObligationRepository
     for (const field of [
       "latestDeliveryNote",
       "latestEvidenceRefs",
+      "latestEventEvidenceLinkIds",
       "latestDeliveredByActorId",
       "latestDeliveredAt",
       "latestReviewedByActorId",
@@ -210,6 +215,9 @@ function toDocument(
     _id: id,
     ...document,
     latestEvidenceRefs: [...document.latestEvidenceRefs],
+    latestEventEvidenceLinkIds: [
+      ...document.latestEventEvidenceLinkIds,
+    ],
     statusHistory: [...document.statusHistory],
   };
 }
@@ -231,6 +239,9 @@ function toDomain(
     status: document.status as ContractObligationStatus,
     latestDeliveryNote: document.latestDeliveryNote,
     latestEvidenceRefs: [...document.latestEvidenceRefs],
+    latestEventEvidenceLinkIds: [
+      ...(document.latestEventEvidenceLinkIds ?? []),
+    ],
     latestDeliveredByActorId:
       document.latestDeliveredByActorId,
     latestDeliveredAt: document.latestDeliveredAt,

@@ -21,3 +21,12 @@ export const CONTRACT_OBLIGATION_ADMIN_LIST_PRESENTER_KEY =
 
 export const CONTRACT_OBLIGATION_ADMIN_DETAIL_PRESENTER_KEY =
   "contract-registry.obligation.admin.detail";
+
+export const CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_ADMIN_MUTATION_PRESENTER_KEY =
+  "contract-registry.obligation.event-evidence-link.admin.mutation";
+
+export const CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_ADMIN_LIST_PRESENTER_KEY =
+  "contract-registry.obligation.event-evidence-link.admin.list";
+
+export const CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_ADMIN_DETAIL_PRESENTER_KEY =
+  "contract-registry.obligation.event-evidence-link.admin.detail";

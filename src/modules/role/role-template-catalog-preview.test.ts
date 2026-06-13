@@ -80,18 +80,23 @@ test("role template catalog contains exactly the seven core templates with valid
   );
 });
 
-test("CR-3A role templates keep contract obligation mutation authority admin-global first", () => {
+test("CR-3B role templates keep contract obligation evidence mutation authority admin-global first", () => {
   const obligationCapabilities = [
     Permission.CONTRACT_OBLIGATION_READ,
     Permission.CONTRACT_OBLIGATION_MANAGE_DRAFT,
     Permission.CONTRACT_OBLIGATION_DELIVER,
     Permission.CONTRACT_OBLIGATION_REVIEW,
     Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
+    Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_READ,
+    Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK,
+    Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_REMOVE,
   ];
   const obligationMutationCapabilities =
     obligationCapabilities.filter(
       (permission) =>
-        permission !== Permission.CONTRACT_OBLIGATION_READ,
+        permission !== Permission.CONTRACT_OBLIGATION_READ &&
+        permission !==
+          Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_READ,
     );
 
   const admin = getRoleTemplate("ADMIN_FULL");
@@ -128,6 +133,12 @@ test("CR-3A role templates keep contract obligation mutation authority admin-glo
   );
   assert.equal(
     finance?.permissions.includes(
+      Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_READ,
+    ),
+    true,
+  );
+  assert.equal(
+    finance?.permissions.includes(
       Permission.CONTRACT_OBLIGATION_MANAGE_DRAFT,
     ),
     true,
@@ -149,6 +160,25 @@ test("CR-3A role templates keep contract obligation mutation authority admin-glo
       Permission.CONTRACT_OBLIGATION_DELIVER,
     ),
     false,
+  );
+  assert.equal(
+    finance?.permissions.includes(
+      Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK,
+    ),
+    false,
+  );
+  assert.equal(
+    finance?.permissions.includes(
+      Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_REMOVE,
+    ),
+    false,
+  );
+
+  assert.equal(
+    auditor?.permissions.includes(
+      Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_READ,
+    ),
+    true,
   );
 
   const externalTalentTemplates = ROLE_TEMPLATE_CATALOG.filter(

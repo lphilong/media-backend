@@ -15,6 +15,10 @@ import {
   CONTRACT_OBLIGATION_CODE_UNIQ_INDEX_NAME,
   CONTRACT_OBLIGATION_CONTRACT_STATUS_CREATED_INDEX_NAME,
   CONTRACT_OBLIGATION_DUE_DATE_INDEX_NAME,
+  CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_ACTIVE_UNIQ_INDEX_NAME,
+  CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_CONTRACT_RECORD_STATUS_INDEX_NAME,
+  CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_EVENT_STATUS_INDEX_NAME,
+  CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_OBLIGATION_STATUS_CREATED_INDEX_NAME,
   CONTRACT_OBLIGATION_RESPONSIBLE_OWNER_INDEX_NAME,
   CONTRACT_OBLIGATION_STATUS_TYPE_INDEX_NAME,
   initContractRegistryIndexes,
@@ -193,6 +197,39 @@ export function createContractRegistryBootstrapRegistrar(): BootstrapRegistrar {
         CONTRACT_OBLIGATION_DUE_DATE_INDEX_NAME,
         { dueDate: 1 },
       );
+      await assertRequiredIndex(
+        db,
+        "contract_obligation_event_evidence_links",
+        CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_OBLIGATION_STATUS_CREATED_INDEX_NAME,
+        {
+          contractObligationId: 1,
+          status: 1,
+          createdAt: -1,
+          _id: 1,
+        },
+      );
+      await assertRequiredIndex(
+        db,
+        "contract_obligation_event_evidence_links",
+        CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_EVENT_STATUS_INDEX_NAME,
+        { eventId: 1, status: 1 },
+      );
+      await assertRequiredIndex(
+        db,
+        "contract_obligation_event_evidence_links",
+        CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_CONTRACT_RECORD_STATUS_INDEX_NAME,
+        { contractRecordId: 1, status: 1 },
+      );
+      await assertRequiredUniquePartialIndex(
+        db,
+        "contract_obligation_event_evidence_links",
+        CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_ACTIVE_UNIQ_INDEX_NAME,
+        {
+          contractObligationId: 1,
+          eventId: 1,
+        },
+        { status: "ACTIVE" },
+      );
     },
   });
 }
@@ -234,6 +271,43 @@ async function assertRequiredPartialIndex(
     indexName,
     expectedKey,
   );
+
+  if (
+    !hasDeepExactShape(
+      matched.partialFilterExpression,
+      expectedPartialFilterExpression,
+    )
+  ) {
+    throw new SystemInvariantError(
+      "SYSTEM_INVARIANT_VIOLATION",
+      `Required index ${indexName} on ${collectionName} has invalid partialFilterExpression`,
+    );
+  }
+}
+
+async function assertRequiredUniquePartialIndex(
+  db: Db,
+  collectionName: string,
+  indexName: string,
+  expectedKey: Record<string, number>,
+  expectedPartialFilterExpression: Record<
+    string,
+    unknown
+  >,
+): Promise<void> {
+  const matched = await assertRequiredIndex(
+    db,
+    collectionName,
+    indexName,
+    expectedKey,
+  );
+
+  if (matched.unique !== true) {
+    throw new SystemInvariantError(
+      "SYSTEM_INVARIANT_VIOLATION",
+      `Required index ${indexName} on ${collectionName} must be unique`,
+    );
+  }
 
   if (
     !hasDeepExactShape(

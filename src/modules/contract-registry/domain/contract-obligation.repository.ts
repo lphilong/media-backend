@@ -29,6 +29,7 @@ export interface TransitionContractObligationInput {
   readonly transition: ContractObligationStatusTransition;
   readonly latestDeliveryNote?: string | null;
   readonly latestEvidenceRefs?: readonly ContractObligationEvidenceRef[];
+  readonly latestEventEvidenceLinkIds?: readonly string[];
   readonly latestDeliveredByActorId?: string | null;
   readonly latestDeliveredAt?: number | null;
   readonly latestReviewedByActorId?: string | null;

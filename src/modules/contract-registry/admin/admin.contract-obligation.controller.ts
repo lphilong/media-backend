@@ -100,11 +100,14 @@ export class ContractObligationAdminController extends SecureController {
         assertFields(body, [
           "deliveryNote",
           "evidenceRefs",
+          "eventEvidenceLinkIds",
         ]);
         return this.service.deliver(actor, {
           obligationId: req.params.obligationId,
           deliveryNote: body.deliveryNote as string | null,
           evidenceRefs: body.evidenceRefs as never,
+          eventEvidenceLinkIds:
+            body.eventEvidenceLinkIds as never,
         });
 
       case "CONTRACT_OBLIGATION_REJECT":

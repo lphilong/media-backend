@@ -14,11 +14,17 @@ import {
   ListContractObligationsResult,
 } from "./contract-obligation.contracts";
 import {
+  ContractObligationEventEvidenceLinkMutationResult,
+  GetContractObligationEventEvidenceLinkDetailResult,
+  ListContractObligationEventEvidenceLinksResult,
+} from "./contract-obligation-event-evidence-link.contracts";
+import {
   ContractRegistryAdminByLinkedEntityListExposure,
   ContractRegistryAdminByOwnerListExposure,
   ContractRegistryAdminDetailExposure,
   ContractRegistryAdminListExposure,
   ContractRegistryAdminMutationExposure,
+  ContractObligationEventEvidenceLinkAdminExposure,
   ContractObligationAdminExposure,
 } from "./contract-registry.exposure";
 
@@ -174,6 +180,61 @@ export class ContractObligationAdminDetailPresenter extends Presenter<
   ): PresentationResult {
     return {
       data: ContractObligationAdminExposure.expose(input),
+    };
+  }
+}
+
+export class ContractObligationEventEvidenceLinkAdminMutationPresenter extends Presenter<
+  ContractObligationEventEvidenceLinkMutationResult,
+  PresentationResult
+> {
+  present(
+    input: ContractObligationEventEvidenceLinkMutationResult,
+    _context: ContextType,
+  ): PresentationResult {
+    return {
+      data:
+        ContractObligationEventEvidenceLinkAdminExposure.expose(
+          input,
+        ),
+    };
+  }
+}
+
+export class ContractObligationEventEvidenceLinkAdminListPresenter extends Presenter<
+  ListContractObligationEventEvidenceLinksResult,
+  PresentationResult
+> {
+  present(
+    input: ListContractObligationEventEvidenceLinksResult,
+    _context: ContextType,
+  ): PresentationResult {
+    const output: PresentationResult = {
+      data:
+        ContractObligationEventEvidenceLinkAdminExposure.exposeMany(
+          input.items,
+        ),
+    };
+    if (input.nextCursor) {
+      output.meta = { nextCursor: input.nextCursor };
+    }
+    return output;
+  }
+}
+
+export class ContractObligationEventEvidenceLinkAdminDetailPresenter extends Presenter<
+  GetContractObligationEventEvidenceLinkDetailResult,
+  PresentationResult
+> {
+  present(
+    input: GetContractObligationEventEvidenceLinkDetailResult,
+    _context: ContextType,
+  ): PresentationResult {
+    return {
+      data:
+        ContractObligationEventEvidenceLinkAdminExposure.expose(
+          input,
+        ),
     };
   }
 }

@@ -138,6 +138,9 @@ export enum Permission {
   CONTRACT_OBLIGATION_DELIVER = "contractObligation.deliver",
   CONTRACT_OBLIGATION_REVIEW = "contractObligation.review",
   CONTRACT_OBLIGATION_MANAGE_LIFECYCLE = "contractObligation.manageLifecycle",
+  CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_READ = "contractObligation.eventEvidenceLink.read",
+  CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK = "contractObligation.eventEvidenceLink.link",
+  CONTRACT_OBLIGATION_EVENT_EVIDENCE_REMOVE = "contractObligation.eventEvidenceLink.remove",
 
   /* =========================
      TALENT KPI

@@ -22,6 +22,7 @@ import { PermissionResolver } from "@core/permission/permission.resolver";
 import { getTraceIdOrThrow } from "@core/trace/trace.context";
 import { ContractRegistryEmploymentProfileReadonlyAccess } from "../domain/contract-registry-employment-profile-readonly-access";
 import { buildContractObligationCodePolicy } from "../domain/contract-obligation-code-policy";
+import { ContractObligationEventEvidenceLinkRepository } from "../domain/contract-obligation-event-evidence-link.repository";
 import { ContractObligationRepository } from "../domain/contract-obligation.repository";
 import {
   CONTRACT_OBLIGATION_EVIDENCE_POLICIES,
@@ -71,6 +72,7 @@ import {
 export class ContractObligationAdminService {
   constructor(
     private readonly obligationRepository: ContractObligationRepository,
+    private readonly eventEvidenceLinkRepository: ContractObligationEventEvidenceLinkRepository,
     private readonly contractRepository: ContractRegistryRepository,
     private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
     private readonly employmentProfileReadonlyAccess: ContractRegistryEmploymentProfileReadonlyAccess,
@@ -119,6 +121,7 @@ export class ContractObligationAdminService {
           status: "DRAFT",
           latestDeliveryNote: null,
           latestEvidenceRefs: [],
+          latestEventEvidenceLinkIds: [],
           latestDeliveredByActorId: null,
           latestDeliveredAt: null,
           latestReviewedByActorId: null,
@@ -269,6 +272,9 @@ export class ContractObligationAdminService {
     const evidenceRefs = normalizeEvidenceRefs(
       command.evidenceRefs,
     );
+    const eventEvidenceLinkIds = normalizeEventEvidenceLinkIds(
+      command.eventEvidenceLinkIds,
+    );
 
     return this.executeMutation(
       actor,
@@ -284,12 +290,27 @@ export class ContractObligationAdminService {
           current.contractRecordId,
           session,
         );
+        const activeEventEvidenceLinks =
+          await this.eventEvidenceLinkRepository.listActiveByIdsForObligation(
+            current.id,
+            eventEvidenceLinkIds,
+            session,
+          );
         if (
-          current.evidencePolicy === "REQUIRED" &&
-          evidenceRefs.length === 0
+          activeEventEvidenceLinks.length !==
+          eventEvidenceLinkIds.length
         ) {
           throw new ContractObligationValidationError(
-            "At least one direct structured evidence reference is required",
+            "Selected eventEvidenceLinkIds must be ACTIVE and belong to the same obligation",
+          );
+        }
+        if (
+          current.evidencePolicy === "REQUIRED" &&
+          evidenceRefs.length === 0 &&
+          eventEvidenceLinkIds.length === 0
+        ) {
+          throw new ContractObligationValidationError(
+            "At least one direct structured evidence reference or active Event evidence link is required",
           );
         }
         const now = Date.now();
@@ -308,6 +329,7 @@ export class ContractObligationAdminService {
               ),
               latestDeliveryNote: deliveryNote,
               latestEvidenceRefs: evidenceRefs,
+              latestEventEvidenceLinkIds: eventEvidenceLinkIds,
               latestDeliveredByActorId: actor.id,
               latestDeliveredAt: now,
               latestReviewedByActorId: null,
@@ -895,6 +917,39 @@ function normalizeEvidenceRefs(
       url,
       referenceId,
     };
+  });
+}
+
+function normalizeEventEvidenceLinkIds(
+  value: unknown,
+): readonly string[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new ContractObligationValidationError(
+      "eventEvidenceLinkIds must be an array",
+    );
+  }
+  if (value.length > CONTRACT_OBLIGATION_EVIDENCE_REF_MAX_COUNT) {
+    throw new ContractObligationValidationError(
+      `eventEvidenceLinkIds must contain at most ${CONTRACT_OBLIGATION_EVIDENCE_REF_MAX_COUNT} items`,
+    );
+  }
+
+  const seen = new Set<string>();
+  return value.map((raw, index) => {
+    const id = normalizeRequiredText(
+      raw,
+      `eventEvidenceLinkIds[${index}]`,
+    );
+    if (seen.has(id)) {
+      throw new ContractObligationValidationError(
+        "eventEvidenceLinkIds must not contain duplicates",
+      );
+    }
+    seen.add(id);
+    return id;
   });
 }
 

@@ -11,6 +11,7 @@ import {
   ContractRecordMutationView,
 } from "@modules/contract-registry/domain/contract-registry.types";
 import { ContractObligationView } from "@modules/contract-registry/domain/contract-obligation.types";
+import { ContractObligationEventEvidenceLinkView } from "@modules/contract-registry/domain/contract-obligation-event-evidence-link.types";
 
 const CONTRACT_RECORD_ADMIN_DETAIL_FIELDS = [
   "id",
@@ -284,6 +285,7 @@ const CONTRACT_OBLIGATION_FIELDS = [
   "status",
   "latestDeliveryNote",
   "latestEvidenceRefs",
+  "latestEventEvidenceLinkIds",
   "latestDeliveredByActorId",
   "latestDeliveredAt",
   "latestReviewedByActorId",
@@ -315,6 +317,48 @@ export const ContractObligationAdminExposure =
 
     exposeMany(
       items: readonly ContractObligationView[],
+    ): readonly PlainObject[] {
+      return items.map((item) => this.expose(item));
+    },
+  });
+
+const CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_FIELDS = [
+  "id",
+  "contractObligationId",
+  "contractRecordId",
+  "eventId",
+  "status",
+  "linkedByActorId",
+  "linkedAt",
+  "linkReason",
+  "removedByActorId",
+  "removedAt",
+  "removeReason",
+  "snapshot",
+  "actionHistory",
+  "createdByActorId",
+  "createdAt",
+  "updatedByActorId",
+  "updatedAt",
+  "boundaryMetadata",
+] as const;
+
+export const ContractObligationEventEvidenceLinkAdminExposure =
+  Object.freeze({
+    expose(
+      input: ContractObligationEventEvidenceLinkView,
+    ): PlainObject {
+      return toPlainObject(
+        ExposurePolicy.expose(
+          { ...input },
+          CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_FIELDS,
+        ),
+        "ContractObligationEventEvidenceLinkAdmin exposure",
+      );
+    },
+
+    exposeMany(
+      items: readonly ContractObligationEventEvidenceLinkView[],
     ): readonly PlainObject[] {
       return items.map((item) => this.expose(item));
     },

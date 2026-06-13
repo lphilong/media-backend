@@ -148,6 +148,8 @@ export const AUTHORITATIVE_ADMIN_MUTATION_IDENTITIES = [
   "contract-obligation.accept",
   "contract-obligation.cancel",
   "contract-obligation.archive",
+  "contract-obligation.event-evidence-link.create",
+  "contract-obligation.event-evidence-link.remove",
   "talent-kpi.create",
   "talent-kpi.update-draft-core",
   "talent-kpi.replace-metrics",
@@ -385,6 +387,10 @@ const ADMIN_MUTATION_PERMISSION_BY_IDENTITY: Readonly<
     Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
   "contract-obligation.archive":
     Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
+  "contract-obligation.event-evidence-link.create":
+    Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK,
+  "contract-obligation.event-evidence-link.remove":
+    Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_REMOVE,
 
   "talent-kpi.create": Permission.TALENT_KPI_CREATE,
   "talent-kpi.update-draft-core": Permission.TALENT_KPI_UPDATE,

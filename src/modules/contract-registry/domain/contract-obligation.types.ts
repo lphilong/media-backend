@@ -67,6 +67,7 @@ export interface ContractObligation {
   readonly status: ContractObligationStatus;
   readonly latestDeliveryNote: string | null;
   readonly latestEvidenceRefs: readonly ContractObligationEvidenceRef[];
+  readonly latestEventEvidenceLinkIds: readonly string[];
   readonly latestDeliveredByActorId: string | null;
   readonly latestDeliveredAt: number | null;
   readonly latestReviewedByActorId: string | null;
@@ -88,7 +89,7 @@ export interface ContractObligationBoundaryMetadata {
   readonly legacyEmploymentContractAllowed: false;
   readonly unsupportedContractKindAllowed: false;
   readonly responsibleOwnerGrantsAuthority: false;
-  readonly eventEvidenceLinkImplemented: false;
+  readonly eventEvidenceLinkImplemented: true;
   readonly eventCompletionMutatesObligation: false;
   readonly acceptanceCreatesRevenue: false;
   readonly acceptanceCreatesCommission: false;
@@ -112,7 +113,7 @@ export const CONTRACT_OBLIGATION_BOUNDARY_METADATA: ContractObligationBoundaryMe
     legacyEmploymentContractAllowed: false,
     unsupportedContractKindAllowed: false,
     responsibleOwnerGrantsAuthority: false,
-    eventEvidenceLinkImplemented: false,
+    eventEvidenceLinkImplemented: true,
     eventCompletionMutatesObligation: false,
     acceptanceCreatesRevenue: false,
     acceptanceCreatesCommission: false,
@@ -136,6 +137,9 @@ export function toContractObligationView(
   return {
     ...obligation,
     latestEvidenceRefs: [...obligation.latestEvidenceRefs],
+    latestEventEvidenceLinkIds: [
+      ...obligation.latestEventEvidenceLinkIds,
+    ],
     statusHistory: [...obligation.statusHistory],
     boundaryMetadata:
       CONTRACT_OBLIGATION_BOUNDARY_METADATA,

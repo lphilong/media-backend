@@ -388,7 +388,7 @@ test("Contract Registry list/detail enrich linked and owner refs with page-bound
     directCommissionSourceEligible: false,
     payrollSourceEligible: false,
     obligationAcceptanceImplemented: true,
-    eventEvidenceLinkImplemented: false,
+    eventEvidenceLinkImplemented: true,
   });
 });
 
@@ -423,7 +423,7 @@ test("Contract Registry creates supported commercial/legal talent contracts with
     directCommissionSourceEligible: false,
     payrollSourceEligible: false,
     obligationAcceptanceImplemented: true,
-    eventEvidenceLinkImplemented: false,
+    eventEvidenceLinkImplemented: true,
   });
   assert.equal(harness.repository.records.length, 1);
 });
@@ -603,7 +603,7 @@ test("Contract Registry boundary classification is exhaustive and fails closed f
         directCommissionSourceEligible: false,
         payrollSourceEligible: false,
         obligationAcceptanceImplemented: true,
-        eventEvidenceLinkImplemented: false,
+        eventEvidenceLinkImplemented: true,
       },
     );
   }

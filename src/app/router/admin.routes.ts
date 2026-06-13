@@ -155,6 +155,9 @@ import { ContractRegistryAdminQueryService } from "@modules/contract-registry/ad
 import { ContractObligationAdminController } from "@modules/contract-registry/admin/admin.contract-obligation.controller";
 import { ContractObligationAdminService } from "@modules/contract-registry/admin/admin.contract-obligation.service";
 import { ContractObligationAdminQueryService } from "@modules/contract-registry/admin/admin.contract-obligation.query-service";
+import { ContractObligationEventEvidenceLinkAdminController } from "@modules/contract-registry/admin/admin.contract-obligation-event-evidence-link.controller";
+import { ContractObligationEventEvidenceLinkAdminQueryService } from "@modules/contract-registry/admin/admin.contract-obligation-event-evidence-link.query-service";
+import { ContractObligationEventEvidenceLinkAdminService } from "@modules/contract-registry/admin/admin.contract-obligation-event-evidence-link.service";
 
 /* TALENT KPI */
 import { adminTalentKpiRoutes } from "@modules/talent-kpi/admin/admin.talent-kpi.routes";
@@ -401,6 +404,8 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     contractRegistryTalentReadonlyAccess,
     contractObligationRepository,
     contractObligationReadRepository,
+    contractObligationEventEvidenceLinkRepository,
+    contractObligationEventEvidenceLinkReadRepository,
   } = createContractRegistryInfra(infra.primaryDb);
   const {
     talentKpiRepository,
@@ -896,6 +901,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     new ContractObligationAdminController(
       new ContractObligationAdminService(
         contractObligationRepository,
+        contractObligationEventEvidenceLinkRepository,
         contractRegistryRepository,
         contractRegistryBusinessCodeSequenceRepository,
         contractRegistryEmploymentProfileReadonlyAccess,
@@ -906,6 +912,20 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
         contractObligationReadRepository,
       ),
     );
+  const contractObligationEventEvidenceLinkController =
+    new ContractObligationEventEvidenceLinkAdminController(
+      new ContractObligationEventEvidenceLinkAdminService(
+        contractObligationEventEvidenceLinkRepository,
+        contractObligationRepository,
+        contractRegistryRepository,
+        eventAssignmentRepository,
+        authoritativeAuditGuard,
+        adminMutationBridge,
+      ),
+      new ContractObligationEventEvidenceLinkAdminQueryService(
+        contractObligationEventEvidenceLinkReadRepository,
+      ),
+    );
 
   r.use(
     "/contract-records",
@@ -913,6 +933,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       contractRegistryController,
       contractRegistryQueryController,
       contractObligationController,
+      contractObligationEventEvidenceLinkController,
     ),
   );
 

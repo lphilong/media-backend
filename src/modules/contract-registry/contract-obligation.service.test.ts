@@ -13,6 +13,11 @@ import { bindTraceId } from "@core/trace/trace.context";
 import { ContractObligationAdminService } from "./admin/admin.contract-obligation.service";
 import { ContractRegistryAdminService } from "./admin/admin.contract-registry.service";
 import {
+  ContractObligationEventEvidenceLinkRepository,
+  RemoveContractObligationEventEvidenceLinkInput,
+} from "./domain/contract-obligation-event-evidence-link.repository";
+import { ContractObligationEventEvidenceLink } from "./domain/contract-obligation-event-evidence-link.types";
+import {
   ContractObligationRepository,
   TransitionContractObligationInput,
   UpdateContractObligationMetadataInput,
@@ -56,6 +61,7 @@ test("CR-3A obligation lifecycle, eligibility, evidence, separation, archive gua
     const codes = new MemoryCodeSequenceRepository();
     const service = new ContractObligationAdminService(
       obligations,
+      new MemoryEventEvidenceLinkRepository(),
       contracts,
       codes,
       {
@@ -83,7 +89,7 @@ test("CR-3A obligation lifecycle, eligibility, evidence, separation, archive gua
     assert.equal(created.obligationType, "DELIVERABLE");
     assert.equal(
       created.boundaryMetadata.eventEvidenceLinkImplemented,
-      false,
+      true,
     );
     assert.equal(
       created.boundaryMetadata.acceptanceCreatesRevenue,
@@ -409,6 +415,7 @@ function createObligationService(
 ): ContractObligationAdminService {
   return new ContractObligationAdminService(
     obligations,
+    new MemoryEventEvidenceLinkRepository(),
     contracts,
     new MemoryCodeSequenceRepository(),
     {
@@ -552,6 +559,9 @@ class MemoryObligationRepository
       latestEvidenceRefs:
         input.latestEvidenceRefs ??
         current.latestEvidenceRefs,
+      latestEventEvidenceLinkIds:
+        input.latestEventEvidenceLinkIds ??
+        current.latestEventEvidenceLinkIds,
     };
     this.records[index] = updated;
     return updated;
@@ -567,6 +577,75 @@ class MemoryObligationRepository
           record.status,
         ),
     );
+  }
+}
+
+class MemoryEventEvidenceLinkRepository
+  implements ContractObligationEventEvidenceLinkRepository
+{
+  readonly records: ContractObligationEventEvidenceLink[] = [];
+
+  async insert(record: ContractObligationEventEvidenceLink) {
+    this.records.push(record);
+    return record;
+  }
+
+  async findById(id: string) {
+    return this.records.find((record) => record.id === id) ?? null;
+  }
+
+  async findActiveByObligationAndEvent(
+    contractObligationId: string,
+    eventId: string,
+  ) {
+    return (
+      this.records.find(
+        (record) =>
+          record.contractObligationId === contractObligationId &&
+          record.eventId === eventId &&
+          record.status === "ACTIVE",
+      ) ?? null
+    );
+  }
+
+  async listActiveByIdsForObligation(
+    contractObligationId: string,
+    linkIds: readonly string[],
+  ) {
+    const ids = new Set(linkIds);
+    return this.records.filter(
+      (record) =>
+        ids.has(record.id) &&
+        record.contractObligationId === contractObligationId &&
+        record.status === "ACTIVE",
+    );
+  }
+
+  async softRemove(
+    input: RemoveContractObligationEventEvidenceLinkInput,
+  ) {
+    const index = this.records.findIndex(
+      (record) =>
+        record.id === input.linkId &&
+        record.status === "ACTIVE",
+    );
+    if (index < 0) return null;
+    const current = this.records[index];
+    const updated: ContractObligationEventEvidenceLink = {
+      ...current,
+      status: "REMOVED",
+      removedByActorId: input.removedByActorId,
+      removedAt: input.removedAt,
+      removeReason: input.removeReason,
+      actionHistory: [
+        ...current.actionHistory,
+        input.action,
+      ],
+      updatedByActorId: input.updatedByActorId,
+      updatedAt: input.updatedAt,
+    };
+    this.records[index] = updated;
+    return updated;
   }
 }
 

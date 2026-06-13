@@ -13,8 +13,12 @@ import {
 import { ContractObligationValidationError } from "@modules/contract-registry/domain/contract-registry.errors";
 
 interface ContractObligationReadDocument
-  extends Omit<ContractObligation, "id"> {
+  extends Omit<
+    ContractObligation,
+    "id" | "latestEventEvidenceLinkIds"
+  > {
   readonly _id: string;
+  readonly latestEventEvidenceLinkIds?: readonly string[];
 }
 
 interface ObligationCursor {
@@ -112,6 +116,9 @@ function toDomain(
     ...obligation,
     id: _id,
     latestEvidenceRefs: [...document.latestEvidenceRefs],
+    latestEventEvidenceLinkIds: [
+      ...(document.latestEventEvidenceLinkIds ?? []),
+    ],
     statusHistory: [...document.statusHistory],
   };
 }
