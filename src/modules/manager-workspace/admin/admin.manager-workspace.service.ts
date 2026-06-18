@@ -1,6 +1,5 @@
 import { Actor } from "@core/actor/actor";
 import { Permission } from "@core/permission/permission.enum";
-import { PermissionGuard } from "@core/permission/permission.guard";
 import { EmploymentProfileRepository } from "@modules/employment-profile/domain/employment-profile.repository";
 import { EmploymentProfileRecord } from "@modules/employment-profile/domain/employment-profile.types";
 import {
@@ -12,6 +11,7 @@ import { KpiSubjectReadonlyAccess } from "@modules/kpi/domain/kpi-subject-readon
 import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
 import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import { ReferenceSummary } from "@modules/reference-summary";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 type ManagerWorkspaceKpiCapabilities = {
   readonly read: boolean;
@@ -111,6 +111,7 @@ export class ManagerWorkspaceAdminService {
       OrgUnitManagerAssignmentRepository,
       "listActiveByManagerEmploymentProfileId"
     >,
+    private readonly structuredAuthority: StructuredScopeAuthorityService,
     private readonly clock: () => number = Date.now,
   ) {}
 
@@ -146,16 +147,24 @@ export class ManagerWorkspaceAdminService {
         asOf,
       ),
     ]);
-    const hasManagerCapability = hasKpiManagedCapability(actor);
+    const [authorizedOrgUnitAssignments, authorizedTalentGroupAssignments] =
+      await Promise.all([
+        this.filterOrgUnitAssignments(actor, orgUnitAssignments),
+        this.filterTalentGroupAssignments(actor, talentGroupAssignments),
+      ]);
     const refs = await this.loadScopeRefs(
-      orgUnitAssignments,
-      talentGroupAssignments,
+      authorizedOrgUnitAssignments,
+      authorizedTalentGroupAssignments,
     );
-    const orgUnits = orgUnitAssignments.map((assignment) =>
-      toOrgUnitScope(assignment, refs, actor, hasManagerCapability),
+    const orgUnits = await Promise.all(
+      authorizedOrgUnitAssignments.map((assignment) =>
+        this.toOrgUnitScope(assignment, refs, actor),
+      ),
     );
-    const talentGroups = talentGroupAssignments.map((assignment) =>
-      toTalentGroupScope(assignment, refs, actor, hasManagerCapability),
+    const talentGroups = await Promise.all(
+      authorizedTalentGroupAssignments.map((assignment) =>
+        this.toTalentGroupScope(assignment, refs, actor),
+      ),
     );
     const unitKpiVisible = orgUnits.some(
       (scope) => scope.capabilities.kpi.read,
@@ -165,17 +174,29 @@ export class ManagerWorkspaceAdminService {
     );
     const visible = unitKpiVisible || talentGroupKpiVisible;
     const hasManagedAssignment = orgUnits.length + talentGroups.length > 0;
-    const workShiftsVisible =
-      hasManagedAssignment &&
-      actor.permissions.includes(Permission.WORK_SCHEDULE_READ);
-    const eventsVisible =
-      hasManagedAssignment &&
-      actor.permissions.includes(Permission.EVENT_READ);
-    const revenueSourceVisible =
-      talentGroups.length > 0 &&
-      actor.permissions.includes(
-        Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
-      );
+    const [workShiftsVisible, eventsVisible, revenueSourceVisible] =
+      await Promise.all([
+        hasStructuredModuleScope(
+          this.structuredAuthority,
+          actor,
+          Permission.WORK_SCHEDULE_READ,
+          orgUnits.map((scope) => scope.orgUnitId),
+          talentGroups.map((scope) => scope.talentGroupId),
+        ),
+        hasStructuredModuleScope(
+          this.structuredAuthority,
+          actor,
+          Permission.EVENT_READ,
+          orgUnits.map((scope) => scope.orgUnitId),
+          talentGroups.map((scope) => scope.talentGroupId),
+        ),
+        hasAnyManagedTalentGroupAuthority(
+          this.structuredAuthority,
+          actor,
+          talentGroups.map((scope) => scope.talentGroupId),
+          [Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT],
+        ),
+      ]);
     const reasons = visible
       ? []
       : [
@@ -188,8 +209,7 @@ export class ManagerWorkspaceAdminService {
       actor: baseActor,
       employmentProfile: profileView,
       readiness: {
-        canUseManagerWorkspace:
-          hasManagerCapability || orgUnits.length + talentGroups.length > 0,
+        canUseManagerWorkspace: true,
         reasons,
       },
       scopes: {
@@ -246,6 +266,140 @@ export class ManagerWorkspaceAdminService {
         subjectId: assignment.groupId,
       })),
     ]);
+  }
+
+  private async filterOrgUnitAssignments(
+    actor: Actor,
+    assignments: readonly OrgUnitManagerAssignment[],
+  ): Promise<readonly OrgUnitManagerAssignment[]> {
+    const authorized = await Promise.all(
+      assignments.map(async (assignment) =>
+        (await hasAnyManagedOrgUnitAuthority(
+          this.structuredAuthority,
+          actor,
+          assignment.orgUnitId,
+        ))
+          ? assignment
+          : null,
+      ),
+    );
+    return authorized.filter(
+      (assignment): assignment is OrgUnitManagerAssignment => assignment !== null,
+    );
+  }
+
+  private async filterTalentGroupAssignments(
+    actor: Actor,
+    assignments: readonly TalentGroupManagerAssignment[],
+  ): Promise<readonly TalentGroupManagerAssignment[]> {
+    const authorized = await Promise.all(
+      assignments.map(async (assignment) =>
+        (await hasAnyManagedTalentGroupAuthority(
+          this.structuredAuthority,
+          actor,
+          assignment.groupId,
+        ))
+          ? assignment
+          : null,
+      ),
+    );
+    return authorized.filter(
+      (assignment): assignment is TalentGroupManagerAssignment =>
+        assignment !== null,
+    );
+  }
+
+  private async toOrgUnitScope(
+    assignment: OrgUnitManagerAssignment,
+    refs: ReadonlyMap<string, ReferenceSummary>,
+    actor: Actor,
+  ): Promise<ManagerWorkspaceOrgUnitScope> {
+    const ref = refs.get(`ORG_UNIT:${assignment.orgUnitId}`);
+    const directUnitManager =
+      assignment.role === "UNIT_MANAGER" && !assignment.includeDescendants;
+    const canRead = await hasAnyManagedOrgUnitAuthority(
+      this.structuredAuthority,
+      actor,
+      assignment.orgUnitId,
+      [Permission.KPI_READ, Permission.KPI_READ_PROGRESS],
+    );
+    const canEnterActual =
+      directUnitManager &&
+      (await hasManagedOrgUnitAuthority(
+        this.structuredAuthority,
+        actor,
+        Permission.KPI_ENTER_ACTUAL,
+        assignment.orgUnitId,
+      ));
+    const canCorrectActual =
+      directUnitManager &&
+      (await hasManagedOrgUnitAuthority(
+        this.structuredAuthority,
+        actor,
+        Permission.KPI_CORRECT_ACTUAL,
+        assignment.orgUnitId,
+      ));
+
+    return {
+      orgUnitId: assignment.orgUnitId,
+      ...(ref?.code ? { code: ref.code } : {}),
+      name: ref?.name ?? ref?.displayName ?? assignment.orgUnitId,
+      ...(ref?.displayName ? { displayName: ref.displayName } : {}),
+      role: assignment.role,
+      includeDescendants: assignment.includeDescendants,
+      ...(assignment.isPrimary ? { isPrimary: true } : {}),
+      capabilities: {
+        kpi: {
+          read: canRead,
+          manageAllocation: canEnterActual,
+          enterActual: canEnterActual,
+          correctActual: canCorrectActual,
+          finalize: false,
+        },
+      },
+    };
+  }
+
+  private async toTalentGroupScope(
+    assignment: TalentGroupManagerAssignment,
+    refs: ReadonlyMap<string, ReferenceSummary>,
+    actor: Actor,
+  ): Promise<ManagerWorkspaceTalentGroupScope> {
+    const ref = refs.get(`TALENT_GROUP:${assignment.groupId}`);
+    const canRead = await hasAnyManagedTalentGroupAuthority(
+      this.structuredAuthority,
+      actor,
+      assignment.groupId,
+      [Permission.KPI_READ, Permission.KPI_READ_PROGRESS],
+    );
+    const canEnterActual = await hasManagedTalentGroupAuthority(
+      this.structuredAuthority,
+      actor,
+      Permission.KPI_ENTER_ACTUAL,
+      assignment.groupId,
+    );
+    const canCorrectActual = await hasManagedTalentGroupAuthority(
+      this.structuredAuthority,
+      actor,
+      Permission.KPI_CORRECT_ACTUAL,
+      assignment.groupId,
+    );
+
+    return {
+      talentGroupId: assignment.groupId,
+      ...(ref?.code ? { code: ref.code } : {}),
+      name: ref?.name ?? ref?.displayName ?? assignment.groupId,
+      ...(ref?.displayName ? { displayName: ref.displayName } : {}),
+      capabilities: {
+        kpi: {
+          read: canRead,
+          manageAllocation: canEnterActual,
+          enterActual: canEnterActual,
+          correctActual: canCorrectActual,
+          finalize: false,
+        },
+      },
+    };
   }
 }
 
@@ -323,78 +477,115 @@ function isManagerReadyEmploymentProfile(
   );
 }
 
-function hasKpiManagedCapability(actor: Actor): boolean {
+async function hasAnyManagedOrgUnitAuthority(
+  service: StructuredScopeAuthorityService,
+  actor: Actor,
+  orgUnitIds: string | readonly string[],
+  permissions: readonly Permission[] = [
+    Permission.KPI_READ,
+    Permission.KPI_READ_PROGRESS,
+    Permission.KPI_ENTER_ACTUAL,
+    Permission.KPI_CORRECT_ACTUAL,
+    Permission.WORK_SCHEDULE_READ,
+    Permission.EVENT_READ,
+  ],
+): Promise<boolean> {
+  const ids = Array.isArray(orgUnitIds) ? orgUnitIds : [orgUnitIds];
+  for (const permission of permissions) {
+    for (const orgUnitId of ids) {
+      if (
+        await hasManagedOrgUnitAuthority(service, actor, permission, orgUnitId)
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+async function hasAnyManagedTalentGroupAuthority(
+  service: StructuredScopeAuthorityService,
+  actor: Actor,
+  talentGroupIds: string | readonly string[],
+  permissions: readonly Permission[] = [
+    Permission.KPI_READ,
+    Permission.KPI_READ_PROGRESS,
+    Permission.KPI_ENTER_ACTUAL,
+    Permission.KPI_CORRECT_ACTUAL,
+    Permission.WORK_SCHEDULE_READ,
+    Permission.EVENT_READ,
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+  ],
+): Promise<boolean> {
+  const ids = Array.isArray(talentGroupIds) ? talentGroupIds : [talentGroupIds];
+  for (const permission of permissions) {
+    for (const talentGroupId of ids) {
+      if (
+        await hasManagedTalentGroupAuthority(
+          service,
+          actor,
+          permission,
+          talentGroupId,
+        )
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+async function hasStructuredModuleScope(
+  service: StructuredScopeAuthorityService,
+  actor: Actor,
+  permission: Permission,
+  orgUnitIds: readonly string[],
+  talentGroupIds: readonly string[],
+): Promise<boolean> {
   return (
-    PermissionGuard.hasKpiScopeGrant(actor, "managedGroup") &&
-    (actor.permissions.includes(Permission.KPI_READ) ||
-      actor.permissions.includes(Permission.KPI_READ_PROGRESS))
+    (await hasAnyManagedOrgUnitAuthority(service, actor, orgUnitIds, [
+      permission,
+    ])) ||
+    (await hasAnyManagedTalentGroupAuthority(service, actor, talentGroupIds, [
+      permission,
+    ]))
   );
 }
 
-function toOrgUnitScope(
-  assignment: OrgUnitManagerAssignment,
-  refs: ReadonlyMap<string, ReferenceSummary>,
+function hasManagedOrgUnitAuthority(
+  service: StructuredScopeAuthorityService,
   actor: Actor,
-  hasManagerCapability: boolean,
-): ManagerWorkspaceOrgUnitScope {
-  const ref = refs.get(`ORG_UNIT:${assignment.orgUnitId}`);
-  const directUnitManager =
-    assignment.role === "UNIT_MANAGER" && !assignment.includeDescendants;
-  const canWrite =
-    hasManagerCapability &&
-    directUnitManager &&
-    actor.permissions.includes(Permission.KPI_ENTER_ACTUAL);
-
-  return {
-    orgUnitId: assignment.orgUnitId,
-    ...(ref?.code ? { code: ref.code } : {}),
-    name: ref?.name ?? ref?.displayName ?? assignment.orgUnitId,
-    ...(ref?.displayName ? { displayName: ref.displayName } : {}),
-    role: assignment.role,
-    includeDescendants: assignment.includeDescendants,
-    ...(assignment.isPrimary ? { isPrimary: true } : {}),
-    capabilities: {
-      kpi: {
-        read: hasManagerCapability,
-        manageAllocation: canWrite,
-        enterActual: canWrite,
-        correctActual:
-          hasManagerCapability &&
-          directUnitManager &&
-          actor.permissions.includes(Permission.KPI_CORRECT_ACTUAL),
-        finalize: false,
-      },
-    },
-  };
+  permission: Permission,
+  orgUnitId: string,
+): Promise<boolean> {
+  if (!actor.isActive) {
+    return Promise.resolve(false);
+  }
+  if (!actor.permissions.includes(permission)) {
+    return Promise.resolve(false);
+  }
+  return service.hasAuthority({
+    userId: actor.id,
+    permission,
+    scope: { scopeType: "managedOrgUnit", targetId: orgUnitId },
+  });
 }
 
-function toTalentGroupScope(
-  assignment: TalentGroupManagerAssignment,
-  refs: ReadonlyMap<string, ReferenceSummary>,
+function hasManagedTalentGroupAuthority(
+  service: StructuredScopeAuthorityService,
   actor: Actor,
-  hasManagerCapability: boolean,
-): ManagerWorkspaceTalentGroupScope {
-  const ref = refs.get(`TALENT_GROUP:${assignment.groupId}`);
-
-  return {
-    talentGroupId: assignment.groupId,
-    ...(ref?.code ? { code: ref.code } : {}),
-    name: ref?.name ?? ref?.displayName ?? assignment.groupId,
-    ...(ref?.displayName ? { displayName: ref.displayName } : {}),
-    capabilities: {
-      kpi: {
-        read: hasManagerCapability,
-        manageAllocation:
-          hasManagerCapability &&
-          actor.permissions.includes(Permission.KPI_ENTER_ACTUAL),
-        enterActual:
-          hasManagerCapability &&
-          actor.permissions.includes(Permission.KPI_ENTER_ACTUAL),
-        correctActual:
-          hasManagerCapability &&
-          actor.permissions.includes(Permission.KPI_CORRECT_ACTUAL),
-        finalize: false,
-      },
-    },
-  };
+  permission: Permission,
+  talentGroupId: string,
+): Promise<boolean> {
+  if (!actor.isActive) {
+    return Promise.resolve(false);
+  }
+  if (!actor.permissions.includes(permission)) {
+    return Promise.resolve(false);
+  }
+  return service.hasAuthority({
+    userId: actor.id,
+    permission,
+    scope: { scopeType: "managedTalentGroup", targetId: talentGroupId },
+  });
 }

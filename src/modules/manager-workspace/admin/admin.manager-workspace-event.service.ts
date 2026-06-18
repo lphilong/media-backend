@@ -8,6 +8,7 @@ import { ManagerEventSummaryView } from "@modules/event-assignment/domain/event-
 import { EventAssignmentReadRepository } from "@modules/event-assignment/read/event-assignment.read-repository";
 import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
 import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 export class ManagerWorkspaceEventAdminService {
   constructor(
@@ -27,6 +28,7 @@ export class ManagerWorkspaceEventAdminService {
       EventAssignmentReadRepository,
       "listManagerEventSummaries" | "getManagerEventSummary"
     >,
+    private readonly structuredAuthority: StructuredScopeAuthorityService,
     private readonly clock: () => number = Date.now,
   ) {}
 
@@ -93,11 +95,56 @@ export class ManagerWorkspaceEventAdminService {
         asOf,
       ),
     ]);
+    const [orgUnitIds, talentGroupIds] = await Promise.all([
+      filterManagedOrgUnitIds(this.structuredAuthority, actor, orgUnits),
+      filterManagedTalentGroupIds(
+        this.structuredAuthority,
+        actor,
+        talentGroups.map((item) => item.groupId),
+      ),
+    ]);
     return {
-      orgUnitIds: [...new Set(orgUnits.map((item) => item.orgUnitId))].sort(),
-      talentGroupIds: [
-        ...new Set(talentGroups.map((item) => item.groupId)),
-      ].sort(),
+      orgUnitIds,
+      talentGroupIds,
     };
   }
+}
+
+async function filterManagedOrgUnitIds(
+  service: StructuredScopeAuthorityService,
+  actor: Actor,
+  assignments: readonly { readonly orgUnitId: string }[],
+): Promise<readonly string[]> {
+  const authorized = await Promise.all(
+    [...new Set(assignments.map((item) => item.orgUnitId))].map(
+      async (orgUnitId) =>
+        (await service.hasAuthority({
+          userId: actor.id,
+          permission: Permission.EVENT_READ,
+          scope: { scopeType: "managedOrgUnit", targetId: orgUnitId },
+        }))
+          ? orgUnitId
+          : null,
+    ),
+  );
+  return authorized.filter((id): id is string => id !== null).sort();
+}
+
+async function filterManagedTalentGroupIds(
+  service: StructuredScopeAuthorityService,
+  actor: Actor,
+  talentGroupIds: readonly string[],
+): Promise<readonly string[]> {
+  const authorized = await Promise.all(
+    [...new Set(talentGroupIds)].map(async (talentGroupId) =>
+      (await service.hasAuthority({
+        userId: actor.id,
+        permission: Permission.EVENT_READ,
+        scope: { scopeType: "managedTalentGroup", targetId: talentGroupId },
+      }))
+        ? talentGroupId
+        : null,
+    ),
+  );
+  return authorized.filter((id): id is string => id !== null).sort();
 }

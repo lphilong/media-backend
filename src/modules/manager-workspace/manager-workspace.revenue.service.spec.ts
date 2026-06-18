@@ -9,6 +9,10 @@ import { EmploymentProfileRecord } from "@modules/employment-profile/domain/empl
 import { TalentGroupManagerAssignment } from "@modules/kpi/domain/kpi.types";
 import { PlatformAccountRecord } from "@modules/platform-account/domain/platform-account.types";
 import {
+  StructuredScopeAuthorityAssignment,
+  StructuredScopeAuthorityService,
+} from "@modules/role/domain/structured-scope-authority";
+import {
   PlatformEarningBatch,
   PlatformEarningLine,
   PlatformEarningRepository,
@@ -101,6 +105,58 @@ test("manager creates drafts only for currently assigned eligible Platform Accou
       }),
     ),
     RevenueLedgerInvalidPlatformAttributionError,
+  );
+});
+
+test("manager revenue requires matching structured TalentGroup and Platform Account scope", async () => {
+  const missingTalentGroupScope = createHarness({
+    structuredAuthority: structuredAuthority([
+      structuredAssignment({
+        permission: "revenueLedger.platformEarning.submit",
+        scopeType: "assignedPlatformAccount",
+        targetId: "pa-managed",
+      }),
+    ]),
+  });
+  await assert.rejects(
+    missingTalentGroupScope.service.listBatches(managerActor(), {
+      talentGroupId: "tg-managed",
+    }),
+    RevenueLedgerPermissionScopeError,
+  );
+
+  const missingPlatformAccountScope = createHarness({
+    structuredAuthority: structuredAuthority([
+      structuredAssignment({
+        permission: "revenueLedger.platformEarning.submit",
+        scopeType: "managedTalentGroup",
+        targetId: "tg-managed",
+      }),
+      structuredAssignment({
+        permission: "revenueLedger.platformEarning.submit",
+        scopeType: "assignedPlatformAccount",
+        targetId: "pa-other",
+      }),
+    ]),
+  });
+  assert.deepEqual(
+    (await missingPlatformAccountScope.service.getScope(managerActor()))
+      .platformAccounts,
+    [],
+  );
+  await assert.rejects(
+    withTrace(() =>
+      missingPlatformAccountScope.service.createBatch(managerActor(), {
+        platform: "TIKTOK",
+        platformAccountId: "pa-managed",
+        talentGroupId: "tg-managed",
+        sourceType: "TIKTOK_LIVESTREAM_DIAMOND",
+        periodMonth: "2026-06",
+        sourceDateFrom: now,
+        sourceDateTo: now,
+      }),
+    ),
+    RevenueLedgerPermissionScopeError,
   );
 });
 
@@ -212,7 +268,10 @@ test("manager revenue DTOs omit Finance-only snapshots and expose no Finance lif
   }
 });
 
-function createHarness(): {
+function createHarness(input: {
+  readonly assignments?: readonly TalentGroupManagerAssignment[];
+  readonly structuredAuthority?: StructuredScopeAuthorityService;
+} = {}): {
   readonly service: ManagerWorkspaceRevenueAdminService;
   readonly repository: InMemoryPlatformEarningRepository;
   account: PlatformAccountRecord;
@@ -231,7 +290,7 @@ function createHarness(): {
     },
     {
       async listActiveAssignmentsByManagerEmploymentProfile() {
-        return [managerAssignment()];
+        return input.assignments ?? [managerAssignment()];
       },
     },
     {
@@ -294,6 +353,7 @@ function createHarness(): {
         });
       },
     } satisfies AuthoritativeAdminMutationBridge,
+    input.structuredAuthority ?? structuredAuthority(),
     () => now,
   );
   return harness;
@@ -525,6 +585,69 @@ function managerActor(): Actor {
     scopeGrants: {},
     isActive: true,
   });
+}
+
+function structuredAuthority(
+  assignments: readonly StructuredScopeAuthorityAssignment[] = [
+    structuredAssignment({
+      permission: "revenueLedger.platformEarning.submit",
+      scopeType: "managedTalentGroup",
+      targetId: "tg-managed",
+    }),
+    structuredAssignment({
+      permission: "revenueLedger.platformEarning.submit",
+      scopeType: "assignedPlatformAccount",
+      targetId: "pa-managed",
+    }),
+  ],
+): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService(
+    {
+      async listByUserId(userId) {
+        return assignments.filter(
+          (assignment) => assignment.assignment.userId === userId,
+        );
+      },
+    },
+    () => now,
+  );
+}
+
+function structuredAssignment(input: {
+  readonly permission: string;
+  readonly scopeType: "managedTalentGroup" | "assignedPlatformAccount";
+  readonly targetId: string;
+}): StructuredScopeAuthorityAssignment {
+  const assignmentId = [
+    "structured",
+    input.permission,
+    input.scopeType,
+    input.targetId,
+  ].join("-");
+  return {
+    assignment: {
+      assignmentId,
+      roleId: assignmentId,
+      userId: "manager-user",
+      structuredScopeGrants: [
+        { scopeType: input.scopeType, targetId: input.targetId },
+      ],
+      state: "ACTIVE",
+      effectiveAt: now - 1,
+      expiresAt: null,
+      revokedAt: null,
+      origin: "DIRECT",
+      bundleOrigin: null,
+      reason: null,
+      createdAt: now - 1,
+      updatedAt: now - 1,
+    },
+    role: {
+      id: assignmentId,
+      state: "ACTIVE",
+      permissions: [input.permission],
+    },
+  };
 }
 
 function withTrace<T>(fn: () => Promise<T>): Promise<T> {

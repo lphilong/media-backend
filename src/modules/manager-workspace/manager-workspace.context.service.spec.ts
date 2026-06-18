@@ -12,6 +12,10 @@ import { ManagerWorkspaceAdminService } from "./admin/admin.manager-workspace.se
 import { ManagerWorkspaceWorkScheduleAdminService } from "./admin/admin.manager-workspace-work-schedule.service";
 import { ManagerWorkspaceEventAdminService } from "./admin/admin.manager-workspace-event.service";
 import { EventAssignmentPermissionScopeError } from "@modules/event-assignment/domain/event-assignment.errors";
+import {
+  StructuredScopeAuthorityAssignment,
+  StructuredScopeAuthorityService,
+} from "@modules/role/domain/structured-scope-authority";
 
 const now = Date.UTC(2026, 5, 4, 0, 0, 0, 0);
 
@@ -42,6 +46,7 @@ test("manager Events use active OrgUnit and TalentGroup assignments only", async
         return null;
       },
     },
+    structuredAuthority(),
     () => now,
   );
 
@@ -104,6 +109,7 @@ test("manager Event detail returns completion evidence as read-only summary", as
         };
       },
     },
+    structuredAuthority(),
     () => now,
   );
 
@@ -142,6 +148,7 @@ test("manager Events fail closed without assignment scope and expose no mutation
         return null;
       },
     },
+    structuredAuthority(),
     () => now,
   );
   const actor = managerActor({
@@ -156,6 +163,56 @@ test("manager Events fail closed without assignment scope and expose no mutation
   );
   assert.equal("createEvent" in service, false);
   assert.equal("cancelEvent" in service, false);
+});
+
+test("manager Events require matching structured OrgUnit and TalentGroup scopes", async () => {
+  let capturedScope: unknown;
+  const service = new ManagerWorkspaceEventAdminService(
+    {
+      async findNonArchivedByLinkedUserId() {
+        return activeProfile();
+      },
+    },
+    {
+      async listActiveAssignmentsByManagerEmploymentProfile() {
+        return [talentGroupAssignment("tg-managed")];
+      },
+    },
+    {
+      async listActiveByManagerEmploymentProfileId() {
+        return [orgUnitAssignment("ou-managed", "UNIT_MANAGER")];
+      },
+    },
+    {
+      async listManagerEventSummaries(scope) {
+        capturedScope = scope;
+        return [];
+      },
+      async getManagerEventSummary() {
+        return null;
+      },
+    },
+    structuredAuthority([
+      structuredAssignment({
+        permission: "event.read",
+        scopeType: "managedTalentGroup",
+        targetId: "tg-other",
+      }),
+      structuredAssignment({
+        permission: "event.read",
+        scopeType: "managedOrgUnit",
+        targetId: "ou-other",
+      }),
+    ]),
+    () => now,
+  );
+
+  assert.deepEqual(
+    (await service.listEvents(managerActor({ permissions: ["event.read"] })))
+      .items,
+    [],
+  );
+  assert.deepEqual(capturedScope, { orgUnitIds: [], talentGroupIds: [] });
 });
 
 test("manager workspace context fail-closes without linked EmploymentProfile", async () => {
@@ -296,6 +353,48 @@ test("role/capability without assignment does not expose module data", async () 
   assert.deepEqual(context.readiness.reasons, ["NO_MANAGED_SCOPE_ASSIGNED"]);
 });
 
+test("business assignment without matching structured scope does not expose manager context authority", async () => {
+  const service = createService({
+    profile: activeProfile(),
+    orgUnitAssignments: [orgUnitAssignment("ou-production", "UNIT_MANAGER")],
+    talentGroupAssignments: [talentGroupAssignment("tg-live")],
+    structuredAuthority: structuredAuthority([
+      structuredAssignment({
+        permission: "kpi.read",
+        scopeType: "managedOrgUnit",
+        targetId: "ou-other",
+      }),
+      structuredAssignment({
+        permission: "kpi.read",
+        scopeType: "managedTalentGroup",
+        targetId: "tg-other",
+      }),
+    ]),
+  });
+  const context = await service.getContext(managerActor());
+
+  assert.equal(context.modules.kpi.visible, false);
+  assert.equal(context.scopes.orgUnits.length, 0);
+  assert.equal(context.scopes.talentGroups.length, 0);
+  assert.deepEqual(context.readiness.reasons, ["NO_MANAGED_SCOPE_ASSIGNED"]);
+});
+
+test("inactive actor does not gain manager context authority from role name or assignments", async () => {
+  const service = createService({
+    profile: activeProfile(),
+    orgUnitAssignments: [orgUnitAssignment("ou-production", "UNIT_MANAGER")],
+    talentGroupAssignments: [talentGroupAssignment("tg-live")],
+  });
+  const context = await service.getContext(
+    managerActor({ isActive: false, roles: ["TEAM_MANAGER"] }),
+  );
+
+  assert.equal(context.modules.kpi.visible, false);
+  assert.equal(context.scopes.orgUnits.length, 0);
+  assert.equal(context.scopes.talentGroups.length, 0);
+  assert.deepEqual(context.readiness.reasons, ["NO_MANAGED_SCOPE_ASSIGNED"]);
+});
+
 test("terminated linked EmploymentProfile fail-closes manager workspace context", async () => {
   const service = createService({
     profile: activeProfile({ employmentStatus: "TERMINATED" }),
@@ -376,10 +475,48 @@ test("manager WorkSchedule reporting-manager relationship alone grants no access
   assert.equal("cancelWorkShift" in service, false);
 });
 
+test("manager WorkSchedule requires matching structured OrgUnit and TalentGroup scope", async () => {
+  let repositoryCalled = false;
+  const service = createWorkScheduleService({
+    orgUnitAssignments: [orgUnitAssignment("ou-direct", "UNIT_MANAGER")],
+    talentGroupAssignments: [talentGroupAssignment("tg-live")],
+    orgUnitProfiles: [managedProfile("ep-org")],
+    talentGroupProfiles: [
+      managedTalentGroupResolution(managedProfile("ep-group")),
+    ],
+    structuredAuthority: structuredAuthority([
+      structuredAssignment({
+        permission: "workSchedule.read",
+        scopeType: "managedOrgUnit",
+        targetId: "ou-other",
+      }),
+      structuredAssignment({
+        permission: "workSchedule.read",
+        scopeType: "managedTalentGroup",
+        targetId: "tg-other",
+      }),
+    ]),
+    onList() {
+      repositoryCalled = true;
+      return [];
+    },
+  });
+
+  const result = await service.listWorkShifts(
+    managerActor({ permissions: ["workSchedule.read"], scopeGrants: {} }),
+    {},
+  );
+
+  assert.equal(repositoryCalled, false);
+  assert.deepEqual(result.items, []);
+  assert.equal(result.meta.managedMemberCount, 0);
+});
+
 function createService(input: {
   readonly profile: EmploymentProfileRecord | null;
   readonly orgUnitAssignments?: readonly OrgUnitManagerAssignment[];
   readonly talentGroupAssignments?: readonly TalentGroupManagerAssignment[];
+  readonly structuredAuthority?: StructuredScopeAuthorityService;
 }): ManagerWorkspaceAdminService {
   return new ManagerWorkspaceAdminService(
     {
@@ -429,6 +566,7 @@ function createService(input: {
         return input.orgUnitAssignments ?? [];
       },
     },
+    input.structuredAuthority ?? structuredAuthority(),
     () => now,
   );
 }
@@ -539,6 +677,7 @@ function createWorkScheduleService(input: {
   readonly orgUnitProfiles?: readonly WorkScheduleReferencedEmploymentProfile[];
   readonly talentGroupProfiles?: readonly ReturnType<typeof managedTalentGroupResolution>[];
   readonly onList?: (input: WorkShiftListReadInput) => ReturnType<typeof managerShift>[];
+  readonly structuredAuthority?: StructuredScopeAuthorityService;
 }): ManagerWorkspaceWorkScheduleAdminService {
   return new ManagerWorkspaceWorkScheduleAdminService(
     {
@@ -569,8 +708,127 @@ function createWorkScheduleService(input: {
         return { items: input.onList?.(readInput) ?? [] };
       },
     },
+    input.structuredAuthority ?? structuredAuthority(),
     () => now,
   );
+}
+
+function structuredAuthority(
+  assignments: readonly StructuredScopeAuthorityAssignment[] = [
+    ...structuredAssignmentsFor("kpi.read", "managedOrgUnit", [
+      "ou-production",
+      "ou-department",
+      "ou-operator",
+    ]),
+    ...structuredAssignmentsFor("kpi.readProgress", "managedOrgUnit", [
+      "ou-production",
+      "ou-department",
+      "ou-operator",
+    ]),
+    structuredAssignment({
+      permission: "kpi.enterActual",
+      scopeType: "managedOrgUnit",
+      targetId: "ou-production",
+    }),
+    structuredAssignment({
+      permission: "kpi.correctActual",
+      scopeType: "managedOrgUnit",
+      targetId: "ou-production",
+    }),
+    ...structuredAssignmentsFor("kpi.read", "managedTalentGroup", ["tg-live"]),
+    ...structuredAssignmentsFor("kpi.readProgress", "managedTalentGroup", [
+      "tg-live",
+    ]),
+    ...structuredAssignmentsFor("kpi.enterActual", "managedTalentGroup", [
+      "tg-live",
+    ]),
+    ...structuredAssignmentsFor("kpi.correctActual", "managedTalentGroup", [
+      "tg-live",
+    ]),
+    structuredAssignment({
+      permission: "workSchedule.read",
+      scopeType: "managedOrgUnit",
+      targetId: "ou-production",
+    }),
+    structuredAssignment({
+      permission: "workSchedule.read",
+      scopeType: "managedOrgUnit",
+      targetId: "ou-direct",
+    }),
+    structuredAssignment({
+      permission: "workSchedule.read",
+      scopeType: "managedTalentGroup",
+      targetId: "tg-live",
+    }),
+    structuredAssignment({
+      permission: "event.read",
+      scopeType: "managedOrgUnit",
+      targetId: "ou-managed",
+    }),
+    structuredAssignment({
+      permission: "event.read",
+      scopeType: "managedTalentGroup",
+      targetId: "tg-managed",
+    }),
+  ],
+): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService(
+    {
+      async listByUserId(userId) {
+        return assignments.filter(
+          (assignment) => assignment.assignment.userId === userId,
+        );
+      },
+    },
+    () => now,
+  );
+}
+
+function structuredAssignmentsFor(
+  permission: string,
+  scopeType: "managedOrgUnit" | "managedTalentGroup",
+  targetIds: readonly string[],
+): readonly StructuredScopeAuthorityAssignment[] {
+  return targetIds.map((targetId) =>
+    structuredAssignment({ permission, scopeType, targetId }),
+  );
+}
+
+function structuredAssignment(input: {
+  readonly permission: string;
+  readonly scopeType: "managedOrgUnit" | "managedTalentGroup";
+  readonly targetId: string;
+}): StructuredScopeAuthorityAssignment {
+  const assignmentId = [
+    "structured",
+    input.permission,
+    input.scopeType,
+    input.targetId,
+  ].join("-");
+  return {
+    assignment: {
+      assignmentId,
+      roleId: assignmentId,
+      userId: "user-manager",
+      structuredScopeGrants: [
+        { scopeType: input.scopeType, targetId: input.targetId },
+      ],
+      state: "ACTIVE",
+      effectiveAt: now - 1,
+      expiresAt: null,
+      revokedAt: null,
+      origin: "DIRECT",
+      bundleOrigin: null,
+      reason: null,
+      createdAt: now - 1,
+      updatedAt: now - 1,
+    },
+    role: {
+      id: assignmentId,
+      state: "ACTIVE",
+      permissions: [input.permission],
+    },
+  };
 }
 
 function managedProfile(

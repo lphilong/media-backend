@@ -22,6 +22,7 @@ import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/tale
 import { PlatformAccountReadRepository } from "@modules/platform-account/read/platform-account.read-repository";
 import { PlatformAccountRepository } from "@modules/platform-account/domain/platform-account.repository";
 import { PlatformAccountListItemView } from "@modules/platform-account/domain/platform-account.types";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import {
   PlatformEarningBatch,
   PlatformEarningLine,
@@ -152,13 +153,14 @@ export class ManagerWorkspaceRevenueAdminService {
     private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
+    private readonly structuredAuthority: StructuredScopeAuthorityService,
     private readonly clock: () => number = Date.now,
   ) {}
 
   async getScope(actor: Actor): Promise<ManagerPlatformEarningScopeView> {
     const scope = await this.resolveManagerScope(actor);
     const [platformAccounts, talentGroups] = await Promise.all([
-      this.listEligiblePlatformAccounts(scope.talentGroupIds),
+      this.listEligiblePlatformAccounts(actor, scope.talentGroupIds),
       Promise.all(
         scope.talentGroupIds.map(async (talentGroupId) => ({
           talentGroupId,
@@ -245,6 +247,7 @@ export class ManagerWorkspaceRevenueAdminService {
       async (session) => {
         await this.assertAssignedTalentGroup(actor, input.talentGroupId);
         await this.assertEligiblePlatformAccount(
+          actor,
           input.platformAccountId,
           input.talentGroupId,
           input.platform,
@@ -319,6 +322,7 @@ export class ManagerWorkspaceRevenueAdminService {
         const nextPlatformAccountId =
           input.platformAccountId ?? batch.platformAccountId;
         await this.assertEligiblePlatformAccount(
+          actor,
           nextPlatformAccountId,
           nextTalentGroupId,
           batch.platform,
@@ -591,11 +595,14 @@ export class ManagerWorkspaceRevenueAdminService {
         profile.id,
         this.clock(),
       );
+    const authorized = await filterManagedTalentGroupIds(
+      this.structuredAuthority,
+      actor,
+      assignments.map((assignment) => assignment.groupId),
+    );
     return {
       profile,
-      talentGroupIds: [
-        ...new Set(assignments.map((assignment) => assignment.groupId)),
-      ].sort(),
+      talentGroupIds: authorized,
     };
   }
 
@@ -644,6 +651,7 @@ export class ManagerWorkspaceRevenueAdminService {
   }
 
   private async listEligiblePlatformAccounts(
+    actor: Actor,
     talentGroupIds: readonly string[],
   ): Promise<readonly ManagerPlatformEarningPlatformAccountView[]> {
     const pages = await Promise.all(
@@ -658,7 +666,7 @@ export class ManagerWorkspaceRevenueAdminService {
         }),
       ),
     );
-    return pages
+    const eligible = pages
       .flatMap((page) => page.items)
       .filter(isEligiblePlatformAccountListItem)
       .map((account) => ({
@@ -669,6 +677,17 @@ export class ManagerWorkspaceRevenueAdminService {
         handle: account.handle,
         ownerTalentGroupId: account.ownerTalentGroupId,
       }));
+    const authorized = await Promise.all(
+      eligible.map(async (account) =>
+        (await this.hasAssignedPlatformAccountAuthority(actor, account.id))
+          ? account
+          : null,
+      ),
+    );
+    return authorized.filter(
+      (account): account is NonNullable<(typeof authorized)[number]> =>
+        account !== null,
+    );
   }
 
   private async listEligibleMembers(
@@ -703,6 +722,7 @@ export class ManagerWorkspaceRevenueAdminService {
   }
 
   private async assertEligiblePlatformAccount(
+    actor: Actor,
     platformAccountId: string,
     talentGroupId: string,
     platform: string,
@@ -725,6 +745,11 @@ export class ManagerWorkspaceRevenueAdminService {
         "Platform account is not eligible for the assigned TalentGroup source submission scope",
       );
     }
+    if (!(await this.hasAssignedPlatformAccountAuthority(actor, account.id))) {
+      throw new RevenueLedgerPermissionScopeError(
+        "Platform account is outside the actor's assigned structured scope",
+      );
+    }
   }
 
   private async assertCurrentBatchEligibility(
@@ -739,11 +764,26 @@ export class ManagerWorkspaceRevenueAdminService {
     }
     await this.assertAssignedTalentGroup(actor, batch.talentGroupId);
     await this.assertEligiblePlatformAccount(
+      actor,
       batch.platformAccountId,
       batch.talentGroupId,
       batch.platform,
       session,
     );
+  }
+
+  private hasAssignedPlatformAccountAuthority(
+    actor: Actor,
+    platformAccountId: string,
+  ): Promise<boolean> {
+    return this.structuredAuthority.hasAuthority({
+      userId: actor.id,
+      permission: Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+      scope: {
+        scopeType: "assignedPlatformAccount",
+        targetId: platformAccountId,
+      },
+    });
   }
 
   private async assertLineMemberInBatchScope(
@@ -884,6 +924,25 @@ export class ManagerWorkspaceRevenueAdminService {
       async (session) => fn(session),
     );
   }
+}
+
+async function filterManagedTalentGroupIds(
+  service: StructuredScopeAuthorityService,
+  actor: Actor,
+  talentGroupIds: readonly string[],
+): Promise<readonly string[]> {
+  const authorized = await Promise.all(
+    [...new Set(talentGroupIds)].map(async (talentGroupId) =>
+      (await service.hasAuthority({
+        userId: actor.id,
+        permission: Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+        scope: { scopeType: "managedTalentGroup", targetId: talentGroupId },
+      }))
+        ? talentGroupId
+        : null,
+    ),
+  );
+  return authorized.filter((id): id is string => id !== null).sort();
 }
 
 function exposeManagerBatch(

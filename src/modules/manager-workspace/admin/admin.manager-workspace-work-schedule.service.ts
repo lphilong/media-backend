@@ -5,6 +5,7 @@ import { PermissionResolver } from "@core/permission/permission.resolver";
 import { EmploymentProfileRepository } from "@modules/employment-profile/domain/employment-profile.repository";
 import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
 import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import { WorkSchedulePermissionScopeError, WorkScheduleValidationError } from "@modules/work-schedule/domain/work-schedule.errors";
 import {
   WorkScheduleEmploymentProfileReadonlyAccess,
@@ -70,6 +71,7 @@ export class ManagerWorkspaceWorkScheduleAdminService {
       "listActiveByManagerEmploymentProfileId"
     >,
     private readonly readRepository: Pick<WorkShiftReadRepository, "listWorkShifts">,
+    private readonly structuredAuthority: StructuredScopeAuthorityService,
     private readonly clock: () => number = Date.now,
   ) {}
 
@@ -98,9 +100,17 @@ export class ManagerWorkspaceWorkScheduleAdminService {
         asOf,
       ),
     ]);
+    const [orgUnitIds, talentGroupIds] = await Promise.all([
+      filterManagedOrgUnitIds(this.structuredAuthority, actor, orgUnitAssignments),
+      filterManagedTalentGroupIds(
+        this.structuredAuthority,
+        actor,
+        talentGroupAssignments.map((assignment) => assignment.groupId),
+      ),
+    ]);
     const managedProfiles = await this.resolveManagedProfiles(
-      orgUnitAssignments.map((assignment) => assignment.orgUnitId),
-      talentGroupAssignments.map((assignment) => assignment.groupId),
+      orgUnitIds,
+      talentGroupIds,
     );
     const month = parseMonth(query.month, asOf);
     const window = monthWindow(month);
@@ -225,6 +235,45 @@ export class ManagerWorkspaceWorkScheduleAdminService {
       PermissionResolver.resolve(Permission.WORK_SCHEDULE_READ),
     );
   }
+}
+
+async function filterManagedOrgUnitIds(
+  service: StructuredScopeAuthorityService,
+  actor: Actor,
+  assignments: readonly { readonly orgUnitId: string }[],
+): Promise<readonly string[]> {
+  const authorized = await Promise.all(
+    [...new Set(assignments.map((assignment) => assignment.orgUnitId))].map(
+      async (orgUnitId) =>
+        (await service.hasAuthority({
+          userId: actor.id,
+          permission: Permission.WORK_SCHEDULE_READ,
+          scope: { scopeType: "managedOrgUnit", targetId: orgUnitId },
+        }))
+          ? orgUnitId
+          : null,
+    ),
+  );
+  return authorized.filter((id): id is string => id !== null).sort();
+}
+
+async function filterManagedTalentGroupIds(
+  service: StructuredScopeAuthorityService,
+  actor: Actor,
+  talentGroupIds: readonly string[],
+): Promise<readonly string[]> {
+  const authorized = await Promise.all(
+    [...new Set(talentGroupIds)].map(async (talentGroupId) =>
+      (await service.hasAuthority({
+        userId: actor.id,
+        permission: Permission.WORK_SCHEDULE_READ,
+        scope: { scopeType: "managedTalentGroup", targetId: talentGroupId },
+      }))
+        ? talentGroupId
+        : null,
+    ),
+  );
+  return authorized.filter((id): id is string => id !== null).sort();
 }
 
 function isManagerReady(status: string): boolean {

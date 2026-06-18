@@ -59,6 +59,8 @@ import { adminRoleBundleRoutes } from "@modules/role/admin/admin.role-bundle.rou
 import { AdminEffectiveAccessController } from "@modules/role/admin/admin.effective-access.controller";
 import { EffectiveAccessAdminService } from "@modules/role/admin/admin.effective-access.service";
 import { adminEffectiveAccessRoutes } from "@modules/role/admin/admin.effective-access.routes";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
+import { NativeMongoStructuredScopeAuthorityReader } from "@infra/mongo/role/structured-scope-authority.repository";
 
 /* ORG UNIT */
 import { adminOrgUnitRoutes } from "@modules/org-unit/admin/admin.org-unit.routes";
@@ -286,6 +288,9 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     roleReadRepository,
     roleAssignmentReadRepository,
   } = createRoleInfra(infra.primaryDb);
+  const structuredScopeAuthority = new StructuredScopeAuthorityService(
+    new NativeMongoStructuredScopeAuthorityReader(infra.primaryDb),
+  );
 
   const roleService = new RoleAdminService(
     roleRepository,
@@ -1009,6 +1014,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       kpiSubjectReadonlyAccess,
       talentGroupManagerAssignmentRepository,
       orgUnitManagerAssignmentRepository,
+      structuredScopeAuthority,
     ),
     new ManagerWorkspaceWorkScheduleAdminService(
       employmentProfileRepository,
@@ -1016,6 +1022,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       talentGroupManagerAssignmentRepository,
       orgUnitManagerAssignmentRepository,
       workShiftReadRepository,
+      structuredScopeAuthority,
     ),
     workScheduleRequestBatchService,
     workScheduleAvailabilityBatchService,
@@ -1024,6 +1031,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       talentGroupManagerAssignmentRepository,
       orgUnitManagerAssignmentRepository,
       eventAssignmentReadRepository,
+      structuredScopeAuthority,
     ),
     new ManagerWorkspaceRevenueAdminService(
       employmentProfileRepository,
@@ -1035,6 +1043,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       revenueLedgerBusinessCodeSequenceRepository,
       authoritativeAuditGuard,
       adminMutationBridge,
+      structuredScopeAuthority,
     ),
   );
 
