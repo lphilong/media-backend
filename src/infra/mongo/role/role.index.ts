@@ -12,7 +12,7 @@ export const ROLE_SEARCH_CODE_UPDATED_LIST_INDEX_NAME =
   "idx_role_search_code_updated";
 
 export const ROLE_ACTIVE_ASSIGNMENT_UNIQ_INDEX =
-  "uniq_role_assignment_active_role_user";
+  "uniq_role_assignment_active_role_user_scope";
 export const ROLE_ASSIGNMENT_ROLE_STATE_UPDATED_LIST_INDEX_NAME =
   "idx_role_assignment_role_state_updated";
 
@@ -70,7 +70,7 @@ export async function initRoleIndexes(
   );
 
   await assignmentCollection.createIndex(
-    { roleId: 1, userId: 1 },
+    { roleId: 1, userId: 1, scopeFingerprint: 1 },
     {
       name: ROLE_ACTIVE_ASSIGNMENT_UNIQ_INDEX,
       unique: true,

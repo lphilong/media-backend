@@ -20,6 +20,7 @@ export interface UserAuthResolutionCandidate {
   readonly accountStatus: UserAccountStatus;
   readonly permissions: readonly string[];
   readonly scopeGrants?: ActorScopeGrants;
+  readonly authorizationValidUntil?: number;
 }
 
 export interface UserAuthResolutionRepository {
@@ -86,6 +87,7 @@ export class UserActorResolutionFacade {
       permissions: candidate.permissions,
       context: input.context,
       scopeGrants: candidate.scopeGrants,
+      authorizationValidUntil: candidate.authorizationValidUntil,
     };
 
     return { actor };

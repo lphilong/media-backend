@@ -24,6 +24,7 @@ import {
   UserRoleAssignmentRecord,
 } from "@modules/role/domain/role.types";
 import { isRoleTemplateCode } from "@modules/role/domain/role-template.catalog";
+import { RoleAssignmentScopeGrant } from "@modules/role/domain/role-assignment-scope";
 
 interface RoleDocument {
   readonly _id: string;
@@ -68,9 +69,19 @@ interface UserRoleAssignmentDocument {
   readonly roleId: string;
   readonly userId: string;
   readonly scopeGrants?: ActorScopeGrants;
+  readonly structuredScopeGrants?: readonly RoleAssignmentScopeGrant[];
+  readonly scopeFingerprint?: string;
   readonly state: RoleAssignmentState;
   readonly effectiveAt: number | null;
+  readonly expiresAt?: number | null;
+  readonly reviewAt?: number | null;
+  readonly assignedBy?: string | null;
+  readonly assignedAt?: number;
   readonly revokedAt: number | null;
+  readonly revokedBy?: string | null;
+  readonly revokeReason?: string | null;
+  readonly origin?: "DIRECT" | "BUNDLE" | "LEGACY";
+  readonly bundleOrigin?: UserRoleAssignmentRecord["bundleOrigin"];
   readonly reason: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -372,6 +383,19 @@ export class NativeMongoUserRoleAssignmentRepository
     return doc ? toUserRoleAssignmentRecord(doc) : null;
   }
 
+  async findActiveByRoleUserAndScopeFingerprint(
+    roleId: string,
+    userId: string,
+    scopeFingerprint: string,
+    session?: ClientSession,
+  ): Promise<UserRoleAssignmentRecord | null> {
+    const doc = await this.collection.findOne(
+      { roleId, userId, scopeFingerprint, state: "ACTIVE" },
+      this.withSession(session),
+    );
+    return doc ? toUserRoleAssignmentRecord(doc) : null;
+  }
+
   async findActiveManyByRoleAndUser(
     roleId: string,
     userId: string,
@@ -415,6 +439,7 @@ export class NativeMongoUserRoleAssignmentRepository
     reason: string | null,
     revokedAt: number,
     session: ClientSession,
+    revokedBy?: string,
   ): Promise<UserRoleAssignmentRecord | null> {
     const updated = await this.collection.findOneAndUpdate(
       {
@@ -424,8 +449,9 @@ export class NativeMongoUserRoleAssignmentRepository
       {
         $set: {
           state: "REVOKED",
-          reason,
           revokedAt,
+          revokedBy: revokedBy ?? null,
+          revokeReason: reason,
           updatedAt: revokedAt,
         },
       },
@@ -594,9 +620,23 @@ function toUserRoleAssignmentDocument(
     roleId: assignment.roleId,
     userId: assignment.userId,
     ...(assignment.scopeGrants ? { scopeGrants: assignment.scopeGrants } : {}),
+    ...(assignment.structuredScopeGrants
+      ? { structuredScopeGrants: assignment.structuredScopeGrants }
+      : {}),
+    ...(assignment.scopeFingerprint
+      ? { scopeFingerprint: assignment.scopeFingerprint }
+      : {}),
     state: assignment.state,
     effectiveAt: assignment.effectiveAt,
+    expiresAt: assignment.expiresAt ?? null,
+    reviewAt: assignment.reviewAt ?? null,
+    assignedBy: assignment.assignedBy ?? null,
+    assignedAt: assignment.assignedAt ?? assignment.createdAt,
     revokedAt: assignment.revokedAt,
+    revokedBy: assignment.revokedBy ?? null,
+    revokeReason: assignment.revokeReason ?? null,
+    origin: assignment.origin ?? "LEGACY",
+    bundleOrigin: assignment.bundleOrigin ?? null,
     reason: assignment.reason,
     createdAt: assignment.createdAt,
     updatedAt: assignment.updatedAt,
@@ -611,9 +651,23 @@ function toUserRoleAssignmentRecord(
     roleId: document.roleId,
     userId: document.userId,
     ...(document.scopeGrants ? { scopeGrants: document.scopeGrants } : {}),
+    ...(document.structuredScopeGrants
+      ? { structuredScopeGrants: document.structuredScopeGrants }
+      : {}),
+    ...(document.scopeFingerprint
+      ? { scopeFingerprint: document.scopeFingerprint }
+      : {}),
     state: document.state,
     effectiveAt: document.effectiveAt,
+    expiresAt: document.expiresAt ?? null,
+    reviewAt: document.reviewAt ?? null,
+    assignedBy: document.assignedBy ?? null,
+    assignedAt: document.assignedAt ?? document.createdAt,
     revokedAt: document.revokedAt,
+    revokedBy: document.revokedBy ?? null,
+    revokeReason: document.revokeReason ?? null,
+    origin: document.origin ?? "LEGACY",
+    bundleOrigin: document.bundleOrigin ?? null,
     reason: document.reason,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,

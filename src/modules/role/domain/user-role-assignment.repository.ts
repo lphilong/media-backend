@@ -18,6 +18,13 @@ export interface UserRoleAssignmentRepository {
     session?: ClientSession,
   ): Promise<UserRoleAssignmentRecord | null>;
 
+  findActiveByRoleUserAndScopeFingerprint?(
+    roleId: string,
+    userId: string,
+    scopeFingerprint: string,
+    session?: ClientSession,
+  ): Promise<UserRoleAssignmentRecord | null>;
+
   hasActiveAssignmentsForRole(
     roleId: string,
     session?: ClientSession,
@@ -28,5 +35,6 @@ export interface UserRoleAssignmentRepository {
     reason: string | null,
     revokedAt: number,
     session: ClientSession,
+    revokedBy?: string,
   ): Promise<UserRoleAssignmentRecord | null>;
 }

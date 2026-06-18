@@ -88,6 +88,7 @@ export function createRoleBootstrapRegistrar(): BootstrapRegistrar {
         {
           roleId: 1,
           userId: 1,
+          scopeFingerprint: 1,
         },
         {
           state: "ACTIVE",

@@ -1,6 +1,7 @@
 import { ReferenceSummary } from "@modules/reference-summary";
 import { ActorScopeGrants } from "@core/actor/actor";
 import type { RoleTemplateCode } from "./role-template.catalog";
+import type { RoleAssignmentScopeGrant } from "./role-assignment-scope";
 
 export const ROLE_STATES = ["DRAFT", "ACTIVE", "INACTIVE", "ARCHIVED"] as const;
 
@@ -66,9 +67,23 @@ export interface UserRoleAssignmentRecord {
   readonly roleId: string;
   readonly userId: string;
   readonly scopeGrants?: ActorScopeGrants;
+  readonly structuredScopeGrants?: readonly RoleAssignmentScopeGrant[];
+  readonly scopeFingerprint?: string;
   readonly state: RoleAssignmentState;
   readonly effectiveAt: number | null;
+  readonly expiresAt?: number | null;
+  readonly reviewAt?: number | null;
+  readonly assignedBy?: string | null;
+  readonly assignedAt?: number;
   readonly revokedAt: number | null;
+  readonly revokedBy?: string | null;
+  readonly revokeReason?: string | null;
+  readonly origin?: "DIRECT" | "BUNDLE" | "LEGACY";
+  readonly bundleOrigin?: {
+    readonly bundleAssignmentId: string;
+    readonly bundleCode: string;
+    readonly bundleVersion: string;
+  } | null;
   readonly reason: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -139,9 +154,19 @@ export interface RoleAssignmentView {
   readonly roleRef?: ReferenceSummary | null;
   readonly userRef?: ReferenceSummary | null;
   readonly scopeGrants?: ActorScopeGrants;
+  readonly structuredScopeGrants?: readonly RoleAssignmentScopeGrant[];
+  readonly scopeFingerprint?: string;
   readonly state: RoleAssignmentState;
   readonly effectiveAt: number | null;
+  readonly expiresAt?: number | null;
+  readonly reviewAt?: number | null;
+  readonly assignedBy?: string | null;
+  readonly assignedAt?: number;
   readonly revokedAt: number | null;
+  readonly revokedBy?: string | null;
+  readonly revokeReason?: string | null;
+  readonly origin?: "DIRECT" | "BUNDLE" | "LEGACY";
+  readonly bundleOrigin?: UserRoleAssignmentRecord["bundleOrigin"];
   readonly reason: string | null;
 }
 

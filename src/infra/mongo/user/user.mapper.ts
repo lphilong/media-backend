@@ -61,6 +61,7 @@ export class UserMapper {
     > & {
       readonly permissions: readonly string[];
       readonly scopeGrants?: ActorScopeGrants;
+      readonly authorizationValidUntil?: number;
     },
   ): UserAuthResolutionCandidate {
     assertStatus(doc.accountStatus);
@@ -72,6 +73,7 @@ export class UserMapper {
       accountStatus: doc.accountStatus,
       permissions: [...doc.permissions],
       scopeGrants: doc.scopeGrants,
+      authorizationValidUntil: doc.authorizationValidUntil,
     };
   }
 }

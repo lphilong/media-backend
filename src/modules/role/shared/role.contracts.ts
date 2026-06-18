@@ -18,6 +18,8 @@ import {
   RoleTemplateListItem,
 } from "@modules/role/domain/role-template.catalog";
 import { ActorScopeGrants } from "@core/actor/actor";
+import { RoleAssignmentScopeGrant } from "@modules/role/domain/role-assignment-scope";
+import { UserRoleAssignmentRecord } from "@modules/role/domain/role.types";
 
 export interface RoleAssignmentRuleInput {
   readonly id?: string;
@@ -84,7 +86,11 @@ export interface AssignRoleToUserCommand {
   readonly userId: string;
   readonly reason?: string | null;
   readonly scopeGrants?: ActorScopeGrants;
+  readonly structuredScopeGrants?: readonly RoleAssignmentScopeGrant[];
   readonly effectiveAt?: number | string | null;
+  readonly expiresAt?: number | string | null;
+  readonly reviewAt?: number | string | null;
+  readonly bundleOrigin?: UserRoleAssignmentRecord["bundleOrigin"];
 }
 
 export interface RevokeRoleFromUserCommand {

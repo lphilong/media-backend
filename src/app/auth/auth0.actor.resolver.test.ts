@@ -142,3 +142,81 @@ test(
     assert.equal(cache.setCalls.length, 1);
   },
 );
+
+test(
+  "Auth0ActorResolver refreshes cached permissions at assignment lifecycle boundaries",
+  async () => {
+    let repositoryCalls = 0;
+    const repository = {
+      async findByAuthSubject(): Promise<
+        readonly UserAuthResolutionCandidate[]
+      > {
+        repositoryCalls += 1;
+        return [
+          {
+            userId: "admin-user-1",
+            actorKind: "ADMIN",
+            accountStatus: "ACTIVE",
+            permissions: [Permission.USER_VIEW],
+            authorizationValidUntil: Date.now() + 60_000,
+          },
+        ];
+      },
+      async readAuthSecurityVersion(): Promise<string> {
+        return "v1";
+      },
+    };
+    const cache = new InMemoryCache();
+    const cacheKey = CacheKey.actorSnapshot(
+      "ADMIN",
+      "auth0|admin-user-1",
+    );
+    cache.setInitialValue(
+      cacheKey,
+      createActorSnapshotEnvelope(
+        {
+          id: "admin-user-1",
+          type: "admin",
+          context: "ADMIN",
+          roles: [],
+          permissions: [Permission.ROLE_CREATE],
+          scopeGrants: {},
+          isActive: true,
+          authorizationValidUntil: Date.now() - 1,
+        },
+        "v1",
+      ),
+    );
+    const resolver = new Auth0ActorResolver(repository, cache);
+    const req = {
+      ip: "127.0.0.1",
+      headers: {
+        "x-trace-id": "trace-auth0-lifecycle-boundary",
+        "user-agent": "node-test",
+      },
+      auth: {
+        payload: {
+          sub: "auth0|admin-user-1",
+        },
+      },
+    } as unknown as Request & {
+      auth: { payload: { sub: string } };
+    };
+    bindContext(req, "ADMIN");
+
+    const actor = await resolver.resolve(req);
+
+    assert.equal(repositoryCalls, 1);
+    assert.deepEqual(actor.permissions, [Permission.USER_VIEW]);
+    assert.deepEqual(cache.deletedKeys, [cacheKey]);
+    assert.equal(cache.setCalls.length, 1);
+    assert.equal(
+      (
+        cache.setCalls[0]?.value as {
+          snapshot: { authorizationValidUntil?: number };
+        }
+      ).snapshot.authorizationValidUntil !== undefined,
+      true,
+    );
+  },
+);

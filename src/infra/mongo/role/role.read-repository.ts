@@ -25,6 +25,10 @@ import {
 import { RoleUserReadonlyAccess } from "@modules/role/domain/role-user-readonly-access";
 import { RoleAssignableUser } from "@modules/role/domain/role-user-readonly-access";
 import { isRoleTemplateCode } from "@modules/role/domain/role-template.catalog";
+import {
+  buildRoleAssignmentScopeFingerprint,
+  RoleAssignmentScopeGrant,
+} from "@modules/role/domain/role-assignment-scope";
 
 interface RoleDocument {
   readonly _id: string;
@@ -62,9 +66,19 @@ interface RoleAssignmentDocument {
   readonly roleId: string;
   readonly userId: string;
   readonly scopeGrants?: ActorScopeGrants;
+  readonly structuredScopeGrants?: readonly RoleAssignmentScopeGrant[];
+  readonly scopeFingerprint?: string;
   readonly state: RoleAssignmentState;
   readonly effectiveAt: number | null;
+  readonly expiresAt?: number | null;
+  readonly reviewAt?: number | null;
+  readonly assignedBy?: string | null;
+  readonly assignedAt?: number;
   readonly revokedAt: number | null;
+  readonly revokedBy?: string | null;
+  readonly revokeReason?: string | null;
+  readonly origin?: "DIRECT" | "BUNDLE" | "LEGACY";
+  readonly bundleOrigin?: RoleAssignmentView["bundleOrigin"];
   readonly reason: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -507,9 +521,23 @@ function toRoleAssignmentView(
     userId: document.userId,
     userRef: null,
     ...(document.scopeGrants ? { scopeGrants: document.scopeGrants } : {}),
+    ...(document.structuredScopeGrants
+      ? { structuredScopeGrants: document.structuredScopeGrants }
+      : {}),
+    scopeFingerprint:
+      document.scopeFingerprint ??
+      buildRoleAssignmentScopeFingerprint(undefined),
     state: document.state,
     effectiveAt: document.effectiveAt,
+    expiresAt: document.expiresAt ?? null,
+    reviewAt: document.reviewAt ?? null,
+    assignedBy: document.assignedBy ?? null,
+    assignedAt: document.assignedAt ?? document.createdAt,
     revokedAt: document.revokedAt,
+    revokedBy: document.revokedBy ?? null,
+    revokeReason: document.revokeReason ?? null,
+    origin: document.origin ?? "LEGACY",
+    bundleOrigin: document.bundleOrigin ?? null,
     reason: document.reason,
   };
 }

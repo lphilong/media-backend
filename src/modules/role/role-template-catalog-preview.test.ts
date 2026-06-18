@@ -44,7 +44,11 @@ import {
   UserRoleAssignmentRecord,
 } from "@modules/role/domain/role.types";
 import { RoleUserReadonlyAccess } from "@modules/role/domain/role-user-readonly-access";
-import { RoleConflictError } from "@modules/role/domain/role.errors";
+import {
+  RoleAssignmentConflictError,
+  RoleConflictError,
+  RoleValidationError,
+} from "@modules/role/domain/role.errors";
 import { UserAdminCapabilityRepository } from "@modules/user/domain/user.admin-capability.repository";
 
 const ALL_PERMISSION_CODES = Object.values(Permission);
@@ -628,6 +632,197 @@ test("role assignment success returns assignment DTO with scopes and audit", asy
   assert.equal(auditEvents.length, 1);
 });
 
+test("RoleAdminService supports same-role multi-scope and rejects exact-scope duplicates", async () => {
+  const { service, assignmentRepository } =
+    await createAssignmentServiceHarness();
+  const actor = createActor(ALL_PERMISSION_CODES);
+
+  const first = await executeRoleMutation(
+    "trace-role-multi-scope-a",
+    () =>
+      service.assignRoleToUser(actor, {
+        roleId: "role-hr",
+        userId: "target-user",
+        reason: "Manage org A",
+        structuredScopeGrants: [
+          { scopeType: "managedOrgUnit", targetId: "org-a" },
+        ],
+      }),
+  );
+  const second = await executeRoleMutation(
+    "trace-role-multi-scope-b",
+    () =>
+      service.assignRoleToUser(actor, {
+        roleId: "role-hr",
+        userId: "target-user",
+        reason: "Manage org B",
+        structuredScopeGrants: [
+          { scopeType: "managedOrgUnit", targetId: "org-b" },
+        ],
+      }),
+  );
+
+  assert.notEqual(first.scopeFingerprint, second.scopeFingerprint);
+  assert.equal(assignmentRepository.assignments.length, 2);
+  await assert.rejects(
+    () =>
+      executeRoleMutation("trace-role-multi-scope-duplicate", () =>
+        service.assignRoleToUser(actor, {
+          roleId: "role-hr",
+          userId: "target-user",
+          reason: "Duplicate org A",
+          structuredScopeGrants: [
+            { scopeType: "managedOrgUnit", targetId: "org-a" },
+          ],
+        }),
+      ),
+    RoleAssignmentConflictError,
+  );
+  assert.equal(assignmentRepository.assignments.length, 2);
+});
+
+test("RoleAdminService keeps legacy unstructured assignment uniqueness safe", async () => {
+  const { service, assignmentRepository } =
+    await createAssignmentServiceHarness();
+  const actor = createActor(ALL_PERMISSION_CODES);
+
+  const assignment = await executeRoleMutation(
+    "trace-role-legacy-scope",
+    () =>
+      service.assignRoleToUser(actor, {
+        roleId: "role-hr",
+        userId: "target-user",
+        reason: "Legacy-compatible assignment",
+      }),
+  );
+
+  assert.equal(assignment.scopeFingerprint, "scope:v1:legacy");
+  await assert.rejects(
+    () =>
+      executeRoleMutation("trace-role-legacy-scope-duplicate", () =>
+        service.assignRoleToUser(actor, {
+          roleId: "role-hr",
+          userId: "target-user",
+          reason: "Duplicate legacy assignment",
+        }),
+      ),
+    RoleAssignmentConflictError,
+  );
+  assert.equal(assignmentRepository.assignments.length, 1);
+});
+
+test("RoleAdminService validates assignment dates and persists lifecycle metadata", async () => {
+  const { service, assignmentRepository } =
+    await createAssignmentServiceHarness();
+  const actor = createActor(ALL_PERMISSION_CODES);
+  const effectiveAt = Date.now() + 60_000;
+  const expiresAt = effectiveAt + 60_000;
+  const reviewAt = effectiveAt + 30_000;
+
+  const result = await executeRoleMutation(
+    "trace-role-lifecycle-metadata",
+    () =>
+      service.assignRoleToUser(actor, {
+        roleId: "role-hr",
+        userId: "target-user",
+        reason: "Scheduled access",
+        structuredScopeGrants: [
+          { scopeType: "managedOrgUnit", targetId: "org-a" },
+        ],
+        effectiveAt,
+        expiresAt,
+        reviewAt,
+      }),
+  );
+
+  assert.equal(result.assignedBy, actor.id);
+  assert.equal(typeof result.assignedAt, "number");
+  assert.equal(result.effectiveAt, effectiveAt);
+  assert.equal(result.expiresAt, expiresAt);
+  assert.equal(result.reviewAt, reviewAt);
+  assert.equal(result.origin, "DIRECT");
+  assert.equal(result.bundleOrigin, null);
+  assert.deepEqual(result.structuredScopeGrants, [
+    { scopeType: "managedOrgUnit", targetId: "org-a" },
+  ]);
+  assert.equal(assignmentRepository.assignments.length, 1);
+
+  await assert.rejects(
+    () =>
+      executeRoleMutation("trace-role-invalid-dates", () =>
+        service.assignRoleToUser(actor, {
+          roleId: "role-hr",
+          userId: "target-user-2",
+          reason: "Invalid dates",
+          effectiveAt,
+          expiresAt: effectiveAt,
+        }),
+      ),
+    RoleValidationError,
+  );
+});
+
+test("RoleAdminService requires reasons only for global and financeGlobal structured scopes", async () => {
+  for (const scopeType of ["global", "financeGlobal"] as const) {
+    const { service } = await createAssignmentServiceHarness();
+    await assert.rejects(
+      () =>
+        executeRoleMutation(`trace-role-${scopeType}-reason-required`, () =>
+          service.assignRoleToUser(createActor(ALL_PERMISSION_CODES), {
+            roleId: "role-hr",
+            userId: "target-user",
+            structuredScopeGrants: [{ scopeType }],
+          }),
+        ),
+      /reason is required/u,
+    );
+  }
+
+  const { service } = await createAssignmentServiceHarness();
+  const result = await executeRoleMutation(
+    "trace-role-self-no-reason",
+    () =>
+      service.assignRoleToUser(createActor(ALL_PERMISSION_CODES), {
+        roleId: "role-hr",
+        userId: "target-user",
+        structuredScopeGrants: [{ scopeType: "self" }],
+      }),
+  );
+  assert.equal(result.reason, null);
+});
+
+test("role revocation preserves assignment reason and records revoke metadata", async () => {
+  const { service, assignmentRepository } =
+    await createAssignmentServiceHarness();
+  const actor = createActor(ALL_PERMISSION_CODES);
+  const assigned = await executeRoleMutation(
+    "trace-role-revoke-assign",
+    () =>
+      service.assignRoleToUser(actor, {
+        roleId: "role-hr",
+        userId: "target-user",
+        reason: "Original assignment reason",
+      }),
+  );
+
+  const revoked = await executeRoleMutation(
+    "trace-role-revoke",
+    () =>
+      service.revokeRoleFromUser(actor, {
+        roleId: "role-hr",
+        assignmentId: assigned.assignmentId,
+        reason: "Access no longer required",
+      }),
+  );
+
+  assert.equal(revoked.state, "REVOKED");
+  assert.equal(revoked.reason, "Original assignment reason");
+  assert.equal(revoked.revokeReason, "Access no longer required");
+  assert.equal(revoked.revokedBy, actor.id);
+  assert.equal(typeof revoked.revokedAt, "number");
+  assert.equal(assignmentRepository.assignments[0]?.state, "REVOKED");
+});
+
 test("TALENT_STAFF_SELF assignment to ADMIN rejects", async () => {
   const roleRepository = new InMemoryRoleRepository();
   const assignmentRepository = new InMemoryUserRoleAssignmentRepository();
@@ -721,9 +916,19 @@ test("role assignment mutation presenter exposes assignment DTO", () => {
     scopeGrants: {
       eventAssignment: ["global"],
     },
+    structuredScopeGrants: [],
+    scopeFingerprint: "scope:v1:legacy",
     state: "ACTIVE",
     effectiveAt: 1,
+    expiresAt: null,
+    reviewAt: null,
+    assignedBy: null,
+    assignedAt: 1,
     revokedAt: null,
+    revokedBy: null,
+    revokeReason: null,
+    origin: "LEGACY",
+    bundleOrigin: null,
     reason: null,
   });
 });
@@ -1199,30 +1404,138 @@ class InMemoryRoleAssignmentRuleRepository implements RoleAssignmentRuleReposito
 
 class InMemoryUserRoleAssignmentRepository implements UserRoleAssignmentRepository {
   insertCount = 0;
+  readonly assignments: UserRoleAssignmentRecord[] = [];
 
   async insert(
     assignment: UserRoleAssignmentRecord,
     _session: ClientSession,
   ): Promise<UserRoleAssignmentRecord> {
     this.insertCount += 1;
+    this.assignments.push(assignment);
     return assignment;
   }
 
-  async findById(): Promise<UserRoleAssignmentRecord | null> {
-    return null;
+  async findById(
+    assignmentId: string,
+  ): Promise<UserRoleAssignmentRecord | null> {
+    return (
+      this.assignments.find(
+        (assignment) => assignment.assignmentId === assignmentId,
+      ) ?? null
+    );
   }
 
-  async findActiveByRoleAndUser(): Promise<UserRoleAssignmentRecord | null> {
-    return null;
+  async findActiveByRoleAndUser(
+    roleId: string,
+    userId: string,
+  ): Promise<UserRoleAssignmentRecord | null> {
+    return (
+      this.assignments.find(
+        (assignment) =>
+          assignment.roleId === roleId &&
+          assignment.userId === userId &&
+          assignment.state === "ACTIVE",
+      ) ?? null
+    );
+  }
+
+  async findActiveByRoleUserAndScopeFingerprint(
+    roleId: string,
+    userId: string,
+    scopeFingerprint: string,
+  ): Promise<UserRoleAssignmentRecord | null> {
+    return (
+      this.assignments.find(
+        (assignment) =>
+          assignment.roleId === roleId &&
+          assignment.userId === userId &&
+          assignment.scopeFingerprint === scopeFingerprint &&
+          assignment.state === "ACTIVE",
+      ) ?? null
+    );
   }
 
   async hasActiveAssignmentsForRole(): Promise<boolean> {
     return false;
   }
 
-  async revokeById(): Promise<UserRoleAssignmentRecord | null> {
-    return null;
+  async revokeById(
+    assignmentId: string,
+    reason: string | null,
+    revokedAt: number,
+    _session: ClientSession,
+    revokedBy?: string,
+  ): Promise<UserRoleAssignmentRecord | null> {
+    const index = this.assignments.findIndex(
+      (assignment) =>
+        assignment.assignmentId === assignmentId &&
+        assignment.state === "ACTIVE",
+    );
+    const current = this.assignments[index];
+    if (index < 0 || !current) {
+      return null;
+    }
+    const revoked: UserRoleAssignmentRecord = {
+      ...current,
+      state: "REVOKED",
+      revokedAt,
+      revokedBy: revokedBy ?? null,
+      revokeReason: reason,
+      updatedAt: revokedAt,
+    };
+    this.assignments[index] = revoked;
+    return revoked;
   }
+}
+
+async function createAssignmentServiceHarness(): Promise<{
+  readonly service: RoleAdminService;
+  readonly assignmentRepository: InMemoryUserRoleAssignmentRepository;
+}> {
+  const roleRepository = new InMemoryRoleRepository();
+  const assignmentRepository = new InMemoryUserRoleAssignmentRepository();
+  const service = new RoleAdminService(
+    roleRepository,
+    assignmentRepository,
+    new InMemoryRoleAssignmentRuleRepository(),
+    new InMemoryBusinessCodeSequenceRepository(),
+    new AlwaysAssignableUserAccess("ADMIN"),
+    new PermissiveAdminCapabilityRepository(),
+    createAuditGuard(),
+    new InlineMutationBridge(),
+    createActorSnapshotCacheInvalidator(),
+    noOpLogger,
+  );
+  const now = Date.now();
+  await roleRepository.insert(
+    {
+      id: "role-hr",
+      code: "HR_OPERATIONS",
+      name: "HR Operations",
+      description: null,
+      state: "ACTIVE",
+      permissions: [Permission.USER_VIEW],
+      delegationBand: "LIMITED",
+      maxDelegatableBand: "NONE",
+      createdAt: now,
+      updatedAt: now,
+      activatedAt: now,
+      archivedAt: null,
+    },
+    {} as ClientSession,
+  );
+  return { service, assignmentRepository };
+}
+
+async function executeRoleMutation<T>(
+  traceId: string,
+  mutation: () => Promise<T>,
+): Promise<T> {
+  return await bindTraceId(
+    traceId,
+    async () =>
+      await runWithDomainEventCollector(mutation),
+  );
 }
 
 class AlwaysAssignableUserAccess implements RoleUserReadonlyAccess {

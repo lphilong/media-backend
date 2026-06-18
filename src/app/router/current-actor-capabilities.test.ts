@@ -21,6 +21,7 @@ import { contextMiddleware } from "@core/context/context.middleware.adapter";
 import { Permission } from "@core/permission/permission.enum";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
+import { isRoleAssignmentCurrentlyEffective } from "@modules/role/domain/role-assignment-lifecycle";
 
 const AUTH0_OPTIONS = {
   issuerBaseURL: "https://auth.example.test/",
@@ -180,6 +181,97 @@ test("GET /admin/me/capabilities returns the current materialized admin actor sn
     });
     assert.equal(typeof body.data.generatedAt, "string");
     assert.equal(Number.isNaN(Date.parse(body.data.generatedAt)), false);
+  } finally {
+    await close(server);
+  }
+});
+
+test("GET /admin/me/capabilities exposes only currently effective role permissions from Auth0 materialization", async () => {
+  const now = Date.now();
+  const assignments = [
+    {
+      state: "ACTIVE" as const,
+      effectiveAt: now - 1_000,
+      expiresAt: now + 60_000,
+      permission: Permission.USER_VIEW,
+    },
+    {
+      state: "ACTIVE" as const,
+      effectiveAt: now + 60_000,
+      expiresAt: null,
+      permission: Permission.ROLE_CREATE,
+    },
+    {
+      state: "ACTIVE" as const,
+      effectiveAt: now - 60_000,
+      expiresAt: now,
+      permission: Permission.ROLE_UPDATE,
+    },
+  ];
+  const resolver = new Auth0ActorResolver(
+    {
+      async findByAuthSubject() {
+        return [
+          {
+            userId: "lifecycle-admin",
+            actorKind: "ADMIN" as const,
+            accountStatus: "ACTIVE" as const,
+            permissions: assignments
+              .filter((assignment) =>
+                isRoleAssignmentCurrentlyEffective(assignment, now),
+              )
+              .map((assignment) => assignment.permission),
+            authorizationValidUntil: now + 60_000,
+          },
+        ];
+      },
+      async readAuthSecurityVersion() {
+        return "v1";
+      },
+    },
+    {
+      async get() {
+        return null;
+      },
+      async set() {},
+      async del() {},
+      async exists() {
+        return false;
+      },
+    },
+  );
+  const app = express();
+  app.use(
+    "/admin",
+    contextMiddleware("ADMIN"),
+    async (req, _res, next) => {
+      (
+        req as unknown as {
+          auth: { payload: { sub: string } };
+        }
+      ).auth = { payload: { sub: "auth0|lifecycle-admin" } };
+      try {
+        await resolver.resolve(req);
+        next();
+      } catch (error) {
+        next(error);
+      }
+    },
+    createCapabilitiesRoutes(),
+  );
+  app.use(createHttpErrorMiddleware({ error() {} } as never));
+  const { server, baseUrl } = await listen(app);
+
+  try {
+    const response = await fetch(`${baseUrl}/admin/me/capabilities`, {
+      headers: {
+        "x-trace-id": "trace-current-capabilities-lifecycle",
+      },
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.data.permissions, [Permission.USER_VIEW]);
   } finally {
     await close(server);
   }

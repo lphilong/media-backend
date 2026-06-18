@@ -63,6 +63,7 @@ interface UserAuthResolutionAggregateDocument {
   readonly roleMaxDelegatableBands?: readonly unknown[];
   readonly scopeGrants?: unknown;
   readonly assignmentScopeGrants?: readonly unknown[];
+  readonly authorizationValidUntil?: unknown;
 }
 
 interface ActiveRoleAssignmentProbeDocument {
@@ -132,6 +133,7 @@ export class MongoUserAuthRepository
           doc._id,
           doc.assignmentScopeGrants,
         ),
+        ...toAuthorizationValidity(doc.authorizationValidUntil, doc._id),
       });
     });
   }
@@ -382,6 +384,7 @@ function normalizeAuthSecurityVersion(value: unknown): string | null {
 }
 
 function buildAuthResolutionPipeline(authSubject: string): Document[] {
+  const now = Date.now();
   return [
     {
       $match: {
@@ -406,7 +409,7 @@ function buildAuthResolutionPipeline(authSubject: string): Document[] {
               $expr: {
                 $and: [
                   { $eq: ["$userId", "$$userId"] },
-                  { $eq: ["$state", "ACTIVE"] },
+                  buildCurrentlyEffectiveRoleAssignmentExpression(now),
                 ],
               },
             },
@@ -428,6 +431,7 @@ function buildAuthResolutionPipeline(authSubject: string): Document[] {
         as: "activeAssignments",
       },
     },
+    buildNextRoleAssignmentLifecycleTransitionLookup(now),
     {
       $set: {
         assignmentRoleIds: {
@@ -521,12 +525,16 @@ function buildAuthResolutionPipeline(authSubject: string): Document[] {
         roleMaxDelegatableBands: 1,
         scopeGrants: 1,
         assignmentScopeGrants: 1,
+        authorizationValidUntil: {
+          $arrayElemAt: ["$nextLifecycleTransitions.transitionAt", 0],
+        },
       },
     },
   ];
 }
 
 function buildActivePermissionProjectionPipeline(): Document[] {
+  const now = Date.now();
   return [
     {
       $match: {
@@ -546,7 +554,7 @@ function buildActivePermissionProjectionPipeline(): Document[] {
               $expr: {
                 $and: [
                   { $eq: ["$userId", "$$userId"] },
-                  { $eq: ["$state", "ACTIVE"] },
+                  buildCurrentlyEffectiveRoleAssignmentExpression(now),
                 ],
               },
             },
@@ -657,6 +665,7 @@ function buildActivePermissionProjectionPipeline(): Document[] {
 }
 
 function buildActiveDelegationCeilingPipeline(userId: string): Document[] {
+  const now = Date.now();
   return [
     {
       $match: {
@@ -677,7 +686,7 @@ function buildActiveDelegationCeilingPipeline(userId: string): Document[] {
               $expr: {
                 $and: [
                   { $eq: ["$userId", "$$userId"] },
-                  { $eq: ["$state", "ACTIVE"] },
+                  buildCurrentlyEffectiveRoleAssignmentExpression(now),
                 ],
               },
             },
@@ -777,6 +786,7 @@ function buildActiveDelegationCeilingPipeline(userId: string): Document[] {
 }
 
 function buildActiveRoleAssignmentProbePipeline(userId: string): Document[] {
+  const now = Date.now();
   return [
     {
       $match: {
@@ -796,7 +806,7 @@ function buildActiveRoleAssignmentProbePipeline(userId: string): Document[] {
               $expr: {
                 $and: [
                   { $eq: ["$userId", "$$userId"] },
-                  { $eq: ["$state", "ACTIVE"] },
+                  buildCurrentlyEffectiveRoleAssignmentExpression(now),
                 ],
               },
             },
@@ -825,6 +835,7 @@ function buildActiveRoleAssignmentProbePipeline(userId: string): Document[] {
 }
 
 function buildActiveAdminConsoleRoleCodePipeline(userId: string): Document[] {
+  const now = Date.now();
   return [
     {
       $match: {
@@ -844,7 +855,7 @@ function buildActiveAdminConsoleRoleCodePipeline(userId: string): Document[] {
               $expr: {
                 $and: [
                   { $eq: ["$userId", "$$userId"] },
-                  { $eq: ["$state", "ACTIVE"] },
+                  buildCurrentlyEffectiveRoleAssignmentExpression(now),
                 ],
               },
             },
@@ -927,6 +938,96 @@ function buildActiveAdminConsoleRoleCodePipeline(userId: string): Document[] {
       },
     },
   ];
+}
+
+export function buildCurrentlyEffectiveRoleAssignmentExpression(
+  now: number,
+): Document {
+  return {
+    $and: [
+      { $eq: ["$state", "ACTIVE"] },
+      {
+        $or: [
+          { $eq: [{ $ifNull: ["$effectiveAt", null] }, null] },
+          { $lte: ["$effectiveAt", now] },
+        ],
+      },
+      {
+        $or: [
+          { $eq: [{ $ifNull: ["$expiresAt", null] }, null] },
+          { $gt: ["$expiresAt", now] },
+        ],
+      },
+    ],
+  };
+}
+
+function buildNextRoleAssignmentLifecycleTransitionLookup(now: number): Document {
+  return {
+    $lookup: {
+      from: "role_assignments",
+      let: { userId: "$_id" },
+      pipeline: [
+        {
+          $match: {
+            $expr: {
+              $and: [
+                { $eq: ["$userId", "$$userId"] },
+                { $eq: ["$state", "ACTIVE"] },
+              ],
+            },
+          },
+        },
+        {
+          $project: {
+            transitions: {
+              $filter: {
+                input: [
+                  {
+                    $cond: [
+                      { $gt: [{ $ifNull: ["$effectiveAt", -1] }, now] },
+                      "$effectiveAt",
+                      null,
+                    ],
+                  },
+                  {
+                    $cond: [
+                      { $gt: [{ $ifNull: ["$expiresAt", -1] }, now] },
+                      "$expiresAt",
+                      null,
+                    ],
+                  },
+                ],
+                as: "transition",
+                cond: { $ne: ["$$transition", null] },
+              },
+            },
+          },
+        },
+        { $unwind: "$transitions" },
+        { $sort: { transitions: 1 } },
+        { $limit: 1 },
+        { $project: { _id: 0, transitionAt: "$transitions" } },
+      ],
+      as: "nextLifecycleTransitions",
+    },
+  };
+}
+
+function toAuthorizationValidity(
+  value: unknown,
+  userId: string,
+): { readonly authorizationValidUntil?: number } {
+  if (value === undefined || value === null) {
+    return {};
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new InfrastructureError(
+      "USER_AUTH_ASSIGNMENT_LIFECYCLE_INVALID",
+      `Invalid role assignment lifecycle boundary for user ${userId}`,
+    );
+  }
+  return { authorizationValidUntil: value };
 }
 
 function toRuntimePermissionSet(

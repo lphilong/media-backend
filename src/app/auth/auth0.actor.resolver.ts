@@ -193,6 +193,12 @@ export class Auth0ActorResolver {
             resolved.actor,
           ),
         isActive: true,
+        ...(resolved.actor.authorizationValidUntil !== undefined
+          ? {
+              authorizationValidUntil:
+                resolved.actor.authorizationValidUntil,
+            }
+          : {}),
       };
 
       if (currentVersion !== null) {
@@ -501,6 +507,15 @@ function isTrustedActorSnapshot(
   }
 
   if (candidate.isActive !== true) {
+    return false;
+  }
+
+  if (
+    candidate.authorizationValidUntil !== undefined &&
+    (typeof candidate.authorizationValidUntil !== "number" ||
+      !Number.isFinite(candidate.authorizationValidUntil) ||
+      candidate.authorizationValidUntil <= Date.now())
+  ) {
     return false;
   }
 

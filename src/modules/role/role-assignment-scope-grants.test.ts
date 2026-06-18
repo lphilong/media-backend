@@ -240,7 +240,15 @@ test("role assignment persistence stores explicit scopes and reads old records w
     },
     state: "ACTIVE",
     effectiveAt: 1,
+    expiresAt: null,
+    reviewAt: null,
+    assignedBy: null,
+    assignedAt: 1,
     revokedAt: null,
+    revokedBy: null,
+    revokeReason: null,
+    origin: "LEGACY",
+    bundleOrigin: null,
     reason: "coverage",
     createdAt: 1,
     updatedAt: 1,
@@ -267,6 +275,79 @@ test("role assignment exposure includes assignment scopes for auditability", () 
       contractRegistry: ["global"],
     },
   );
+});
+
+test("role assignment persistence and exposure preserve AUTH-2 lifecycle and audit metadata", async () => {
+  const inserted: Array<Record<string, unknown>> = [];
+  const repository = new NativeMongoUserRoleAssignmentRepository({
+    collection() {
+      return {
+        insertOne: async (document: Record<string, unknown>) => {
+          inserted.push(document);
+        },
+      };
+    },
+  } as never);
+  const assignment = {
+    assignmentId: "assignment-auth-2",
+    roleId: "role-1",
+    userId: "user-1",
+    structuredScopeGrants: [
+      { scopeType: "managedOrgUnit" as const, targetId: "org-a" },
+    ],
+    scopeFingerprint: "scope:v1:managedOrgUnit|targetId=org-a",
+    state: "REVOKED" as const,
+    effectiveAt: 10,
+    expiresAt: 100,
+    reviewAt: 50,
+    assignedBy: "admin-1",
+    assignedAt: 5,
+    revokedAt: 60,
+    revokedBy: "admin-2",
+    revokeReason: "No longer required",
+    origin: "BUNDLE" as const,
+    bundleOrigin: {
+      bundleAssignmentId: "bundle-assignment-1",
+      bundleCode: "HR_OPERATIONS_BUNDLE",
+      bundleVersion: "2026-06-18",
+    },
+    reason: "Original assignment reason",
+    createdAt: 5,
+    updatedAt: 60,
+  };
+
+  await repository.insert(assignment, {} as never);
+  const exposed = RoleAdminAssignmentExposure.expose({
+    ...assignment,
+    userRef: null,
+  });
+
+  assert.equal(inserted[0]?.scopeFingerprint, assignment.scopeFingerprint);
+  assert.deepEqual(
+    inserted[0]?.structuredScopeGrants,
+    assignment.structuredScopeGrants,
+  );
+  for (const field of [
+    "assignedBy",
+    "assignedAt",
+    "effectiveAt",
+    "expiresAt",
+    "reviewAt",
+    "revokedBy",
+    "revokeReason",
+    "origin",
+    "bundleOrigin",
+  ]) {
+    assert.deepEqual(
+      inserted[0]?.[field],
+      assignment[field as keyof typeof assignment],
+    );
+    assert.deepEqual(
+      exposed[field],
+      assignment[field as keyof typeof assignment],
+    );
+  }
+  assert.equal(exposed.reason, "Original assignment reason");
 });
 
 test("auth materialization unions user-level and assignment-level scope grants deterministically", async () => {

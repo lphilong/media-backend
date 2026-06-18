@@ -107,4 +107,5 @@ export interface ResolvedActorUser {
   readonly permissions: readonly string[];
   readonly context: Extract<ContextType, "ADMIN" | "SELF_SERVICE">;
   readonly scopeGrants?: ActorScopeGrants;
+  readonly authorizationValidUntil?: number;
 }

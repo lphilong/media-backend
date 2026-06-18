@@ -39,6 +39,10 @@ import {
   normalizeAssignmentScopeGrants,
 } from "@modules/role/domain/role-assignment-scope-grants";
 import {
+  buildRoleAssignmentScopeFingerprint,
+  normalizeRoleAssignmentScopeGrants,
+} from "@modules/role/domain/role-assignment-scope";
+import {
   createRoleCreatedEvent,
   createRoleActivatedEvent,
   createRoleArchivedEvent,
@@ -1093,8 +1097,25 @@ export class RoleAdminService {
         const reason = normalizeNullableText(command.reason, "reason");
         const scopeGrants = normalizeAssignmentScopeGrants(command.scopeGrants);
         assertActorCanGrantAssignmentScopeGrants(actor, scopeGrants);
-
-        assertEffectiveAtNotProvided(command.effectiveAt);
+        const structuredScopeGrants = normalizeRoleAssignmentScopeGrants(
+          command.structuredScopeGrants,
+        );
+        const scopeFingerprint =
+          buildRoleAssignmentScopeFingerprint(structuredScopeGrants);
+        const effectiveAt = normalizeOptionalAssignmentTimestamp(
+          command.effectiveAt,
+          "effectiveAt",
+        );
+        const expiresAt = normalizeOptionalAssignmentTimestamp(
+          command.expiresAt,
+          "expiresAt",
+        );
+        const reviewAt = normalizeOptionalAssignmentTimestamp(
+          command.reviewAt,
+          "reviewAt",
+        );
+        assertAssignmentDates(effectiveAt, expiresAt, reviewAt);
+        assertGlobalScopeReason(structuredScopeGrants, reason);
 
         return this.executeAuthoritativeMutation(
           actor,
@@ -1142,15 +1163,24 @@ export class RoleAdminService {
             assertRoleActorKindCompatible(role, targetUser.actorKind);
 
             const existingActiveAssignment =
-              await this.userRoleAssignmentRepository.findActiveByRoleAndUser(
-                roleId,
-                userId,
-                session,
-              );
+              structuredScopeGrants &&
+              this.userRoleAssignmentRepository
+                .findActiveByRoleUserAndScopeFingerprint
+                ? await this.userRoleAssignmentRepository.findActiveByRoleUserAndScopeFingerprint(
+                    roleId,
+                    userId,
+                    scopeFingerprint,
+                    session,
+                  )
+                : await this.userRoleAssignmentRepository.findActiveByRoleAndUser(
+                    roleId,
+                    userId,
+                    session,
+                  );
 
             if (existingActiveAssignment) {
               throw new RoleAssignmentConflictError(
-                `Active assignment already exists for role ${roleId} and user ${userId}`,
+                `Active assignment already exists for role ${roleId}, user ${userId}, and scope ${scopeFingerprint}`,
               );
             }
 
@@ -1181,9 +1211,19 @@ export class RoleAdminService {
               roleId,
               userId,
               ...(scopeGrants ? { scopeGrants } : {}),
+              ...(structuredScopeGrants ? { structuredScopeGrants } : {}),
+              scopeFingerprint,
               state: "ACTIVE" as const,
-              effectiveAt: now,
+              effectiveAt: effectiveAt ?? now,
+              expiresAt,
+              reviewAt,
+              assignedBy: actor.id,
+              assignedAt: now,
               revokedAt: null,
+              revokedBy: null,
+              revokeReason: null,
+              origin: command.bundleOrigin ? ("BUNDLE" as const) : ("DIRECT" as const),
+              bundleOrigin: command.bundleOrigin ?? null,
               reason,
               createdAt: now,
               updatedAt: now,
@@ -1197,7 +1237,7 @@ export class RoleAdminService {
             } catch (error) {
               if (isDuplicateKeyError(error)) {
                 throw new RoleAssignmentConflictError(
-                  `Active assignment already exists for role ${roleId} and user ${userId}`,
+                  `Active assignment already exists for role ${roleId}, user ${userId}, and scope ${scopeFingerprint}`,
                 );
               }
 
@@ -1362,6 +1402,7 @@ export class RoleAdminService {
               reason,
               revokedAt,
               session,
+              actor.id,
             );
 
             if (!revoked) {
@@ -1801,9 +1842,23 @@ function toRoleAssignmentView(
     },
     userRef: userRef ?? null,
     ...(assignment.scopeGrants ? { scopeGrants: assignment.scopeGrants } : {}),
+    ...(assignment.structuredScopeGrants
+      ? { structuredScopeGrants: assignment.structuredScopeGrants }
+      : {}),
+    scopeFingerprint:
+      assignment.scopeFingerprint ??
+      buildRoleAssignmentScopeFingerprint(undefined),
     state: assignment.state,
     effectiveAt: assignment.effectiveAt,
+    expiresAt: assignment.expiresAt ?? null,
+    reviewAt: assignment.reviewAt ?? null,
+    assignedBy: assignment.assignedBy ?? null,
+    assignedAt: assignment.assignedAt ?? assignment.createdAt,
     revokedAt: assignment.revokedAt,
+    revokedBy: assignment.revokedBy ?? null,
+    revokeReason: assignment.revokeReason ?? null,
+    origin: assignment.origin ?? "LEGACY",
+    bundleOrigin: assignment.bundleOrigin ?? null,
     reason: assignment.reason,
   };
 }
@@ -2212,14 +2267,54 @@ function assertStrictConditionObject(value: unknown, path: string): void {
   }
 }
 
-function assertEffectiveAtNotProvided(value: unknown): void {
+function normalizeOptionalAssignmentTimestamp(
+  value: unknown,
+  field: string,
+): number | null {
   if (value === undefined || value === null) {
-    return;
+    return null;
   }
+  const timestamp =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Date.parse(value)
+        : Number.NaN;
+  if (!Number.isFinite(timestamp) || timestamp < 0) {
+    throw new RoleValidationError(`${field} must be a timestamp or ISO date`);
+  }
+  return Math.trunc(timestamp);
+}
 
-  throw new RoleValidationError(
-    "effectiveAt is not supported for ROLE assignment",
-  );
+function assertAssignmentDates(
+  effectiveAt: number | null,
+  expiresAt: number | null,
+  reviewAt: number | null,
+): void {
+  const effective = effectiveAt ?? Date.now();
+  if (expiresAt !== null && expiresAt <= effective) {
+    throw new RoleValidationError("expiresAt must be after effectiveAt");
+  }
+  if (reviewAt !== null && reviewAt < effective) {
+    throw new RoleValidationError("reviewAt must not be before effectiveAt");
+  }
+}
+
+function assertGlobalScopeReason(
+  grants: ReturnType<typeof normalizeRoleAssignmentScopeGrants>,
+  reason: string | null,
+): void {
+  if (
+    grants?.some(
+      (grant) =>
+        grant.scopeType === "global" || grant.scopeType === "financeGlobal",
+    ) &&
+    !reason
+  ) {
+    throw new RoleValidationError(
+      "reason is required for global or financeGlobal scope",
+    );
+  }
 }
 
 function toSortedUniquePermissionCodes(

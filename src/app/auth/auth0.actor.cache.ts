@@ -15,6 +15,7 @@ export interface ActorSnapshot {
   permissions: readonly string[];
   scopeGrants?: ActorScopeGrants;
   isActive: boolean;
+  authorizationValidUntil?: number;
 }
 
 /**

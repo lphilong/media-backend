@@ -53,6 +53,12 @@ import { RoleAdminQueryService } from "@modules/role/admin/admin.role.query-serv
 import { adminRoleTemplateRoutes } from "@modules/role/admin/admin.role-template.routes";
 import { AdminRoleTemplateController } from "@modules/role/admin/admin.role-template.controller";
 import { RoleTemplateAdminService } from "@modules/role/admin/admin.role-template.service";
+import { AdminRoleBundleController } from "@modules/role/admin/admin.role-bundle.controller";
+import { RoleBundleAdminService } from "@modules/role/admin/admin.role-bundle.service";
+import { adminRoleBundleRoutes } from "@modules/role/admin/admin.role-bundle.routes";
+import { AdminEffectiveAccessController } from "@modules/role/admin/admin.effective-access.controller";
+import { EffectiveAccessAdminService } from "@modules/role/admin/admin.effective-access.service";
+import { adminEffectiveAccessRoutes } from "@modules/role/admin/admin.effective-access.routes";
 
 /* ORG UNIT */
 import { adminOrgUnitRoutes } from "@modules/org-unit/admin/admin.org-unit.routes";
@@ -307,6 +313,22 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   r.use("/roles", adminRoleRoutes(roleController, roleQueryController));
 
   r.use("/role-templates", adminRoleTemplateRoutes(roleTemplateController));
+  r.use(
+    "/role-bundles",
+    adminRoleBundleRoutes(
+      new AdminRoleBundleController(
+        new RoleBundleAdminService(roleRepository, roleService),
+      ),
+    ),
+  );
+  r.use(
+    "/effective-access",
+    adminEffectiveAccessRoutes(
+      new AdminEffectiveAccessController(
+        new EffectiveAccessAdminService(infra.primaryDb),
+      ),
+    ),
+  );
 
   /* ORG UNIT */
   const {
