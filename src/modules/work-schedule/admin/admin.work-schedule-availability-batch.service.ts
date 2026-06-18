@@ -14,6 +14,8 @@ import { getTraceIdOrThrow } from "@core/trace/trace.context";
 import { SystemInvariantError } from "@core/error/system-error";
 import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
 import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
+import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import { ReferenceSummary } from "@modules/reference-summary";
 import {
   WorkScheduleAvailabilityBatchNotFoundError,
@@ -127,6 +129,7 @@ export class WorkScheduleAvailabilityBatchAdminService {
     >,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
+    private readonly structuredAuthority: StructuredScopeAuthorityService,
     private readonly clock: () => number = Date.now,
   ) {}
 
@@ -476,8 +479,14 @@ export class WorkScheduleAvailabilityBatchAdminService {
     query: GetWorkScheduleAvailabilityBatchDetailQuery,
   ): Promise<WorkScheduleAvailabilityBatchView> {
     this.assertPermission(actor, Permission.WORK_SCHEDULE_READ);
-    this.assertGlobalAuthority(actor);
-    return this.toBatchView(await this.requireBatch(query.batchId));
+    const batch = await this.requireBatch(query.batchId);
+    await this.assertAdminStructuredAuthorityForBatch(
+      actor,
+      Permission.WORK_SCHEDULE_READ,
+      batch,
+      "read WorkSchedule availability batch",
+    );
+    return this.toBatchView(batch);
   }
 
   async approveAdminLines(
@@ -509,7 +518,6 @@ export class WorkScheduleAvailabilityBatchAdminService {
     status: "APPROVED" | "REJECTED" | "CANCELLED",
   ): Promise<WorkScheduleAvailabilityBatchMutationResult> {
     const permission = this.assertPermission(actor, Permission.WORK_SCHEDULE_UPDATE);
-    this.assertGlobalAuthority(actor);
     const lineIds = normalizeLineIds(command.lineIds);
     const note =
       normalizeOptionalText(command.adminDecisionNote, "adminDecisionNote") ??
@@ -536,6 +544,12 @@ export class WorkScheduleAvailabilityBatchAdminService {
       { batchId: command.batchId, lineCount: lineIds.length },
       async (session) => {
         const batch = await this.requireBatch(command.batchId, session);
+        await this.assertAdminStructuredAuthorityForBatch(
+          actor,
+          Permission.WORK_SCHEDULE_UPDATE,
+          batch,
+          "decide WorkSchedule availability lines",
+        );
         const now = this.clock();
         for (const lineId of lineIds) {
           const line = await this.requireLine(batch.id, lineId, session);
@@ -841,6 +855,47 @@ export class WorkScheduleAvailabilityBatchAdminService {
         "WorkSchedule availability administration requires workSchedule.global scope",
       );
     }
+  }
+
+  private async assertAdminStructuredAuthorityForBatch(
+    actor: Actor,
+    permission: Permission,
+    batch: Pick<
+      WorkScheduleAvailabilityBatchRecord,
+      "targetType" | "targetOrgUnitId" | "targetTalentGroupId"
+    >,
+    action: string,
+  ): Promise<void> {
+    const scope =
+      batch.targetType === "ORG_UNIT"
+        ? batch.targetOrgUnitId
+          ? {
+              scopeType: "managedOrgUnit" as const,
+              targetId: batch.targetOrgUnitId,
+            }
+          : null
+        : batch.targetTalentGroupId
+          ? {
+              scopeType: "managedTalentGroup" as const,
+              targetId: batch.targetTalentGroupId,
+            }
+          : null;
+
+    if (!scope) {
+      throw new WorkSchedulePermissionScopeError(
+        `Cannot ${action}: WorkSchedule availability batch target is not object-bound`,
+      );
+    }
+
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission,
+      scope,
+      authority: this.structuredAuthority,
+      error: new WorkSchedulePermissionScopeError(
+        `Cannot ${action}: matching structured WorkSchedule object scope is required`,
+      ),
+    });
   }
 
   private async allocateBatchCode(

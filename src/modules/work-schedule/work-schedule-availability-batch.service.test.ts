@@ -12,6 +12,12 @@ import { Permission } from "@core/permission/permission.enum";
 import { bindTraceId } from "@core/trace/trace.context";
 import type { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
 import type { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
+import type { UserRoleAssignmentRecord } from "@modules/role/domain/role.types";
+import {
+  StructuredScopeAuthorityAssignment,
+  StructuredScopeAuthorityReader,
+  StructuredScopeAuthorityService,
+} from "@modules/role/domain/structured-scope-authority";
 import { WorkScheduleAvailabilityBatchAdminService } from "./admin/admin.work-schedule-availability-batch.service";
 import { adminWorkScheduleAvailabilityBatchRoutes } from "./admin/admin.work-schedule-availability-batch.routes";
 import { adminManagerWorkspaceRoutes } from "../manager-workspace/admin/admin.manager-workspace.routes";
@@ -553,7 +559,10 @@ const mutationBridge: AuthoritativeAdminMutationBridge = {
 
 const audit = { async record() {} } as unknown as AuditGuard;
 
-function createService(repository = new MemoryAvailabilityRepository()) {
+function createService(
+  repository = new MemoryAvailabilityRepository(),
+  structuredAuthority = defaultStructuredAuthority(),
+) {
   return {
     repository,
     service: new WorkScheduleAvailabilityBatchAdminService(
@@ -566,8 +575,74 @@ function createService(repository = new MemoryAvailabilityRepository()) {
       orgAssignments,
       audit,
       mutationBridge,
+      structuredAuthority,
       () => NOW,
     ),
+  };
+}
+
+function defaultStructuredAuthority(): StructuredScopeAuthorityService {
+  return structuredAuthorityWith([
+    structuredRecord({
+      userId: "ops-user",
+      permissions: [
+        Permission.WORK_SCHEDULE_READ,
+        Permission.WORK_SCHEDULE_UPDATE,
+      ],
+      structuredScopeGrants: [
+        { scopeType: "managedOrgUnit", targetId: "org-managed" },
+        { scopeType: "managedTalentGroup", targetId: "group-managed" },
+      ],
+    }),
+  ]);
+}
+
+function structuredAuthorityWith(
+  records: readonly StructuredScopeAuthorityAssignment[],
+): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService(
+    {
+      async listByUserId(userId: string) {
+        return records.filter((record) => record.assignment.userId === userId);
+      },
+    } satisfies StructuredScopeAuthorityReader,
+    () => NOW,
+  );
+}
+
+function structuredRecord(input: {
+  readonly assignmentId?: string;
+  readonly userId: string;
+  readonly permissions: readonly Permission[];
+  readonly structuredScopeGrants?: UserRoleAssignmentRecord["structuredScopeGrants"];
+  readonly state?: UserRoleAssignmentRecord["state"];
+  readonly roleState?: string;
+  readonly effectiveAt?: number | null;
+  readonly expiresAt?: number | null;
+}): StructuredScopeAuthorityAssignment {
+  return {
+    assignment: {
+      assignmentId: input.assignmentId ?? `${input.userId}-assignment`,
+      roleId: `${input.userId}-role`,
+      userId: input.userId,
+      ...(input.structuredScopeGrants
+        ? { structuredScopeGrants: input.structuredScopeGrants }
+        : {}),
+      state: input.state ?? "ACTIVE",
+      effectiveAt: input.effectiveAt ?? NOW - 1,
+      expiresAt: input.expiresAt ?? null,
+      revokedAt: input.state === "REVOKED" ? NOW - 1 : null,
+      origin: "DIRECT",
+      bundleOrigin: null,
+      reason: null,
+      createdAt: NOW - 1,
+      updatedAt: NOW - 1,
+    },
+    role: {
+      id: `${input.userId}-role`,
+      state: input.roleState ?? "ACTIVE",
+      permissions: input.permissions,
+    },
   };
 }
 
@@ -602,9 +677,10 @@ function adminActor(
   permissions: readonly Permission[],
   scopes: readonly ("team" | "global")[],
   roles: readonly string[] = ["PRODUCTION_OPS"],
+  id = "authority-test-user",
 ): Actor {
   return new Actor({
-    id: "authority-test-user",
+    id,
     type: "admin",
     context: "ADMIN",
     roles,
@@ -636,6 +712,16 @@ function payload(
       },
     ],
     ...overrides,
+  };
+}
+
+function availabilityLineForDate(day: string, reason: string) {
+  return {
+    memberEmploymentProfileId: "ep-org",
+    availabilityType: "UNAVAILABLE_FULL_DAY",
+    taxonomyCode: "AUTHORIZED_LEAVE",
+    availabilityDate: `2026-06-${day}`,
+    reason,
   };
 }
 
@@ -1321,11 +1407,68 @@ test("manager and Admin decisions reject every requested terminal availability t
   );
 });
 
-test("Admin availability queue and decisions require permission plus global scope", async () => {
-  const { service } = createService();
+test("Admin availability detail and decisions require permission plus matching structured object scope", async () => {
+  const authority = structuredAuthorityWith([
+    structuredRecord({
+      userId: "structured-read-user",
+      permissions: [Permission.WORK_SCHEDULE_READ],
+      structuredScopeGrants: [
+        { scopeType: "managedOrgUnit", targetId: "org-managed" },
+      ],
+    }),
+    structuredRecord({
+      userId: "structured-update-user",
+      permissions: [Permission.WORK_SCHEDULE_UPDATE],
+      structuredScopeGrants: [
+        { scopeType: "managedOrgUnit", targetId: "org-managed" },
+      ],
+    }),
+    structuredRecord({
+      userId: "mismatched-read-user",
+      permissions: [Permission.WORK_SCHEDULE_READ],
+      structuredScopeGrants: [
+        { scopeType: "managedOrgUnit", targetId: "org-other" },
+      ],
+    }),
+    structuredRecord({
+      userId: "mismatched-update-user",
+      permissions: [Permission.WORK_SCHEDULE_UPDATE],
+      structuredScopeGrants: [
+        { scopeType: "managedTalentGroup", targetId: "group-managed" },
+      ],
+    }),
+    structuredRecord({
+      userId: "future-read-user",
+      permissions: [Permission.WORK_SCHEDULE_READ],
+      structuredScopeGrants: [
+        { scopeType: "managedOrgUnit", targetId: "org-managed" },
+      ],
+      effectiveAt: NOW + 1,
+    }),
+    structuredRecord({
+      userId: "expired-read-user",
+      permissions: [Permission.WORK_SCHEDULE_READ],
+      structuredScopeGrants: [
+        { scopeType: "managedOrgUnit", targetId: "org-managed" },
+      ],
+      expiresAt: NOW,
+    }),
+    structuredRecord({
+      userId: "scope-without-actor-permission",
+      permissions: [Permission.WORK_SCHEDULE_READ],
+      structuredScopeGrants: [
+        { scopeType: "managedOrgUnit", targetId: "org-managed" },
+      ],
+    }),
+  ]);
+  const { service } = createService(
+    new MemoryAvailabilityRepository(),
+    authority,
+  );
   const batch = await withTrace(() =>
     service.submitManagerBatch(managerActor(), payload()),
   );
+
   const permissionWithoutGlobal = adminActor(
     [Permission.WORK_SCHEDULE_READ, Permission.WORK_SCHEDULE_UPDATE],
     ["team"],
@@ -1334,58 +1477,197 @@ test("Admin availability queue and decisions require permission plus global scop
     [Permission.WORK_SCHEDULE_UPDATE],
     ["global"],
   );
-  const globalWithoutUpdate = adminActor(
-    [Permission.WORK_SCHEDULE_READ],
-    ["global"],
+  await assert.rejects(
+    service.listAdminBatches(permissionWithoutGlobal, {}),
+    WorkSchedulePermissionScopeError,
+  );
+  await assert.rejects(
+    service.listAdminBatches(globalWithoutRead, {}),
+    SystemInvariantError,
   );
 
-  for (const read of [
-    () => service.listAdminBatches(permissionWithoutGlobal, {}),
-    () =>
-      service.getAdminBatchDetail(permissionWithoutGlobal, {
-        batchId: batch.id,
-      }),
-  ]) {
-    await assert.rejects(read(), WorkSchedulePermissionScopeError);
-  }
-  for (const read of [
-    () => service.listAdminBatches(globalWithoutRead, {}),
-    () =>
-      service.getAdminBatchDetail(globalWithoutRead, {
-        batchId: batch.id,
-      }),
-  ]) {
-    await assert.rejects(read(), SystemInvariantError);
-  }
+  const structuredRead = adminActor(
+    [Permission.WORK_SCHEDULE_READ],
+    [],
+    ["PRODUCTION_OPS"],
+    "structured-read-user",
+  );
+  assert.equal(
+    (
+      await service.getAdminBatchDetail(structuredRead, { batchId: batch.id })
+    ).id,
+    batch.id,
+  );
 
-  const decisions = [
-    (actor: Actor) =>
-      service.approveAdminLines(actor, {
-        batchId: batch.id,
-        lineIds: [batch.lines[0]!.id],
-      }),
-    (actor: Actor) =>
-      service.rejectAdminLines(actor, {
-        batchId: batch.id,
-        lineIds: [batch.lines[0]!.id],
-        rejectionReason: "Authority denial test rejection reason",
-      }),
-    (actor: Actor) =>
-      service.cancelAdminLines(actor, {
-        batchId: batch.id,
-        lineIds: [batch.lines[0]!.id],
-        cancellationReason: "Authority denial test cancellation reason",
-      }),
-  ];
-
-  for (const decide of decisions) {
+  const legacyGlobalRead = adminActor(
+    [Permission.WORK_SCHEDULE_READ],
+    ["global"],
+    ["PRODUCTION_OPS"],
+    "legacy-read-user",
+  );
+  await assert.rejects(
+    service.getAdminBatchDetail(legacyGlobalRead, { batchId: batch.id }),
+    WorkSchedulePermissionScopeError,
+  );
+  await assert.rejects(
+    service.getAdminBatchDetail(
+      adminActor(
+        [Permission.WORK_SCHEDULE_READ],
+        [],
+        ["PRODUCTION_OPS"],
+        "mismatched-read-user",
+      ),
+      { batchId: batch.id },
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+  await assert.rejects(
+    service.getAdminBatchDetail(
+      adminActor([], [], ["PRODUCTION_OPS"], "scope-without-actor-permission"),
+      { batchId: batch.id },
+    ),
+    SystemInvariantError,
+  );
+  for (const actorId of ["future-read-user", "expired-read-user"]) {
     await assert.rejects(
-      decide(permissionWithoutGlobal),
+      service.getAdminBatchDetail(
+        adminActor(
+          [Permission.WORK_SCHEDULE_READ],
+          [],
+          ["PRODUCTION_OPS"],
+          actorId,
+        ),
+        { batchId: batch.id },
+      ),
       WorkSchedulePermissionScopeError,
     );
-    await assert.rejects(decide(globalWithoutUpdate), SystemInvariantError);
-    await assert.rejects(decide(managerActor()), SystemInvariantError);
   }
+
+  const structuredUpdate = adminActor(
+    [Permission.WORK_SCHEDULE_UPDATE],
+    [],
+    ["PRODUCTION_OPS"],
+    "structured-update-user",
+  );
+  const approveBatch = await withTrace(() =>
+    service.submitManagerBatch(
+      managerActor(),
+      payload({
+        lines: [
+          availabilityLineForDate(
+            "16",
+            "Approve with matching structured authority",
+          ),
+        ],
+      }),
+    ),
+  );
+  await withTrace(() =>
+    service.approveAdminLines(structuredUpdate, {
+      batchId: approveBatch.id,
+      lineIds: [approveBatch.lines[0]!.id],
+    }),
+  );
+  const rejectBatch = await withTrace(() =>
+    service.submitManagerBatch(
+      managerActor(),
+      payload({
+        lines: [
+          availabilityLineForDate(
+            "17",
+            "Reject with matching structured authority",
+          ),
+        ],
+      }),
+    ),
+  );
+  await withTrace(() =>
+    service.rejectAdminLines(structuredUpdate, {
+      batchId: rejectBatch.id,
+      lineIds: [rejectBatch.lines[0]!.id],
+      rejectionReason: "Reject with matching structured authority",
+    }),
+  );
+  const cancelBatch = await withTrace(() =>
+    service.submitManagerBatch(
+      managerActor(),
+      payload({
+        lines: [
+          availabilityLineForDate(
+            "18",
+            "Cancel with matching structured authority",
+          ),
+        ],
+      }),
+    ),
+  );
+  await withTrace(() =>
+    service.cancelAdminLines(structuredUpdate, {
+      batchId: cancelBatch.id,
+      lineIds: [cancelBatch.lines[0]!.id],
+      cancellationReason: "Cancel with matching structured authority",
+    }),
+  );
+
+  const denyBatch = await withTrace(() =>
+    service.submitManagerBatch(
+      managerActor(),
+      payload({
+        lines: [
+          availabilityLineForDate(
+            "19",
+            "Deny without matching structured authority",
+          ),
+        ],
+      }),
+    ),
+  );
+  await assert.rejects(
+    withTrace(() =>
+      service.approveAdminLines(
+        adminActor(
+          [Permission.WORK_SCHEDULE_UPDATE],
+          ["global"],
+          ["PRODUCTION_OPS"],
+          "legacy-update-user",
+        ),
+        {
+          batchId: denyBatch.id,
+          lineIds: [denyBatch.lines[0]!.id],
+        },
+      ),
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+  await assert.rejects(
+    withTrace(() =>
+      service.approveAdminLines(
+        adminActor(
+          [Permission.WORK_SCHEDULE_UPDATE],
+          [],
+          ["PRODUCTION_OPS"],
+          "mismatched-update-user",
+        ),
+        {
+          batchId: denyBatch.id,
+          lineIds: [denyBatch.lines[0]!.id],
+        },
+      ),
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+  await assert.rejects(
+    withTrace(() =>
+      service.approveAdminLines(
+        adminActor([Permission.WORK_SCHEDULE_READ], ["global"]),
+        {
+          batchId: denyBatch.id,
+          lineIds: [denyBatch.lines[0]!.id],
+        },
+      ),
+    ),
+    SystemInvariantError,
+  );
   await assert.rejects(
     service.listAdminBatches(managerActor(), {}),
     WorkSchedulePermissionScopeError,
