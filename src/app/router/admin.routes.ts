@@ -1005,6 +1005,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     orgUnitManagerAssignmentRepository,
     authoritativeAuditGuard,
     adminMutationBridge,
+    structuredScopeAuthority,
   );
   const kpiController = new KpiAdminController(kpiService);
   const kpiQueryController = new KpiAdminQueryController(kpiService);

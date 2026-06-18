@@ -58,6 +58,13 @@ import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit
 import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import { resolveManagedUnitAuthority } from "@modules/kpi/domain/managed-unit-authority";
 import {
+  StructuredScopeAuthorityAssignment,
+  StructuredScopeAuthorityReader,
+  StructuredScopeAuthorityService,
+} from "@modules/role/domain/structured-scope-authority";
+import { RoleAssignmentScopeGrant } from "@modules/role/domain/role-assignment-scope";
+import { UserRoleAssignmentRecord } from "@modules/role/domain/role.types";
+import {
   KpiAllocation,
   KpiAllocationStatus,
   KpiAllocationStatusCount,
@@ -271,7 +278,36 @@ function createScopedActor(params: {
   });
 }
 
-function createHarness(clock: () => number = fixedClock()): {
+const ALL_KPI_ADMIN_PERMISSIONS: readonly Permission[] = [
+  Permission.KPI_READ,
+  Permission.KPI_CREATE_PLAN,
+  Permission.KPI_UPDATE_DRAFT,
+  Permission.KPI_PUBLISH,
+  Permission.KPI_MANAGE_ALLOCATION,
+  Permission.KPI_ARCHIVE,
+  Permission.KPI_ENTER_ACTUAL,
+  Permission.KPI_CORRECT_ACTUAL,
+  Permission.KPI_READ_PROGRESS,
+  Permission.KPI_FINALIZE,
+];
+
+const DEFAULT_KPI_STRUCTURED_SCOPE_GRANTS: readonly RoleAssignmentScopeGrant[] =
+  [
+    { scopeType: "managedTalentGroup", targetId: "group-1" },
+    { scopeType: "managedTalentGroup", targetId: "group-2" },
+    { scopeType: "managedTalentGroup", targetId: "group-other" },
+    { scopeType: "managedTalentGroup", targetId: "missing-group" },
+    { scopeType: "managedOrgUnit", targetId: "org-department-active" },
+    { scopeType: "managedOrgUnit", targetId: "org-team-active" },
+    { scopeType: "managedOrgUnit", targetId: "org-business-active" },
+    { scopeType: "managedOrgUnit", targetId: "org-support-active" },
+  ];
+
+function createHarness(
+  clock: () => number = fixedClock(),
+  structuredAuthority: StructuredScopeAuthorityService =
+    createDefaultKpiStructuredAuthority(clock),
+): {
   readonly service: KpiAdminService;
   readonly repository: InMemoryKpiPlanRepository;
   readonly actualRepository: InMemoryKpiActualRepository;
@@ -296,6 +332,7 @@ function createHarness(clock: () => number = fixedClock()): {
     orgUnitManagerRepository,
     audit as unknown as AuditGuard,
     new ImmediateMutationBridge(),
+    structuredAuthority,
     clock,
   );
   return {
@@ -306,6 +343,87 @@ function createHarness(clock: () => number = fixedClock()): {
     managerRepository,
     orgUnitManagerRepository,
     audit,
+  };
+}
+
+function createDefaultKpiStructuredAuthority(
+  clock: () => number,
+): StructuredScopeAuthorityService {
+  return createKpiStructuredAuthority(
+    [
+      kpiStructuredRecord({
+        userId: "admin-1",
+        permissions: ALL_KPI_ADMIN_PERMISSIONS,
+      }),
+      kpiStructuredRecord({
+        userId: "manager-user",
+        permissions: [
+          Permission.KPI_READ,
+          Permission.KPI_ENTER_ACTUAL,
+          Permission.KPI_CORRECT_ACTUAL,
+          Permission.KPI_READ_PROGRESS,
+        ],
+      }),
+      kpiStructuredRecord({
+        userId: "read-only-user",
+        permissions: [Permission.KPI_READ, Permission.KPI_READ_PROGRESS],
+      }),
+    ],
+    clock,
+  );
+}
+
+function createKpiStructuredAuthority(
+  records: readonly StructuredScopeAuthorityAssignment[],
+  clock: () => number = fixedClock(),
+): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService(
+    {
+      async listByUserId(
+        userId: string,
+      ): Promise<readonly StructuredScopeAuthorityAssignment[]> {
+        return records.filter(
+          (record) => record.assignment.userId === userId,
+        );
+      },
+    } satisfies StructuredScopeAuthorityReader,
+    clock,
+  );
+}
+
+function kpiStructuredRecord(input: {
+  readonly assignmentId?: string;
+  readonly userId: string;
+  readonly permissions: readonly Permission[];
+  readonly structuredScopeGrants?: readonly RoleAssignmentScopeGrant[];
+  readonly state?: UserRoleAssignmentRecord["state"];
+  readonly roleState?: string;
+  readonly effectiveAt?: number | null;
+  readonly expiresAt?: number | null;
+}): StructuredScopeAuthorityAssignment {
+  const roleId = `${input.userId}-kpi-role`;
+  return {
+    assignment: {
+      assignmentId: input.assignmentId ?? `${input.userId}-kpi-assignment`,
+      roleId,
+      userId: input.userId,
+      structuredScopeGrants:
+        input.structuredScopeGrants ?? DEFAULT_KPI_STRUCTURED_SCOPE_GRANTS,
+      state: input.state ?? "ACTIVE",
+      effectiveAt: input.effectiveAt ?? 1_000,
+      expiresAt: input.expiresAt ?? null,
+      revokedAt: input.state === "REVOKED" ? 1_001 : null,
+      origin: "DIRECT",
+      bundleOrigin: null,
+      reason: null,
+      createdAt: 1_000,
+      updatedAt: 1_000,
+    },
+    role: {
+      id: roleId,
+      state: input.roleState ?? "ACTIVE",
+      permissions: input.permissions,
+    },
   };
 }
 
@@ -1894,6 +2012,216 @@ test("KPI V2 creates ORG_UNIT draft plans for active supported Org Unit types", 
     assert.equal(result.targetMetrics[0]?.metricCode, "REVENUE_VND");
     assert.equal(result.allocations.length, 0);
   }
+});
+
+test("KPI plan create requires exact structured subject authority", async () => {
+  const clock = fixedClock();
+  const allowedActor = createScopedActor({
+    id: "org-kpi-admin",
+    permissions: [Permission.KPI_CREATE_PLAN],
+  });
+  const deniedLegacyGlobalActor = createScopedActor({
+    id: "legacy-global-kpi-admin",
+    permissions: [Permission.KPI_CREATE_PLAN],
+    kpiScopes: ["global"],
+  });
+  const deniedLegacyManagedActor = createScopedActor({
+    id: "legacy-managed-kpi-admin",
+    permissions: [Permission.KPI_CREATE_PLAN],
+    kpiScopes: ["managedGroup"],
+  });
+  const noMatchingGrantActor = createScopedActor({
+    id: "wrong-org-kpi-admin",
+    permissions: [Permission.KPI_CREATE_PLAN],
+  });
+  const noRolePermissionActor = createScopedActor({
+    id: "grant-without-permission-kpi-admin",
+    permissions: [Permission.KPI_CREATE_PLAN],
+  });
+  const { service, repository } = createHarness(
+    clock,
+    createKpiStructuredAuthority(
+      [
+        kpiStructuredRecord({
+          userId: "org-kpi-admin",
+          permissions: [Permission.KPI_CREATE_PLAN],
+          structuredScopeGrants: [
+            { scopeType: "managedOrgUnit", targetId: "org-department-active" },
+            { scopeType: "managedTalentGroup", targetId: "group-1" },
+          ],
+        }),
+        kpiStructuredRecord({
+          userId: "wrong-org-kpi-admin",
+          permissions: [Permission.KPI_CREATE_PLAN],
+          structuredScopeGrants: [
+            { scopeType: "managedOrgUnit", targetId: "org-team-active" },
+          ],
+        }),
+        kpiStructuredRecord({
+          userId: "grant-without-permission-kpi-admin",
+          permissions: [Permission.KPI_READ],
+          structuredScopeGrants: [
+            { scopeType: "managedOrgUnit", targetId: "org-department-active" },
+          ],
+        }),
+      ],
+      clock,
+    ),
+  );
+
+  const orgPlan = await service.createKpiPlan(
+    allowedActor,
+    orgUnitPlanCommand("org-department-active"),
+  );
+  const groupPlan = await service.createKpiPlan(
+    allowedActor,
+    groupPlanCommand(),
+  );
+
+  assert.equal(orgPlan.subjectType, "ORG_UNIT");
+  assert.equal(groupPlan.subjectType, "TALENT_GROUP");
+
+  for (const actor of [deniedLegacyGlobalActor, deniedLegacyManagedActor]) {
+    await assert.rejects(
+      service.createKpiPlan(
+        actor,
+        orgUnitPlanCommand("org-department-active"),
+      ),
+      KpiPermissionScopeError,
+    );
+  }
+  await assert.rejects(
+    service.createKpiPlan(
+      noMatchingGrantActor,
+      orgUnitPlanCommand("org-department-active"),
+    ),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.createKpiPlan(
+      noRolePermissionActor,
+      orgUnitPlanCommand("org-department-active"),
+    ),
+    KpiPermissionScopeError,
+  );
+  assert.equal(repository.plans.length, 2);
+});
+
+test("KPI existing plan operations authorize from persisted subject", async () => {
+  const clock = fixedClock();
+  const exactActor = createScopedActor({
+    id: "exact-org-editor",
+    permissions: [
+      Permission.KPI_READ,
+      Permission.KPI_UPDATE_DRAFT,
+      Permission.KPI_PUBLISH,
+      Permission.KPI_ARCHIVE,
+    ],
+  });
+  const wrongActor = createScopedActor({
+    id: "wrong-org-editor",
+    permissions: [
+      Permission.KPI_READ,
+      Permission.KPI_UPDATE_DRAFT,
+      Permission.KPI_PUBLISH,
+      Permission.KPI_ARCHIVE,
+    ],
+    kpiScopes: ["global"],
+  });
+  const { service } = createHarness(
+    clock,
+    createKpiStructuredAuthority(
+      [
+        kpiStructuredRecord({
+          userId: "admin-1",
+          permissions: ALL_KPI_ADMIN_PERMISSIONS,
+        }),
+        kpiStructuredRecord({
+          userId: "exact-org-editor",
+          permissions: [
+            Permission.KPI_READ,
+            Permission.KPI_UPDATE_DRAFT,
+            Permission.KPI_PUBLISH,
+            Permission.KPI_ARCHIVE,
+          ],
+          structuredScopeGrants: [
+            { scopeType: "managedOrgUnit", targetId: "org-department-active" },
+          ],
+        }),
+        kpiStructuredRecord({
+          userId: "wrong-org-editor",
+          permissions: [
+            Permission.KPI_READ,
+            Permission.KPI_UPDATE_DRAFT,
+            Permission.KPI_PUBLISH,
+            Permission.KPI_ARCHIVE,
+          ],
+          structuredScopeGrants: [
+            { scopeType: "managedOrgUnit", targetId: "org-team-active" },
+          ],
+        }),
+      ],
+      clock,
+    ),
+  );
+  const created = await service.createKpiPlan(
+    createActor(),
+    orgUnitPlanCommand("org-department-active"),
+  );
+
+  const detail = await service.getKpiPlanDetail(exactActor, {
+    kpiPlanId: created.id,
+  });
+  const updated = await service.updateKpiDraftCore(exactActor, {
+    kpiPlanId: created.id,
+    title: "Persisted subject authorized",
+  });
+
+  assert.equal(detail.subjectId, "org-department-active");
+  assert.equal(updated.title, "Persisted subject authorized");
+  await assert.rejects(
+    service.getKpiPlanDetail(wrongActor, {
+      kpiPlanId: created.id,
+    }),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.archiveKpiPlan(wrongActor, { kpiPlanId: created.id }),
+    KpiPermissionScopeError,
+  );
+});
+
+test("KPI migrated actual and finalization paths deny legacy global without structured grant", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
+  const { service } = createHarness(() => now.value);
+  const published = await createPublishedGroupPlan(service);
+  const allocation = published.allocations[0] as KpiAllocation;
+  const legacyGlobalActor = createScopedActor({
+    id: "legacy-global-all-kpi",
+    permissions: ALL_KPI_ADMIN_PERMISSIONS,
+    kpiScopes: ["global"],
+  });
+
+  await assert.rejects(
+    service.getKpiPlanDetail(legacyGlobalActor, { kpiPlanId: published.id }),
+    KpiPermissionScopeError,
+  );
+  await assert.rejects(
+    service.createOrSetKpiActual(legacyGlobalActor, {
+      kpiPlanId: published.id,
+      allocationId: allocation.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "2026-05-05",
+      actualValue: 1,
+    }),
+    KpiPermissionScopeError,
+  );
+
+  now.value = JUNE_1_2026_NOON_HCM;
+  await assert.rejects(
+    service.finalizeKpiPlan(legacyGlobalActor, { kpiPlanId: published.id }),
+    KpiPermissionScopeError,
+  );
 });
 
 test("KPI V2 global list and detail return safe ORG_UNIT subjectRef without internals", async () => {
@@ -4218,24 +4546,25 @@ test("KPI ORG_UNIT finalized finalResult route is manager-readable and scoped", 
   );
 });
 
-test("KPI V2 global read remains compatible with existing TALENT plan", async () => {
+test("KPI V2 global list remains compatible with existing TALENT plan while detail fails closed", async () => {
   const { service, repository } = createHarness();
   repository.plans.push(buildFutureSubjectDraftPlan("TALENT"));
 
   const result = await service.listKpiPlans(createActor(), {
     subjectType: "TALENT",
   });
-  const detail = await service.getKpiPlanDetail(createActor(), {
-    kpiPlanId: "future-TALENT",
-  });
 
   assert.deepEqual(
     result.items.map((item) => item.id),
     ["future-TALENT"],
   );
-  assert.equal(detail.subjectType, "TALENT");
   assert.equal(result.items[0]?.subjectRef, null);
-  assert.equal(detail.subjectRef, null);
+  await assert.rejects(
+    service.getKpiPlanDetail(createActor(), {
+      kpiPlanId: "future-TALENT",
+    }),
+    KpiPermissionScopeError,
+  );
 });
 
 test("KPI V2 global list and detail return safe TALENT_GROUP subjectRef", async () => {
@@ -4288,7 +4617,7 @@ test("KPI V2 global list and detail safely omit missing subjectRef", async () =>
   assert.equal(detail.subjectRef, null);
 });
 
-test("KPI V2 global TALENT subjectRef uses safe display fields only", async () => {
+test("KPI V2 global TALENT list subjectRef uses safe display fields only while detail fails closed", async () => {
   const { service, repository } = createHarness();
   const talentPlan: KpiPlan = {
     ...buildFutureSubjectDraftPlan("TALENT"),
@@ -4301,9 +4630,6 @@ test("KPI V2 global TALENT subjectRef uses safe display fields only", async () =
   const result = await service.listKpiPlans(createActor(), {
     subjectType: "TALENT",
   });
-  const detail = await service.getKpiPlanDetail(createActor(), {
-    kpiPlanId: talentPlan.id,
-  });
 
   assert.deepEqual(result.items[0]?.subjectRef, {
     id: "talent-1",
@@ -4311,7 +4637,12 @@ test("KPI V2 global TALENT subjectRef uses safe display fields only", async () =
     displayName: "Talent Profile 1",
     status: "ACTIVE",
   });
-  assert.deepEqual(detail.subjectRef, result.items[0]?.subjectRef);
+  await assert.rejects(
+    service.getKpiPlanDetail(createActor(), {
+      kpiPlanId: talentPlan.id,
+    }),
+    KpiPermissionScopeError,
+  );
   for (const forbiddenField of [
     "legalName",
     "displayShortName",

@@ -50,6 +50,9 @@ import {
 } from "@modules/kpi/domain/kpi-subject-readonly-access";
 import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
 import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
+import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { RoleAssignmentScopeGrant } from "@modules/role/domain/role-assignment-scope";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import {
   KPI_CREATE_SUBJECT_TYPES,
   KPI_EXECUTABLE_SUBJECT_TYPES,
@@ -263,6 +266,7 @@ export class KpiAdminService {
       | undefined,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
+    private readonly structuredAuthority: StructuredScopeAuthorityService,
     private readonly clock: () => number = Date.now,
   ) {}
 
@@ -271,7 +275,6 @@ export class KpiAdminService {
     command: CreateKpiPlanCommand,
   ): Promise<KpiPlanMutationView> {
     const permission = this.assertPermission(actor, Permission.KPI_CREATE_PLAN);
-    this.assertKpiGlobalScope(actor, "create KPI plan");
     const period = normalizePlanPeriod({
       periodMonth: command.periodMonth,
       periodStartAt: command.periodStartAt,
@@ -279,6 +282,7 @@ export class KpiAdminService {
       timezone: command.timezone,
     });
     const subjectType = normalizeSubjectType(command.subjectType);
+    const subjectId = normalizeRequiredText(command.subjectId, "subjectId");
     const operation: AuthoritativeAdminMutationIdentity = "kpi.create-plan";
 
     assertCreateSubjectType(subjectType);
@@ -299,8 +303,14 @@ export class KpiAdminService {
       async (session) => {
         await this.assertSubjectReferenceActive(
           subjectType,
-          normalizeRequiredText(command.subjectId, "subjectId"),
+          subjectId,
           session,
+        );
+        await this.requireKpiSubjectStructuredAuthority(
+          actor,
+          Permission.KPI_CREATE_PLAN,
+          { subjectType, subjectId },
+          "create KPI plan",
         );
 
         const now = this.clock();
@@ -313,7 +323,7 @@ export class KpiAdminService {
           normalizedTitle: normalizeSearchToken(command.title),
           description: normalizeNullableText(command.description),
           subjectType,
-          subjectId: normalizeRequiredText(command.subjectId, "subjectId"),
+          subjectId,
           status: "DRAFT",
           currencyCode: normalizeCurrency(command.currencyCode ?? "VND"),
           periodMonth: period.periodMonth,
@@ -434,6 +444,12 @@ export class KpiAdminService {
         "KPI actual workspace supports only TALENT_GROUP or ORG_UNIT plans",
       );
     }
+    await this.requireKpiSubjectStructuredAuthority(
+      actor,
+      Permission.KPI_READ_PROGRESS,
+      plan,
+      "read KPI actual workspace plan detail",
+    );
     if (!this.hasKpiGlobalScope(actor)) {
       if (plan.subjectType !== "TALENT_GROUP") {
         throw new KpiPermissionScopeError(
@@ -467,16 +483,20 @@ export class KpiAdminService {
     query: GetKpiPlanDetailQuery,
   ): Promise<KpiPlanDetailView> {
     this.assertContextPermission(actor, Permission.KPI_READ);
+    const plan = await this.requirePlan(query.kpiPlanId);
+    await this.requireKpiSubjectStructuredAuthority(
+      actor,
+      Permission.KPI_READ,
+      plan,
+      "read KPI plan detail",
+    );
     if (this.hasKpiGlobalScope(actor)) {
-      return this.loadPlanDetail(query.kpiPlanId);
+      return this.loadPlanDetail(plan.id);
     }
     if (!this.hasKpiManagedGroupScope(actor)) {
-      throw new KpiPermissionScopeError(
-        "Cannot read KPI plan detail: kpi.global or kpi.managedGroup scope is required",
-      );
+      return this.loadPlanDetail(plan.id);
     }
 
-    const plan = await this.requirePlan(query.kpiPlanId);
     if (
       plan.status !== "PUBLISHED" &&
       !(plan.subjectType === "ORG_UNIT" && plan.status === "FINALIZED")
@@ -520,7 +540,6 @@ export class KpiAdminService {
       actor,
       Permission.KPI_UPDATE_DRAFT,
     );
-    this.assertKpiGlobalScope(actor, "update KPI draft");
     const operation: AuthoritativeAdminMutationIdentity =
       "kpi.update-draft-core";
     const changedFields = listDefinedFields(command, [
@@ -541,6 +560,12 @@ export class KpiAdminService {
       `kpi-plan:${command.kpiPlanId}`,
       async (session) => {
         const current = await this.requirePlan(command.kpiPlanId, session);
+        await this.requireKpiSubjectStructuredAuthority(
+          actor,
+          Permission.KPI_UPDATE_DRAFT,
+          current,
+          "update KPI draft",
+        );
         this.assertDraft(current, "update draft core");
 
         const period =
@@ -620,7 +645,6 @@ export class KpiAdminService {
       actor,
       Permission.KPI_UPDATE_DRAFT,
     );
-    this.assertKpiGlobalScope(actor, "replace KPI target metrics");
     const operation: AuthoritativeAdminMutationIdentity =
       "kpi.replace-target-metrics";
 
@@ -631,6 +655,12 @@ export class KpiAdminService {
       `kpi-plan:${command.kpiPlanId}`,
       async (session) => {
         const current = await this.requirePlan(command.kpiPlanId, session);
+        await this.requireKpiSubjectStructuredAuthority(
+          actor,
+          Permission.KPI_UPDATE_DRAFT,
+          current,
+          "replace KPI target metrics",
+        );
         this.assertDraft(current, "replace target metrics");
         const normalized = normalizeTargetMetrics(
           command.targetMetrics,
@@ -671,7 +701,6 @@ export class KpiAdminService {
       actor,
       Permission.KPI_MANAGE_ALLOCATION,
     );
-    this.assertKpiGlobalScope(actor, "replace KPI allocations");
     const operation: AuthoritativeAdminMutationIdentity =
       "kpi.replace-allocations";
 
@@ -688,6 +717,12 @@ export class KpiAdminService {
             "KPI allocations are allowed only for TALENT_GROUP plans",
           );
         }
+        await this.requireKpiSubjectStructuredAuthority(
+          actor,
+          Permission.KPI_MANAGE_ALLOCATION,
+          current,
+          "replace KPI allocations",
+        );
 
         const targetMetrics = await this.repository.listTargetMetricsByPlanId(
           current.id,
@@ -746,6 +781,33 @@ export class KpiAdminService {
 
     if (subjectType !== "TALENT_GROUP") {
       return { items: [] };
+    }
+
+    if (kpiPlanId) {
+      const plan = await this.requirePlan(kpiPlanId);
+      await this.requireKpiSubjectStructuredAuthority(
+        actor,
+        Permission.KPI_READ,
+        plan,
+        "list KPI allocations",
+      );
+      if (plan.subjectType !== "TALENT_GROUP") {
+        return { items: [] };
+      }
+      if (groupId && groupId !== plan.subjectId) {
+        return { items: [] };
+      }
+      if (!this.hasKpiGlobalScope(actor) && !this.hasKpiManagedGroupScope(actor)) {
+        const items = await this.repository.listAllocations({
+          status,
+          kpiPlanId: plan.id,
+          groupId: plan.subjectId,
+          limit,
+        });
+        return {
+          items: items.filter(isTalentGroupCompatibleAllocation),
+        };
+      }
     }
 
     if (this.hasKpiGlobalScope(actor)) {
@@ -834,12 +896,18 @@ export class KpiAdminService {
   ): Promise<ListKpiManagedMembersResult> {
     this.assertContextPermission(actor, Permission.KPI_ENTER_ACTUAL);
     const plan = await this.requirePlan(query.kpiPlanId);
-    await this.assertActorCanDraftAllocation(actor, plan);
     if (plan.subjectType !== "TALENT_GROUP") {
       throw new KpiInvalidAllocationError(
         "KPI managed member picker is supported only for TALENT_GROUP plans",
       );
     }
+    await this.requireKpiSubjectStructuredAuthority(
+      actor,
+      Permission.KPI_ENTER_ACTUAL,
+      plan,
+      "list KPI managed members",
+    );
+    await this.assertActorCanDraftAllocation(actor, plan);
     const items =
       await this.subjectReadonlyAccess.listActiveInternalGroupMembers(
         plan.subjectId,
@@ -857,12 +925,18 @@ export class KpiAdminService {
   ): Promise<ListKpiOrgUnitManagedMembersResult> {
     this.assertContextPermission(actor, Permission.KPI_ENTER_ACTUAL);
     const plan = await this.requirePlan(query.kpiPlanId);
-    await this.assertActorCanDraftAllocation(actor, plan);
     if (plan.subjectType !== "ORG_UNIT") {
       throw new KpiInvalidAllocationError(
         "KPI Org Unit member picker is supported only for ORG_UNIT plans",
       );
     }
+    await this.requireKpiSubjectStructuredAuthority(
+      actor,
+      Permission.KPI_ENTER_ACTUAL,
+      plan,
+      "list KPI Org Unit managed members",
+    );
+    await this.assertActorCanDraftAllocation(actor, plan);
     const items = await this.subjectReadonlyAccess.listActiveOrgUnitMembers(
       plan.subjectId,
       {
@@ -966,6 +1040,12 @@ export class KpiAdminService {
       `kpi-plan:${command.kpiPlanId}`,
       async (session) => {
         const plan = await this.requirePlan(command.kpiPlanId, session);
+        await this.requireKpiSubjectStructuredAuthority(
+          actor,
+          Permission.KPI_ENTER_ACTUAL,
+          plan,
+          "upsert KPI allocation draft",
+        );
         await this.assertActorCanDraftAllocation(actor, plan, session);
         const targetMetrics = await this.repository.listTargetMetricsByPlanId(
           plan.id,
@@ -1045,6 +1125,12 @@ export class KpiAdminService {
       `kpi-plan:${command.kpiPlanId}`,
       async (session) => {
         const plan = await this.requirePlan(command.kpiPlanId, session);
+        await this.requireKpiSubjectStructuredAuthority(
+          actor,
+          Permission.KPI_ENTER_ACTUAL,
+          plan,
+          "submit KPI allocation draft",
+        );
         await this.assertActorCanDraftAllocation(actor, plan, session);
         const allocations = await this.repository.listAllocationsByPlanId(
           plan.id,
@@ -1132,7 +1218,6 @@ export class KpiAdminService {
     command: PublishKpiAllocationCommand,
   ): Promise<KpiPlanMutationView> {
     const permission = this.assertPermission(actor, Permission.KPI_PUBLISH);
-    this.assertKpiGlobalScope(actor, "publish KPI allocation");
     const operation: AuthoritativeAdminMutationIdentity =
       "kpi.allocation.publish";
 
@@ -1143,6 +1228,12 @@ export class KpiAdminService {
       `kpi-plan:${command.kpiPlanId}`,
       async (session) => {
         const plan = await this.requirePlan(command.kpiPlanId, session);
+        await this.requireKpiSubjectStructuredAuthority(
+          actor,
+          Permission.KPI_PUBLISH,
+          plan,
+          "publish KPI allocation",
+        );
         assertAllocatableSubjectType(plan.subjectType);
         if (plan.status !== "PUBLISHED") {
           throw new KpiStateError(
@@ -1194,7 +1285,6 @@ export class KpiAdminService {
     command: PublishKpiPlanCommand,
   ): Promise<KpiPlanMutationView> {
     const permission = this.assertPermission(actor, Permission.KPI_PUBLISH);
-    this.assertKpiGlobalScope(actor, "publish KPI plan");
     const operation: AuthoritativeAdminMutationIdentity = "kpi.publish";
 
     return this.executeMutation(
@@ -1205,6 +1295,12 @@ export class KpiAdminService {
       async (session) => {
         const current = await this.requirePlan(command.kpiPlanId, session);
         assertPublishSubjectType(current.subjectType);
+        await this.requireKpiSubjectStructuredAuthority(
+          actor,
+          Permission.KPI_PUBLISH,
+          current,
+          "publish KPI plan",
+        );
         this.assertDraft(current, "publish");
         const targetMetrics = await this.repository.listTargetMetricsByPlanId(
           current.id,
@@ -1269,7 +1365,6 @@ export class KpiAdminService {
     command: ArchiveKpiPlanCommand,
   ): Promise<KpiPlanMutationView> {
     const permission = this.assertPermission(actor, Permission.KPI_ARCHIVE);
-    this.assertKpiGlobalScope(actor, "archive KPI plan");
     const operation: AuthoritativeAdminMutationIdentity = "kpi.archive";
 
     return this.executeMutation(
@@ -1279,6 +1374,12 @@ export class KpiAdminService {
       `kpi-plan:${command.kpiPlanId}`,
       async (session) => {
         const current = await this.requirePlan(command.kpiPlanId, session);
+        await this.requireKpiSubjectStructuredAuthority(
+          actor,
+          Permission.KPI_ARCHIVE,
+          current,
+          "archive KPI plan",
+        );
         if (current.status === "ARCHIVED") {
           throw new KpiStateError(`KPI plan ${current.id} is already ARCHIVED`);
         }
@@ -1344,6 +1445,12 @@ export class KpiAdminService {
       `kpi-actual:${command.kpiPlanId}`,
       async (session) => {
         const plan = await this.requirePlan(command.kpiPlanId, session);
+        await this.requireKpiSubjectStructuredAuthority(
+          actor,
+          Permission.KPI_ENTER_ACTUAL,
+          plan,
+          "enter KPI actual",
+        );
         const allocationId = normalizeRequiredText(
           command.allocationId,
           "allocationId",
@@ -1474,6 +1581,12 @@ export class KpiAdminService {
       `kpi-actual-excuse:${command.kpiPlanId}`,
       async (session) => {
         const plan = await this.requirePlan(command.kpiPlanId, session);
+        await this.requireKpiSubjectStructuredAuthority(
+          actor,
+          Permission.KPI_ENTER_ACTUAL,
+          plan,
+          "mark KPI actual excuse",
+        );
         const allocationId = normalizeRequiredText(
           command.allocationId,
           "allocationId",
@@ -1580,6 +1693,12 @@ export class KpiAdminService {
       `kpi-actual-excuse:${command.excuseId}`,
       async (session) => {
         const plan = await this.requirePlan(command.kpiPlanId, session);
+        await this.requireKpiSubjectStructuredAuthority(
+          actor,
+          Permission.KPI_ENTER_ACTUAL,
+          plan,
+          "remove KPI actual excuse",
+        );
         const excuse = await this.repository.findActualSlotExcuseById(
           normalizeRequiredText(command.excuseId, "excuseId"),
           session,
@@ -1660,6 +1779,12 @@ export class KpiAdminService {
       `kpi-actual:${command.actualEntryId}`,
       async (session) => {
         const plan = await this.requirePlan(command.kpiPlanId, session);
+        await this.requireKpiSubjectStructuredAuthority(
+          actor,
+          Permission.KPI_ENTER_ACTUAL,
+          plan,
+          "update KPI actual",
+        );
         const entry = await this.requireActualEntry(
           command.actualEntryId,
           plan.id,
@@ -1726,6 +1851,12 @@ export class KpiAdminService {
       `kpi-actual-correction:${command.actualEntryId}`,
       async (session) => {
         const plan = await this.requirePlan(command.kpiPlanId, session);
+        await this.requireKpiSubjectStructuredAuthority(
+          actor,
+          Permission.KPI_CORRECT_ACTUAL,
+          plan,
+          "correct KPI actual",
+        );
         const entry = await this.requireActualEntry(
           command.actualEntryId,
           plan.id,
@@ -1828,7 +1959,6 @@ export class KpiAdminService {
       actor,
       Permission.KPI_FINALIZE,
     );
-    this.assertKpiGlobalScope(actor, "finalize KPI plan");
     const operation: AuthoritativeAdminMutationIdentity = "kpi.finalize";
 
     return this.executeMutation(
@@ -1838,6 +1968,12 @@ export class KpiAdminService {
       `kpi-plan:${command.kpiPlanId}`,
       async (session) => {
         const current = await this.requirePlan(command.kpiPlanId, session);
+        await this.requireKpiSubjectStructuredAuthority(
+          actor,
+          Permission.KPI_FINALIZE,
+          current,
+          "finalize KPI plan",
+        );
         assertExecutableSubjectType(current.subjectType);
         if (current.status !== "PUBLISHED") {
           throw new KpiStateError(
@@ -1899,6 +2035,14 @@ export class KpiAdminService {
     this.assertContextPermission(actor, Permission.KPI_READ_PROGRESS);
     const plan = await this.requirePlan(query.kpiPlanId);
     assertExecutableSubjectType(plan.subjectType);
+    if (this.hasKpiGlobalScope(actor) || this.hasKpiManagedGroupScope(actor)) {
+      await this.requireKpiSubjectStructuredAuthority(
+        actor,
+        Permission.KPI_READ_PROGRESS,
+        plan,
+        "read KPI progress",
+      );
+    }
     const allowedTalentIds = await this.resolveProgressTalentScope(actor, plan);
     return this.buildProgressView(plan, allowedTalentIds);
   }
@@ -1944,6 +2088,12 @@ export class KpiAdminService {
     this.assertContextPermission(actor, Permission.KPI_READ_PROGRESS);
     const plan = await this.requirePlan(query.kpiPlanId);
     assertExecutableSubjectType(plan.subjectType);
+    await this.requireKpiSubjectStructuredAuthority(
+      actor,
+      Permission.KPI_READ_PROGRESS,
+      plan,
+      "read KPI actual daily grid",
+    );
     const actualDate = normalizeActualDateText(query.actualDate, "actualDate");
     assertActualDateWithinPlan(plan, actualDate);
     await this.assertActorCanReadActualGrid(actor, plan);
@@ -1970,6 +2120,12 @@ export class KpiAdminService {
     this.assertContextPermission(actor, Permission.KPI_READ_PROGRESS);
     const plan = await this.requirePlan(query.kpiPlanId);
     assertExecutableSubjectType(plan.subjectType);
+    await this.requireKpiSubjectStructuredAuthority(
+      actor,
+      Permission.KPI_READ_PROGRESS,
+      plan,
+      "list KPI actual corrections",
+    );
     const entry = await this.requireActualEntry(query.actualEntryId, plan.id);
     await this.assertActorCanReadActualEntry(actor, plan, entry);
     const items = await this.actualRepository.listCorrectionsByActualEntryId(
@@ -2732,14 +2888,22 @@ export class KpiAdminService {
     return permission;
   }
 
-  private assertKpiGlobalScope(actor: Actor, operation: string): void {
-    if (this.hasKpiGlobalScope(actor)) {
-      return;
-    }
-
-    throw new KpiPermissionScopeError(
-      `Cannot ${operation}: kpi.global scope is required`,
-    );
+  private async requireKpiSubjectStructuredAuthority(
+    actor: Actor,
+    permission: Permission,
+    subject: Pick<KpiPlan, "subjectType" | "subjectId">,
+    operation: string,
+  ): Promise<void> {
+    const scope = buildStructuredKpiSubjectScope(subject, operation);
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission,
+      scope,
+      authority: this.structuredAuthority,
+      error: new KpiPermissionScopeError(
+        `Cannot ${operation}: matching structured KPI ${scope.scopeType} authority is required for ${subject.subjectType} ${scope.targetId}`,
+      ),
+    });
   }
 
   private hasKpiGlobalScope(actor: Actor): boolean {
@@ -4030,8 +4194,17 @@ export class KpiAdminService {
           "KPI Org Unit allocation list is supported only for ORG_UNIT plans",
         );
       }
+      await this.requireKpiSubjectStructuredAuthority(
+        actor,
+        Permission.KPI_READ,
+        plan,
+        "list KPI Org Unit allocations",
+      );
       if (orgUnitId && plan.subjectId !== orgUnitId) {
         return [];
+      }
+      if (!this.hasKpiGlobalScope(actor) && !this.hasKpiManagedGroupScope(actor)) {
+        return [plan.id];
       }
       if (this.hasKpiGlobalScope(actor)) {
         return [plan.id];
@@ -4095,7 +4268,6 @@ export class KpiAdminService {
     },
   ): Promise<KpiPlanMutationView> {
     const permission = this.assertPermission(actor, input.permissionCode);
-    this.assertKpiGlobalScope(actor, "approve KPI allocation");
     return this.executeMutation(
       actor,
       permission,
@@ -4103,6 +4275,12 @@ export class KpiAdminService {
       `kpi-plan:${kpiPlanId}`,
       async (session) => {
         const plan = await this.requirePlan(kpiPlanId, session);
+        await this.requireKpiSubjectStructuredAuthority(
+          actor,
+          input.permissionCode,
+          plan,
+          "approve or reject KPI allocation",
+        );
         assertAllocatableSubjectType(plan.subjectType);
         this.assertActualMutationPlanOpen(plan, "approve or reject allocation");
         const allocations = await this.repository.listAllocationsByPlanId(
@@ -6007,6 +6185,22 @@ function isActualWorkspaceSubjectType(
   value: unknown,
 ): value is KpiActualWorkspaceSubjectType {
   return value === "TALENT_GROUP" || value === "ORG_UNIT";
+}
+
+function buildStructuredKpiSubjectScope(
+  subject: Pick<KpiPlan, "subjectType" | "subjectId">,
+  operation: string,
+): RoleAssignmentScopeGrant {
+  const targetId = normalizeRequiredText(subject.subjectId, "subjectId");
+  if (subject.subjectType === "ORG_UNIT") {
+    return { scopeType: "managedOrgUnit", targetId };
+  }
+  if (subject.subjectType === "TALENT_GROUP") {
+    return { scopeType: "managedTalentGroup", targetId };
+  }
+  throw new KpiPermissionScopeError(
+    `Cannot ${operation}: structured KPI authority supports only ORG_UNIT or TALENT_GROUP subjects`,
+  );
 }
 
 function normalizeActualWorkspaceBooleanFilter(
