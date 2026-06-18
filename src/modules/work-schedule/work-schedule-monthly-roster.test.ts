@@ -11,6 +11,7 @@ import type { AuditGuard } from "@core/audit/audit.guard";
 import { SystemInvariantError } from "@core/error/system-error";
 import { Permission } from "@core/permission/permission.enum";
 import { bindTraceId } from "@core/trace/trace.context";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import { MonthlyRosterAdminQueryService } from "@modules/work-schedule/admin/admin.monthly-roster.query-service";
 import { MonthlyRosterAdminService } from "@modules/work-schedule/admin/admin.monthly-roster.service";
 import { buildMonthlyRosterPreview } from "@modules/work-schedule/domain/work-schedule-roster-preview";
@@ -790,9 +791,11 @@ const audit = {
 function createActor(
   permissions: readonly Permission[],
   workScheduleScopes: readonly string[] = ["global"],
+  id = "admin-user-1",
+  isActive = true,
 ): Actor {
   return new Actor({
-    id: "admin-user-1",
+    id,
     type: "admin",
     context: "ADMIN",
     roles: [],
@@ -800,7 +803,66 @@ function createActor(
     scopeGrants: {
       workSchedule: workScheduleScopes as never,
     },
-    isActive: true,
+    isActive,
+  });
+}
+
+function createStructuredAuthority(params: {
+  readonly userId?: string;
+  readonly permissions?: readonly Permission[];
+  readonly scopes?: readonly (
+    | { readonly scopeType: "managedOrgUnit"; readonly targetId: string }
+    | { readonly scopeType: "managedTalentGroup"; readonly targetId: string }
+  )[];
+  readonly state?: "ACTIVE" | "REVOKED";
+  readonly roleState?: string;
+  readonly effectiveAt?: number | null;
+  readonly expiresAt?: number | null;
+} = {}): StructuredScopeAuthorityService {
+  const userId = params.userId ?? "admin-user-1";
+  return new StructuredScopeAuthorityService({
+    async listByUserId(candidateUserId) {
+      if (candidateUserId !== userId) {
+        return [];
+      }
+      return [
+        {
+          assignment: {
+            assignmentId: "monthly-roster-assignment",
+            roleId: "monthly-roster-role",
+            userId,
+            structuredScopeGrants:
+              params.scopes ?? [
+                { scopeType: "managedOrgUnit", targetId: "dept-1" },
+                { scopeType: "managedOrgUnit", targetId: "dept-2" },
+                { scopeType: "managedOrgUnit", targetId: "team-1" },
+                {
+                  scopeType: "managedTalentGroup",
+                  targetId: "group-1",
+                },
+              ],
+            state: params.state ?? "ACTIVE",
+            effectiveAt: params.effectiveAt ?? 0,
+            expiresAt: params.expiresAt ?? null,
+            revokedAt: params.state === "REVOKED" ? 1 : null,
+            reason: null,
+            createdAt: 0,
+            updatedAt: 0,
+          },
+          role: {
+            id: "monthly-roster-role",
+            state: params.roleState ?? "ACTIVE",
+            permissions:
+              params.permissions ?? [
+                Permission.WORK_SCHEDULE_CREATE,
+                Permission.WORK_SCHEDULE_READ,
+                Permission.WORK_SCHEDULE_UPDATE,
+                Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+              ],
+          },
+        },
+      ];
+    },
   });
 }
 
@@ -1166,6 +1228,7 @@ function createService(params: {
   readonly availabilityRepository?: MemoryAvailabilityRepository;
   readonly codeSequenceRepository?: WorkScheduleCodeSequenceRepository;
   readonly now?: () => number;
+  readonly structuredAuthority?: StructuredScopeAuthorityService;
 } = {}): MonthlyRosterAdminService {
   const orgUnits =
     params.orgUnits ??
@@ -1285,6 +1348,8 @@ function createService(params: {
       (() => Date.parse("2026-05-15T00:00:00.000Z")),
     params.availabilityRepository ??
       new MemoryAvailabilityRepository(),
+    params.structuredAuthority ??
+      createStructuredAuthority(),
   );
 }
 
@@ -2487,7 +2552,7 @@ test("Monthly Roster older drafts allow metadata-only edits but remain unpublish
   });
 });
 
-test("Admin Monthly Roster operations require global authority", async () => {
+test("Admin Monthly Roster operations require exact structured target authority", async () => {
   await bindTraceId("trace-roster-permission-scope", async () => {
     await assert.rejects(
       createService().createMonthlyRosterDraft(
@@ -2498,12 +2563,48 @@ test("Admin Monthly Roster operations require global authority", async () => {
     );
 
     await assert.rejects(
-      createService().createMonthlyRosterDraft(
+      createService({
+        structuredAuthority: createStructuredAuthority({
+          scopes: [],
+        }),
+      }).createMonthlyRosterDraft(
         createActor(
           [Permission.WORK_SCHEDULE_CREATE],
-          ["self", "team"],
+          ["global"],
         ),
         createRosterPayload(),
+      ),
+      WorkSchedulePermissionScopeError,
+    );
+
+    await assert.rejects(
+      createService({
+        structuredAuthority: createStructuredAuthority({
+          permissions: [Permission.WORK_SCHEDULE_READ],
+        }),
+      }).createMonthlyRosterDraft(
+        createActor([Permission.WORK_SCHEDULE_CREATE]),
+        createRosterPayload(),
+      ),
+      WorkSchedulePermissionScopeError,
+    );
+
+    await assert.rejects(
+      createService({
+        structuredAuthority: createStructuredAuthority({
+          scopes: [
+            {
+              scopeType: "managedOrgUnit",
+              targetId: "dept-1",
+            },
+          ],
+        }),
+      }).createMonthlyRosterDraft(
+        createActor([Permission.WORK_SCHEDULE_CREATE]),
+        createRosterPayload({
+          targetType: "TALENT_GROUP",
+          targetTalentGroupId: "group-1",
+        }),
       ),
       WorkSchedulePermissionScopeError,
     );
@@ -2525,15 +2626,57 @@ test("Admin Monthly Roster operations require global authority", async () => {
     await assert.rejects(
       createService({
         rosters: [seedRoster()],
+        orgUnits: [
+          {
+            id: "dept-1",
+            type: "DEPARTMENT",
+            status: "ACTIVE",
+          },
+          {
+            id: "dept-2",
+            type: "DEPARTMENT",
+            status: "ACTIVE",
+          },
+        ],
+        structuredAuthority: createStructuredAuthority({
+          scopes: [
+            {
+              scopeType: "managedOrgUnit",
+              targetId: "dept-1",
+            },
+          ],
+        }),
+      }).updateMonthlyRosterDraft(
+        createActor([Permission.WORK_SCHEDULE_UPDATE]),
+        {
+          monthlyRosterId: "roster-1",
+          targetType: "ORG_UNIT",
+          targetOrgUnitId: "dept-2",
+          departmentOrgUnitId: "dept-2",
+        },
+      ),
+      WorkSchedulePermissionScopeError,
+    );
+
+    await assert.rejects(
+      createService({
+        rosters: [seedRoster()],
+        structuredAuthority: createStructuredAuthority({
+          scopes: [
+            {
+              scopeType: "managedOrgUnit",
+              targetId: "dept-other",
+            },
+          ],
+        }),
       }).updateMonthlyRosterDraft(
         createActor(
           [Permission.WORK_SCHEDULE_UPDATE],
-          ["department"],
+          ["global"],
         ),
         {
           monthlyRosterId: "roster-1",
           description: "Not authorized",
-          scope: "department",
         },
       ),
       WorkSchedulePermissionScopeError,
@@ -2541,7 +2684,10 @@ test("Admin Monthly Roster operations require global authority", async () => {
 
     const created =
       await createService().createMonthlyRosterDraft(
-        createActor([Permission.WORK_SCHEDULE_CREATE]),
+        createActor(
+          [Permission.WORK_SCHEDULE_CREATE],
+          ["self", "team"],
+        ),
         createRosterPayload(),
       );
     assert.equal(created.status, "DRAFT");
@@ -2595,6 +2741,7 @@ test("Monthly Roster read query normalizes filters and enforces read permission"
       {
         findById: async () => null,
       },
+      createStructuredAuthority(),
     );
 
   await assert.rejects(
@@ -2879,7 +3026,7 @@ test("Admin apply availability is idempotent, conflict-safe, and fails closed fo
   });
 });
 
-test("Admin apply availability route exists and requires update plus global scope", async () => {
+test("Admin apply availability route requires update plus exact structured scope", async () => {
   await bindTraceId("trace-roster-apply-availability-authority", async () => {
     const rosterRoutes = await readFile(
       "src/modules/work-schedule/admin/admin.monthly-roster.routes.ts",
@@ -2916,10 +3063,21 @@ test("Admin apply availability route exists and requires update plus global scop
       SystemInvariantError,
     );
     await assert.rejects(
-      service.applyAvailabilityLinesToMonthlyRoster(
+      createService({
+        rosters: [seedRoster()],
+        availabilityRepository,
+        structuredAuthority: createStructuredAuthority({
+          scopes: [
+            {
+              scopeType: "managedOrgUnit",
+              targetId: "dept-other",
+            },
+          ],
+        }),
+      }).applyAvailabilityLinesToMonthlyRoster(
         createActor(
           [Permission.WORK_SCHEDULE_UPDATE],
-          ["team"],
+          ["global"],
         ),
         {
           monthlyRosterId: "roster-1",
@@ -2962,20 +3120,27 @@ test("Admin apply availability route exists and requires update plus global scop
   });
 });
 
-test("Monthly Roster publish requires global dispatcher scope because it creates official Work Shifts", async () => {
-  await assert.rejects(
-    createService({ rosters: [seedRoster()] }).publishMonthlyRoster(
-      createActor(
-        [Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE],
-        ["self", "team", "department"],
+test("Monthly Roster publish denies legacy global scope without exact structured authority", async () => {
+  await bindTraceId("trace-roster-publish-structured-scope", async () => {
+    await assert.rejects(
+      createService({
+        rosters: [seedRoster()],
+        structuredAuthority: createStructuredAuthority({
+          scopes: [],
+        }),
+      }).publishMonthlyRoster(
+        createActor(
+          [Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE],
+          ["global"],
+        ),
+        {
+          monthlyRosterId: "roster-1",
+          expectedPreviewHash: "hash",
+        },
       ),
-      {
-        monthlyRosterId: "roster-1",
-        expectedPreviewHash: "hash",
-      },
-    ),
-    WorkSchedulePermissionScopeError,
-  );
+      WorkSchedulePermissionScopeError,
+    );
+  });
 });
 
 test("Monthly Roster publish generates Work Shifts from current preview with source metadata and backend shift codes", async () => {

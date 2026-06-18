@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { Actor } from "@core/actor/actor";
 import { Permission } from "@core/permission/permission.enum";
 import { bindTraceId } from "@core/trace/trace.context";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import { MonthlyRosterAdminQueryService } from "@modules/work-schedule/admin/admin.monthly-roster.query-service";
 import type { WorkScheduleReferencedEmploymentProfile } from "@modules/work-schedule/domain/work-schedule-employment-profile-readonly-access";
 import type { WorkScheduleReferencedOrgUnit } from "@modules/work-schedule/domain/work-schedule-org-unit-readonly-access";
@@ -214,6 +215,7 @@ function createService(params: {
   readonly patterns?: readonly WorkPatternRecord[];
   readonly calendars?: readonly HolidayCalendarRecord[];
   readonly workShiftReadRepository?: MemoryWorkShiftReadRepository;
+  readonly structuredAuthority?: StructuredScopeAuthorityService;
 } = {}): MonthlyRosterAdminQueryService {
   const orgUnits =
     params.orgUnits ??
@@ -313,6 +315,8 @@ function createService(params: {
         talentGroups.find((group) => group.id === id) ??
         null,
     },
+    params.structuredAuthority ??
+      createStructuredAuthority(),
   );
 }
 
@@ -1022,7 +1026,7 @@ test("Monthly Roster preview still applies valid persisted ACTIVE exception date
   );
 });
 
-test("Monthly Roster preview requires global read authority", async () => {
+test("Monthly Roster preview requires exact structured read authority", async () => {
   await bindTraceId("trace-roster-preview-scope", async () => {
     const service = createService();
 
@@ -1039,14 +1043,41 @@ test("Monthly Roster preview requires global read authority", async () => {
 
     await assert.rejects(
       () =>
-        service.previewMonthlyRoster(
+        createService({
+          structuredAuthority: createStructuredAuthority({
+            scopes: [
+              {
+                scopeType: "managedOrgUnit",
+                targetId: "dept-other",
+              },
+            ],
+          }),
+        }).previewMonthlyRoster(
           createActor(
             [Permission.WORK_SCHEDULE_READ],
-            ["department"],
+            ["global"],
           ),
           {
             monthlyRosterId: "roster-1",
             scope: "global",
+          },
+        ),
+      WorkSchedulePermissionScopeError,
+    );
+
+    await assert.rejects(
+      () =>
+        createService({
+          rosters: [
+            {
+              ...seedRoster(),
+              targetType: "COMPANY" as never,
+            },
+          ],
+        }).previewMonthlyRoster(
+          createActor([Permission.WORK_SCHEDULE_READ]),
+          {
+            monthlyRosterId: "roster-1",
           },
         ),
       WorkSchedulePermissionScopeError,
@@ -1070,7 +1101,7 @@ test("Monthly Roster preview requires global read authority", async () => {
     const preview = await service.previewMonthlyRoster(
         createActor(
           [Permission.WORK_SCHEDULE_READ],
-          ["global"],
+          ["department"],
         ),
         {
           monthlyRosterId: "roster-1",
@@ -1126,6 +1157,50 @@ function createActor(
       workSchedule: workScheduleScopes as never,
     },
     isActive: true,
+  });
+}
+
+function createStructuredAuthority(params: {
+  readonly scopes?: readonly (
+    | { readonly scopeType: "managedOrgUnit"; readonly targetId: string }
+    | { readonly scopeType: "managedTalentGroup"; readonly targetId: string }
+  )[];
+} = {}): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(userId) {
+      if (userId !== "admin-user-1") {
+        return [];
+      }
+      return [
+        {
+          assignment: {
+            assignmentId: "monthly-roster-read-assignment",
+            roleId: "monthly-roster-read-role",
+            userId,
+            structuredScopeGrants:
+              params.scopes ?? [
+                { scopeType: "managedOrgUnit", targetId: "dept-1" },
+                {
+                  scopeType: "managedTalentGroup",
+                  targetId: "group-1",
+                },
+              ],
+            state: "ACTIVE",
+            effectiveAt: 0,
+            expiresAt: null,
+            revokedAt: null,
+            reason: null,
+            createdAt: 0,
+            updatedAt: 0,
+          },
+          role: {
+            id: "monthly-roster-read-role",
+            state: "ACTIVE",
+            permissions: [Permission.WORK_SCHEDULE_READ],
+          },
+        },
+      ];
+    },
   });
 }
 

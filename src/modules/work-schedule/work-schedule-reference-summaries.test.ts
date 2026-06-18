@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Actor } from "@core/actor/actor";
 import { Permission } from "@core/permission/permission.enum";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import { NativeMongoMonthlyRosterReadRepository } from "@infra/mongo/work-schedule/monthly-roster.read-repository";
 import { NativeMongoWorkShiftReadRepository } from "@infra/mongo/work-schedule/work-schedule.read-repository";
 import { MonthlyRosterAdminQueryService } from "@modules/work-schedule/admin/admin.monthly-roster.query-service";
@@ -576,6 +577,40 @@ test("Monthly Roster preview decorates rows and eligible profiles with refs afte
         status: "ACTIVE",
       }),
     } as never,
+    {
+      findById: async () => null,
+    } as never,
+    new StructuredScopeAuthorityService({
+      async listByUserId(userId) {
+        return [
+          {
+            assignment: {
+              assignmentId: "monthly-roster-read-assignment",
+              roleId: "monthly-roster-read-role",
+              userId,
+              structuredScopeGrants: [
+                {
+                  scopeType: "managedOrgUnit",
+                  targetId: "ou-1",
+                },
+              ],
+              state: "ACTIVE",
+              effectiveAt: 0,
+              expiresAt: null,
+              revokedAt: null,
+              reason: null,
+              createdAt: 0,
+              updatedAt: 0,
+            },
+            role: {
+              id: "monthly-roster-read-role",
+              state: "ACTIVE",
+              permissions: [Permission.WORK_SCHEDULE_READ],
+            },
+          },
+        ];
+      },
+    }),
   );
 
   const preview = await service.previewMonthlyRoster(actor, {

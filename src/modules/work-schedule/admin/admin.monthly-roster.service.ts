@@ -37,6 +37,8 @@ import {
 import { WorkScheduleOrgUnitReadonlyAccess } from "@modules/work-schedule/domain/work-schedule-org-unit-readonly-access";
 import { WorkScheduleStudioResourceReadonlyAccess } from "@modules/work-schedule/domain/work-schedule-studio-resource-readonly-access";
 import { WorkScheduleTalentGroupReadonlyAccess } from "@modules/work-schedule/domain/work-schedule-talent-group-readonly-access";
+import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import {
   WorkScheduleConflictError,
   WorkScheduleInvalidResourceReferenceError,
@@ -217,6 +219,7 @@ export class MonthlyRosterAdminService {
     private readonly logger: StructuredLogger = createStructuredLogger(),
     private readonly now: () => number = Date.now,
     private readonly availabilityRepository: WorkScheduleAvailabilityBatchRepository = createMissingAvailabilityRepository(),
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
   ) {}
 
   async createMonthlyRosterDraft(
@@ -248,13 +251,13 @@ export class MonthlyRosterAdminService {
         targetId: getRosterTargetId(input),
       },
       async (session) => {
-        const scope =
-          await this.resolveRosterScopeForTarget(
-            actor,
-            input.requestedScope,
-            session,
-          );
         await this.assertActiveRosterTarget(input, session);
+        const scope = await this.requireStructuredAuthorityForRosterTarget(
+          actor,
+          Permission.WORK_SCHEDULE_CREATE,
+          input,
+          input.requestedScope,
+        );
         await this.requireActivePattern(
           input.workPatternId,
           session,
@@ -420,6 +423,12 @@ export class MonthlyRosterAdminService {
             session,
           );
 
+        await this.requireStructuredAuthorityForRosterTarget(
+          actor,
+          Permission.WORK_SCHEDULE_UPDATE,
+          current,
+          input.requestedScope,
+        );
         assertDraftRoster(current);
         const candidateTarget = mergeRosterTarget(
           current,
@@ -443,16 +452,18 @@ export class MonthlyRosterAdminService {
           input.holidayCalendarId ??
           current.holidayCalendarId;
 
-        const scope =
-          await this.resolveRosterScopeForTarget(
-            actor,
-            input.requestedScope,
-            session,
-          );
         await this.assertActiveRosterTarget(
           candidateTarget,
           session,
         );
+        const scope = areRosterTargetsEqual(candidateTarget, current)
+          ? getStructuredRosterScopeLabel(current)
+          : await this.requireStructuredAuthorityForRosterTarget(
+              actor,
+              Permission.WORK_SCHEDULE_UPDATE,
+              candidateTarget,
+              input.requestedScope,
+            );
         await this.requireActivePattern(
           candidateWorkPatternId,
           session,
@@ -554,18 +565,18 @@ export class MonthlyRosterAdminService {
             session,
           );
 
+        const scope = await this.requireStructuredAuthorityForRosterTarget(
+          actor,
+          Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+          current,
+          input.requestedScope,
+        );
         if (current.status === "ARCHIVED") {
           throw new WorkScheduleStateError(
             "ARCHIVED monthly rosters cannot transition",
           );
         }
 
-        const scope =
-          await this.resolveRosterScopeForTarget(
-            actor,
-            input.requestedScope,
-            session,
-          );
         const now = Date.now();
         const updated =
           await this.rosterRepository.transitionStatus(
@@ -623,7 +634,6 @@ export class MonthlyRosterAdminService {
       actor,
       Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
     );
-    this.assertOfficialWorkShiftPublishAuthority(actor);
     const input =
       normalizePublishMonthlyRosterCommand(command);
 
@@ -643,12 +653,12 @@ export class MonthlyRosterAdminService {
             input.monthlyRosterId,
             session,
           );
-        const scope =
-          await this.resolveRosterScopeForTarget(
-            actor,
-            input.requestedScope,
-            session,
-          );
+        const scope = await this.requireStructuredAuthorityForRosterTarget(
+          actor,
+          Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+          current,
+          input.requestedScope,
+        );
 
         if (current.status === "PUBLISHED") {
           controls.markExplicitNoOpSuccess();
@@ -907,13 +917,13 @@ export class MonthlyRosterAdminService {
           input.monthlyRosterId,
           session,
         );
+        const scope = await this.requireStructuredAuthorityForRosterTarget(
+          actor,
+          Permission.WORK_SCHEDULE_UPDATE,
+          roster,
+          input.requestedScope,
+        );
         assertDraftRoster(roster);
-        const scope =
-          await this.resolveRosterScopeForTarget(
-            actor,
-            input.requestedScope,
-            session,
-          );
         await this.assertActiveRosterTarget(
           roster,
           session,
@@ -1272,17 +1282,17 @@ export class MonthlyRosterAdminService {
             monthlyRosterId,
             session,
           );
+        const scope = await this.requireStructuredAuthorityForRosterTarget(
+          actor,
+          Permission.WORK_SCHEDULE_UPDATE,
+          current,
+          requestedScope,
+        );
         assertDraftRoster(current);
         const exception =
           requireActiveException(
             current,
             rosterExceptionId,
-          );
-        const scope =
-          await this.resolveRosterScopeForTarget(
-            actor,
-            requestedScope,
-            session,
           );
         const now = Date.now();
         const updated =
@@ -1350,13 +1360,13 @@ export class MonthlyRosterAdminService {
             params.input.monthlyRosterId,
             session,
           );
+        const scope = await this.requireStructuredAuthorityForRosterTarget(
+          params.actor,
+          Permission.WORK_SCHEDULE_UPDATE,
+          current,
+          params.input.requestedScope,
+        );
         assertDraftRoster(current);
-        const scope =
-          await this.resolveRosterScopeForTarget(
-            params.actor,
-            params.input.requestedScope,
-            session,
-          );
         const pattern = await this.requireActivePattern(
           current.workPatternId,
           session,
@@ -1515,23 +1525,6 @@ export class MonthlyRosterAdminService {
     PermissionGuard.assert(actor, permission);
 
     return permission;
-  }
-
-  private assertOfficialWorkShiftPublishAuthority(
-    actor: Actor,
-  ): void {
-    if (
-      PermissionGuard.hasWorkScheduleScopeGrant(
-        actor,
-        "global",
-      )
-    ) {
-      return;
-    }
-
-    throw new WorkSchedulePermissionScopeError(
-      "Monthly Roster publish creates official WorkShifts and requires workSchedule.global scope",
-    );
   }
 
   private async requireMonthlyRoster(
@@ -2160,11 +2153,12 @@ export class MonthlyRosterAdminService {
     );
   }
 
-  private async resolveRosterScopeForTarget(
+  private async requireStructuredAuthorityForRosterTarget(
     actor: Actor,
+    permission: Permission,
+    target: NormalizedMonthlyRosterTarget,
     requestedScope: WorkShiftScope | undefined,
-    _session: ClientSession,
-  ): Promise<"global"> {
+  ): Promise<"managedOrgUnit" | "managedTalentGroup"> {
     if (
       requestedScope !== undefined &&
       requestedScope !== "global"
@@ -2174,18 +2168,18 @@ export class MonthlyRosterAdminService {
       );
     }
 
-    if (
-      !PermissionGuard.hasWorkScheduleScopeGrant(
-        actor,
-        "global",
-      )
-    ) {
-      throw new WorkSchedulePermissionScopeError(
-        "Admin Monthly Roster operations require workSchedule.global scope",
-      );
-    }
+    const scope = buildStructuredRosterScope(target);
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission,
+      scope,
+      authority: this.structuredAuthority,
+      error: new WorkSchedulePermissionScopeError(
+        `Monthly Roster operation requires matching ${scope.scopeType} authority for target ${scope.targetId}`,
+      ),
+    });
 
-    return "global";
+    return scope.scopeType;
   }
 
   private async recordAudit(params: {
@@ -4211,6 +4205,75 @@ function createMissingAvailabilityRepository(): WorkScheduleAvailabilityBatchRep
     updateBatchDerived: fail,
     updateLineApplyState: fail,
   };
+}
+
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId() {
+      throw new SystemInvariantError(
+        "SYSTEM_INVARIANT_VIOLATION",
+        "StructuredScopeAuthorityService is required for Monthly Roster operations",
+      );
+    },
+  });
+}
+
+function buildStructuredRosterScope(
+  target: Pick<
+    NormalizedMonthlyRosterTarget,
+    "targetType" | "targetMode" | "targetOrgUnitId" | "targetTalentGroupId"
+  >,
+):
+  | { readonly scopeType: "managedOrgUnit"; readonly targetId: string }
+  | { readonly scopeType: "managedTalentGroup"; readonly targetId: string } {
+  if (target.targetMode !== "EXACT_ONLY") {
+    throw new WorkSchedulePermissionScopeError(
+      "Monthly Roster structured authority requires targetMode EXACT_ONLY",
+    );
+  }
+
+  if (target.targetType === "ORG_UNIT") {
+    if (target.targetTalentGroupId !== null) {
+      throw new WorkSchedulePermissionScopeError(
+        "Malformed ORG_UNIT Monthly Roster target",
+      );
+    }
+    return {
+      scopeType: "managedOrgUnit",
+      targetId: requireRosterTargetId(
+        target.targetOrgUnitId,
+        "targetOrgUnitId",
+      ),
+    };
+  }
+
+  if (target.targetType === "TALENT_GROUP") {
+    if (target.targetOrgUnitId !== null) {
+      throw new WorkSchedulePermissionScopeError(
+        "Malformed TALENT_GROUP Monthly Roster target",
+      );
+    }
+    return {
+      scopeType: "managedTalentGroup",
+      targetId: requireRosterTargetId(
+        target.targetTalentGroupId,
+        "targetTalentGroupId",
+      ),
+    };
+  }
+
+  throw new WorkSchedulePermissionScopeError(
+    "Unsupported Monthly Roster targetType for structured authority",
+  );
+}
+
+function getStructuredRosterScopeLabel(
+  target: Pick<
+    NormalizedMonthlyRosterTarget,
+    "targetType" | "targetMode" | "targetOrgUnitId" | "targetTalentGroupId"
+  >,
+): "managedOrgUnit" | "managedTalentGroup" {
+  return buildStructuredRosterScope(target).scopeType;
 }
 
 function toMonthlyRosterMutationView(

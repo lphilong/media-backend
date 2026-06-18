@@ -858,6 +858,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     undefined,
     undefined,
     workScheduleAvailabilityBatchRepository,
+    structuredScopeAuthority,
   );
   const monthlyRosterQueryService = new MonthlyRosterAdminQueryService(
     monthlyRosterReadRepository,
@@ -867,6 +868,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     workShiftReadRepository,
     workScheduleOrgUnitReadonlyAccess,
     workScheduleTalentGroupReadonlyAccess,
+    structuredScopeAuthority,
   );
   const monthlyRosterController = new MonthlyRosterAdminController(
     monthlyRosterService,

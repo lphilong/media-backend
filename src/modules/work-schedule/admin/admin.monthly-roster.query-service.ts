@@ -3,6 +3,8 @@ import { SystemInvariantError } from "@core/error/system-error";
 import { Permission } from "@core/permission/permission.enum";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
+import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import {
   buildMonthlyRosterPreview,
   rosterMonthUtcWindow as buildRosterMonthUtcWindow,
@@ -58,6 +60,7 @@ export class MonthlyRosterAdminQueryService {
     private readonly workShiftReadRepository: WorkShiftReadRepository,
     private readonly orgUnitReadonlyAccess: WorkScheduleOrgUnitReadonlyAccess,
     private readonly talentGroupReadonlyAccess: WorkScheduleTalentGroupReadonlyAccess = createMissingTalentGroupReadonlyAccess(),
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
   ) {}
 
   async listMonthlyRosters(
@@ -132,8 +135,9 @@ export class MonthlyRosterAdminQueryService {
       );
     }
 
-    await this.assertRosterReadScope(
+    await this.requireStructuredRosterReadAuthority(
       actor,
+      detail,
       parseRequestedScope(query.scope),
     );
 
@@ -160,8 +164,9 @@ export class MonthlyRosterAdminQueryService {
       );
     }
 
-    await this.assertRosterReadScope(
+    await this.requireStructuredRosterReadAuthority(
       actor,
+      roster,
       parseRequestedScope(query.scope),
     );
 
@@ -279,6 +284,29 @@ export class MonthlyRosterAdminQueryService {
         "Admin Monthly Roster reads require workSchedule.global scope",
       );
     }
+  }
+
+  private async requireStructuredRosterReadAuthority(
+    actor: Actor,
+    roster: MonthlyRosterView,
+    requestedScope: "global" | undefined,
+  ): Promise<void> {
+    if (requestedScope !== undefined && requestedScope !== "global") {
+      throw new WorkSchedulePermissionScopeError(
+        "Admin Monthly Roster reads accept only the legacy global request context",
+      );
+    }
+
+    const scope = buildStructuredRosterScope(roster);
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission: Permission.WORK_SCHEDULE_READ,
+      scope,
+      authority: this.structuredAuthority,
+      error: new WorkSchedulePermissionScopeError(
+        `Monthly Roster read requires matching ${scope.scopeType} authority for target ${scope.targetId}`,
+      ),
+    });
   }
 
   private async assertActiveRosterTarget(
@@ -798,4 +826,61 @@ function createMissingTalentGroupReadonlyAccess(): WorkScheduleTalentGroupReadon
       );
     },
   };
+}
+
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId() {
+      throw new SystemInvariantError(
+        "SYSTEM_INVARIANT_VIOLATION",
+        "StructuredScopeAuthorityService is required for Monthly Roster reads",
+      );
+    },
+  });
+}
+
+function buildStructuredRosterScope(
+  roster: MonthlyRosterView,
+):
+  | { readonly scopeType: "managedOrgUnit"; readonly targetId: string }
+  | { readonly scopeType: "managedTalentGroup"; readonly targetId: string } {
+  if (roster.targetMode !== "EXACT_ONLY") {
+    throw new WorkSchedulePermissionScopeError(
+      "Monthly Roster structured authority requires targetMode EXACT_ONLY",
+    );
+  }
+
+  if (roster.targetType === "ORG_UNIT") {
+    if (roster.targetTalentGroupId !== null) {
+      throw new WorkSchedulePermissionScopeError(
+        "Malformed ORG_UNIT Monthly Roster target",
+      );
+    }
+    return {
+      scopeType: "managedOrgUnit",
+      targetId: requireRosterTargetId(
+        roster.targetOrgUnitId,
+        "targetOrgUnitId",
+      ),
+    };
+  }
+
+  if (roster.targetType === "TALENT_GROUP") {
+    if (roster.targetOrgUnitId !== null) {
+      throw new WorkSchedulePermissionScopeError(
+        "Malformed TALENT_GROUP Monthly Roster target",
+      );
+    }
+    return {
+      scopeType: "managedTalentGroup",
+      targetId: requireRosterTargetId(
+        roster.targetTalentGroupId,
+        "targetTalentGroupId",
+      ),
+    };
+  }
+
+  throw new WorkSchedulePermissionScopeError(
+    "Unsupported Monthly Roster targetType for structured authority",
+  );
 }
