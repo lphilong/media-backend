@@ -8,6 +8,7 @@ import {
 } from "@core/application/authoritative-admin-mutation.bridge";
 import { AuditGuard } from "@core/audit/audit.guard";
 import { bindTraceId } from "@core/trace/trace.context";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import { EventAssignmentAdminService } from "./admin/admin.event-assignment.service";
 import {
   EventAssignmentOverlapConflictError,
@@ -398,8 +399,77 @@ function createService(repository: MemoryEventRepository) {
     } as never,
     audit,
     bridge,
+    createStructuredAuthority(),
     logger,
   );
+}
+
+function createStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(userId: string) {
+      if (userId !== "admin-1") {
+        return [];
+      }
+      return [
+        {
+          assignment: {
+            assignmentId: "event-assignment-scope",
+            roleId: "event-role",
+            userId,
+            structuredScopeGrants: [
+              { scopeType: "assignedEvent", targetId: "event-draft" },
+              { scopeType: "assignedEvent", targetId: "event-planned" },
+              { scopeType: "assignedEvent", targetId: "event-confirmed" },
+              {
+                scopeType: "assignedEvent",
+                targetId: "event-confirmed-invalid-ref",
+              },
+              { scopeType: "assignedEvent", targetId: "event-cancelled" },
+              { scopeType: "assignedEvent", targetId: "event-archived" },
+              { scopeType: "assignedEvent", targetId: "event-completed" },
+              {
+                scopeType: "assignedEvent",
+                targetId: "event-note-over-limit",
+              },
+              {
+                scopeType: "assignedEvent",
+                targetId: "event-url-over-limit",
+              },
+              {
+                scopeType: "assignedEvent",
+                targetId: "event-reference-over-limit",
+              },
+              {
+                scopeType: "assignedEvent",
+                targetId: "event-label-over-limit",
+              },
+              {
+                scopeType: "assignedEvent",
+                targetId: "event-boundary-success",
+              },
+              { scopeType: "assignedStudioResource", targetId: "studio-1" },
+            ],
+            state: "ACTIVE",
+            effectiveAt: 0,
+            expiresAt: null,
+            revokedAt: null,
+            reason: null,
+            createdAt: 0,
+            updatedAt: 0,
+          },
+          role: {
+            id: "event-role",
+            state: "ACTIVE",
+            permissions: [
+              "event.update",
+              "event.manageAssignments",
+              "event.manageLifecycle",
+            ],
+          },
+        },
+      ];
+    },
+  });
 }
 
 function actor(): Actor {

@@ -6,6 +6,7 @@ import { PermissionResolver } from "@core/permission/permission.resolver";
 import {
   StudioResourceInvalidOperationalStatusError,
   StudioResourceNotFoundError,
+  StudioResourcePermissionScopeError,
   StudioResourceValidationError,
 } from "@modules/studio-resource/domain/studio-resource.errors";
 import {
@@ -27,6 +28,8 @@ import {
   ListStudioResourcesQuery,
   ListStudioResourcesResult,
 } from "@modules/studio-resource/shared/studio-resource.contracts";
+import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -34,6 +37,7 @@ const MAX_LIMIT = 100;
 export class StudioResourceAdminQueryService {
   constructor(
     private readonly readRepository: StudioResourceReadRepository,
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
   ) {}
 
   async listStudioResources(
@@ -43,13 +47,10 @@ export class StudioResourceAdminQueryService {
     this.assertReadPermission(actor);
 
     return this.readRepository.listStudioResources({
-      resourceClass: parseOptionalResourceClass(
-        query.resourceClass,
+      resourceClass: parseOptionalResourceClass(query.resourceClass),
+      operationalStatus: parseOptionalOperationalStatus(
+        query.operationalStatus,
       ),
-      operationalStatus:
-        parseOptionalOperationalStatus(
-          query.operationalStatus,
-        ),
       hasMaxOccupancy: parseOptionalBoolean(
         query.hasMaxOccupancy,
         "hasMaxOccupancy",
@@ -58,9 +59,7 @@ export class StudioResourceAdminQueryService {
       cursor: parseOptionalCursor(query.cursor),
       search: parseOptionalSearch(query.search),
       sortField: parseOptionalSortField(query.sortBy),
-      sortDirection: parseOptionalSortDirection(
-        query.sortDirection,
-      ),
+      sortDirection: parseOptionalSortDirection(query.sortDirection),
     });
   }
 
@@ -71,13 +70,10 @@ export class StudioResourceAdminQueryService {
     this.assertReadPermission(actor);
 
     return this.readRepository.listStudioResourceAvailability({
-      resourceClass: parseOptionalResourceClass(
-        query.resourceClass,
+      resourceClass: parseOptionalResourceClass(query.resourceClass),
+      operationalStatus: parseOptionalOperationalStatus(
+        query.operationalStatus,
       ),
-      operationalStatus:
-        parseOptionalOperationalStatus(
-          query.operationalStatus,
-        ),
       hasMaxOccupancy: parseOptionalBoolean(
         query.hasMaxOccupancy,
         "hasMaxOccupancy",
@@ -86,9 +82,7 @@ export class StudioResourceAdminQueryService {
       cursor: parseOptionalCursor(query.cursor),
       search: parseOptionalSearch(query.search),
       sortField: parseOptionalSortField(query.sortBy),
-      sortDirection: parseOptionalSortDirection(
-        query.sortDirection,
-      ),
+      sortDirection: parseOptionalSortDirection(query.sortDirection),
     });
   }
 
@@ -103,15 +97,12 @@ export class StudioResourceAdminQueryService {
       "studioResourceId",
     );
     const detail =
-      await this.readRepository.getStudioResourceDetail(
-        studioResourceId,
-      );
+      await this.readRepository.getStudioResourceDetail(studioResourceId);
 
     if (!detail) {
-      throw new StudioResourceNotFoundError(
-        studioResourceId,
-      );
+      throw new StudioResourceNotFoundError(studioResourceId);
     }
+    await this.requireAssignedStudioResourceAuthority(actor, studioResourceId);
 
     return detail;
   }
@@ -124,24 +115,46 @@ export class StudioResourceAdminQueryService {
     );
     PermissionGuard.assert(actor, permission);
   }
+
+  private async requireAssignedStudioResourceAuthority(
+    actor: Actor,
+    studioResourceId: string,
+  ): Promise<void> {
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission: Permission.STUDIO_RESOURCE_READ,
+      scope: {
+        scopeType: "assignedStudioResource",
+        targetId: studioResourceId,
+      },
+      authority: this.structuredAuthority,
+      error: new StudioResourcePermissionScopeError(
+        `Studio resource read requires assignedStudioResource scope: ${studioResourceId}`,
+      ),
+    });
+  }
 }
 
-function normalizeRequiredText(
-  value: unknown,
-  field: string,
-): string {
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(): Promise<never> {
+      throw new SystemInvariantError(
+        "SYSTEM_INVARIANT_VIOLATION",
+        "StructuredScopeAuthorityService is required for Studio Resource reads",
+      );
+    },
+  });
+}
+
+function normalizeRequiredText(value: unknown, field: string): string {
   if (typeof value !== "string") {
-    throw new StudioResourceValidationError(
-      `${field} must be a string`,
-    );
+    throw new StudioResourceValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
 
   if (!normalized) {
-    throw new StudioResourceValidationError(
-      `${field} is required`,
-    );
+    throw new StudioResourceValidationError(`${field} is required`);
   }
 
   return normalized;
@@ -162,11 +175,7 @@ function parseOptionalResourceClass(
 
   const normalized = value.trim().toUpperCase();
 
-  if (
-    STUDIO_RESOURCE_CLASSES.includes(
-      normalized as StudioResourceClass,
-    )
-  ) {
+  if (STUDIO_RESOURCE_CLASSES.includes(normalized as StudioResourceClass)) {
     return normalized as StudioResourceClass;
   }
 
@@ -216,9 +225,7 @@ function parseOptionalBoolean(
   }
 
   if (typeof value !== "string") {
-    throw new StudioResourceValidationError(
-      `${field} must be a boolean`,
-    );
+    throw new StudioResourceValidationError(`${field} must be a boolean`);
   }
 
   const normalized = value.trim().toLowerCase();
@@ -231,9 +238,7 @@ function parseOptionalBoolean(
     return false;
   }
 
-  throw new StudioResourceValidationError(
-    `${field} must be a boolean`,
-  );
+  throw new StudioResourceValidationError(`${field} must be a boolean`);
 }
 
 function parseLimit(value: unknown): number {
@@ -248,9 +253,7 @@ function parseLimit(value: unknown): number {
   }
 
   if (numeric <= 0) {
-    throw new StudioResourceValidationError(
-      "limit must be a positive integer",
-    );
+    throw new StudioResourceValidationError("limit must be a positive integer");
   }
 
   return Math.min(numeric, MAX_LIMIT);
@@ -275,67 +278,47 @@ function parseOptionalInteger(
 
     numeric = Number(value);
   } else {
-    throw new StudioResourceValidationError(
-      `${field} must be an integer`,
-    );
+    throw new StudioResourceValidationError(`${field} must be an integer`);
   }
 
   if (!Number.isInteger(numeric)) {
-    throw new StudioResourceValidationError(
-      `${field} must be an integer`,
-    );
+    throw new StudioResourceValidationError(`${field} must be an integer`);
   }
 
   return numeric;
 }
 
-function parseOptionalCursor(
-  value: unknown,
-): string | undefined {
+function parseOptionalCursor(value: unknown): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   if (typeof value !== "string") {
-    throw new StudioResourceValidationError(
-      "cursor must be a string",
-    );
+    throw new StudioResourceValidationError("cursor must be a string");
   }
 
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function parseOptionalSearch(
-  value: unknown,
-): string | undefined {
+function parseOptionalSearch(value: unknown): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   if (typeof value !== "string") {
-    throw new StudioResourceValidationError(
-      "search must be a string",
-    );
+    throw new StudioResourceValidationError("search must be a string");
   }
 
   const normalized = canonicalizeSearchToken(value);
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function canonicalizeSearchToken(
-  value: string,
-): string {
-  return value
-    .normalize("NFKC")
-    .trim()
-    .replace(/\s+/gu, " ")
-    .toLowerCase();
+function canonicalizeSearchToken(value: string): string {
+  return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 }
 
-function assertAdminActorType(
-  actor: Actor,
-): void {
+function assertAdminActorType(actor: Actor): void {
   if (actor.type === "admin") {
     return;
   }
@@ -362,9 +345,7 @@ function parseOptionalSortField(
   const normalized = value.trim();
 
   if (
-    STUDIO_RESOURCE_SORT_FIELDS.includes(
-      normalized as StudioResourceSortField,
-    )
+    STUDIO_RESOURCE_SORT_FIELDS.includes(normalized as StudioResourceSortField)
   ) {
     return normalized as StudioResourceSortField;
   }

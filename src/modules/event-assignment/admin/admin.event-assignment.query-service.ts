@@ -38,6 +38,8 @@ import {
   ListEventsQuery,
   ListEventsResult,
 } from "@modules/event-assignment/shared/event-assignment.contracts";
+import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -80,6 +82,7 @@ type EventAssignmentReadScope = {
 export class EventAssignmentAdminQueryService {
   constructor(
     private readonly readRepository: EventAssignmentReadRepository,
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
   ) {}
 
   async listEvents(
@@ -91,11 +94,9 @@ export class EventAssignmentAdminQueryService {
 
     const assignmentFilter = parseAssignmentFilter({
       assignmentKind: query.assignmentKind,
-      assignmentEmploymentProfileId:
-        query.assignmentEmploymentProfileId,
+      assignmentEmploymentProfileId: query.assignmentEmploymentProfileId,
       assignmentTalentId: query.assignmentTalentId,
-      assignmentTalentGroupId:
-        query.assignmentTalentGroupId,
+      assignmentTalentGroupId: query.assignmentTalentGroupId,
     });
     const window = parseWindowFilter({
       windowStartAt: query.windowStartAt,
@@ -118,10 +119,8 @@ export class EventAssignmentAdminQueryService {
       assignmentKind: assignmentFilter.assignmentKind,
       assignmentEmploymentProfileId:
         assignmentFilter.assignmentEmploymentProfileId,
-      assignmentTalentId:
-        assignmentFilter.assignmentTalentId,
-      assignmentTalentGroupId:
-        assignmentFilter.assignmentTalentGroupId,
+      assignmentTalentId: assignmentFilter.assignmentTalentId,
+      assignmentTalentGroupId: assignmentFilter.assignmentTalentGroupId,
       containsStudioResourceId: parseOptionalId(
         query.containsStudioResourceId,
         "containsStudioResourceId",
@@ -132,22 +131,15 @@ export class EventAssignmentAdminQueryService {
       ),
       windowStartAt: window.windowStartAt,
       windowEndAt: window.windowEndAt,
-      eventOverlapStartAt:
-        targetFilters.eventOverlapStartAt,
-      eventOverlapEndAt:
-        targetFilters.eventOverlapEndAt,
-      eventStartFromAt:
-        targetFilters.eventStartFromAt,
+      eventOverlapStartAt: targetFilters.eventOverlapStartAt,
+      eventOverlapEndAt: targetFilters.eventOverlapEndAt,
+      eventStartFromAt: targetFilters.eventStartFromAt,
       eventStartToAt: targetFilters.eventStartToAt,
       limit: parseLimit(query.limit),
       cursor: parseOptionalCursor(query.cursor),
       search: parseOptionalSearch(query.search),
-      sortField: parseOptionalSortField(
-        query.sortBy,
-      ),
-      sortDirection: parseOptionalSortDirection(
-        query.sortDirection,
-      ),
+      sortField: parseOptionalSortField(query.sortBy),
+      sortDirection: parseOptionalSortDirection(query.sortDirection),
     });
   }
 
@@ -166,27 +158,19 @@ export class EventAssignmentAdminQueryService {
 
     const readInput: EventByAssignmentListReadInput = {
       assignmentKind: assignment.assignmentKind,
-      assignmentEmploymentProfileId:
-        assignment.assignmentEmploymentProfileId,
+      assignmentEmploymentProfileId: assignment.assignmentEmploymentProfileId,
       assignmentTalentId: assignment.assignmentTalentId,
-      assignmentTalentGroupId:
-        assignment.assignmentTalentGroupId,
+      assignmentTalentGroupId: assignment.assignmentTalentGroupId,
       status: parseOptionalStatus(query.status),
       windowStartAt: window.windowStartAt,
       windowEndAt: window.windowEndAt,
       limit: parseLimit(query.limit),
       cursor: parseOptionalCursor(query.cursor),
-      sortField: parseOptionalSortField(
-        query.sortBy,
-      ),
-      sortDirection: parseOptionalSortDirection(
-        query.sortDirection,
-      ),
+      sortField: parseOptionalSortField(query.sortBy),
+      sortDirection: parseOptionalSortDirection(query.sortDirection),
     };
 
-    return this.readRepository.listEventsByAssignment(
-      readInput,
-    );
+    return this.readRepository.listEventsByAssignment(readInput);
   }
 
   async listEventsByResource(
@@ -194,7 +178,11 @@ export class EventAssignmentAdminQueryService {
     query: ListEventsByResourceQuery,
   ): Promise<ListEventsByResourceResult> {
     this.assertReadPermission(actor);
-    await this.resolveReadScope(actor);
+    const studioResourceId = normalizeRequiredText(
+      query.studioResourceId,
+      "studioResourceId",
+    );
+    await this.requireAssignedStudioResourceAuthority(actor, studioResourceId);
 
     const window = parseWindowFilter({
       windowStartAt: query.windowStartAt,
@@ -202,21 +190,14 @@ export class EventAssignmentAdminQueryService {
     });
 
     return this.readRepository.listEventsByResource({
-      studioResourceId: normalizeRequiredText(
-        query.studioResourceId,
-        "studioResourceId",
-      ),
+      studioResourceId,
       status: parseOptionalStatus(query.status),
       windowStartAt: window.windowStartAt,
       windowEndAt: window.windowEndAt,
       limit: parseLimit(query.limit),
       cursor: parseOptionalCursor(query.cursor),
-      sortField: parseOptionalSortField(
-        query.sortBy,
-      ),
-      sortDirection: parseOptionalSortDirection(
-        query.sortDirection,
-      ),
+      sortField: parseOptionalSortField(query.sortBy),
+      sortDirection: parseOptionalSortDirection(query.sortDirection),
     });
   }
 
@@ -225,7 +206,14 @@ export class EventAssignmentAdminQueryService {
     query: ListEventsByPlatformQuery,
   ): Promise<ListEventsByPlatformResult> {
     this.assertReadPermission(actor);
-    await this.resolveReadScope(actor);
+    const platformAccountId = normalizeRequiredText(
+      query.platformAccountId,
+      "platformAccountId",
+    );
+    await this.requireAssignedPlatformAccountAuthority(
+      actor,
+      platformAccountId,
+    );
 
     const window = parseWindowFilter({
       windowStartAt: query.windowStartAt,
@@ -233,21 +221,14 @@ export class EventAssignmentAdminQueryService {
     });
 
     return this.readRepository.listEventsByPlatform({
-      platformAccountId: normalizeRequiredText(
-        query.platformAccountId,
-        "platformAccountId",
-      ),
+      platformAccountId,
       status: parseOptionalStatus(query.status),
       windowStartAt: window.windowStartAt,
       windowEndAt: window.windowEndAt,
       limit: parseLimit(query.limit),
       cursor: parseOptionalCursor(query.cursor),
-      sortField: parseOptionalSortField(
-        query.sortBy,
-      ),
-      sortDirection: parseOptionalSortDirection(
-        query.sortDirection,
-      ),
+      sortField: parseOptionalSortField(query.sortBy),
+      sortDirection: parseOptionalSortDirection(query.sortDirection),
     });
   }
 
@@ -256,24 +237,18 @@ export class EventAssignmentAdminQueryService {
     query: ListEventAssignmentsQuery,
   ): Promise<ListEventAssignmentsResult> {
     this.assertReadPermission(actor);
-    await this.resolveReadScope(actor);
 
-    const eventId = normalizeRequiredText(
-      query.eventId,
-      "eventId",
-    );
+    const eventId = normalizeRequiredText(query.eventId, "eventId");
 
-    const detail =
-      await this.readRepository.getEventDetail(eventId);
+    const detail = await this.readRepository.getEventDetail(eventId);
 
     if (!detail) {
       throw new EventAssignmentNotFoundError(eventId);
     }
+    await this.requireAssignedEventAuthority(actor, eventId);
 
     const items =
-      await this.readRepository.listActiveAssignmentsForEvent(
-        eventId,
-      );
+      await this.readRepository.listActiveAssignmentsForEvent(eventId);
 
     return {
       items,
@@ -285,18 +260,14 @@ export class EventAssignmentAdminQueryService {
     query: GetEventDetailQuery,
   ): Promise<GetEventDetailResult> {
     this.assertReadPermission(actor);
-    await this.resolveReadScope(actor);
 
-    const eventId = normalizeRequiredText(
-      query.eventId,
-      "eventId",
-    );
-    const detail =
-      await this.readRepository.getEventDetail(eventId);
+    const eventId = normalizeRequiredText(query.eventId, "eventId");
+    const detail = await this.readRepository.getEventDetail(eventId);
 
     if (!detail) {
       throw new EventAssignmentNotFoundError(eventId);
     }
+    await this.requireAssignedEventAuthority(actor, eventId);
 
     return detail;
   }
@@ -306,12 +277,12 @@ export class EventAssignmentAdminQueryService {
     query: ListStudioBookingsQuery,
   ): Promise<ListStudioBookingsResult> {
     this.assertReadPermission(actor);
-    await this.resolveReadScope(actor);
     const eventId = normalizeRequiredText(query.eventId, "eventId");
     const detail = await this.readRepository.getEventDetail(eventId);
     if (!detail) {
       throw new EventAssignmentNotFoundError(eventId);
     }
+    await this.requireAssignedEventAuthority(actor, eventId);
     return {
       items: await this.readRepository.listStudioBookings(eventId),
     };
@@ -320,13 +291,13 @@ export class EventAssignmentAdminQueryService {
   private assertReadPermission(actor: Actor): void {
     assertAdminActorType(actor);
 
-    const permission = PermissionResolver.resolve(
-      Permission.EVENT_READ,
-    );
+    const permission = PermissionResolver.resolve(Permission.EVENT_READ);
     PermissionGuard.assert(actor, permission);
   }
 
-  private async resolveReadScope(actor: Actor): Promise<EventAssignmentReadScope> {
+  private async resolveReadScope(
+    actor: Actor,
+  ): Promise<EventAssignmentReadScope> {
     if (PermissionGuard.hasEventAssignmentScopeGrant(actor, "global")) {
       return {
         kind: "global",
@@ -337,52 +308,98 @@ export class EventAssignmentAdminQueryService {
       "Global Admin Event routes require global eventAssignment scope",
     );
   }
+
+  private async requireAssignedEventAuthority(
+    actor: Actor,
+    eventId: string,
+  ): Promise<void> {
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission: Permission.EVENT_READ,
+      scope: { scopeType: "assignedEvent", targetId: eventId },
+      authority: this.structuredAuthority,
+      error: new EventAssignmentPermissionScopeError(
+        `Event read requires assignedEvent scope: ${eventId}`,
+      ),
+    });
+  }
+
+  private async requireAssignedStudioResourceAuthority(
+    actor: Actor,
+    studioResourceId: string,
+  ): Promise<void> {
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission: Permission.EVENT_READ,
+      scope: {
+        scopeType: "assignedStudioResource",
+        targetId: studioResourceId,
+      },
+      authority: this.structuredAuthority,
+      error: new EventAssignmentPermissionScopeError(
+        `Event resource read requires assignedStudioResource scope: ${studioResourceId}`,
+      ),
+    });
+  }
+
+  private async requireAssignedPlatformAccountAuthority(
+    actor: Actor,
+    platformAccountId: string,
+  ): Promise<void> {
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission: Permission.EVENT_READ,
+      scope: {
+        scopeType: "assignedPlatformAccount",
+        targetId: platformAccountId,
+      },
+      authority: this.structuredAuthority,
+      error: new EventAssignmentPermissionScopeError(
+        `Event platform read requires assignedPlatformAccount scope: ${platformAccountId}`,
+      ),
+    });
+  }
 }
 
-function normalizeRequiredText(
-  value: unknown,
-  field: string,
-): string {
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(): Promise<never> {
+      throw new SystemInvariantError(
+        "SYSTEM_INVARIANT_VIOLATION",
+        "StructuredScopeAuthorityService is required for Event reads",
+      );
+    },
+  });
+}
+
+function normalizeRequiredText(value: unknown, field: string): string {
   if (typeof value !== "string") {
-    throw new EventAssignmentValidationError(
-      `${field} must be a string`,
-    );
+    throw new EventAssignmentValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
 
   if (!normalized) {
-    throw new EventAssignmentValidationError(
-      `${field} is required`,
-    );
+    throw new EventAssignmentValidationError(`${field} is required`);
   }
 
   return normalized;
 }
 
-function parseOptionalId(
-  value: unknown,
-  field: string,
-): string | undefined {
+function parseOptionalId(value: unknown, field: string): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   if (typeof value !== "string") {
-    throw new EventAssignmentValidationError(
-      `${field} must be a string`,
-    );
+    throw new EventAssignmentValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
-  return normalized.length > 0
-    ? normalized
-    : undefined;
+  return normalized.length > 0 ? normalized : undefined;
 }
 
-function parseOptionalStatus(
-  value: unknown,
-): EventStatus | undefined {
+function parseOptionalStatus(value: unknown): EventStatus | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
@@ -393,15 +410,9 @@ function parseOptionalStatus(
     );
   }
 
-  const normalized = value
-    .trim()
-    .toUpperCase();
+  const normalized = value.trim().toUpperCase();
 
-  if (
-    EVENT_STATUSES.includes(
-      normalized as EventStatus,
-    )
-  ) {
+  if (EVENT_STATUSES.includes(normalized as EventStatus)) {
     return normalized as EventStatus;
   }
 
@@ -418,18 +429,13 @@ function parseEventStatusFilters(input: {
   readonly statuses?: readonly EventStatus[];
 } {
   const status = parseOptionalStatus(input.status);
-  const statusGroup = parseOptionalStatusGroup(
-    input.statusGroup,
-  );
+  const statusGroup = parseOptionalStatusGroup(input.statusGroup);
 
   if (!statusGroup) {
     return { status };
   }
 
-  if (
-    status !== undefined &&
-    !ACTIVE_EVENT_STATUSES.includes(status)
-  ) {
+  if (status !== undefined && !ACTIVE_EVENT_STATUSES.includes(status)) {
     throw new EventAssignmentValidationError(
       "status is inconsistent with statusGroup ACTIVE",
     );
@@ -437,24 +443,17 @@ function parseEventStatusFilters(input: {
 
   return {
     status,
-    statuses:
-      status === undefined
-        ? ACTIVE_EVENT_STATUSES
-        : undefined,
+    statuses: status === undefined ? ACTIVE_EVENT_STATUSES : undefined,
   };
 }
 
-function parseOptionalStatusGroup(
-  value: unknown,
-): "ACTIVE" | undefined {
+function parseOptionalStatusGroup(value: unknown): "ACTIVE" | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   if (typeof value !== "string") {
-    throw new EventAssignmentValidationError(
-      "statusGroup must be ACTIVE",
-    );
+    throw new EventAssignmentValidationError("statusGroup must be ACTIVE");
   }
 
   const normalized = value.trim().toUpperCase();
@@ -463,9 +462,7 @@ function parseOptionalStatusGroup(
     return "ACTIVE";
   }
 
-  throw new EventAssignmentValidationError(
-    "statusGroup must be ACTIVE",
-  );
+  throw new EventAssignmentValidationError("statusGroup must be ACTIVE");
 }
 
 function parseAssignmentFilter(input: {
@@ -474,14 +471,11 @@ function parseAssignmentFilter(input: {
   readonly assignmentTalentId: unknown;
   readonly assignmentTalentGroupId: unknown;
 }): ParsedAssignmentFilter {
-  const assignmentKind = parseOptionalAssignmentKind(
-    input.assignmentKind,
+  const assignmentKind = parseOptionalAssignmentKind(input.assignmentKind);
+  const assignmentEmploymentProfileId = parseOptionalId(
+    input.assignmentEmploymentProfileId,
+    "assignmentEmploymentProfileId",
   );
-  const assignmentEmploymentProfileId =
-    parseOptionalId(
-      input.assignmentEmploymentProfileId,
-      "assignmentEmploymentProfileId",
-    );
   const assignmentTalentId = parseOptionalId(
     input.assignmentTalentId,
     "assignmentTalentId",
@@ -504,8 +498,7 @@ function parseAssignmentFilter(input: {
 
   if (assignmentKind) {
     if (
-      assignmentKind ===
-        "EMPLOYMENT_PROFILE" &&
+      assignmentKind === "EMPLOYMENT_PROFILE" &&
       (assignmentTalentId !== undefined ||
         assignmentTalentGroupId !== undefined)
     ) {
@@ -516,8 +509,7 @@ function parseAssignmentFilter(input: {
 
     if (
       assignmentKind === "TALENT" &&
-      (assignmentEmploymentProfileId !==
-        undefined ||
+      (assignmentEmploymentProfileId !== undefined ||
         assignmentTalentGroupId !== undefined)
     ) {
       throw new EventAssignmentValidationError(
@@ -527,8 +519,7 @@ function parseAssignmentFilter(input: {
 
     if (
       assignmentKind === "TALENT_GROUP" &&
-      (assignmentEmploymentProfileId !==
-        undefined ||
+      (assignmentEmploymentProfileId !== undefined ||
         assignmentTalentId !== undefined)
     ) {
       throw new EventAssignmentValidationError(
@@ -548,14 +539,11 @@ function parseAssignmentFilter(input: {
 function parseExactAssignment(
   query: ListEventsByAssignmentQuery,
 ): ParsedExactAssignment {
-  const assignmentKind = parseRequiredAssignmentKind(
-    query.assignmentKind,
+  const assignmentKind = parseRequiredAssignmentKind(query.assignmentKind);
+  const assignmentEmploymentProfileId = parseOptionalId(
+    query.assignmentEmploymentProfileId,
+    "assignmentEmploymentProfileId",
   );
-  const assignmentEmploymentProfileId =
-    parseOptionalId(
-      query.assignmentEmploymentProfileId,
-      "assignmentEmploymentProfileId",
-    );
   const assignmentTalentId = parseOptionalId(
     query.assignmentTalentId,
     "assignmentTalentId",
@@ -566,8 +554,7 @@ function parseExactAssignment(
   );
 
   if (
-    assignmentKind ===
-      "EMPLOYMENT_PROFILE" &&
+    assignmentKind === "EMPLOYMENT_PROFILE" &&
     assignmentEmploymentProfileId &&
     !assignmentTalentId &&
     !assignmentTalentGroupId
@@ -623,24 +610,16 @@ function parseOptionalAssignmentKind(
   return parseRequiredAssignmentKind(value);
 }
 
-function parseRequiredAssignmentKind(
-  value: unknown,
-): EventAssignmentKind {
+function parseRequiredAssignmentKind(value: unknown): EventAssignmentKind {
   if (typeof value !== "string") {
     throw new EventAssignmentValidationError(
       `assignmentKind must be one of ${EVENT_ASSIGNMENT_KINDS.join(", ")}`,
     );
   }
 
-  const normalized = value
-    .trim()
-    .toUpperCase();
+  const normalized = value.trim().toUpperCase();
 
-  if (
-    EVENT_ASSIGNMENT_KINDS.includes(
-      normalized as EventAssignmentKind,
-    )
-  ) {
+  if (EVENT_ASSIGNMENT_KINDS.includes(normalized as EventAssignmentKind)) {
     return normalized as EventAssignmentKind;
   }
 
@@ -657,10 +636,7 @@ function parseWindowFilter(input: {
     input.windowStartAt,
     "windowStartAt",
   );
-  const windowEndAt = parseOptionalTimestamp(
-    input.windowEndAt,
-    "windowEndAt",
-  );
+  const windowEndAt = parseOptionalTimestamp(input.windowEndAt, "windowEndAt");
 
   if (
     windowStartAt !== undefined &&
@@ -684,11 +660,10 @@ function parseEventTargetFilters(input: {
   readonly eventStartFromAt: unknown;
   readonly eventStartToAt: unknown;
 }): ParsedEventTargetFilters {
-  const eventOverlapStartAt =
-    parseOptionalTimestamp(
-      input.eventOverlapStartAt,
-      "eventOverlapStartAt",
-    );
+  const eventOverlapStartAt = parseOptionalTimestamp(
+    input.eventOverlapStartAt,
+    "eventOverlapStartAt",
+  );
   const eventOverlapEndAt = parseOptionalTimestamp(
     input.eventOverlapEndAt,
     "eventOverlapEndAt",
@@ -735,10 +710,7 @@ function parseLimit(value: unknown): number {
     return DEFAULT_LIMIT;
   }
 
-  const numeric = parseOptionalInteger(
-    value,
-    "limit",
-  );
+  const numeric = parseOptionalInteger(value, "limit");
 
   if (numeric === undefined) {
     return DEFAULT_LIMIT;
@@ -772,15 +744,11 @@ function parseOptionalInteger(
 
     numeric = Number(value);
   } else {
-    throw new EventAssignmentValidationError(
-      `${field} must be an integer`,
-    );
+    throw new EventAssignmentValidationError(`${field} must be an integer`);
   }
 
   if (!Number.isInteger(numeric)) {
-    throw new EventAssignmentValidationError(
-      `${field} must be an integer`,
-    );
+    throw new EventAssignmentValidationError(`${field} must be an integer`);
   }
 
   return numeric;
@@ -794,10 +762,7 @@ function parseOptionalTimestamp(
     return undefined;
   }
 
-  const parsed = parseOptionalInteger(
-    value,
-    field,
-  );
+  const parsed = parseOptionalInteger(value, field);
 
   if (parsed === undefined) {
     return undefined;
@@ -806,51 +771,34 @@ function parseOptionalTimestamp(
   return parsed;
 }
 
-function parseOptionalCursor(
-  value: unknown,
-): string | undefined {
+function parseOptionalCursor(value: unknown): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   if (typeof value !== "string") {
-    throw new EventAssignmentValidationError(
-      "cursor must be a string",
-    );
+    throw new EventAssignmentValidationError("cursor must be a string");
   }
 
   const normalized = value.trim();
-  return normalized.length > 0
-    ? normalized
-    : undefined;
+  return normalized.length > 0 ? normalized : undefined;
 }
 
-function parseOptionalSearch(
-  value: unknown,
-): string | undefined {
+function parseOptionalSearch(value: unknown): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   if (typeof value !== "string") {
-    throw new EventAssignmentValidationError(
-      "search must be a string",
-    );
+    throw new EventAssignmentValidationError("search must be a string");
   }
 
-  const normalized = value
-    .normalize("NFKC")
-    .trim()
-    .replace(/\s+/gu, " ");
+  const normalized = value.normalize("NFKC").trim().replace(/\s+/gu, " ");
 
-  return normalized.length > 0
-    ? normalized
-    : undefined;
+  return normalized.length > 0 ? normalized : undefined;
 }
 
-function parseOptionalSortField(
-  value: unknown,
-): EventSortField | undefined {
+function parseOptionalSortField(value: unknown): EventSortField | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
@@ -863,11 +811,7 @@ function parseOptionalSortField(
 
   const normalized = value.trim();
 
-  if (
-    EVENT_SORT_FIELDS.includes(
-      normalized as EventSortField,
-    )
-  ) {
+  if (EVENT_SORT_FIELDS.includes(normalized as EventSortField)) {
     return normalized as EventSortField;
   }
 
@@ -889,15 +833,9 @@ function parseOptionalSortDirection(
     );
   }
 
-  const normalized = value
-    .trim()
-    .toUpperCase();
+  const normalized = value.trim().toUpperCase();
 
-  if (
-    EVENT_SORT_DIRECTIONS.includes(
-      normalized as EventSortDirection,
-    )
-  ) {
+  if (EVENT_SORT_DIRECTIONS.includes(normalized as EventSortDirection)) {
     return normalized as EventSortDirection;
   }
 
@@ -906,9 +844,7 @@ function parseOptionalSortDirection(
   );
 }
 
-function assertAdminActorType(
-  actor: Actor,
-): void {
+function assertAdminActorType(actor: Actor): void {
   if (actor.type === "admin") {
     return;
   }

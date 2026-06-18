@@ -65,3 +65,14 @@ export class StudioResourceInvalidOperationalStatusError extends DomainError {
     );
   }
 }
+
+export class StudioResourcePermissionScopeError extends DomainError {
+  constructor(message: string) {
+    super(
+      "STUDIO_RESOURCE_PERMISSION_SCOPE_ERROR",
+      message,
+      "Permission or scope denied",
+      403,
+    );
+  }
+}

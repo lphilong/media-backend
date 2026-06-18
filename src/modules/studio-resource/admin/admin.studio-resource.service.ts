@@ -1,8 +1,5 @@
 import crypto from "crypto";
-import {
-  ClientSession,
-  MongoServerError,
-} from "mongodb";
+import { ClientSession, MongoServerError } from "mongodb";
 import { Actor } from "@core/actor/actor";
 import {
   AuthoritativeAdminMutationBridge,
@@ -30,6 +27,7 @@ import {
   StudioResourceInvalidOperationalStatusError,
   StudioResourceInvalidResourceShapeError,
   StudioResourceNotFoundError,
+  StudioResourcePermissionScopeError,
   StudioResourceStateError,
   StudioResourceValidationError,
 } from "@modules/studio-resource/domain/studio-resource.errors";
@@ -58,6 +56,8 @@ import {
   StudioResourceMutationResult,
   UpdateStudioResourceCoreCommand,
 } from "@modules/studio-resource/shared/studio-resource.contracts";
+import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 type StudioResourceFailureClassification =
   | "validation"
@@ -66,6 +66,7 @@ type StudioResourceFailureClassification =
   | "state_error"
   | "invalid_resource_shape"
   | "invalid_operational_status"
+  | "permission_scope"
   | "invariant"
   | "unknown";
 
@@ -100,6 +101,7 @@ export class StudioResourceAdminService {
     private readonly eventAssignmentReadonlyAccess: StudioResourceEventAssignmentReadonlyAccess,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
     private readonly logger: StructuredLogger = createStructuredLogger(),
   ) {}
 
@@ -119,18 +121,15 @@ export class StudioResourceAdminService {
       permission,
       operation,
       {
-        resourceCode: readOptionalLogString(
-          command.resourceCode,
-        ),
+        resourceCode: readOptionalLogString(command.resourceCode),
         resourceClass: input.resourceClass,
       },
       async (session) => {
         if (input.resourceCode !== undefined) {
-          const existing =
-            await this.repository.findByResourceCode(
-              input.resourceCode,
-              session,
-            );
+          const existing = await this.repository.findByResourceCode(
+            input.resourceCode,
+            session,
+          );
 
           if (existing) {
             throw new StudioResourceConflictError(
@@ -139,23 +138,14 @@ export class StudioResourceAdminService {
           }
         }
 
-        assertResourceShape(
-          input.resourceClass,
-          input.maxOccupancy,
-        );
+        assertResourceShape(input.resourceClass, input.maxOccupancy);
 
         let created!: StudioResourceRecord;
-        const maxAttempts =
-          input.resourceCode === undefined ? 5 : 1;
+        const maxAttempts = input.resourceCode === undefined ? 5 : 1;
 
-        for (
-          let attempt = 1;
-          attempt <= maxAttempts;
-          attempt += 1
-        ) {
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
           const resourceCode =
-            input.resourceCode ??
-            (await this.allocateGeneratedCode(session));
+            input.resourceCode ?? (await this.allocateGeneratedCode(session));
           const now = Date.now();
           const record: StudioResourceRecord = {
             id: crypto.randomUUID(),
@@ -163,8 +153,7 @@ export class StudioResourceAdminService {
             name: input.name,
             normalizedName: input.normalizedName,
             shortName: input.shortName,
-            normalizedShortName:
-              input.normalizedShortName,
+            normalizedShortName: input.normalizedShortName,
             resourceClass: input.resourceClass,
             operationalStatus: "ACTIVE",
             locationLabel: input.locationLabel,
@@ -176,10 +165,7 @@ export class StudioResourceAdminService {
           };
 
           try {
-            created = await this.repository.insert(
-              record,
-              session,
-            );
+            created = await this.repository.insert(record, session);
             break;
           } catch (error) {
             if (!isDuplicateKeyError(error)) {
@@ -208,8 +194,7 @@ export class StudioResourceAdminService {
           metadata: {
             resourceCode: created.resourceCode,
             resourceClass: created.resourceClass,
-            operationalStatus:
-              created.operationalStatus,
+            operationalStatus: created.operationalStatus,
             maxOccupancy: created.maxOccupancy,
           },
           session,
@@ -247,26 +232,25 @@ export class StudioResourceAdminService {
           input.studioResourceId,
           session,
         );
+        await this.requireAssignedStudioResourceAuthority(
+          actor,
+          Permission.STUDIO_RESOURCE_UPDATE,
+          current.id,
+        );
 
-        if (
-          current.operationalStatus === "ARCHIVED"
-        ) {
+        if (current.operationalStatus === "ARCHIVED") {
           throw new StudioResourceStateError(
             `Archived studio resource cannot be updated: ${current.id}`,
           );
         }
 
-        assertResourceShape(
-          current.resourceClass,
-          current.maxOccupancy,
-        );
+        assertResourceShape(current.resourceClass, current.maxOccupancy);
 
         const patch = buildStudioResourceCorePatch({
           current,
           ...input,
         });
-        const changedFields =
-          summarizeChangedCoreFields(patch);
+        const changedFields = summarizeChangedCoreFields(patch);
 
         if (changedFields.length === 0) {
           throw new StudioResourceValidationError(
@@ -281,10 +265,7 @@ export class StudioResourceAdminService {
             : current.maxOccupancy,
         );
 
-        const updated = await this.repository.updateCore(
-          patch,
-          session,
-        );
+        const updated = await this.repository.updateCore(patch, session);
 
         if (!updated) {
           throw new StudioResourceConflictError(
@@ -299,8 +280,7 @@ export class StudioResourceAdminService {
           mutationType: operation,
           metadata: {
             changedFields,
-            operationalStatus:
-              updated.operationalStatus,
+            operationalStatus: updated.operationalStatus,
           },
           session,
         });
@@ -420,10 +400,7 @@ export class StudioResourceAdminService {
       session: ClientSession,
     ) => Promise<void>,
   ): Promise<StudioResourceMutationResult> {
-    const permission = this.assertPermission(
-      actor,
-      permissionCode,
-    );
+    const permission = this.assertPermission(actor, permissionCode);
     const studioResourceId = normalizeRequiredText(
       studioResourceIdInput,
       "studioResourceId",
@@ -442,11 +419,13 @@ export class StudioResourceAdminService {
           studioResourceId,
           session,
         );
-
-        assertResourceShape(
-          current.resourceClass,
-          current.maxOccupancy,
+        await this.requireAssignedStudioResourceAuthority(
+          actor,
+          permissionCode,
+          current.id,
         );
+
+        assertResourceShape(current.resourceClass, current.maxOccupancy);
         assertExpectedOperationalStatus(
           current.operationalStatus,
           fromStatuses,
@@ -463,11 +442,10 @@ export class StudioResourceAdminService {
           toStatus,
           updatedAt: Date.now(),
         };
-        const updated =
-          await this.repository.transitionOperationalStatus(
-            transition,
-            session,
-          );
+        const updated = await this.repository.transitionOperationalStatus(
+          transition,
+          session,
+        );
 
         if (!updated) {
           throw new StudioResourceConflictError(
@@ -502,8 +480,7 @@ export class StudioResourceAdminService {
   ): PermissionContract {
     assertAdminActorType(actor);
 
-    const permission =
-      PermissionResolver.resolve(permissionCode);
+    const permission = PermissionResolver.resolve(permissionCode);
 
     PermissionGuard.assert(actor, permission);
     return permission;
@@ -519,47 +496,54 @@ export class StudioResourceAdminService {
     );
 
     if (!studioResource) {
-      throw new StudioResourceNotFoundError(
-        studioResourceId,
-      );
+      throw new StudioResourceNotFoundError(studioResourceId);
     }
 
     return studioResource;
   }
 
-  private async allocateGeneratedCode(
-    session: ClientSession,
-  ): Promise<string> {
-    const maxExisting =
-      await this.repository.findMaxGeneratedCodeSequence(
-        STUDIO_RESOURCE_CODE_POLICY,
-        session,
-      );
+  private async requireAssignedStudioResourceAuthority(
+    actor: Actor,
+    permission: Permission,
+    studioResourceId: string,
+  ): Promise<void> {
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission,
+      scope: {
+        scopeType: "assignedStudioResource",
+        targetId: studioResourceId,
+      },
+      authority: this.structuredAuthority,
+      error: new StudioResourcePermissionScopeError(
+        `Studio resource operation requires assignedStudioResource scope: ${studioResourceId}`,
+      ),
+    });
+  }
+
+  private async allocateGeneratedCode(session: ClientSession): Promise<string> {
+    const maxExisting = await this.repository.findMaxGeneratedCodeSequence(
+      STUDIO_RESOURCE_CODE_POLICY,
+      session,
+    );
     await this.codeSequenceRepository.ensureAtLeast(
       STUDIO_RESOURCE_CODE_POLICY.moduleKey,
       STUDIO_RESOURCE_CODE_POLICY.bucket,
       maxExisting,
       session,
     );
-    const next =
-      await this.codeSequenceRepository.allocateNext(
-        STUDIO_RESOURCE_CODE_POLICY.moduleKey,
-        STUDIO_RESOURCE_CODE_POLICY.bucket,
-        session,
-      );
-
-    return formatBusinessCode(
-      STUDIO_RESOURCE_CODE_POLICY,
-      next,
+    const next = await this.codeSequenceRepository.allocateNext(
+      STUDIO_RESOURCE_CODE_POLICY.moduleKey,
+      STUDIO_RESOURCE_CODE_POLICY.bucket,
+      session,
     );
+
+    return formatBusinessCode(STUDIO_RESOURCE_CODE_POLICY, next);
   }
 
   private async assertNoLiveDownstreamAllocations(
     studioResourceId: string,
-    operation:
-      | "mark out of service"
-      | "deactivate"
-      | "archive",
+    operation: "mark out of service" | "deactivate" | "archive",
     evaluationTime: number,
     session: ClientSession,
   ): Promise<void> {
@@ -626,12 +610,7 @@ export class StudioResourceAdminService {
     ) => Promise<T>,
     onSuccess: (result: T) => Readonly<Record<string, unknown>>,
   ): Promise<T> {
-    this.logMutationEvent(
-      actor,
-      operation,
-      "mutation.start",
-      startMetadata,
-    );
+    this.logMutationEvent(actor, operation, "mutation.start", startMetadata);
 
     try {
       const traceId = getTraceIdOrThrow();
@@ -642,23 +621,15 @@ export class StudioResourceAdminService {
           requiredPermission: permission,
           mutationIdentity: operation,
           mutationTargetDescriptor:
-            buildMutationTargetDescriptor(
-              startMetadata,
-            ),
+            buildMutationTargetDescriptor(startMetadata),
         },
-        async (session, controls) =>
-          fn(session, controls),
+        async (session, controls) => fn(session, controls),
       );
 
-      this.logMutationEvent(
-        actor,
-        operation,
-        "mutation.success",
-        {
-          ...startMetadata,
-          ...onSuccess(result),
-        },
-      );
+      this.logMutationEvent(actor, operation, "mutation.success", {
+        ...startMetadata,
+        ...onSuccess(result),
+      });
 
       return result;
     } catch (error) {
@@ -671,10 +642,7 @@ export class StudioResourceAdminService {
         timestamp: Date.now(),
         metadata: {
           ...startMetadata,
-          classification:
-            classifyStudioResourceMutationFailure(
-              error,
-            ),
+          classification: classifyStudioResourceMutationFailure(error),
           errorCode: extractErrorCode(error),
           errorMessage: truncateLogMessage(error),
         },
@@ -705,10 +673,7 @@ export class StudioResourceAdminService {
 function normalizeCreateCommand(
   command: CreateStudioResourceCommand,
 ): NormalizedCreateCommand {
-  const name = normalizeRequiredText(
-    command.name,
-    "name",
-  );
+  const name = normalizeRequiredText(command.name, "name");
   const shortNameInput = normalizeOptionalNullableText(
     command.shortName,
     "shortName",
@@ -724,33 +689,30 @@ function normalizeCreateCommand(
     normalizedName: normalizeNameForSearch(name),
     shortName,
     normalizedShortName:
-      shortName === null
-        ? null
-        : normalizeNameForSearch(shortName),
-    resourceClass: normalizeResourceClass(
-      command.resourceClass,
-    ),
+      shortName === null ? null : normalizeNameForSearch(shortName),
+    resourceClass: normalizeResourceClass(command.resourceClass),
     locationLabel:
-      normalizeOptionalNullableText(
-        command.locationLabel,
-        "locationLabel",
-      ) ?? null,
+      normalizeOptionalNullableText(command.locationLabel, "locationLabel") ??
+      null,
     description:
-      normalizeOptionalNullableText(
-        command.description,
-        "description",
-      ) ?? null,
+      normalizeOptionalNullableText(command.description, "description") ?? null,
     externalRef:
-      normalizeOptionalNullableText(
-        command.externalRef,
-        "externalRef",
-      ) ?? null,
+      normalizeOptionalNullableText(command.externalRef, "externalRef") ?? null,
     maxOccupancy:
-      normalizeOptionalMaxOccupancy(
-        command.maxOccupancy,
-        "maxOccupancy",
-      ) ?? null,
+      normalizeOptionalMaxOccupancy(command.maxOccupancy, "maxOccupancy") ??
+      null,
   };
+}
+
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(): Promise<never> {
+      throw new SystemInvariantError(
+        "SYSTEM_INVARIANT_VIOLATION",
+        "StructuredScopeAuthorityService is required for Studio Resource operations",
+      );
+    },
+  });
 }
 
 function normalizeOptionalCreateCode(
@@ -762,15 +724,11 @@ function normalizeOptionalCreateCode(
   }
 
   if (typeof value !== "string") {
-    throw new StudioResourceValidationError(
-      `${field} must be a string`,
-    );
+    throw new StudioResourceValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
-  return normalized.length > 0
-    ? normalized
-    : undefined;
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function normalizeUpdateCoreCommand(
@@ -781,14 +739,8 @@ function normalizeUpdateCoreCommand(
       command.studioResourceId,
       "studioResourceId",
     ),
-    name: normalizeOptionalNonNullableText(
-      command.name,
-      "name",
-    ),
-    shortName: normalizeOptionalNullableText(
-      command.shortName,
-      "shortName",
-    ),
+    name: normalizeOptionalNonNullableText(command.name, "name"),
+    shortName: normalizeOptionalNullableText(command.shortName, "shortName"),
     locationLabel: normalizeOptionalNullableText(
       command.locationLabel,
       "locationLabel",
@@ -834,14 +786,9 @@ function buildStudioResourceCorePatch(params: {
     updatedAt: Date.now(),
   };
 
-  if (
-    params.name !== undefined &&
-    params.name !== params.current.name
-  ) {
+  if (params.name !== undefined && params.name !== params.current.name) {
     patch.name = params.name;
-    patch.normalizedName = normalizeNameForSearch(
-      params.name,
-    );
+    patch.normalizedName = normalizeNameForSearch(params.name);
   }
 
   if (
@@ -918,22 +865,15 @@ function summarizeChangedCoreFields(
   return changedFields;
 }
 
-function normalizeRequiredText(
-  value: unknown,
-  field: string,
-): string {
+function normalizeRequiredText(value: unknown, field: string): string {
   if (typeof value !== "string") {
-    throw new StudioResourceValidationError(
-      `${field} must be a string`,
-    );
+    throw new StudioResourceValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
 
   if (!normalized) {
-    throw new StudioResourceValidationError(
-      `${field} is required`,
-    );
+    throw new StudioResourceValidationError(`${field} is required`);
   }
 
   return normalized;
@@ -948,9 +888,7 @@ function normalizeOptionalNonNullableText(
   }
 
   if (value === null) {
-    throw new StudioResourceValidationError(
-      `${field} must not be null`,
-    );
+    throw new StudioResourceValidationError(`${field} must not be null`);
   }
 
   return normalizeRequiredText(value, field);
@@ -983,11 +921,7 @@ function normalizeOptionalMaxOccupancy(
     return null;
   }
 
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value) ||
-    value <= 0
-  ) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
     throw new StudioResourceValidationError(
       `${field} must be a positive integer when provided`,
     );
@@ -996,9 +930,7 @@ function normalizeOptionalMaxOccupancy(
   return value;
 }
 
-function normalizeResourceClass(
-  value: unknown,
-): StudioResourceClass {
+function normalizeResourceClass(value: unknown): StudioResourceClass {
   if (typeof value !== "string") {
     throw new StudioResourceValidationError(
       `resourceClass must be one of ${STUDIO_RESOURCE_CLASSES.join(", ")}`,
@@ -1007,11 +939,7 @@ function normalizeResourceClass(
 
   const normalized = value.trim().toUpperCase();
 
-  if (
-    STUDIO_RESOURCE_CLASSES.includes(
-      normalized as StudioResourceClass,
-    )
-  ) {
+  if (STUDIO_RESOURCE_CLASSES.includes(normalized as StudioResourceClass)) {
     return normalized as StudioResourceClass;
   }
 
@@ -1020,14 +948,8 @@ function normalizeResourceClass(
   );
 }
 
-function normalizeNameForSearch(
-  value: string,
-): string {
-  return value
-    .normalize("NFKC")
-    .trim()
-    .replace(/\s+/gu, " ")
-    .toLowerCase();
+function normalizeNameForSearch(value: string): string {
+  return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 }
 
 function assertResourceShape(
@@ -1035,17 +957,11 @@ function assertResourceShape(
   maxOccupancy: number | null,
 ): void {
   if (resourceClass === "SPACE") {
-    if (
-      maxOccupancy === null ||
-      maxOccupancy === undefined
-    ) {
+    if (maxOccupancy === null || maxOccupancy === undefined) {
       return;
     }
 
-    if (
-      Number.isInteger(maxOccupancy) &&
-      maxOccupancy > 0
-    ) {
+    if (Number.isInteger(maxOccupancy) && maxOccupancy > 0) {
       return;
     }
 
@@ -1075,9 +991,7 @@ function assertExpectedOperationalStatus(
   );
 }
 
-function assertAdminActorType(
-  actor: Actor,
-): void {
+function assertAdminActorType(actor: Actor): void {
   if (actor.type === "admin") {
     return;
   }
@@ -1107,13 +1021,8 @@ function toMutationView(
   };
 }
 
-function isDuplicateKeyError(
-  error: unknown,
-): error is MongoServerError {
-  return (
-    error instanceof MongoServerError &&
-    error.code === 11000
-  );
+function isDuplicateKeyError(error: unknown): error is MongoServerError {
+  return error instanceof MongoServerError && error.code === 11000;
 }
 
 function buildMutationTargetDescriptor(
@@ -1121,10 +1030,7 @@ function buildMutationTargetDescriptor(
 ): string {
   const encoded = JSON.stringify(metadata);
 
-  if (
-    typeof encoded === "string" &&
-    encoded.length > 2
-  ) {
+  if (typeof encoded === "string" && encoded.length > 2) {
     return encoded;
   }
 
@@ -1150,17 +1056,16 @@ function classifyStudioResourceMutationFailure(
     return "state_error";
   }
 
-  if (
-    error instanceof StudioResourceInvalidResourceShapeError
-  ) {
+  if (error instanceof StudioResourceInvalidResourceShapeError) {
     return "invalid_resource_shape";
   }
 
-  if (
-    error instanceof
-    StudioResourceInvalidOperationalStatusError
-  ) {
+  if (error instanceof StudioResourceInvalidOperationalStatusError) {
     return "invalid_operational_status";
+  }
+
+  if (error instanceof StudioResourcePermissionScopeError) {
+    return "permission_scope";
   }
 
   if (error instanceof SystemInvariantError) {
@@ -1170,9 +1075,7 @@ function classifyStudioResourceMutationFailure(
   return "unknown";
 }
 
-function extractErrorCode(
-  error: unknown,
-): string | undefined {
+function extractErrorCode(error: unknown): string | undefined {
   if (error instanceof BaseAppError) {
     return error.code;
   }
@@ -1184,13 +1087,8 @@ function extractErrorCode(
   return undefined;
 }
 
-function truncateLogMessage(
-  error: unknown,
-): string {
-  const raw =
-    error instanceof Error
-      ? error.message
-      : String(error);
+function truncateLogMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
 
   if (raw.length <= 256) {
     return raw;
@@ -1199,15 +1097,11 @@ function truncateLogMessage(
   return `${raw.slice(0, 253)}...`;
 }
 
-function readOptionalLogString(
-  value: unknown,
-): string | undefined {
+function readOptionalLogString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
   }
 
   const normalized = value.trim();
-  return normalized.length > 0
-    ? normalized
-    : undefined;
+  return normalized.length > 0 ? normalized : undefined;
 }

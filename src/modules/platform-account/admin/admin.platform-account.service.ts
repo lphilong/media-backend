@@ -1,8 +1,5 @@
 import crypto from "crypto";
-import {
-  ClientSession,
-  MongoServerError,
-} from "mongodb";
+import { ClientSession, MongoServerError } from "mongodb";
 import { Actor } from "@core/actor/actor";
 import {
   AuthoritativeAdminMutationBridge,
@@ -30,6 +27,7 @@ import {
   PlatformAccountConflictError,
   PlatformAccountInvalidPlatformIdentityError,
   PlatformAccountNotFoundError,
+  PlatformAccountPermissionScopeError,
   PlatformAccountStateError,
   PlatformAccountValidationError,
 } from "@modules/platform-account/domain/platform-account.errors";
@@ -73,6 +71,8 @@ import {
   UpdatePlatformAccountCapabilitiesCommand,
   UpdatePlatformAccountCoreCommand,
 } from "@modules/platform-account/shared/platform-account.contracts";
+import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 type PlatformAccountFailureClassification =
   | "validation"
@@ -81,12 +81,11 @@ type PlatformAccountFailureClassification =
   | "state_error"
   | "invalid_owner_reference"
   | "invalid_platform_identity"
+  | "permission_scope"
   | "invariant"
   | "unknown";
 
-type OwnerEligibilityRequirement =
-  | "ACTIVE_ONLY"
-  | "NON_ARCHIVED_ONLY";
+type OwnerEligibilityRequirement = "ACTIVE_ONLY" | "NON_ARCHIVED_ONLY";
 
 interface OwnerReferenceShape {
   readonly ownerKind: PlatformAccountOwnerKind;
@@ -101,8 +100,7 @@ interface NormalizedNullableValue {
   readonly normalized: string | null;
 }
 
-interface NormalizedCreateCommand
-  extends OwnerReferenceShape {
+interface NormalizedCreateCommand extends OwnerReferenceShape {
   readonly accountCode: string | undefined;
   readonly platform: PlatformAccountPlatform;
   readonly platformSurfaceType: PlatformAccountSurfaceType;
@@ -130,6 +128,7 @@ export class PlatformAccountAdminService {
     private readonly eventAssignmentReadonlyAccess: PlatformAccountEventAssignmentReadonlyAccess,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
     private readonly logger: StructuredLogger = createStructuredLogger(),
   ) {}
 
@@ -149,24 +148,17 @@ export class PlatformAccountAdminService {
       permission,
       operation,
       {
-        accountCode: readOptionalLogString(
-          command.accountCode,
-        ),
-        platform: readOptionalLogString(
-          command.platform,
-        ),
-        ownerKind: readOptionalLogString(
-          command.ownerKind,
-        ),
+        accountCode: readOptionalLogString(command.accountCode),
+        platform: readOptionalLogString(command.platform),
+        ownerKind: readOptionalLogString(command.ownerKind),
         ownerReferenceId: input.ownerReferenceId,
       },
       async (session) => {
         if (input.accountCode !== undefined) {
-          const existingCode =
-            await this.repository.findByAccountCode(
-              input.accountCode,
-              session,
-            );
+          const existingCode = await this.repository.findByAccountCode(
+            input.accountCode,
+            session,
+          );
 
           if (existingCode) {
             throw new PlatformAccountConflictError(
@@ -175,67 +167,44 @@ export class PlatformAccountAdminService {
           }
         }
 
-        await this.assertOwnerEligible(
-          input,
-          "ACTIVE_ONLY",
-          session,
-        );
+        await this.assertOwnerEligible(input, "ACTIVE_ONLY", session);
         await this.assertNoLiveIdentityConflicts(
           {
             platform: input.platform,
-            normalizedHandle:
-              input.normalizedHandle,
-            externalPlatformId:
-              input.externalPlatformId,
-            normalizedProfileUrl:
-              input.normalizedProfileUrl,
+            normalizedHandle: input.normalizedHandle,
+            externalPlatformId: input.externalPlatformId,
+            normalizedProfileUrl: input.normalizedProfileUrl,
           },
           session,
         );
 
         let created!: PlatformAccountRecord;
-        const maxAttempts =
-          input.accountCode === undefined ? 5 : 1;
+        const maxAttempts = input.accountCode === undefined ? 5 : 1;
 
-        for (
-          let attempt = 1;
-          attempt <= maxAttempts;
-          attempt += 1
-        ) {
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
           const accountCode =
-            input.accountCode ??
-            (await this.allocateGeneratedCode(session));
+            input.accountCode ?? (await this.allocateGeneratedCode(session));
           const now = Date.now();
           const record: PlatformAccountRecord = {
             id: crypto.randomUUID(),
             accountCode,
             platform: input.platform,
-            platformSurfaceType:
-              input.platformSurfaceType,
+            platformSurfaceType: input.platformSurfaceType,
             displayName: input.displayName,
-            normalizedDisplayName:
-              input.normalizedDisplayName,
+            normalizedDisplayName: input.normalizedDisplayName,
             handle: input.handle,
-            normalizedHandle:
-              input.normalizedHandle,
-            externalPlatformId:
-              input.externalPlatformId,
+            normalizedHandle: input.normalizedHandle,
+            externalPlatformId: input.externalPlatformId,
             profileUrl: input.profileUrl,
-            normalizedProfileUrl:
-              input.normalizedProfileUrl,
+            normalizedProfileUrl: input.normalizedProfileUrl,
             ownerKind: input.ownerKind,
-            ownerOrgUnitId:
-              input.ownerOrgUnitId,
+            ownerOrgUnitId: input.ownerOrgUnitId,
             ownerTalentId: input.ownerTalentId,
-            ownerTalentGroupId:
-              input.ownerTalentGroupId,
+            ownerTalentGroupId: input.ownerTalentGroupId,
             operationalStatus: "ACTIVE",
-            livestreamEnabled:
-              input.livestreamEnabled,
-            contentPublishingEnabled:
-              input.contentPublishingEnabled,
-            monetizationEnabled:
-              input.monetizationEnabled,
+            livestreamEnabled: input.livestreamEnabled,
+            contentPublishingEnabled: input.contentPublishingEnabled,
+            monetizationEnabled: input.monetizationEnabled,
             description: input.description,
             externalRef: input.externalRef,
             createdAt: now,
@@ -243,10 +212,7 @@ export class PlatformAccountAdminService {
           };
 
           try {
-            created = await this.repository.insert(
-              record,
-              session,
-            );
+            created = await this.repository.insert(record, session);
             break;
           } catch (error) {
             if (!isDuplicateKeyError(error)) {
@@ -276,21 +242,17 @@ export class PlatformAccountAdminService {
             accountCode: created.accountCode,
             platform: created.platform,
             ownerKind: created.ownerKind,
-            ownerReferenceId:
-              input.ownerReferenceId,
+            ownerReferenceId: input.ownerReferenceId,
           },
           session,
         });
 
-        return toPlatformAccountMutationView(
-          created,
-        );
+        return toPlatformAccountMutationView(created);
       },
       (result) => ({
         platformAccountId: result.id,
         accountCode: result.accountCode,
-        operationalStatus:
-          result.operationalStatus,
+        operationalStatus: result.operationalStatus,
       }),
     );
   }
@@ -309,18 +271,12 @@ export class PlatformAccountAdminService {
       "platformAccountId",
     );
 
-    const hasDisplayName =
-      command.displayName !== undefined;
-    const hasHandle =
-      command.handle !== undefined;
-    const hasExternalPlatformId =
-      command.externalPlatformId !== undefined;
-    const hasProfileUrl =
-      command.profileUrl !== undefined;
-    const hasDescription =
-      command.description !== undefined;
-    const hasExternalRef =
-      command.externalRef !== undefined;
+    const hasDisplayName = command.displayName !== undefined;
+    const hasHandle = command.handle !== undefined;
+    const hasExternalPlatformId = command.externalPlatformId !== undefined;
+    const hasProfileUrl = command.profileUrl !== undefined;
+    const hasDescription = command.description !== undefined;
+    const hasExternalRef = command.externalRef !== undefined;
 
     if (
       !hasDisplayName &&
@@ -336,16 +292,10 @@ export class PlatformAccountAdminService {
     }
 
     const displayName = hasDisplayName
-      ? normalizeDisplayText(
-          command.displayName,
-          "displayName",
-        )
+      ? normalizeDisplayText(command.displayName, "displayName")
       : undefined;
     const handleIdentity = hasHandle
-      ? normalizeHandleIdentity(
-          command.handle,
-          "handle",
-        )
+      ? normalizeHandleIdentity(command.handle, "handle")
       : undefined;
     const externalPlatformId = hasExternalPlatformId
       ? normalizeNullableOpaquePatchText(
@@ -354,23 +304,13 @@ export class PlatformAccountAdminService {
         )
       : undefined;
     const profileUrlIdentity = hasProfileUrl
-      ? normalizeProfileUrlIdentity(
-          command.profileUrl,
-          "profileUrl",
-          true,
-        )
+      ? normalizeProfileUrlIdentity(command.profileUrl, "profileUrl", true)
       : undefined;
     const description = hasDescription
-      ? normalizeNullablePatchText(
-          command.description,
-          "description",
-        )
+      ? normalizeNullablePatchText(command.description, "description")
       : undefined;
     const externalRef = hasExternalRef
-      ? normalizeNullablePatchText(
-          command.externalRef,
-          "externalRef",
-        )
+      ? normalizeNullablePatchText(command.externalRef, "externalRef")
       : undefined;
 
     return this.executeMutation(
@@ -378,21 +318,20 @@ export class PlatformAccountAdminService {
       permission,
       operation,
       {
-        platformAccountId:
-          readOptionalLogString(
-            command.platformAccountId,
-          ),
+        platformAccountId: readOptionalLogString(command.platformAccountId),
       },
       async (session) => {
-        const current =
-          await this.requirePlatformAccount(
-            platformAccountId,
-            session,
-          );
+        const current = await this.requirePlatformAccount(
+          platformAccountId,
+          session,
+        );
+        await this.requireAssignedPlatformAccountAuthority(
+          actor,
+          Permission.PLATFORM_ACCOUNT_UPDATE,
+          current.id,
+        );
 
-        if (
-          current.operationalStatus === "ARCHIVED"
-        ) {
+        if (current.operationalStatus === "ARCHIVED") {
           throw new PlatformAccountStateError(
             `Archived platform account cannot be updated: ${platformAccountId}`,
           );
@@ -404,24 +343,19 @@ export class PlatformAccountAdminService {
           session,
         );
 
-        const patch =
-          buildPlatformAccountCorePatch({
-            current,
-            platformAccountId,
-            displayName,
-            handle: handleIdentity?.value,
-            normalizedHandle:
-              handleIdentity?.normalized,
-            externalPlatformId,
-            profileUrl:
-              profileUrlIdentity?.value,
-            normalizedProfileUrl:
-              profileUrlIdentity?.normalized,
-            description,
-            externalRef,
-          });
-        const changedFields =
-          summarizeChangedCoreFields(patch);
+        const patch = buildPlatformAccountCorePatch({
+          current,
+          platformAccountId,
+          displayName,
+          handle: handleIdentity?.value,
+          normalizedHandle: handleIdentity?.normalized,
+          externalPlatformId,
+          profileUrl: profileUrlIdentity?.value,
+          normalizedProfileUrl: profileUrlIdentity?.normalized,
+          description,
+          externalRef,
+        });
+        const changedFields = summarizeChangedCoreFields(patch);
 
         if (changedFields.length === 0) {
           throw new PlatformAccountValidationError(
@@ -430,10 +364,7 @@ export class PlatformAccountAdminService {
         }
 
         assertLocatorPresence({
-          handle:
-            patch.handle !== undefined
-              ? patch.handle
-              : current.handle,
+          handle: patch.handle !== undefined ? patch.handle : current.handle,
           externalPlatformId:
             patch.externalPlatformId !== undefined
               ? patch.externalPlatformId
@@ -447,14 +378,10 @@ export class PlatformAccountAdminService {
         await this.assertNoLiveIdentityConflicts(
           {
             platform: current.platform,
-            normalizedHandle:
-              patch.normalizedHandle,
-            externalPlatformId:
-              patch.externalPlatformId,
-            normalizedProfileUrl:
-              patch.normalizedProfileUrl,
-            excludePlatformAccountId:
-              current.id,
+            normalizedHandle: patch.normalizedHandle,
+            externalPlatformId: patch.externalPlatformId,
+            normalizedProfileUrl: patch.normalizedProfileUrl,
+            excludePlatformAccountId: current.id,
           },
           session,
         );
@@ -462,10 +389,7 @@ export class PlatformAccountAdminService {
         let updated: PlatformAccountRecord | null;
 
         try {
-          updated = await this.repository.updateCore(
-            patch,
-            session,
-          );
+          updated = await this.repository.updateCore(patch, session);
         } catch (error) {
           if (isDuplicateKeyError(error)) {
             throw new PlatformAccountConflictError(
@@ -493,14 +417,11 @@ export class PlatformAccountAdminService {
           session,
         });
 
-        return toPlatformAccountMutationView(
-          updated,
-        );
+        return toPlatformAccountMutationView(updated);
       },
       (result) => ({
         platformAccountId: result.id,
-        operationalStatus:
-          result.operationalStatus,
+        operationalStatus: result.operationalStatus,
       }),
     );
   }
@@ -509,8 +430,7 @@ export class PlatformAccountAdminService {
     actor: Actor,
     command: TransferPlatformAccountOwnershipCommand,
   ): Promise<PlatformAccountMutationResult> {
-    const operation =
-      "platform-account.transfer-ownership";
+    const operation = "platform-account.transfer-ownership";
     const permission = this.assertPermission(
       actor,
       Permission.PLATFORM_ACCOUNT_MANAGE_OWNERSHIP,
@@ -519,41 +439,34 @@ export class PlatformAccountAdminService {
       command.platformAccountId,
       "platformAccountId",
     );
-    const ownerReference =
-      normalizeOwnerReferenceInput({
-        ownerKind: command.ownerKind,
-        ownerOrgUnitId:
-          command.ownerOrgUnitId,
-        ownerTalentId: command.ownerTalentId,
-        ownerTalentGroupId:
-          command.ownerTalentGroupId,
-      });
+    const ownerReference = normalizeOwnerReferenceInput({
+      ownerKind: command.ownerKind,
+      ownerOrgUnitId: command.ownerOrgUnitId,
+      ownerTalentId: command.ownerTalentId,
+      ownerTalentGroupId: command.ownerTalentGroupId,
+    });
 
     return this.executeMutation(
       actor,
       permission,
       operation,
       {
-        platformAccountId:
-          readOptionalLogString(
-            command.platformAccountId,
-          ),
-        ownerKind: readOptionalLogString(
-          command.ownerKind,
-        ),
-        ownerReferenceId:
-          ownerReference.ownerReferenceId,
+        platformAccountId: readOptionalLogString(command.platformAccountId),
+        ownerKind: readOptionalLogString(command.ownerKind),
+        ownerReferenceId: ownerReference.ownerReferenceId,
       },
       async (session, controls) => {
-        const current =
-          await this.requirePlatformAccount(
-            platformAccountId,
-            session,
-          );
+        const current = await this.requirePlatformAccount(
+          platformAccountId,
+          session,
+        );
+        await this.requireAssignedPlatformAccountAuthority(
+          actor,
+          Permission.PLATFORM_ACCOUNT_MANAGE_OWNERSHIP,
+          current.id,
+        );
 
-        if (
-          current.operationalStatus === "ARCHIVED"
-        ) {
+        if (current.operationalStatus === "ARCHIVED") {
           throw new PlatformAccountStateError(
             `Archived platform account cannot transfer ownership: ${platformAccountId}`,
           );
@@ -561,11 +474,7 @@ export class PlatformAccountAdminService {
 
         assertLocatorPresence(current);
 
-        await this.assertOwnerEligible(
-          ownerReference,
-          "ACTIVE_ONLY",
-          session,
-        );
+        await this.assertOwnerEligible(ownerReference, "ACTIVE_ONLY", session);
 
         if (
           hasExactOwnerShape(current) &&
@@ -574,26 +483,20 @@ export class PlatformAccountAdminService {
             ownerReference.ownerReferenceId
         ) {
           controls.markExplicitNoOpSuccess();
-          return toPlatformAccountMutationView(
-            current,
-          );
+          return toPlatformAccountMutationView(current);
         }
 
-        const updated =
-          await this.repository.transferOwnership(
-            {
-              platformAccountId,
-              ownerKind: ownerReference.ownerKind,
-              ownerOrgUnitId:
-                ownerReference.ownerOrgUnitId,
-              ownerTalentId:
-                ownerReference.ownerTalentId,
-              ownerTalentGroupId:
-                ownerReference.ownerTalentGroupId,
-              updatedAt: Date.now(),
-            },
-            session,
-          );
+        const updated = await this.repository.transferOwnership(
+          {
+            platformAccountId,
+            ownerKind: ownerReference.ownerKind,
+            ownerOrgUnitId: ownerReference.ownerOrgUnitId,
+            ownerTalentId: ownerReference.ownerTalentId,
+            ownerTalentGroupId: ownerReference.ownerTalentGroupId,
+            updatedAt: Date.now(),
+          },
+          session,
+        );
 
         if (!updated) {
           throw new PlatformAccountConflictError(
@@ -608,19 +511,14 @@ export class PlatformAccountAdminService {
           mutationType: operation,
           metadata: {
             previousOwnerKind: current.ownerKind,
-            previousOwnerReferenceId:
-              readCurrentOwnerReferenceId(current),
-            newOwnerKind:
-              ownerReference.ownerKind,
-            newOwnerReferenceId:
-              ownerReference.ownerReferenceId,
+            previousOwnerReferenceId: readCurrentOwnerReferenceId(current),
+            newOwnerKind: ownerReference.ownerKind,
+            newOwnerReferenceId: ownerReference.ownerReferenceId,
           },
           session,
         });
 
-        return toPlatformAccountMutationView(
-          updated,
-        );
+        return toPlatformAccountMutationView(updated);
       },
       (result) => ({
         platformAccountId: result.id,
@@ -648,21 +546,20 @@ export class PlatformAccountAdminService {
       permission,
       operation,
       {
-        platformAccountId:
-          readOptionalLogString(
-            command.platformAccountId,
-          ),
+        platformAccountId: readOptionalLogString(command.platformAccountId),
       },
       async (session) => {
-        const current =
-          await this.requirePlatformAccount(
-            platformAccountId,
-            session,
-          );
+        const current = await this.requirePlatformAccount(
+          platformAccountId,
+          session,
+        );
+        await this.requireAssignedPlatformAccountAuthority(
+          actor,
+          Permission.PLATFORM_ACCOUNT_MANAGE_LIFECYCLE,
+          current.id,
+        );
 
-        if (
-          current.operationalStatus !== "INACTIVE"
-        ) {
+        if (current.operationalStatus !== "INACTIVE") {
           throw new PlatformAccountStateError(
             `Platform account ${platformAccountId} cannot transition from ${current.operationalStatus} to ACTIVE`,
           );
@@ -674,16 +571,15 @@ export class PlatformAccountAdminService {
           session,
         );
 
-        const updated =
-          await this.repository.transitionOperationalStatus(
-            {
-              platformAccountId,
-              fromStatuses: ["INACTIVE"],
-              toStatus: "ACTIVE",
-              updatedAt: Date.now(),
-            },
-            session,
-          );
+        const updated = await this.repository.transitionOperationalStatus(
+          {
+            platformAccountId,
+            fromStatuses: ["INACTIVE"],
+            toStatus: "ACTIVE",
+            updatedAt: Date.now(),
+          },
+          session,
+        );
 
         if (!updated) {
           throw new PlatformAccountConflictError(
@@ -697,22 +593,17 @@ export class PlatformAccountAdminService {
           platformAccountId,
           mutationType: operation,
           metadata: {
-            previousOperationalStatus:
-              current.operationalStatus,
-            nextOperationalStatus:
-              updated.operationalStatus,
+            previousOperationalStatus: current.operationalStatus,
+            nextOperationalStatus: updated.operationalStatus,
           },
           session,
         });
 
-        return toPlatformAccountMutationView(
-          updated,
-        );
+        return toPlatformAccountMutationView(updated);
       },
       (result) => ({
         platformAccountId: result.id,
-        operationalStatus:
-          result.operationalStatus,
+        operationalStatus: result.operationalStatus,
       }),
     );
   }
@@ -736,21 +627,20 @@ export class PlatformAccountAdminService {
       permission,
       operation,
       {
-        platformAccountId:
-          readOptionalLogString(
-            command.platformAccountId,
-          ),
+        platformAccountId: readOptionalLogString(command.platformAccountId),
       },
       async (session) => {
-        const current =
-          await this.requirePlatformAccount(
-            platformAccountId,
-            session,
-          );
+        const current = await this.requirePlatformAccount(
+          platformAccountId,
+          session,
+        );
+        await this.requireAssignedPlatformAccountAuthority(
+          actor,
+          Permission.PLATFORM_ACCOUNT_MANAGE_LIFECYCLE,
+          current.id,
+        );
 
-        if (
-          current.operationalStatus !== "ACTIVE"
-        ) {
+        if (current.operationalStatus !== "ACTIVE") {
           throw new PlatformAccountStateError(
             `Platform account ${platformAccountId} cannot transition from ${current.operationalStatus} to INACTIVE`,
           );
@@ -768,16 +658,15 @@ export class PlatformAccountAdminService {
           session,
         );
 
-        const updated =
-          await this.repository.transitionOperationalStatus(
-            {
-              platformAccountId,
-              fromStatuses: ["ACTIVE"],
-              toStatus: "INACTIVE",
-              updatedAt: Date.now(),
-            },
-            session,
-          );
+        const updated = await this.repository.transitionOperationalStatus(
+          {
+            platformAccountId,
+            fromStatuses: ["ACTIVE"],
+            toStatus: "INACTIVE",
+            updatedAt: Date.now(),
+          },
+          session,
+        );
 
         if (!updated) {
           throw new PlatformAccountConflictError(
@@ -791,22 +680,17 @@ export class PlatformAccountAdminService {
           platformAccountId,
           mutationType: operation,
           metadata: {
-            previousOperationalStatus:
-              current.operationalStatus,
-            nextOperationalStatus:
-              updated.operationalStatus,
+            previousOperationalStatus: current.operationalStatus,
+            nextOperationalStatus: updated.operationalStatus,
           },
           session,
         });
 
-        return toPlatformAccountMutationView(
-          updated,
-        );
+        return toPlatformAccountMutationView(updated);
       },
       (result) => ({
         platformAccountId: result.id,
-        operationalStatus:
-          result.operationalStatus,
+        operationalStatus: result.operationalStatus,
       }),
     );
   }
@@ -830,21 +714,20 @@ export class PlatformAccountAdminService {
       permission,
       operation,
       {
-        platformAccountId:
-          readOptionalLogString(
-            command.platformAccountId,
-          ),
+        platformAccountId: readOptionalLogString(command.platformAccountId),
       },
       async (session) => {
-        const current =
-          await this.requirePlatformAccount(
-            platformAccountId,
-            session,
-          );
+        const current = await this.requirePlatformAccount(
+          platformAccountId,
+          session,
+        );
+        await this.requireAssignedPlatformAccountAuthority(
+          actor,
+          Permission.PLATFORM_ACCOUNT_MANAGE_LIFECYCLE,
+          current.id,
+        );
 
-        if (
-          current.operationalStatus !== "INACTIVE"
-        ) {
+        if (current.operationalStatus !== "INACTIVE") {
           throw new PlatformAccountStateError(
             `Platform account ${platformAccountId} cannot transition from ${current.operationalStatus} to ARCHIVED`,
           );
@@ -857,19 +740,18 @@ export class PlatformAccountAdminService {
           session,
         );
 
-        const updated =
-          await this.repository.transitionOperationalStatus(
-            {
-              platformAccountId,
-              fromStatuses: ["INACTIVE"],
-              toStatus: "ARCHIVED",
-              livestreamEnabled: false,
-              contentPublishingEnabled: false,
-              monetizationEnabled: false,
-              updatedAt: Date.now(),
-            },
-            session,
-          );
+        const updated = await this.repository.transitionOperationalStatus(
+          {
+            platformAccountId,
+            fromStatuses: ["INACTIVE"],
+            toStatus: "ARCHIVED",
+            livestreamEnabled: false,
+            contentPublishingEnabled: false,
+            monetizationEnabled: false,
+            updatedAt: Date.now(),
+          },
+          session,
+        );
 
         if (!updated) {
           throw new PlatformAccountConflictError(
@@ -883,34 +765,23 @@ export class PlatformAccountAdminService {
           platformAccountId,
           mutationType: operation,
           metadata: {
-            previousOperationalStatus:
-              current.operationalStatus,
-            nextOperationalStatus:
-              updated.operationalStatus,
-            previousLivestreamEnabled:
-              current.livestreamEnabled,
-            previousContentPublishingEnabled:
-              current.contentPublishingEnabled,
-            previousMonetizationEnabled:
-              current.monetizationEnabled,
-            newLivestreamEnabled:
-              updated.livestreamEnabled,
-            newContentPublishingEnabled:
-              updated.contentPublishingEnabled,
-            newMonetizationEnabled:
-              updated.monetizationEnabled,
+            previousOperationalStatus: current.operationalStatus,
+            nextOperationalStatus: updated.operationalStatus,
+            previousLivestreamEnabled: current.livestreamEnabled,
+            previousContentPublishingEnabled: current.contentPublishingEnabled,
+            previousMonetizationEnabled: current.monetizationEnabled,
+            newLivestreamEnabled: updated.livestreamEnabled,
+            newContentPublishingEnabled: updated.contentPublishingEnabled,
+            newMonetizationEnabled: updated.monetizationEnabled,
           },
           session,
         });
 
-        return toPlatformAccountMutationView(
-          updated,
-        );
+        return toPlatformAccountMutationView(updated);
       },
       (result) => ({
         platformAccountId: result.id,
-        operationalStatus:
-          result.operationalStatus,
+        operationalStatus: result.operationalStatus,
       }),
     );
   }
@@ -919,8 +790,7 @@ export class PlatformAccountAdminService {
     actor: Actor,
     command: UpdatePlatformAccountCapabilitiesCommand,
   ): Promise<PlatformAccountMutationResult> {
-    const operation =
-      "platform-account.update-capabilities";
+    const operation = "platform-account.update-capabilities";
     const permission = this.assertPermission(
       actor,
       Permission.PLATFORM_ACCOUNT_MANAGE_CAPABILITIES,
@@ -933,11 +803,10 @@ export class PlatformAccountAdminService {
       command.livestreamEnabled,
       "livestreamEnabled",
     );
-    const contentPublishingEnabled =
-      normalizeBoolean(
-        command.contentPublishingEnabled,
-        "contentPublishingEnabled",
-      );
+    const contentPublishingEnabled = normalizeBoolean(
+      command.contentPublishingEnabled,
+      "contentPublishingEnabled",
+    );
     const monetizationEnabled = normalizeBoolean(
       command.monetizationEnabled,
       "monetizationEnabled",
@@ -948,21 +817,20 @@ export class PlatformAccountAdminService {
       permission,
       operation,
       {
-        platformAccountId:
-          readOptionalLogString(
-            command.platformAccountId,
-          ),
+        platformAccountId: readOptionalLogString(command.platformAccountId),
       },
       async (session, controls) => {
-        const current =
-          await this.requirePlatformAccount(
-            platformAccountId,
-            session,
-          );
+        const current = await this.requirePlatformAccount(
+          platformAccountId,
+          session,
+        );
+        await this.requireAssignedPlatformAccountAuthority(
+          actor,
+          Permission.PLATFORM_ACCOUNT_MANAGE_CAPABILITIES,
+          current.id,
+        );
 
-        if (
-          current.operationalStatus === "ARCHIVED"
-        ) {
+        if (current.operationalStatus === "ARCHIVED") {
           throw new PlatformAccountStateError(
             `Archived platform account cannot update capabilities: ${platformAccountId}`,
           );
@@ -974,10 +842,7 @@ export class PlatformAccountAdminService {
           session,
         );
 
-        if (
-          livestreamEnabled === false &&
-          contentPublishingEnabled === false
-        ) {
+        if (livestreamEnabled === false && contentPublishingEnabled === false) {
           await this.assertNoLiveEventAllocationForCapabilityDownshift(
             platformAccountId,
             Date.now(),
@@ -986,30 +851,24 @@ export class PlatformAccountAdminService {
         }
 
         if (
-          current.livestreamEnabled ===
-            livestreamEnabled &&
-          current.contentPublishingEnabled ===
-            contentPublishingEnabled &&
-          current.monetizationEnabled ===
-            monetizationEnabled
+          current.livestreamEnabled === livestreamEnabled &&
+          current.contentPublishingEnabled === contentPublishingEnabled &&
+          current.monetizationEnabled === monetizationEnabled
         ) {
           controls.markExplicitNoOpSuccess();
-          return toPlatformAccountMutationView(
-            current,
-          );
+          return toPlatformAccountMutationView(current);
         }
 
-        const updated =
-          await this.repository.updateCapabilities(
-            {
-              platformAccountId,
-              livestreamEnabled,
-              contentPublishingEnabled,
-              monetizationEnabled,
-              updatedAt: Date.now(),
-            },
-            session,
-          );
+        const updated = await this.repository.updateCapabilities(
+          {
+            platformAccountId,
+            livestreamEnabled,
+            contentPublishingEnabled,
+            monetizationEnabled,
+            updatedAt: Date.now(),
+          },
+          session,
+        );
 
         if (!updated) {
           throw new PlatformAccountConflictError(
@@ -1023,34 +882,23 @@ export class PlatformAccountAdminService {
           platformAccountId,
           mutationType: operation,
           metadata: {
-            previousLivestreamEnabled:
-              current.livestreamEnabled,
-            newLivestreamEnabled:
-              updated.livestreamEnabled,
-            previousContentPublishingEnabled:
-              current.contentPublishingEnabled,
-            newContentPublishingEnabled:
-              updated.contentPublishingEnabled,
-            previousMonetizationEnabled:
-              current.monetizationEnabled,
-            newMonetizationEnabled:
-              updated.monetizationEnabled,
+            previousLivestreamEnabled: current.livestreamEnabled,
+            newLivestreamEnabled: updated.livestreamEnabled,
+            previousContentPublishingEnabled: current.contentPublishingEnabled,
+            newContentPublishingEnabled: updated.contentPublishingEnabled,
+            previousMonetizationEnabled: current.monetizationEnabled,
+            newMonetizationEnabled: updated.monetizationEnabled,
           },
           session,
         });
 
-        return toPlatformAccountMutationView(
-          updated,
-        );
+        return toPlatformAccountMutationView(updated);
       },
       (result) => ({
         platformAccountId: result.id,
-        livestreamEnabled:
-          result.livestreamEnabled,
-        contentPublishingEnabled:
-          result.contentPublishingEnabled,
-        monetizationEnabled:
-          result.monetizationEnabled,
+        livestreamEnabled: result.livestreamEnabled,
+        contentPublishingEnabled: result.contentPublishingEnabled,
+        monetizationEnabled: result.monetizationEnabled,
       }),
     );
   }
@@ -1059,8 +907,7 @@ export class PlatformAccountAdminService {
     actor: Actor,
     permissionCode: Permission,
   ): PermissionContract {
-    const permission =
-      PermissionResolver.resolve(permissionCode);
+    const permission = PermissionResolver.resolve(permissionCode);
 
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(actor, permission);
@@ -1071,46 +918,55 @@ export class PlatformAccountAdminService {
     platformAccountId: string,
     session: ClientSession,
   ): Promise<PlatformAccountRecord> {
-    const platformAccount =
-      await this.repository.findById(
-        platformAccountId,
-        session,
-      );
+    const platformAccount = await this.repository.findById(
+      platformAccountId,
+      session,
+    );
 
     if (!platformAccount) {
-      throw new PlatformAccountNotFoundError(
-        platformAccountId,
-      );
+      throw new PlatformAccountNotFoundError(platformAccountId);
     }
 
     return platformAccount;
   }
 
-  private async allocateGeneratedCode(
-    session: ClientSession,
-  ): Promise<string> {
-    const maxExisting =
-      await this.repository.findMaxGeneratedCodeSequence(
-        PLATFORM_ACCOUNT_CODE_POLICY,
-        session,
-      );
+  private async requireAssignedPlatformAccountAuthority(
+    actor: Actor,
+    permission: Permission,
+    platformAccountId: string,
+  ): Promise<void> {
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission,
+      scope: {
+        scopeType: "assignedPlatformAccount",
+        targetId: platformAccountId,
+      },
+      authority: this.structuredAuthority,
+      error: new PlatformAccountPermissionScopeError(
+        `Platform account operation requires assignedPlatformAccount scope: ${platformAccountId}`,
+      ),
+    });
+  }
+
+  private async allocateGeneratedCode(session: ClientSession): Promise<string> {
+    const maxExisting = await this.repository.findMaxGeneratedCodeSequence(
+      PLATFORM_ACCOUNT_CODE_POLICY,
+      session,
+    );
     await this.codeSequenceRepository.ensureAtLeast(
       PLATFORM_ACCOUNT_CODE_POLICY.moduleKey,
       PLATFORM_ACCOUNT_CODE_POLICY.bucket,
       maxExisting,
       session,
     );
-    const next =
-      await this.codeSequenceRepository.allocateNext(
-        PLATFORM_ACCOUNT_CODE_POLICY.moduleKey,
-        PLATFORM_ACCOUNT_CODE_POLICY.bucket,
-        session,
-      );
-
-    return formatBusinessCode(
-      PLATFORM_ACCOUNT_CODE_POLICY,
-      next,
+    const next = await this.codeSequenceRepository.allocateNext(
+      PLATFORM_ACCOUNT_CODE_POLICY.moduleKey,
+      PLATFORM_ACCOUNT_CODE_POLICY.bucket,
+      session,
     );
+
+    return formatBusinessCode(PLATFORM_ACCOUNT_CODE_POLICY, next);
   }
 
   private async assertNoLiveIdentityConflicts(
@@ -1131,10 +987,8 @@ export class PlatformAccountAdminService {
         await this.repository.findLiveByPlatformAndNormalizedHandle(
           {
             platform: params.platform,
-            normalizedHandle:
-              params.normalizedHandle,
-            excludePlatformAccountId:
-              params.excludePlatformAccountId,
+            normalizedHandle: params.normalizedHandle,
+            excludePlatformAccountId: params.excludePlatformAccountId,
           },
           session,
         );
@@ -1154,10 +1008,8 @@ export class PlatformAccountAdminService {
         await this.repository.findLiveByPlatformAndExternalPlatformId(
           {
             platform: params.platform,
-            externalPlatformId:
-              params.externalPlatformId,
-            excludePlatformAccountId:
-              params.excludePlatformAccountId,
+            externalPlatformId: params.externalPlatformId,
+            excludePlatformAccountId: params.excludePlatformAccountId,
           },
           session,
         );
@@ -1177,10 +1029,8 @@ export class PlatformAccountAdminService {
         await this.repository.findLiveByPlatformAndNormalizedProfileUrl(
           {
             platform: params.platform,
-            normalizedProfileUrl:
-              params.normalizedProfileUrl,
-            excludePlatformAccountId:
-              params.excludePlatformAccountId,
+            normalizedProfileUrl: params.normalizedProfileUrl,
+            excludePlatformAccountId: params.excludePlatformAccountId,
           },
           session,
         );
@@ -1215,14 +1065,10 @@ export class PlatformAccountAdminService {
         ownerKind: record.ownerKind,
         ownerOrgUnitId: record.ownerOrgUnitId,
         ownerTalentId: record.ownerTalentId,
-        ownerTalentGroupId:
-          record.ownerTalentGroupId,
-        ownerReferenceId:
-          readCurrentOwnerReferenceId(record) ?? "",
+        ownerTalentGroupId: record.ownerTalentGroupId,
+        ownerReferenceId: readCurrentOwnerReferenceId(record) ?? "",
       },
-      targetStatus === "ACTIVE"
-        ? "ACTIVE_ONLY"
-        : "NON_ARCHIVED_ONLY",
+      targetStatus === "ACTIVE" ? "ACTIVE_ONLY" : "NON_ARCHIVED_ONLY",
       session,
     );
   }
@@ -1277,11 +1123,10 @@ export class PlatformAccountAdminService {
   ): Promise<void> {
     switch (ownerReference.ownerKind) {
       case "ORG_UNIT": {
-        const orgUnit =
-          await this.requireOrgUnitReference(
-            ownerReference.ownerReferenceId,
-            session,
-          );
+        const orgUnit = await this.requireOrgUnitReference(
+          ownerReference.ownerReferenceId,
+          session,
+        );
         assertOrgUnitEligible(
           orgUnit,
           ownerReference.ownerReferenceId,
@@ -1291,11 +1136,10 @@ export class PlatformAccountAdminService {
       }
 
       case "TALENT": {
-        const talent =
-          await this.requireTalentReference(
-            ownerReference.ownerReferenceId,
-            session,
-          );
+        const talent = await this.requireTalentReference(
+          ownerReference.ownerReferenceId,
+          session,
+        );
         assertTalentEligible(
           talent,
           ownerReference.ownerReferenceId,
@@ -1305,11 +1149,10 @@ export class PlatformAccountAdminService {
       }
 
       case "TALENT_GROUP": {
-        const talentGroup =
-          await this.requireTalentGroupReference(
-            ownerReference.ownerReferenceId,
-            session,
-          );
+        const talentGroup = await this.requireTalentGroupReference(
+          ownerReference.ownerReferenceId,
+          session,
+        );
         assertTalentGroupEligible(
           talentGroup,
           ownerReference.ownerReferenceId,
@@ -1323,11 +1166,10 @@ export class PlatformAccountAdminService {
     orgUnitId: string,
     session: ClientSession,
   ): Promise<PlatformAccountReferencedOrgUnit> {
-    const orgUnit =
-      await this.orgUnitReadonlyAccess.findById(
-        orgUnitId,
-        session,
-      );
+    const orgUnit = await this.orgUnitReadonlyAccess.findById(
+      orgUnitId,
+      session,
+    );
 
     if (!orgUnit) {
       throw new PlatformAccountInvalidOwnerReferenceError(
@@ -1342,11 +1184,7 @@ export class PlatformAccountAdminService {
     talentId: string,
     session: ClientSession,
   ): Promise<PlatformAccountReferencedTalent> {
-    const talent =
-      await this.talentReadonlyAccess.findById(
-        talentId,
-        session,
-      );
+    const talent = await this.talentReadonlyAccess.findById(talentId, session);
 
     if (!talent) {
       throw new PlatformAccountInvalidOwnerReferenceError(
@@ -1361,11 +1199,10 @@ export class PlatformAccountAdminService {
     groupId: string,
     session: ClientSession,
   ): Promise<PlatformAccountReferencedTalentGroup> {
-    const talentGroup =
-      await this.talentGroupReadonlyAccess.findById(
-        groupId,
-        session,
-      );
+    const talentGroup = await this.talentGroupReadonlyAccess.findById(
+      groupId,
+      session,
+    );
 
     if (!talentGroup) {
       throw new PlatformAccountInvalidOwnerReferenceError(
@@ -1410,12 +1247,7 @@ export class PlatformAccountAdminService {
     ) => Promise<T>,
     onSuccess: (result: T) => Readonly<Record<string, unknown>>,
   ): Promise<T> {
-    this.logMutationEvent(
-      actor,
-      operation,
-      "mutation.start",
-      startMetadata,
-    );
+    this.logMutationEvent(actor, operation, "mutation.start", startMetadata);
 
     try {
       const traceId = getTraceIdOrThrow();
@@ -1427,23 +1259,15 @@ export class PlatformAccountAdminService {
           requiredPermission: permission,
           mutationIdentity: operation,
           mutationTargetDescriptor:
-            buildMutationTargetDescriptor(
-              startMetadata,
-            ),
+            buildMutationTargetDescriptor(startMetadata),
         },
-        async (session, controls) =>
-          fn(session, controls),
+        async (session, controls) => fn(session, controls),
       );
 
-      this.logMutationEvent(
-        actor,
-        operation,
-        "mutation.success",
-        {
-          ...startMetadata,
-          ...onSuccess(result),
-        },
-      );
+      this.logMutationEvent(actor, operation, "mutation.success", {
+        ...startMetadata,
+        ...onSuccess(result),
+      });
 
       return result;
     } catch (error) {
@@ -1456,13 +1280,9 @@ export class PlatformAccountAdminService {
         timestamp: Date.now(),
         metadata: {
           ...startMetadata,
-          classification:
-            classifyPlatformAccountMutationFailure(
-              error,
-            ),
+          classification: classifyPlatformAccountMutationFailure(error),
           errorCode: extractErrorCode(error),
-          errorMessage:
-            truncateLogMessage(error),
+          errorMessage: truncateLogMessage(error),
         },
       });
 
@@ -1491,36 +1311,26 @@ export class PlatformAccountAdminService {
 function normalizeCreateCommand(
   command: CreatePlatformAccountCommand,
 ): NormalizedCreateCommand {
-  const displayName = normalizeDisplayText(
-    command.displayName,
-    "displayName",
+  const displayName = normalizeDisplayText(command.displayName, "displayName");
+  const handleIdentity = normalizeHandleIdentity(command.handle, "handle");
+  const profileUrlIdentity = normalizeProfileUrlIdentity(
+    command.profileUrl,
+    "profileUrl",
+    false,
   );
-  const handleIdentity = normalizeHandleIdentity(
-    command.handle,
-    "handle",
-  );
-  const profileUrlIdentity =
-    normalizeProfileUrlIdentity(
-      command.profileUrl,
-      "profileUrl",
-      false,
-    );
-  const ownerReference =
-    normalizeOwnerReferenceInput({
-      ownerKind: command.ownerKind,
-      ownerOrgUnitId: command.ownerOrgUnitId,
-      ownerTalentId: command.ownerTalentId,
-      ownerTalentGroupId:
-        command.ownerTalentGroupId,
-    });
+  const ownerReference = normalizeOwnerReferenceInput({
+    ownerKind: command.ownerKind,
+    ownerOrgUnitId: command.ownerOrgUnitId,
+    ownerTalentId: command.ownerTalentId,
+    ownerTalentGroupId: command.ownerTalentGroupId,
+  });
 
   assertLocatorPresence({
     handle: handleIdentity.value,
-    externalPlatformId:
-      normalizeNullableOpaqueText(
-        command.externalPlatformId,
-        "externalPlatformId",
-      ),
+    externalPlatformId: normalizeNullableOpaqueText(
+      command.externalPlatformId,
+      "externalPlatformId",
+    ),
     profileUrl: profileUrlIdentity.value,
   });
 
@@ -1530,26 +1340,19 @@ function normalizeCreateCommand(
       "accountCode",
     ),
     platform: normalizePlatform(command.platform),
-    platformSurfaceType:
-      normalizePlatformSurfaceType(
-        command.platformSurfaceType,
-      ),
+    platformSurfaceType: normalizePlatformSurfaceType(
+      command.platformSurfaceType,
+    ),
     displayName,
-    normalizedDisplayName:
-      normalizeDisplayNameForSearch(
-        displayName,
-      ),
+    normalizedDisplayName: normalizeDisplayNameForSearch(displayName),
     handle: handleIdentity.value,
-    normalizedHandle:
-      handleIdentity.normalized,
-    externalPlatformId:
-      normalizeNullableOpaqueText(
-        command.externalPlatformId,
-        "externalPlatformId",
-      ),
+    normalizedHandle: handleIdentity.normalized,
+    externalPlatformId: normalizeNullableOpaqueText(
+      command.externalPlatformId,
+      "externalPlatformId",
+    ),
     profileUrl: profileUrlIdentity.value,
-    normalizedProfileUrl:
-      profileUrlIdentity.normalized,
+    normalizedProfileUrl: profileUrlIdentity.normalized,
     ...ownerReference,
     livestreamEnabled: normalizeBoolean(
       command.livestreamEnabled,
@@ -1563,14 +1366,8 @@ function normalizeCreateCommand(
       command.monetizationEnabled,
       "monetizationEnabled",
     ),
-    description: normalizeNullableText(
-      command.description,
-      "description",
-    ),
-    externalRef: normalizeNullableText(
-      command.externalRef,
-      "externalRef",
-    ),
+    description: normalizeNullableText(command.description, "description"),
+    externalRef: normalizeNullableText(command.externalRef, "externalRef"),
   };
 }
 
@@ -1583,15 +1380,11 @@ function normalizeOptionalCreateCode(
   }
 
   if (typeof value !== "string") {
-    throw new PlatformAccountValidationError(
-      `${field} must be a string`,
-    );
+    throw new PlatformAccountValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
-  return normalized.length > 0
-    ? normalized
-    : undefined;
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function buildPlatformAccountCorePatch(params: {
@@ -1625,56 +1418,44 @@ function buildPlatformAccountCorePatch(params: {
 
   if (
     params.displayName !== undefined &&
-    params.displayName !==
-      params.current.displayName
+    params.displayName !== params.current.displayName
   ) {
     patch.displayName = params.displayName;
-    patch.normalizedDisplayName =
-      normalizeDisplayNameForSearch(
-        params.displayName,
-      );
+    patch.normalizedDisplayName = normalizeDisplayNameForSearch(
+      params.displayName,
+    );
   }
 
-  if (
-    params.handle !== undefined &&
-    params.handle !== params.current.handle
-  ) {
+  if (params.handle !== undefined && params.handle !== params.current.handle) {
     patch.handle = params.handle;
-    patch.normalizedHandle =
-      params.normalizedHandle ?? null;
+    patch.normalizedHandle = params.normalizedHandle ?? null;
   }
 
   if (
     params.externalPlatformId !== undefined &&
-    params.externalPlatformId !==
-      params.current.externalPlatformId
+    params.externalPlatformId !== params.current.externalPlatformId
   ) {
-    patch.externalPlatformId =
-      params.externalPlatformId;
+    patch.externalPlatformId = params.externalPlatformId;
   }
 
   if (
     params.profileUrl !== undefined &&
-    params.profileUrl !==
-      params.current.profileUrl
+    params.profileUrl !== params.current.profileUrl
   ) {
     patch.profileUrl = params.profileUrl;
-    patch.normalizedProfileUrl =
-      params.normalizedProfileUrl ?? null;
+    patch.normalizedProfileUrl = params.normalizedProfileUrl ?? null;
   }
 
   if (
     params.description !== undefined &&
-    params.description !==
-      params.current.description
+    params.description !== params.current.description
   ) {
     patch.description = params.description;
   }
 
   if (
     params.externalRef !== undefined &&
-    params.externalRef !==
-      params.current.externalRef
+    params.externalRef !== params.current.externalRef
   ) {
     patch.externalRef = params.externalRef;
   }
@@ -1721,28 +1502,19 @@ function toPlatformAccountMutationView(
     id: platformAccount.id,
     accountCode: platformAccount.accountCode,
     platform: platformAccount.platform,
-    platformSurfaceType:
-      platformAccount.platformSurfaceType,
+    platformSurfaceType: platformAccount.platformSurfaceType,
     displayName: platformAccount.displayName,
     handle: platformAccount.handle,
-    externalPlatformId:
-      platformAccount.externalPlatformId,
+    externalPlatformId: platformAccount.externalPlatformId,
     profileUrl: platformAccount.profileUrl,
     ownerKind: platformAccount.ownerKind,
-    ownerOrgUnitId:
-      platformAccount.ownerOrgUnitId,
-    ownerTalentId:
-      platformAccount.ownerTalentId,
-    ownerTalentGroupId:
-      platformAccount.ownerTalentGroupId,
-    operationalStatus:
-      platformAccount.operationalStatus,
-    livestreamEnabled:
-      platformAccount.livestreamEnabled,
-    contentPublishingEnabled:
-      platformAccount.contentPublishingEnabled,
-    monetizationEnabled:
-      platformAccount.monetizationEnabled,
+    ownerOrgUnitId: platformAccount.ownerOrgUnitId,
+    ownerTalentId: platformAccount.ownerTalentId,
+    ownerTalentGroupId: platformAccount.ownerTalentGroupId,
+    operationalStatus: platformAccount.operationalStatus,
+    livestreamEnabled: platformAccount.livestreamEnabled,
+    contentPublishingEnabled: platformAccount.contentPublishingEnabled,
+    monetizationEnabled: platformAccount.monetizationEnabled,
     description: platformAccount.description,
     externalRef: platformAccount.externalRef,
     createdAt: platformAccount.createdAt,
@@ -1753,10 +1525,7 @@ function toPlatformAccountMutationView(
 function hasExactOwnerShape(
   record: Pick<
     PlatformAccountRecord,
-    | "ownerKind"
-    | "ownerOrgUnitId"
-    | "ownerTalentId"
-    | "ownerTalentGroupId"
+    "ownerKind" | "ownerOrgUnitId" | "ownerTalentId" | "ownerTalentGroupId"
   >,
 ): boolean {
   const providedOwnerReferences = [
@@ -1796,10 +1565,7 @@ function hasExactOwnerShape(
 function readCurrentOwnerReferenceId(
   record: Pick<
     PlatformAccountRecord,
-    | "ownerKind"
-    | "ownerOrgUnitId"
-    | "ownerTalentId"
-    | "ownerTalentGroupId"
+    "ownerKind" | "ownerOrgUnitId" | "ownerTalentId" | "ownerTalentGroupId"
   >,
 ): string | null {
   switch (record.ownerKind) {
@@ -1820,9 +1586,7 @@ function normalizeOwnerReferenceInput(params: {
   readonly ownerTalentId: unknown;
   readonly ownerTalentGroupId: unknown;
 }): OwnerReferenceShape {
-  const ownerKind = normalizeOwnerKind(
-    params.ownerKind,
-  );
+  const ownerKind = normalizeOwnerKind(params.ownerKind);
   const ownerOrgUnitId = normalizeOptionalNullableId(
     params.ownerOrgUnitId,
     "ownerOrgUnitId",
@@ -1831,11 +1595,10 @@ function normalizeOwnerReferenceInput(params: {
     params.ownerTalentId,
     "ownerTalentId",
   );
-  const ownerTalentGroupId =
-    normalizeOptionalNullableId(
-      params.ownerTalentGroupId,
-      "ownerTalentGroupId",
-    );
+  const ownerTalentGroupId = normalizeOptionalNullableId(
+    params.ownerTalentGroupId,
+    "ownerTalentGroupId",
+  );
 
   const providedOwnerReferences = [
     {
@@ -1858,8 +1621,7 @@ function normalizeOwnerReferenceInput(params: {
     );
   }
 
-  const providedOwnerReference =
-    providedOwnerReferences[0];
+  const providedOwnerReference = providedOwnerReferences[0];
 
   if (
     providedOwnerReference.ownerKind !== ownerKind ||
@@ -1884,19 +1646,13 @@ function assertOrgUnitEligible(
   ownerReferenceId: string,
   requirement: OwnerEligibilityRequirement,
 ): void {
-  if (
-    requirement === "ACTIVE_ONLY" &&
-    orgUnit.status !== "ACTIVE"
-  ) {
+  if (requirement === "ACTIVE_ONLY" && orgUnit.status !== "ACTIVE") {
     throw new PlatformAccountInvalidOwnerReferenceError(
       `Org unit owner must be ACTIVE: ${ownerReferenceId}`,
     );
   }
 
-  if (
-    requirement === "NON_ARCHIVED_ONLY" &&
-    orgUnit.status === "ARCHIVED"
-  ) {
+  if (requirement === "NON_ARCHIVED_ONLY" && orgUnit.status === "ARCHIVED") {
     throw new PlatformAccountInvalidOwnerReferenceError(
       `Org unit owner must be non-archived: ${ownerReferenceId}`,
     );
@@ -1908,10 +1664,7 @@ function assertTalentEligible(
   ownerReferenceId: string,
   requirement: OwnerEligibilityRequirement,
 ): void {
-  if (
-    requirement === "ACTIVE_ONLY" &&
-    talent.operationalStatus !== "ACTIVE"
-  ) {
+  if (requirement === "ACTIVE_ONLY" && talent.operationalStatus !== "ACTIVE") {
     throw new PlatformAccountInvalidOwnerReferenceError(
       `Talent owner must be ACTIVE: ${ownerReferenceId}`,
     );
@@ -1932,10 +1685,7 @@ function assertTalentGroupEligible(
   ownerReferenceId: string,
   requirement: OwnerEligibilityRequirement,
 ): void {
-  if (
-    requirement === "ACTIVE_ONLY" &&
-    talentGroup.status !== "ACTIVE"
-  ) {
+  if (requirement === "ACTIVE_ONLY" && talentGroup.status !== "ACTIVE") {
     throw new PlatformAccountInvalidOwnerReferenceError(
       `Talent group owner must be ACTIVE: ${ownerReferenceId}`,
     );
@@ -1963,14 +1713,9 @@ function assertLocatorPresence(params: {
     params.externalPlatformId !== null &&
     params.externalPlatformId.trim().length > 0;
   const hasValidProfileUrl =
-    params.profileUrl !== null &&
-    isAbsoluteProfileUrl(params.profileUrl);
+    params.profileUrl !== null && isAbsoluteProfileUrl(params.profileUrl);
 
-  if (
-    hasValidHandle ||
-    hasValidExternalPlatformId ||
-    hasValidProfileUrl
-  ) {
+  if (hasValidHandle || hasValidExternalPlatformId || hasValidProfileUrl) {
     return;
   }
 
@@ -1979,54 +1724,47 @@ function assertLocatorPresence(params: {
   );
 }
 
-function normalizeRequiredText(
-  value: unknown,
-  field: string,
-): string {
+function normalizeRequiredText(value: unknown, field: string): string {
   if (typeof value !== "string") {
-    throw new PlatformAccountValidationError(
-      `${field} must be a string`,
-    );
+    throw new PlatformAccountValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
 
   if (!normalized) {
-    throw new PlatformAccountValidationError(
-      `${field} is required`,
-    );
+    throw new PlatformAccountValidationError(`${field} is required`);
   }
 
   return normalized;
 }
 
-function normalizeDisplayText(
-  value: unknown,
-  field: string,
-): string {
+function normalizeDisplayText(value: unknown, field: string): string {
   return normalizeRequiredText(value, field)
     .normalize("NFKC")
     .replace(/\s+/gu, " ");
 }
 
-function normalizeNullableText(
-  value: unknown,
-  field: string,
-): string | null {
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(): Promise<never> {
+      throw new SystemInvariantError(
+        "SYSTEM_INVARIANT_VIOLATION",
+        "StructuredScopeAuthorityService is required for Platform Account operations",
+      );
+    },
+  });
+}
+
+function normalizeNullableText(value: unknown, field: string): string | null {
   if (value === undefined || value === null) {
     return null;
   }
 
   if (typeof value !== "string") {
-    throw new PlatformAccountValidationError(
-      `${field} must be a string`,
-    );
+    throw new PlatformAccountValidationError(`${field} must be a string`);
   }
 
-  const normalized = value
-    .normalize("NFKC")
-    .trim()
-    .replace(/\s+/gu, " ");
+  const normalized = value.normalize("NFKC").trim().replace(/\s+/gu, " ");
 
   if (normalized.length === 0) {
     throw new PlatformAccountValidationError(
@@ -2042,9 +1780,7 @@ function normalizeNullablePatchText(
   field: string,
 ): string | null {
   if (value === undefined) {
-    throw new PlatformAccountValidationError(
-      `${field} must be provided`,
-    );
+    throw new PlatformAccountValidationError(`${field} must be provided`);
   }
 
   return normalizeNullableText(value, field);
@@ -2059,14 +1795,10 @@ function normalizeNullableOpaqueText(
   }
 
   if (typeof value !== "string") {
-    throw new PlatformAccountValidationError(
-      `${field} must be a string`,
-    );
+    throw new PlatformAccountValidationError(`${field} must be a string`);
   }
 
-  const normalized = value
-    .normalize("NFKC")
-    .trim();
+  const normalized = value.normalize("NFKC").trim();
 
   if (normalized.length === 0) {
     throw new PlatformAccountInvalidPlatformIdentityError(
@@ -2082,9 +1814,7 @@ function normalizeNullableOpaquePatchText(
   field: string,
 ): string | null {
   if (value === undefined) {
-    throw new PlatformAccountValidationError(
-      `${field} must be provided`,
-    );
+    throw new PlatformAccountValidationError(`${field} must be provided`);
   }
 
   return normalizeNullableOpaqueText(value, field);
@@ -2099,9 +1829,7 @@ function normalizeOptionalNullableId(
   }
 
   if (typeof value !== "string") {
-    throw new PlatformAccountValidationError(
-      `${field} must be a string`,
-    );
+    throw new PlatformAccountValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
@@ -2115,27 +1843,18 @@ function normalizeOptionalNullableId(
   return normalized;
 }
 
-function normalizeBoolean(
-  value: unknown,
-  field: string,
-): boolean {
+function normalizeBoolean(value: unknown, field: string): boolean {
   if (typeof value === "boolean") {
     return value;
   }
 
-  throw new PlatformAccountValidationError(
-    `${field} must be a boolean`,
-  );
+  throw new PlatformAccountValidationError(`${field} must be a boolean`);
 }
 
-function normalizePlatform(
-  value: unknown,
-): PlatformAccountPlatform {
+function normalizePlatform(value: unknown): PlatformAccountPlatform {
   if (
     typeof value === "string" &&
-    PLATFORM_ACCOUNT_PLATFORMS.includes(
-      value as PlatformAccountPlatform,
-    )
+    PLATFORM_ACCOUNT_PLATFORMS.includes(value as PlatformAccountPlatform)
   ) {
     return value as PlatformAccountPlatform;
   }
@@ -2150,9 +1869,7 @@ function normalizePlatformSurfaceType(
 ): PlatformAccountSurfaceType {
   if (
     typeof value === "string" &&
-    PLATFORM_ACCOUNT_SURFACE_TYPES.includes(
-      value as PlatformAccountSurfaceType,
-    )
+    PLATFORM_ACCOUNT_SURFACE_TYPES.includes(value as PlatformAccountSurfaceType)
   ) {
     return value as PlatformAccountSurfaceType;
   }
@@ -2162,14 +1879,10 @@ function normalizePlatformSurfaceType(
   );
 }
 
-function normalizeOwnerKind(
-  value: unknown,
-): PlatformAccountOwnerKind {
+function normalizeOwnerKind(value: unknown): PlatformAccountOwnerKind {
   if (
     typeof value === "string" &&
-    PLATFORM_ACCOUNT_OWNER_KINDS.includes(
-      value as PlatformAccountOwnerKind,
-    )
+    PLATFORM_ACCOUNT_OWNER_KINDS.includes(value as PlatformAccountOwnerKind)
   ) {
     return value as PlatformAccountOwnerKind;
   }
@@ -2183,14 +1896,9 @@ function normalizeHandleIdentity(
   value: unknown,
   field: string,
 ): NormalizedNullableValue {
-  const normalizedValue =
-    normalizeNullableOpaqueText(value, field);
+  const normalizedValue = normalizeNullableOpaqueText(value, field);
   const normalizedHandle =
-    normalizedValue === null
-      ? null
-      : normalizeHandleForSearch(
-          normalizedValue,
-        );
+    normalizedValue === null ? null : normalizeHandleForSearch(normalizedValue);
 
   if (
     normalizedValue !== null &&
@@ -2214,9 +1922,7 @@ function normalizeProfileUrlIdentity(
   requireProvided: boolean,
 ): NormalizedNullableValue {
   if (value === undefined && requireProvided) {
-    throw new PlatformAccountValidationError(
-      `${field} must be provided`,
-    );
+    throw new PlatformAccountValidationError(`${field} must be provided`);
   }
 
   if (value === undefined || value === null) {
@@ -2227,9 +1933,7 @@ function normalizeProfileUrlIdentity(
   }
 
   if (typeof value !== "string") {
-    throw new PlatformAccountValidationError(
-      `${field} must be a string`,
-    );
+    throw new PlatformAccountValidationError(`${field} must be a string`);
   }
 
   const trimmed = value.trim();
@@ -2240,11 +1944,7 @@ function normalizeProfileUrlIdentity(
     );
   }
 
-  const canonical =
-    canonicalizeAbsoluteProfileUrl(
-      trimmed,
-      field,
-    );
+  const canonical = canonicalizeAbsoluteProfileUrl(trimmed, field);
 
   return {
     value: canonical,
@@ -2252,15 +1952,10 @@ function normalizeProfileUrlIdentity(
   };
 }
 
-function canonicalizeAbsoluteProfileUrl(
-  value: string,
-  field: string,
-): string {
+function canonicalizeAbsoluteProfileUrl(value: string, field: string): string {
   const trimmed = value.trim();
-  const sourceWithoutFragment =
-    stripFragment(trimmed);
-  const preservedQuery =
-    extractRawQuerySegment(sourceWithoutFragment);
+  const sourceWithoutFragment = stripFragment(trimmed);
+  const preservedQuery = extractRawQuerySegment(sourceWithoutFragment);
   let parsed: URL;
 
   try {
@@ -2280,91 +1975,53 @@ function canonicalizeAbsoluteProfileUrl(
 
   parsed.hash = "";
   parsed.search = "";
-  parsed.pathname = normalizeUrlPathname(
-    parsed.pathname,
-  );
+  parsed.pathname = normalizeUrlPathname(parsed.pathname);
 
   return `${parsed.toString()}${preservedQuery}`;
 }
 
 function stripFragment(value: string): string {
   const fragmentIndex = value.indexOf("#");
-  return fragmentIndex >= 0
-    ? value.slice(0, fragmentIndex)
-    : value;
+  return fragmentIndex >= 0 ? value.slice(0, fragmentIndex) : value;
 }
 
-function extractRawQuerySegment(
-  value: string,
-): string {
+function extractRawQuerySegment(value: string): string {
   const queryIndex = value.indexOf("?");
-  return queryIndex >= 0
-    ? value.slice(queryIndex)
-    : "";
+  return queryIndex >= 0 ? value.slice(queryIndex) : "";
 }
 
-function normalizeUrlPathname(
-  pathname: string,
-): string {
-  const withoutTrailingSlash = pathname.replace(
-    /\/+$/u,
-    "",
-  );
+function normalizeUrlPathname(pathname: string): string {
+  const withoutTrailingSlash = pathname.replace(/\/+$/u, "");
 
-  return withoutTrailingSlash.length > 0
-    ? withoutTrailingSlash
-    : "/";
+  return withoutTrailingSlash.length > 0 ? withoutTrailingSlash : "/";
 }
 
 function isDefaultPort(url: URL): boolean {
   return (
     (url.protocol === "http:" && url.port === "80") ||
-    (url.protocol === "https:" &&
-      url.port === "443")
+    (url.protocol === "https:" && url.port === "443")
   );
 }
 
-function normalizeDisplayNameForSearch(
-  value: string,
-): string {
-  return value
-    .normalize("NFKC")
-    .trim()
-    .replace(/\s+/gu, " ")
-    .toLowerCase();
+function normalizeDisplayNameForSearch(value: string): string {
+  return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 }
 
-function normalizeHandleForSearch(
-  value: string,
-): string {
-  return value
-    .normalize("NFKC")
-    .trim()
-    .toLowerCase()
-    .replace(/^@/u, "");
+function normalizeHandleForSearch(value: string): string {
+  return value.normalize("NFKC").trim().toLowerCase().replace(/^@/u, "");
 }
 
-function isAbsoluteProfileUrl(
-  value: string,
-): boolean {
+function isAbsoluteProfileUrl(value: string): boolean {
   try {
-    canonicalizeAbsoluteProfileUrl(
-      value,
-      "profileUrl",
-    );
+    canonicalizeAbsoluteProfileUrl(value, "profileUrl");
     return true;
   } catch {
     return false;
   }
 }
 
-function isDuplicateKeyError(
-  error: unknown,
-): error is MongoServerError {
-  return (
-    error instanceof MongoServerError &&
-    error.code === 11000
-  );
+function isDuplicateKeyError(error: unknown): error is MongoServerError {
+  return error instanceof MongoServerError && error.code === 11000;
 }
 
 function buildMutationTargetDescriptor(
@@ -2372,10 +2029,7 @@ function buildMutationTargetDescriptor(
 ): string {
   const encoded = JSON.stringify(metadata);
 
-  if (
-    typeof encoded === "string" &&
-    encoded.length > 2
-  ) {
+  if (typeof encoded === "string" && encoded.length > 2) {
     return encoded;
   }
 
@@ -2401,18 +2055,16 @@ function classifyPlatformAccountMutationFailure(
     return "state_error";
   }
 
-  if (
-    error instanceof
-    PlatformAccountInvalidOwnerReferenceError
-  ) {
+  if (error instanceof PlatformAccountInvalidOwnerReferenceError) {
     return "invalid_owner_reference";
   }
 
-  if (
-    error instanceof
-    PlatformAccountInvalidPlatformIdentityError
-  ) {
+  if (error instanceof PlatformAccountInvalidPlatformIdentityError) {
     return "invalid_platform_identity";
+  }
+
+  if (error instanceof PlatformAccountPermissionScopeError) {
+    return "permission_scope";
   }
 
   if (error instanceof SystemInvariantError) {
@@ -2422,9 +2074,7 @@ function classifyPlatformAccountMutationFailure(
   return "unknown";
 }
 
-function extractErrorCode(
-  error: unknown,
-): string | undefined {
+function extractErrorCode(error: unknown): string | undefined {
   if (error instanceof BaseAppError) {
     return error.code;
   }
@@ -2436,13 +2086,8 @@ function extractErrorCode(
   return undefined;
 }
 
-function truncateLogMessage(
-  error: unknown,
-): string {
-  const raw =
-    error instanceof Error
-      ? error.message
-      : String(error);
+function truncateLogMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
 
   if (raw.length <= 256) {
     return raw;
@@ -2451,15 +2096,11 @@ function truncateLogMessage(
   return `${raw.slice(0, 253)}...`;
 }
 
-function readOptionalLogString(
-  value: unknown,
-): string | undefined {
+function readOptionalLogString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
   }
 
   const normalized = value.trim();
-  return normalized.length > 0
-    ? normalized
-    : undefined;
+  return normalized.length > 0 ? normalized : undefined;
 }

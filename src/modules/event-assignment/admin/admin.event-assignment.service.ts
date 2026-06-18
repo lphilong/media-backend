@@ -86,6 +86,8 @@ import {
   UpdateEventCoreCommand,
   UpdateEventPlatformAccountsCommand,
 } from "@modules/event-assignment/shared/event-assignment.contracts";
+import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 type EventAssignmentMutationFailureClassification =
   | "validation"
@@ -174,6 +176,7 @@ export class EventAssignmentAdminService {
     private readonly platformAccountReadonlyAccess: EventAssignmentPlatformAccountReadonlyAccess,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
     private readonly logger: StructuredLogger = createStructuredLogger(),
   ) {}
 
@@ -356,8 +359,13 @@ export class EventAssignmentAdminService {
         eventId: input.eventId,
       },
       async (session) => {
-        const scope = resolveRequiredGlobalScope(actor);
         const current = await this.requireEvent(input.eventId, session);
+        await this.requireAssignedEventAuthority(
+          actor,
+          Permission.EVENT_UPDATE,
+          current,
+        );
+        const scope = eventScopeAuditValue(current.id);
 
         assertPlanningForStructuralMutation(current, operation);
 
@@ -435,8 +443,13 @@ export class EventAssignmentAdminService {
         eventId: input.eventId,
       },
       async (session, controls) => {
-        const scope = resolveRequiredGlobalScope(actor);
         const current = await this.requireEvent(input.eventId, session);
+        await this.requireAssignedEventAuthority(
+          actor,
+          Permission.EVENT_UPDATE,
+          current,
+        );
+        const scope = eventScopeAuditValue(current.id);
 
         assertReschedulableEvent(current, operation);
 
@@ -535,8 +548,13 @@ export class EventAssignmentAdminService {
         assignmentCount: input.replacementAssignments.length,
       },
       async (session, controls) => {
-        const scope = resolveRequiredGlobalScope(actor);
         const current = await this.requireEvent(input.eventId, session);
+        await this.requireAssignedEventAuthority(
+          actor,
+          Permission.EVENT_MANAGE_ASSIGNMENTS,
+          current,
+        );
+        const scope = eventScopeAuditValue(current.id);
 
         assertPlanningForStructuralMutation(current, operation);
 
@@ -696,8 +714,18 @@ export class EventAssignmentAdminService {
         studioResourceId: input.studioResourceId,
       },
       async (session) => {
-        const scope = resolveRequiredGlobalScope(actor);
         const event = await this.requireEvent(input.eventId, session);
+        await this.requireAssignedEventAuthority(
+          actor,
+          Permission.EVENT_UPDATE,
+          event,
+        );
+        await this.requireAssignedStudioResourceAuthority(
+          actor,
+          Permission.EVENT_UPDATE,
+          input.studioResourceId,
+        );
+        const scope = eventScopeAuditValue(event.id);
         assertBookingCreationStatus(event, input.status);
         await this.assertStudioResourcesEligible(
           [input.studioResourceId],
@@ -840,8 +868,18 @@ export class EventAssignmentAdminService {
         platformCount: input.newPlatformAccountIds.length,
       },
       async (session, controls) => {
-        const scope = resolveRequiredGlobalScope(actor);
         const current = await this.requireEvent(input.eventId, session);
+        await this.requireAssignedEventAuthority(
+          actor,
+          Permission.EVENT_UPDATE,
+          current,
+        );
+        await this.requireAssignedPlatformAccountAuthorityForEach(
+          actor,
+          Permission.EVENT_UPDATE,
+          input.newPlatformAccountIds,
+        );
+        const scope = eventScopeAuditValue(current.id);
 
         assertPlanningForStructuralMutation(current, operation);
 
@@ -925,8 +963,13 @@ export class EventAssignmentAdminService {
         eventId: input.eventId,
       },
       async (session) => {
-        const scope = resolveRequiredGlobalScope(actor);
         const current = await this.requireEvent(input.eventId, session);
+        await this.requireAssignedEventAuthority(
+          actor,
+          Permission.EVENT_MANAGE_LIFECYCLE,
+          current,
+        );
+        const scope = eventScopeAuditValue(current.id);
 
         if (current.status !== "DRAFT") {
           throw new EventAssignmentStateError(
@@ -992,8 +1035,13 @@ export class EventAssignmentAdminService {
       operation,
       { eventId: input.eventId },
       async (session) => {
-        const scope = resolveRequiredGlobalScope(actor);
         const current = await this.requireEvent(input.eventId, session);
+        await this.requireAssignedEventAuthority(
+          actor,
+          Permission.EVENT_MANAGE_LIFECYCLE,
+          current,
+        );
+        const scope = eventScopeAuditValue(current.id);
         if (current.status !== "PLANNED") {
           throw new EventAssignmentStateError(
             `confirmEvent requires status PLANNED, received ${current.status}`,
@@ -1085,8 +1133,13 @@ export class EventAssignmentAdminService {
         eventId: input.eventId,
       },
       async (session) => {
-        const scope = resolveRequiredGlobalScope(actor);
         const current = await this.requireEvent(input.eventId, session);
+        await this.requireAssignedEventAuthority(
+          actor,
+          Permission.EVENT_MANAGE_LIFECYCLE,
+          current,
+        );
+        const scope = eventScopeAuditValue(current.id);
 
         if (current.status !== "CONFIRMED") {
           throw new EventAssignmentStateError(
@@ -1162,8 +1215,13 @@ export class EventAssignmentAdminService {
         eventId: input.eventId,
       },
       async (session) => {
-        const scope = resolveRequiredGlobalScope(actor);
         const current = await this.requireEvent(input.eventId, session);
+        await this.requireAssignedEventAuthority(
+          actor,
+          Permission.EVENT_MANAGE_LIFECYCLE,
+          current,
+        );
+        const scope = eventScopeAuditValue(current.id);
 
         if (!["DRAFT", "PLANNED", "CONFIRMED"].includes(current.status)) {
           throw new EventAssignmentStateError(
@@ -1241,8 +1299,13 @@ export class EventAssignmentAdminService {
         eventId: input.eventId,
       },
       async (session) => {
-        const scope = resolveRequiredGlobalScope(actor);
         const current = await this.requireEvent(input.eventId, session);
+        await this.requireAssignedEventAuthority(
+          actor,
+          Permission.EVENT_MANAGE_LIFECYCLE,
+          current,
+        );
+        const scope = eventScopeAuditValue(current.id);
 
         if (current.status === "ARCHIVED") {
           throw new EventAssignmentStateError(
@@ -1335,6 +1398,62 @@ export class EventAssignmentAdminService {
     return booking;
   }
 
+  private async requireAssignedEventAuthority(
+    actor: Actor,
+    permission: Permission,
+    event: EventRecord,
+  ): Promise<void> {
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission,
+      scope: { scopeType: "assignedEvent", targetId: event.id },
+      authority: this.structuredAuthority,
+      error: new EventAssignmentPermissionScopeError(
+        `Event operation requires assignedEvent scope: ${event.id}`,
+      ),
+    });
+  }
+
+  private async requireAssignedStudioResourceAuthority(
+    actor: Actor,
+    permission: Permission,
+    studioResourceId: string,
+  ): Promise<void> {
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission,
+      scope: {
+        scopeType: "assignedStudioResource",
+        targetId: studioResourceId,
+      },
+      authority: this.structuredAuthority,
+      error: new EventAssignmentPermissionScopeError(
+        `Event studio booking requires assignedStudioResource scope: ${studioResourceId}`,
+      ),
+    });
+  }
+
+  private async requireAssignedPlatformAccountAuthorityForEach(
+    actor: Actor,
+    permission: Permission,
+    platformAccountIds: readonly string[],
+  ): Promise<void> {
+    for (const platformAccountId of platformAccountIds) {
+      await requireAdminObjectScopeAuthority({
+        actor,
+        permission,
+        scope: {
+          scopeType: "assignedPlatformAccount",
+          targetId: platformAccountId,
+        },
+        authority: this.structuredAuthority,
+        error: new EventAssignmentPermissionScopeError(
+          `Event platform account operation requires assignedPlatformAccount scope: ${platformAccountId}`,
+        ),
+      });
+    }
+  }
+
   private async assertOwnerEligible(
     employmentProfileId: string,
     session: ClientSession,
@@ -1395,13 +1514,23 @@ export class EventAssignmentAdminService {
       operation,
       { eventId, bookingId },
       async (session) => {
-        const scope = resolveRequiredGlobalScope(actor);
         const event = await this.requireEvent(eventId, session);
         const current = await this.requireStudioBooking(
           event.id,
           bookingId,
           session,
         );
+        await this.requireAssignedEventAuthority(
+          actor,
+          Permission.EVENT_UPDATE,
+          event,
+        );
+        await this.requireAssignedStudioResourceAuthority(
+          actor,
+          Permission.EVENT_UPDATE,
+          current.studioResourceId,
+        );
+        const scope = eventScopeAuditValue(event.id);
         if (toStatus === "CONFIRMED") {
           if (event.status !== "CONFIRMED") {
             throw new EventAssignmentStateError(
@@ -2447,6 +2576,21 @@ function resolveRequiredGlobalScope(actor: Actor): "global" {
   throw new EventAssignmentPermissionScopeError(
     "Event assignment mutations require global scope",
   );
+}
+
+function eventScopeAuditValue(eventId: string): string {
+  return `assignedEvent:${eventId}`;
+}
+
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(): Promise<never> {
+      throw new SystemInvariantError(
+        "SYSTEM_INVARIANT_VIOLATION",
+        "StructuredScopeAuthorityService is required for Event operations",
+      );
+    },
+  });
 }
 
 function assertValidEventWindow(

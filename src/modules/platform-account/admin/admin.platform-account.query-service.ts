@@ -4,6 +4,7 @@ import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import {
   PlatformAccountNotFoundError,
+  PlatformAccountPermissionScopeError,
   PlatformAccountValidationError,
 } from "@modules/platform-account/domain/platform-account.errors";
 import {
@@ -27,6 +28,9 @@ import {
   ListPlatformAccountsQuery,
   ListPlatformAccountsResult,
 } from "@modules/platform-account/shared/platform-account.contracts";
+import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
+import { SystemInvariantError } from "@core/error/system-error";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -41,6 +45,7 @@ interface ParsedOwnerFilters {
 export class PlatformAccountAdminQueryService {
   constructor(
     private readonly readRepository: PlatformAccountReadRepository,
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
   ) {}
 
   async listPlatformAccounts(
@@ -56,32 +61,23 @@ export class PlatformAccountAdminQueryService {
     const ownerFilters = parseOwnerFilters(query);
 
     return this.readRepository.listPlatformAccounts({
-      platform: parseOptionalPlatform(
-        query.platform,
+      platform: parseOptionalPlatform(query.platform),
+      platformSurfaceType: parseOptionalSurfaceType(query.platformSurfaceType),
+      operationalStatus: parseOptionalOperationalStatus(
+        query.operationalStatus,
       ),
-      platformSurfaceType:
-        parseOptionalSurfaceType(
-          query.platformSurfaceType,
-        ),
-      operationalStatus:
-        parseOptionalOperationalStatus(
-          query.operationalStatus,
-        ),
       ownerKind: ownerFilters.ownerKind,
-      ownerOrgUnitId:
-        ownerFilters.ownerOrgUnitId,
+      ownerOrgUnitId: ownerFilters.ownerOrgUnitId,
       ownerTalentId: ownerFilters.ownerTalentId,
-      ownerTalentGroupId:
-        ownerFilters.ownerTalentGroupId,
+      ownerTalentGroupId: ownerFilters.ownerTalentGroupId,
       livestreamEnabled: parseOptionalBoolean(
         query.livestreamEnabled,
         "livestreamEnabled",
       ),
-      contentPublishingEnabled:
-        parseOptionalBoolean(
-          query.contentPublishingEnabled,
-          "contentPublishingEnabled",
-        ),
+      contentPublishingEnabled: parseOptionalBoolean(
+        query.contentPublishingEnabled,
+        "contentPublishingEnabled",
+      ),
       monetizationEnabled: parseOptionalBoolean(
         query.monetizationEnabled,
         "monetizationEnabled",
@@ -89,12 +85,8 @@ export class PlatformAccountAdminQueryService {
       limit: parseLimit(query.limit),
       cursor: parseOptionalCursor(query.cursor),
       search: parseOptionalSearch(query.search),
-      sortField: parseOptionalSortField(
-        query.sortBy,
-      ),
-      sortDirection: parseOptionalSortDirection(
-        query.sortDirection,
-      ),
+      sortField: parseOptionalSortField(query.sortBy),
+      sortDirection: parseOptionalSortDirection(query.sortDirection),
     });
   }
 
@@ -113,34 +105,58 @@ export class PlatformAccountAdminQueryService {
       "platformAccountId",
     );
     const detail =
-      await this.readRepository.getPlatformAccountDetail(
-        platformAccountId,
-      );
+      await this.readRepository.getPlatformAccountDetail(platformAccountId);
 
     if (!detail) {
-      throw new PlatformAccountNotFoundError(
-        platformAccountId,
-      );
+      throw new PlatformAccountNotFoundError(platformAccountId);
     }
+    await this.requireAssignedPlatformAccountAuthority(
+      actor,
+      platformAccountId,
+    );
 
     return detail;
   }
+
+  private async requireAssignedPlatformAccountAuthority(
+    actor: Actor,
+    platformAccountId: string,
+  ): Promise<void> {
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission: Permission.PLATFORM_ACCOUNT_READ,
+      scope: {
+        scopeType: "assignedPlatformAccount",
+        targetId: platformAccountId,
+      },
+      authority: this.structuredAuthority,
+      error: new PlatformAccountPermissionScopeError(
+        `Platform account read requires assignedPlatformAccount scope: ${platformAccountId}`,
+      ),
+    });
+  }
+}
+
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(): Promise<never> {
+      throw new SystemInvariantError(
+        "SYSTEM_INVARIANT_VIOLATION",
+        "StructuredScopeAuthorityService is required for Platform Account reads",
+      );
+    },
+  });
 }
 
 function parseOwnerFilters(
   query: ListPlatformAccountsQuery,
 ): ParsedOwnerFilters {
-  const ownerKind = parseOptionalOwnerKind(
-    query.ownerKind,
-  );
+  const ownerKind = parseOptionalOwnerKind(query.ownerKind);
   const ownerOrgUnitId = parseOptionalId(
     query.ownerOrgUnitId,
     "ownerOrgUnitId",
   );
-  const ownerTalentId = parseOptionalId(
-    query.ownerTalentId,
-    "ownerTalentId",
-  );
+  const ownerTalentId = parseOptionalId(query.ownerTalentId, "ownerTalentId");
   const ownerTalentGroupId = parseOptionalId(
     query.ownerTalentGroupId,
     "ownerTalentGroupId",
@@ -158,55 +174,37 @@ function parseOwnerFilters(
     );
   }
 
-  if (
-    ownerKind === "ORG_UNIT" &&
-    ownerTalentId !== undefined
-  ) {
+  if (ownerKind === "ORG_UNIT" && ownerTalentId !== undefined) {
     throw new PlatformAccountValidationError(
       "ownerKind=ORG_UNIT must not be combined with ownerTalentId",
     );
   }
 
-  if (
-    ownerKind === "ORG_UNIT" &&
-    ownerTalentGroupId !== undefined
-  ) {
+  if (ownerKind === "ORG_UNIT" && ownerTalentGroupId !== undefined) {
     throw new PlatformAccountValidationError(
       "ownerKind=ORG_UNIT must not be combined with ownerTalentGroupId",
     );
   }
 
-  if (
-    ownerKind === "TALENT" &&
-    ownerOrgUnitId !== undefined
-  ) {
+  if (ownerKind === "TALENT" && ownerOrgUnitId !== undefined) {
     throw new PlatformAccountValidationError(
       "ownerKind=TALENT must not be combined with ownerOrgUnitId",
     );
   }
 
-  if (
-    ownerKind === "TALENT" &&
-    ownerTalentGroupId !== undefined
-  ) {
+  if (ownerKind === "TALENT" && ownerTalentGroupId !== undefined) {
     throw new PlatformAccountValidationError(
       "ownerKind=TALENT must not be combined with ownerTalentGroupId",
     );
   }
 
-  if (
-    ownerKind === "TALENT_GROUP" &&
-    ownerOrgUnitId !== undefined
-  ) {
+  if (ownerKind === "TALENT_GROUP" && ownerOrgUnitId !== undefined) {
     throw new PlatformAccountValidationError(
       "ownerKind=TALENT_GROUP must not be combined with ownerOrgUnitId",
     );
   }
 
-  if (
-    ownerKind === "TALENT_GROUP" &&
-    ownerTalentId !== undefined
-  ) {
+  if (ownerKind === "TALENT_GROUP" && ownerTalentId !== undefined) {
     throw new PlatformAccountValidationError(
       "ownerKind=TALENT_GROUP must not be combined with ownerTalentId",
     );
@@ -238,39 +236,27 @@ function parseOwnerFilters(
   };
 }
 
-function normalizeRequiredText(
-  value: unknown,
-  field: string,
-): string {
+function normalizeRequiredText(value: unknown, field: string): string {
   if (typeof value !== "string") {
-    throw new PlatformAccountValidationError(
-      `${field} must be a string`,
-    );
+    throw new PlatformAccountValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
 
   if (!normalized) {
-    throw new PlatformAccountValidationError(
-      `${field} is required`,
-    );
+    throw new PlatformAccountValidationError(`${field} is required`);
   }
 
   return normalized;
 }
 
-function parseOptionalId(
-  value: unknown,
-  field: string,
-): string | undefined {
+function parseOptionalId(value: unknown, field: string): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   if (typeof value !== "string") {
-    throw new PlatformAccountValidationError(
-      `${field} must be a string`,
-    );
+    throw new PlatformAccountValidationError(`${field} must be a string`);
   }
 
   const normalized = value.trim();
@@ -300,9 +286,7 @@ function parseOptionalPlatform(
   const normalized = value.trim().toUpperCase();
 
   if (
-    PLATFORM_ACCOUNT_PLATFORMS.includes(
-      normalized as PlatformAccountPlatform,
-    )
+    PLATFORM_ACCOUNT_PLATFORMS.includes(normalized as PlatformAccountPlatform)
   ) {
     return normalized as PlatformAccountPlatform;
   }
@@ -409,9 +393,7 @@ function parseOptionalBoolean(
   }
 
   if (typeof value !== "string") {
-    throw new PlatformAccountValidationError(
-      `${field} must be a boolean`,
-    );
+    throw new PlatformAccountValidationError(`${field} must be a boolean`);
   }
 
   const normalized = value.trim().toLowerCase();
@@ -424,9 +406,7 @@ function parseOptionalBoolean(
     return false;
   }
 
-  throw new PlatformAccountValidationError(
-    `${field} must be a boolean`,
-  );
+  throw new PlatformAccountValidationError(`${field} must be a boolean`);
 }
 
 function parseLimit(value: unknown): number {
@@ -468,48 +448,36 @@ function parseOptionalInteger(
 
     numeric = Number(value);
   } else {
-    throw new PlatformAccountValidationError(
-      `${field} must be an integer`,
-    );
+    throw new PlatformAccountValidationError(`${field} must be an integer`);
   }
 
   if (!Number.isInteger(numeric)) {
-    throw new PlatformAccountValidationError(
-      `${field} must be an integer`,
-    );
+    throw new PlatformAccountValidationError(`${field} must be an integer`);
   }
 
   return numeric;
 }
 
-function parseOptionalCursor(
-  value: unknown,
-): string | undefined {
+function parseOptionalCursor(value: unknown): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   if (typeof value !== "string") {
-    throw new PlatformAccountValidationError(
-      "cursor must be a string",
-    );
+    throw new PlatformAccountValidationError("cursor must be a string");
   }
 
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function parseOptionalSearch(
-  value: unknown,
-): string | undefined {
+function parseOptionalSearch(value: unknown): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   if (typeof value !== "string") {
-    throw new PlatformAccountValidationError(
-      "search must be a string",
-    );
+    throw new PlatformAccountValidationError("search must be a string");
   }
 
   const normalized = value.trim();

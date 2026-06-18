@@ -65,3 +65,14 @@ export class PlatformAccountInvalidPlatformIdentityError extends DomainError {
     );
   }
 }
+
+export class PlatformAccountPermissionScopeError extends DomainError {
+  constructor(message: string) {
+    super(
+      "PLATFORM_ACCOUNT_PERMISSION_SCOPE_ERROR",
+      message,
+      "Permission or scope denied",
+      403,
+    );
+  }
+}

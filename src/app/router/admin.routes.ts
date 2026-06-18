@@ -355,10 +355,8 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     employmentProfileWorkScheduleReadonlyAccess,
     employmentProfileEventAssignmentReadonlyAccess,
   } = createEmploymentProfileInfra(infra.primaryDb);
-  const {
-    employmentTermsRepository,
-    employmentTermsCodeSequenceRepository,
-  } = createEmploymentTermsInfra(infra.primaryDb);
+  const { employmentTermsRepository, employmentTermsCodeSequenceRepository } =
+    createEmploymentTermsInfra(infra.primaryDb);
   const {
     talentRepository,
     businessCodeSequenceRepository: talentBusinessCodeSequenceRepository,
@@ -479,9 +477,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   const {
     peopleReadinessReadRepository,
     employmentTermsReadinessReadonlyAccess,
-  } = createPeopleReadinessInfra(
-    infra.primaryDb,
-  );
+  } = createPeopleReadinessInfra(infra.primaryDb);
 
   const orgUnitService = new OrgUnitAdminService(
     orgUnitRepository,
@@ -651,10 +647,12 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     platformAccountEventAssignmentReadonlyAccess,
     authoritativeAuditGuard,
     adminMutationBridge,
+    structuredScopeAuthority,
   );
 
   const platformAccountQueryService = new PlatformAccountAdminQueryService(
     platformAccountReadRepository,
+    structuredScopeAuthority,
   );
 
   const platformAccountController = new PlatformAccountAdminController(
@@ -679,10 +677,12 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     studioResourceEventAssignmentReadonlyAccess,
     authoritativeAuditGuard,
     adminMutationBridge,
+    structuredScopeAuthority,
   );
 
   const studioResourceQueryService = new StudioResourceAdminQueryService(
     studioResourceReadRepository,
+    structuredScopeAuthority,
   );
 
   const studioResourceController = new StudioResourceAdminController(
@@ -732,10 +732,9 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     authoritativeAuditGuard,
     adminMutationBridge,
   );
-  const workScheduleRequestController =
-    new WorkScheduleRequestAdminController(
-      workScheduleRequestService,
-    );
+  const workScheduleRequestController = new WorkScheduleRequestAdminController(
+    workScheduleRequestService,
+  );
   const workScheduleRequestBatchService =
     new WorkScheduleRequestBatchAdminService(
       workScheduleRequestBatchRepository,
@@ -780,16 +779,12 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
 
   r.use(
     "/work-schedule/requests",
-    adminWorkScheduleRequestRoutes(
-      workScheduleRequestController,
-    ),
+    adminWorkScheduleRequestRoutes(workScheduleRequestController),
   );
 
   r.use(
     "/work-schedule/request-batches",
-    adminWorkScheduleRequestBatchRoutes(
-      workScheduleRequestBatchController,
-    ),
+    adminWorkScheduleRequestBatchRoutes(workScheduleRequestBatchController),
   );
 
   r.use(
@@ -896,9 +891,11 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     eventAssignmentPlatformAccountReadonlyAccess,
     authoritativeAuditGuard,
     adminMutationBridge,
+    structuredScopeAuthority,
   );
   const eventAssignmentQueryService = new EventAssignmentAdminQueryService(
     eventAssignmentReadRepository,
+    structuredScopeAuthority,
   );
   const eventAssignmentController = new EventAssignmentAdminController(
     eventAssignmentService,
@@ -932,21 +929,18 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   );
   const contractRegistryQueryController =
     new ContractRegistryAdminQueryController(contractRegistryQueryService);
-  const contractObligationController =
-    new ContractObligationAdminController(
-      new ContractObligationAdminService(
-        contractObligationRepository,
-        contractObligationEventEvidenceLinkRepository,
-        contractRegistryRepository,
-        contractRegistryBusinessCodeSequenceRepository,
-        contractRegistryEmploymentProfileReadonlyAccess,
-        authoritativeAuditGuard,
-        adminMutationBridge,
-      ),
-      new ContractObligationAdminQueryService(
-        contractObligationReadRepository,
-      ),
-    );
+  const contractObligationController = new ContractObligationAdminController(
+    new ContractObligationAdminService(
+      contractObligationRepository,
+      contractObligationEventEvidenceLinkRepository,
+      contractRegistryRepository,
+      contractRegistryBusinessCodeSequenceRepository,
+      contractRegistryEmploymentProfileReadonlyAccess,
+      authoritativeAuditGuard,
+      adminMutationBridge,
+    ),
+    new ContractObligationAdminQueryService(contractObligationReadRepository),
+  );
   const contractObligationEventEvidenceLinkController =
     new ContractObligationEventEvidenceLinkAdminController(
       new ContractObligationEventEvidenceLinkAdminService(
@@ -1110,10 +1104,9 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     authoritativeAuditGuard,
     adminMutationBridge,
   );
-  const platformEarningController =
-    new PlatformEarningAdminController(
-      platformEarningService,
-    );
+  const platformEarningController = new PlatformEarningAdminController(
+    platformEarningService,
+  );
 
   r.use(
     "/revenue-entries",
@@ -1124,9 +1117,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   );
   r.use(
     "/revenue-ledger",
-    adminPlatformEarningRoutes(
-      platformEarningController,
-    ),
+    adminPlatformEarningRoutes(platformEarningController),
   );
 
   /* DASHBOARD LITE */

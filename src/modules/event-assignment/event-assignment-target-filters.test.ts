@@ -7,6 +7,10 @@ import {
   EventAssignmentPermissionScopeError,
   EventAssignmentValidationError,
 } from "@modules/event-assignment/domain/event-assignment.errors";
+import {
+  StructuredScopeAuthorityAssignment,
+  StructuredScopeAuthorityService,
+} from "@modules/role/domain/structured-scope-authority";
 import type { EventAssignmentReadRepository } from "@modules/event-assignment/read/event-assignment.read-repository";
 import {
   EventAssignmentAdminAssignmentListExposure,
@@ -55,6 +59,18 @@ function createManagedGroupActor(): Actor {
     scopeGrants: {
       eventAssignment: ["managedGroup"],
     },
+    isActive: true,
+  });
+}
+
+function createExactScopedActor(): Actor {
+  return new Actor({
+    id: "admin-user-1",
+    type: "admin",
+    context: "ADMIN",
+    roles: [],
+    permissions: [Permission.EVENT_READ],
+    scopeGrants: {},
     isActive: true,
   });
 }
@@ -182,13 +198,170 @@ test("manager-only scope cannot use global Admin Event routes", async () => {
     service.listEvents(createManagedGroupActor(), {}),
     EventAssignmentPermissionScopeError,
   );
+});
+
+test("exact Event detail and assignment reads require assignedEvent scope", async () => {
+  const repository = createReadRepository({
+    getEventDetail: async () => ({ id: "event-1" }) as never,
+  });
+  const service = new EventAssignmentAdminQueryService(
+    repository,
+    structuredAuthority([
+      assignment(
+        ["event.read"],
+        [{ scopeType: "assignedEvent", targetId: "event-1" }],
+      ),
+    ]),
+  );
+
+  assert.equal(
+    (
+      await service.getEventDetail(createExactScopedActor(), {
+        eventId: "event-1",
+      })
+    ).id,
+    "event-1",
+  );
+  assert.deepEqual(
+    await service.listEventAssignments(createExactScopedActor(), {
+      eventId: "event-1",
+    }),
+    { items: [] },
+  );
+
+  const denied = new EventAssignmentAdminQueryService(
+    repository,
+    structuredAuthority([
+      assignment(
+        ["event.read"],
+        [{ scopeType: "assignedEvent", targetId: "event-other" }],
+      ),
+    ]),
+  );
+
   await assert.rejects(
-    service.getEventDetail(createManagedGroupActor(), {
+    denied.getEventDetail(createActor(), {
       eventId: "event-1",
     }),
     EventAssignmentPermissionScopeError,
   );
 });
+
+test("exact Event resource and platform lists require matching operational object scope", async () => {
+  const repository = createReadRepository();
+  const service = new EventAssignmentAdminQueryService(
+    repository,
+    structuredAuthority([
+      assignment(
+        ["event.read"],
+        [
+          { scopeType: "assignedStudioResource", targetId: "studio-1" },
+          { scopeType: "assignedPlatformAccount", targetId: "platform-1" },
+        ],
+      ),
+    ]),
+  );
+
+  assert.deepEqual(
+    await service.listEventsByResource(createExactScopedActor(), {
+      studioResourceId: "studio-1",
+    }),
+    { items: [] },
+  );
+  assert.deepEqual(
+    await service.listEventsByPlatform(createExactScopedActor(), {
+      platformAccountId: "platform-1",
+    }),
+    { items: [] },
+  );
+
+  await assert.rejects(
+    service.listEventsByResource(createActor(), {
+      studioResourceId: "studio-other",
+    }),
+    EventAssignmentPermissionScopeError,
+  );
+  await assert.rejects(
+    service.listEventsByPlatform(createActor(), {
+      platformAccountId: "platform-other",
+    }),
+    EventAssignmentPermissionScopeError,
+  );
+});
+
+function createReadRepository(
+  overrides: Partial<EventAssignmentReadRepository> = {},
+): EventAssignmentReadRepository {
+  return {
+    async listEvents() {
+      return { items: [] };
+    },
+    async listEventsByAssignment() {
+      return { items: [] };
+    },
+    async listEventsByResource() {
+      return { items: [] };
+    },
+    async listEventsByPlatform() {
+      return { items: [] };
+    },
+    async listActiveAssignmentsForEvent() {
+      return [];
+    },
+    async getEventDetail() {
+      return null;
+    },
+    async eventHasManagedGroupAssignment() {
+      return false;
+    },
+    async listManagerEventSummaries() {
+      return [];
+    },
+    async getManagerEventSummary() {
+      return null;
+    },
+    async listStudioBookings() {
+      return [];
+    },
+    ...overrides,
+  };
+}
+
+function structuredAuthority(
+  records: readonly StructuredScopeAuthorityAssignment[],
+): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(userId: string) {
+      return records.filter((record) => record.assignment.userId === userId);
+    },
+  });
+}
+
+function assignment(
+  permissions: readonly string[],
+  structuredScopeGrants: StructuredScopeAuthorityAssignment["assignment"]["structuredScopeGrants"],
+): StructuredScopeAuthorityAssignment {
+  return {
+    assignment: {
+      assignmentId: "assignment-1",
+      roleId: "role-1",
+      userId: "admin-user-1",
+      structuredScopeGrants,
+      state: "ACTIVE",
+      effectiveAt: 0,
+      expiresAt: null,
+      revokedAt: null,
+      reason: null,
+      createdAt: 0,
+      updatedAt: 0,
+    },
+    role: {
+      id: "role-1",
+      state: "ACTIVE",
+      permissions,
+    },
+  };
+}
 
 test("Event Assignment target filters build additive Mongo predicates and preserve window predicates", async () => {
   let capturedQuery: unknown;
