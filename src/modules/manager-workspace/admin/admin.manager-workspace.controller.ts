@@ -43,11 +43,28 @@ import {
 } from "@modules/work-schedule/shared/work-schedule-availability.exposure";
 import { ManagerEventSummaryView } from "@modules/event-assignment/domain/event-assignment.types";
 import { ManagerWorkspaceEventAdminService } from "./admin.manager-workspace-event.service";
+import {
+  ManagerPlatformEarningBatchListResult,
+  ManagerPlatformEarningBatchView,
+  ManagerPlatformEarningLineListResult,
+  ManagerPlatformEarningLineView,
+  ManagerPlatformEarningScopeView,
+  ManagerWorkspaceRevenueAdminService,
+} from "./admin.manager-workspace-revenue.service";
 
 type ManagerWorkspaceCommand =
   | "MANAGER_WORKSPACE_CONTEXT"
   | "MANAGER_WORKSPACE_LIST_EVENTS"
   | "MANAGER_WORKSPACE_GET_EVENT"
+  | "MANAGER_WORKSPACE_REVENUE_PLATFORM_EARNING_SCOPE"
+  | "MANAGER_WORKSPACE_LIST_REVENUE_PLATFORM_EARNING_BATCHES"
+  | "MANAGER_WORKSPACE_CREATE_REVENUE_PLATFORM_EARNING_BATCH"
+  | "MANAGER_WORKSPACE_GET_REVENUE_PLATFORM_EARNING_BATCH"
+  | "MANAGER_WORKSPACE_UPDATE_REVENUE_PLATFORM_EARNING_BATCH"
+  | "MANAGER_WORKSPACE_LIST_REVENUE_PLATFORM_EARNING_LINES"
+  | "MANAGER_WORKSPACE_ADD_REVENUE_PLATFORM_EARNING_LINE"
+  | "MANAGER_WORKSPACE_UPDATE_REVENUE_PLATFORM_EARNING_LINE"
+  | "MANAGER_WORKSPACE_SUBMIT_REVENUE_PLATFORM_EARNING_BATCH"
   | "MANAGER_WORKSPACE_LIST_WORK_SHIFTS"
   | "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_MEMBERS"
   | "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_REQUEST_BATCH"
@@ -70,6 +87,11 @@ type ManagerWorkspaceResult =
   | ListWorkScheduleAvailabilityBatchesResult
   | ManagerAvailabilityTargetMembersView
   | ManagerEventSummaryView
+  | ManagerPlatformEarningScopeView
+  | ManagerPlatformEarningBatchView
+  | ManagerPlatformEarningBatchListResult
+  | ManagerPlatformEarningLineView
+  | ManagerPlatformEarningLineListResult
   | { readonly items: readonly ManagerEventSummaryView[] };
 
 const SUBMIT_BATCH_BODY_FIELDS = Object.freeze([
@@ -80,6 +102,30 @@ const SUBMIT_BATCH_BODY_FIELDS = Object.freeze([
   "lines",
 ]);
 const CANCEL_BODY_FIELDS = Object.freeze(["cancellationReason"]);
+const CREATE_REVENUE_BATCH_BODY_FIELDS = Object.freeze([
+  "batchCode",
+  "platform",
+  "platformAccountId",
+  "talentGroupId",
+  "sourceType",
+  "periodMonth",
+  "sourceDateFrom",
+  "sourceDateTo",
+]);
+const UPDATE_REVENUE_BATCH_BODY_FIELDS = Object.freeze([
+  "platformAccountId",
+  "talentGroupId",
+  "sourceDateFrom",
+  "sourceDateTo",
+]);
+const REVENUE_LINE_BODY_FIELDS = Object.freeze([
+  "sourceDate",
+  "memberTalentId",
+  "memberEmploymentProfileId",
+  "rawQuantity",
+  "externalSourceRef",
+  "notes",
+]);
 const SUBMIT_AVAILABILITY_BATCH_BODY_FIELDS = Object.freeze([
   "periodMonth",
   "targetType",
@@ -99,6 +145,7 @@ export class ManagerWorkspaceAdminController extends SecureController {
     private readonly workScheduleRequestBatchService: WorkScheduleRequestBatchAdminService,
     private readonly workScheduleAvailabilityBatchService: WorkScheduleAvailabilityBatchAdminService,
     private readonly eventService: ManagerWorkspaceEventAdminService,
+    private readonly revenueService: ManagerWorkspaceRevenueAdminService,
   ) {
     super();
   }
@@ -117,6 +164,125 @@ export class ManagerWorkspaceAdminController extends SecureController {
     }
     if (command === "MANAGER_WORKSPACE_GET_EVENT") {
       return this.eventService.getEvent(actor, req.params.eventId);
+    }
+    if (command === "MANAGER_WORKSPACE_REVENUE_PLATFORM_EARNING_SCOPE") {
+      return this.revenueService.getScope(actor);
+    }
+    if (
+      command === "MANAGER_WORKSPACE_LIST_REVENUE_PLATFORM_EARNING_BATCHES"
+    ) {
+      return this.revenueService.listBatches(actor, {
+        status: readOptionalQuery(req, "status"),
+        platform: readOptionalQuery(req, "platform"),
+        platformAccountId: readOptionalQuery(req, "platformAccountId"),
+        talentGroupId: readOptionalQuery(req, "talentGroupId"),
+        sourceType: readOptionalQuery(req, "sourceType"),
+        periodMonth: readOptionalQuery(req, "periodMonth"),
+        createdBeforeAt: readOptionalQuery(req, "createdBeforeAt"),
+        limit: readOptionalQuery(req, "limit"),
+        cursor: readOptionalQuery(req, "cursor"),
+      });
+    }
+    if (
+      command === "MANAGER_WORKSPACE_CREATE_REVENUE_PLATFORM_EARNING_BATCH"
+    ) {
+      const body = requireRecord(req.body);
+      assertNoUnexpectedFields(
+        body,
+        CREATE_REVENUE_BATCH_BODY_FIELDS,
+        "createManagerPlatformEarningBatch",
+      );
+      return this.revenueService.createBatch(actor, {
+        batchCode: body.batchCode as string | null | undefined,
+        platform: body.platform as string,
+        platformAccountId: body.platformAccountId as string,
+        talentGroupId: body.talentGroupId as string | null | undefined,
+        sourceType: body.sourceType as string,
+        periodMonth: body.periodMonth as string,
+        sourceDateFrom: body.sourceDateFrom as number,
+        sourceDateTo: body.sourceDateTo as number,
+      });
+    }
+    if (
+      command === "MANAGER_WORKSPACE_GET_REVENUE_PLATFORM_EARNING_BATCH"
+    ) {
+      return this.revenueService.getBatch(actor, req.params.batchId);
+    }
+    if (
+      command === "MANAGER_WORKSPACE_UPDATE_REVENUE_PLATFORM_EARNING_BATCH"
+    ) {
+      const body = requireRecord(req.body);
+      assertNoUnexpectedFields(
+        body,
+        UPDATE_REVENUE_BATCH_BODY_FIELDS,
+        "updateManagerPlatformEarningBatch",
+      );
+      return this.revenueService.updateBatch(actor, {
+        batchId: req.params.batchId,
+        platformAccountId: body.platformAccountId as string | undefined,
+        talentGroupId: body.talentGroupId as string | null | undefined,
+        sourceDateFrom: body.sourceDateFrom as number | undefined,
+        sourceDateTo: body.sourceDateTo as number | undefined,
+      });
+    }
+    if (
+      command === "MANAGER_WORKSPACE_LIST_REVENUE_PLATFORM_EARNING_LINES"
+    ) {
+      return this.revenueService.listLines(actor, {
+        batchId: req.params.batchId,
+        limit: readOptionalQuery(req, "limit"),
+        cursor: readOptionalQuery(req, "cursor"),
+      });
+    }
+    if (
+      command === "MANAGER_WORKSPACE_ADD_REVENUE_PLATFORM_EARNING_LINE"
+    ) {
+      const body = requireRecord(req.body);
+      assertNoUnexpectedFields(
+        body,
+        REVENUE_LINE_BODY_FIELDS,
+        "addManagerPlatformEarningLine",
+      );
+      return this.revenueService.addLine(actor, {
+        batchId: req.params.batchId,
+        sourceDate: body.sourceDate as number,
+        memberTalentId: body.memberTalentId as string | null | undefined,
+        memberEmploymentProfileId:
+          body.memberEmploymentProfileId as string | null | undefined,
+        rawQuantity: body.rawQuantity as number,
+        externalSourceRef:
+          body.externalSourceRef as string | null | undefined,
+        notes: body.notes as string | null | undefined,
+      });
+    }
+    if (
+      command === "MANAGER_WORKSPACE_UPDATE_REVENUE_PLATFORM_EARNING_LINE"
+    ) {
+      const body = requireRecord(req.body);
+      assertNoUnexpectedFields(
+        body,
+        REVENUE_LINE_BODY_FIELDS,
+        "updateManagerPlatformEarningLine",
+      );
+      return this.revenueService.updateLine(actor, {
+        batchId: req.params.batchId,
+        lineId: req.params.lineId,
+        sourceDate: body.sourceDate as number | undefined,
+        memberTalentId: body.memberTalentId as string | null | undefined,
+        memberEmploymentProfileId:
+          body.memberEmploymentProfileId as string | null | undefined,
+        rawQuantity: body.rawQuantity as number | undefined,
+        externalSourceRef:
+          body.externalSourceRef as string | null | undefined,
+        notes: body.notes as string | null | undefined,
+      });
+    }
+    if (
+      command === "MANAGER_WORKSPACE_SUBMIT_REVENUE_PLATFORM_EARNING_BATCH"
+    ) {
+      return this.revenueService.submitBatch(actor, {
+        batchId: req.params.batchId,
+      });
     }
 
     if (command === "MANAGER_WORKSPACE_LIST_WORK_SHIFTS") {
@@ -319,6 +485,30 @@ export class ManagerWorkspaceAdminController extends SecureController {
               : {}),
           },
           "managerWorkspaceWorkScheduleRequestBatchList",
+        ),
+      };
+    }
+    if (
+      command === "MANAGER_WORKSPACE_LIST_REVENUE_PLATFORM_EARNING_BATCHES" ||
+      command === "MANAGER_WORKSPACE_LIST_REVENUE_PLATFORM_EARNING_LINES" ||
+      command === "MANAGER_WORKSPACE_REVENUE_PLATFORM_EARNING_SCOPE"
+    ) {
+      return {
+        data: toPlainObject(result, "managerWorkspaceRevenuePlatformEarningList"),
+      };
+    }
+    if (
+      command === "MANAGER_WORKSPACE_CREATE_REVENUE_PLATFORM_EARNING_BATCH" ||
+      command === "MANAGER_WORKSPACE_GET_REVENUE_PLATFORM_EARNING_BATCH" ||
+      command === "MANAGER_WORKSPACE_UPDATE_REVENUE_PLATFORM_EARNING_BATCH" ||
+      command === "MANAGER_WORKSPACE_SUBMIT_REVENUE_PLATFORM_EARNING_BATCH" ||
+      command === "MANAGER_WORKSPACE_ADD_REVENUE_PLATFORM_EARNING_LINE" ||
+      command === "MANAGER_WORKSPACE_UPDATE_REVENUE_PLATFORM_EARNING_LINE"
+    ) {
+      return {
+        data: toPlainObject(
+          result,
+          "managerWorkspaceRevenuePlatformEarningMutation",
         ),
       };
     }

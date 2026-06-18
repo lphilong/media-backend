@@ -82,6 +82,7 @@ export interface PlatformEarningBatchListFilters {
   readonly platform?: string;
   readonly platformAccountId?: string;
   readonly talentGroupId?: string;
+  readonly createdByActorId?: string;
   readonly sourceType?: PlatformEarningSourceType;
   readonly periodMonth?: string;
   readonly createdBeforeAt?: number;

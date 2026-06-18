@@ -114,6 +114,9 @@ export class NativeMongoPlatformEarningRepository
       query.platformAccountId = filters.platformAccountId;
     }
     if (filters.talentGroupId) query.talentGroupId = filters.talentGroupId;
+    if (filters.createdByActorId) {
+      query.createdByActorId = filters.createdByActorId;
+    }
     if (filters.sourceType) query.sourceType = filters.sourceType;
     if (filters.periodMonth) query.periodMonth = filters.periodMonth;
     if (filters.createdBeforeAt !== undefined) {

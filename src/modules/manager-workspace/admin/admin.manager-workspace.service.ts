@@ -80,6 +80,12 @@ export interface ManagerWorkspaceContextView {
         | "NO_MANAGED_SCOPE_ASSIGNED"
         | "MISSING_EVENT_READ_CAPABILITY";
     };
+    readonly revenueSource: {
+      readonly visible: boolean;
+      readonly reason?:
+        | "NO_MANAGED_SCOPE_ASSIGNED"
+        | "MISSING_REVENUE_SOURCE_SUBMIT_CAPABILITY";
+    };
     readonly members: {
       readonly visible: false;
       readonly reason: "NOT_ENABLED_IN_MANAGER_WORKSPACE_YET";
@@ -165,6 +171,11 @@ export class ManagerWorkspaceAdminService {
     const eventsVisible =
       hasManagedAssignment &&
       actor.permissions.includes(Permission.EVENT_READ);
+    const revenueSourceVisible =
+      talentGroups.length > 0 &&
+      actor.permissions.includes(
+        Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+      );
     const reasons = visible
       ? []
       : [
@@ -206,6 +217,15 @@ export class ManagerWorkspaceAdminService {
               reason: hasManagedAssignment
                 ? "MISSING_EVENT_READ_CAPABILITY"
                 : "NO_MANAGED_SCOPE_ASSIGNED",
+            },
+        revenueSource: revenueSourceVisible
+          ? { visible: true }
+          : {
+              visible: false,
+              reason:
+                talentGroups.length > 0
+                  ? "MISSING_REVENUE_SOURCE_SUBMIT_CAPABILITY"
+                  : "NO_MANAGED_SCOPE_ASSIGNED",
             },
         members: disabledModule(),
       },
@@ -256,6 +276,10 @@ function emptyContext(
         reason: "NO_MANAGED_SCOPE_ASSIGNED",
       },
       events: {
+        visible: false,
+        reason: "NO_MANAGED_SCOPE_ASSIGNED",
+      },
+      revenueSource: {
         visible: false,
         reason: "NO_MANAGED_SCOPE_ASSIGNED",
       },

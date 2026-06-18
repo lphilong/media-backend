@@ -23,6 +23,51 @@ export function adminManagerWorkspaceRoutes(
     controller.execute,
   );
   router.get(
+    "/revenue/platform-earning-scope",
+    withCommand("MANAGER_WORKSPACE_REVENUE_PLATFORM_EARNING_SCOPE"),
+    controller.execute,
+  );
+  router.get(
+    "/revenue/platform-earning-batches",
+    withCommand("MANAGER_WORKSPACE_LIST_REVENUE_PLATFORM_EARNING_BATCHES"),
+    controller.execute,
+  );
+  router.post(
+    "/revenue/platform-earning-batches",
+    withCommand("MANAGER_WORKSPACE_CREATE_REVENUE_PLATFORM_EARNING_BATCH"),
+    controller.execute,
+  );
+  router.get(
+    "/revenue/platform-earning-batches/:batchId",
+    withCommand("MANAGER_WORKSPACE_GET_REVENUE_PLATFORM_EARNING_BATCH"),
+    controller.execute,
+  );
+  router.patch(
+    "/revenue/platform-earning-batches/:batchId",
+    withCommand("MANAGER_WORKSPACE_UPDATE_REVENUE_PLATFORM_EARNING_BATCH"),
+    controller.execute,
+  );
+  router.get(
+    "/revenue/platform-earning-batches/:batchId/source-lines",
+    withCommand("MANAGER_WORKSPACE_LIST_REVENUE_PLATFORM_EARNING_LINES"),
+    controller.execute,
+  );
+  router.post(
+    "/revenue/platform-earning-batches/:batchId/source-lines",
+    withCommand("MANAGER_WORKSPACE_ADD_REVENUE_PLATFORM_EARNING_LINE"),
+    controller.execute,
+  );
+  router.patch(
+    "/revenue/platform-earning-batches/:batchId/source-lines/:lineId",
+    withCommand("MANAGER_WORKSPACE_UPDATE_REVENUE_PLATFORM_EARNING_LINE"),
+    controller.execute,
+  );
+  router.post(
+    "/revenue/platform-earning-batches/:batchId/submit",
+    withCommand("MANAGER_WORKSPACE_SUBMIT_REVENUE_PLATFORM_EARNING_BATCH"),
+    controller.execute,
+  );
+  router.get(
     "/work-schedule/work-shifts",
     withCommand("MANAGER_WORKSPACE_LIST_WORK_SHIFTS"),
     controller.execute,

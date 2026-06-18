@@ -176,6 +176,7 @@ import { ManagerWorkspaceAdminController } from "@modules/manager-workspace/admi
 import { ManagerWorkspaceAdminService } from "@modules/manager-workspace/admin/admin.manager-workspace.service";
 import { ManagerWorkspaceWorkScheduleAdminService } from "@modules/manager-workspace/admin/admin.manager-workspace-work-schedule.service";
 import { ManagerWorkspaceEventAdminService } from "@modules/manager-workspace/admin/admin.manager-workspace-event.service";
+import { ManagerWorkspaceRevenueAdminService } from "@modules/manager-workspace/admin/admin.manager-workspace-revenue.service";
 
 /* COMMISSION */
 import { adminCommissionRoutes } from "@modules/commission/admin/admin.commission.routes";
@@ -1001,6 +1002,17 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       talentGroupManagerAssignmentRepository,
       orgUnitManagerAssignmentRepository,
       eventAssignmentReadRepository,
+    ),
+    new ManagerWorkspaceRevenueAdminService(
+      employmentProfileRepository,
+      talentGroupManagerAssignmentRepository,
+      platformAccountRepository,
+      platformAccountReadRepository,
+      workScheduleEmploymentProfileReadonlyAccess,
+      platformEarningRepository,
+      revenueLedgerBusinessCodeSequenceRepository,
+      authoritativeAuditGuard,
+      adminMutationBridge,
     ),
   );
 
