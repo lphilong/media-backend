@@ -13,6 +13,7 @@ import type { BusinessCodeSequenceRepository } from "@core/business-code/busines
 import { SystemInvariantError } from "@core/error/system-error";
 import { Permission } from "@core/permission/permission.enum";
 import { bindTraceId } from "@core/trace/trace.context";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import type {
   AssignEmploymentProfileManagerInput,
   AssignEmploymentProfileOrgUnitInput,
@@ -540,8 +541,45 @@ function createEmploymentProfileAttributionService(
     { async hasNonArchivedEventsForEmploymentProfile() { return false; } } as never,
     audit,
     mutationBridge,
+    createEmploymentProfileStructuredAuthority(),
     logger,
   );
+}
+
+function createEmploymentProfileStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(userId: string) {
+      return [
+        {
+          assignment: {
+            assignmentId: "assignment-employment-profile-test",
+            roleId: "role-employment-profile-test",
+            userId,
+            structuredScopeGrants: [
+              { scopeType: "managedOrgUnit" as const, targetId: "org-1" },
+            ],
+            state: "ACTIVE" as const,
+            effectiveAt: 0,
+            expiresAt: null,
+            revokedAt: null,
+            reason: null,
+            createdAt: 0,
+            updatedAt: 0,
+          },
+          role: {
+            id: "role-employment-profile-test",
+            state: "ACTIVE",
+            permissions: [
+              Permission.EMPLOYMENT_PROFILE_CREATE,
+              Permission.EMPLOYMENT_PROFILE_UPDATE,
+              Permission.EMPLOYMENT_PROFILE_MANAGE_MANAGER_ASSIGNMENT,
+              Permission.EMPLOYMENT_PROFILE_MANAGE_LIFECYCLE,
+            ],
+          },
+        },
+      ];
+    },
+  });
 }
 
 function createActor(

@@ -16,6 +16,7 @@ import {
   TalentGroupConflictError,
   TalentGroupInvalidTalentReferenceError,
   TalentGroupNotFoundError,
+  TalentGroupPermissionScopeError,
   TalentGroupStateError,
   TalentGroupValidationError,
 } from "@modules/talent-group/domain/talent-group.errors";
@@ -32,6 +33,8 @@ import {
   ListTalentGroupManagerAssignmentsResult,
   RevokeTalentGroupManagerAssignmentCommand,
 } from "@modules/talent-group/shared/talent-group.contracts";
+import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 const MANAGER_ASSIGNMENT_ROLE = "MANAGER";
 const MANAGER_ASSIGNMENT_OPERATION: AuthoritativeAdminMutationIdentity =
@@ -45,6 +48,7 @@ export class TalentGroupManagerAssignmentAdminService {
     private readonly managerAssignmentRepository: TalentGroupManagerAssignmentRepository,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
     private readonly clock: () => number = Date.now,
   ) {}
 
@@ -55,6 +59,11 @@ export class TalentGroupManagerAssignmentAdminService {
     this.assertPermission(actor, Permission.TALENT_GROUP_READ);
     const groupId = normalizeRequiredText(query.groupId, "groupId");
     const group = await this.requireGroup(groupId);
+    await this.requireManagedTalentGroupAuthority(
+      actor,
+      Permission.TALENT_GROUP_READ,
+      group.id,
+    );
     const assignments =
       await this.managerAssignmentRepository.listActiveAssignmentsByGroup(
         groupId,
@@ -88,6 +97,11 @@ export class TalentGroupManagerAssignmentAdminService {
       `talent-group-manager-assignment:create:${groupId}:${managerEmploymentProfileId}`,
       async (session) => {
         const group = await this.requireGroup(groupId, session);
+        await this.requireManagedTalentGroupAuthority(
+          actor,
+          Permission.TALENT_GROUP_UPDATE,
+          group.id,
+        );
         if (group.status !== "ACTIVE") {
           throw new TalentGroupStateError(
             `Talent group manager assignment requires ACTIVE group: ${groupId}`,
@@ -194,6 +208,11 @@ export class TalentGroupManagerAssignmentAdminService {
       `talent-group-manager-assignment:revoke:${groupId}:${assignmentId}`,
       async (session) => {
         const group = await this.requireGroup(groupId, session);
+        await this.requireManagedTalentGroupAuthority(
+          actor,
+          Permission.TALENT_GROUP_UPDATE,
+          group.id,
+        );
         const current =
           await this.managerAssignmentRepository.findAssignmentById(
             assignmentId,
@@ -268,6 +287,22 @@ export class TalentGroupManagerAssignmentAdminService {
       throw new TalentGroupNotFoundError(groupId);
     }
     return group;
+  }
+
+  private async requireManagedTalentGroupAuthority(
+    actor: Actor,
+    permission: Permission,
+    groupId: string,
+  ): Promise<void> {
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission,
+      scope: { scopeType: "managedTalentGroup", targetId: groupId },
+      authority: this.structuredAuthority,
+      error: new TalentGroupPermissionScopeError(
+        `Talent group manager assignment requires managedTalentGroup scope: ${groupId}`,
+      ),
+    });
   }
 
   private async toViews(
@@ -350,4 +385,14 @@ function normalizeNullableReason(value: unknown): string | null {
   }
   const normalized = value.trim();
   return normalized.length === 0 ? null : normalized;
+}
+
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(): Promise<never> {
+      throw new TalentGroupPermissionScopeError(
+        "Structured TalentGroup authority is unavailable",
+      );
+    },
+  });
 }

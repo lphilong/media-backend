@@ -159,6 +159,10 @@ export class NativeMongoPlatformAccountReadRepository
     const queryFilters: Array<Record<string, unknown>> =
       [];
 
+    if (input.platformAccountIds) {
+      queryFilters.push({ _id: { $in: [...input.platformAccountIds] } });
+    }
+
     if (input.platform) {
       queryFilters.push({
         platform: input.platform,
@@ -1148,6 +1152,9 @@ function buildCursorQueryShapeSignature(
   sortSpec: SortSpec,
 ): string {
   return JSON.stringify({
+    platformAccountIds: input.platformAccountIds
+      ? [...input.platformAccountIds].sort()
+      : null,
     platform: input.platform ?? null,
     platformSurfaceType:
       input.platformSurfaceType ?? null,

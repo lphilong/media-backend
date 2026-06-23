@@ -16,6 +16,7 @@ import {
 } from "@modules/employment-profile/domain/employment-profile.types";
 import {
   EmploymentProfileNotFoundError,
+  EmploymentProfilePermissionScopeError,
   EmploymentProfileValidationError,
 } from "@modules/employment-profile/domain/employment-profile.errors";
 import { EmploymentProfileReadRepository } from "@modules/employment-profile/read/employment-profile.read-repository";
@@ -27,6 +28,8 @@ import {
   ListEmploymentProfilesQuery,
   ListEmploymentProfilesResult,
 } from "@modules/employment-profile/shared/employment-profile.contracts";
+import { requireAdminGlobalScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -34,6 +37,7 @@ const MAX_LIMIT = 100;
 export class EmploymentProfileAdminQueryService {
   constructor(
     private readonly readRepository: EmploymentProfileReadRepository,
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
   ) {}
 
   async listEmploymentProfiles(
@@ -45,6 +49,14 @@ export class EmploymentProfileAdminQueryService {
     );
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(actor, permission);
+    await requireAdminGlobalScopeAuthority({
+      actor,
+      permission: Permission.EMPLOYMENT_PROFILE_READ,
+      authority: this.structuredAuthority,
+      error: new EmploymentProfilePermissionScopeError(
+        "Broad EmploymentProfile list requires structured global scope",
+      ),
+    });
 
     return this.readRepository.listEmploymentProfiles({
       employmentStatus: parseOptionalEmploymentStatus(
@@ -104,6 +116,15 @@ export class EmploymentProfileAdminQueryService {
       );
     }
 
+    await requireAdminGlobalScopeAuthority({
+      actor,
+      permission: Permission.EMPLOYMENT_PROFILE_READ,
+      authority: this.structuredAuthority,
+      error: new EmploymentProfilePermissionScopeError(
+        "EmploymentProfile Admin detail exposes sensitive fields and requires structured global scope",
+      ),
+    });
+
     return detail;
   }
 
@@ -116,6 +137,14 @@ export class EmploymentProfileAdminQueryService {
     );
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(actor, permission);
+    await requireAdminGlobalScopeAuthority({
+      actor,
+      permission: Permission.EMPLOYMENT_PROFILE_READ,
+      authority: this.structuredAuthority,
+      error: new EmploymentProfilePermissionScopeError(
+        "Direct-report projection requires structured global scope",
+      ),
+    });
 
     const employmentProfileId =
       normalizeRequiredText(
@@ -144,6 +173,16 @@ export class EmploymentProfileAdminQueryService {
       ),
     });
   }
+}
+
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(): Promise<never> {
+      throw new EmploymentProfilePermissionScopeError(
+        "Structured EmploymentProfile authority is unavailable",
+      );
+    },
+  });
 }
 
 function normalizeRequiredText(

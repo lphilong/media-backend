@@ -3,25 +3,25 @@ import { test } from "node:test";
 import { Actor } from "@core/actor/actor";
 import { SystemInvariantError } from "@core/error/system-error";
 import { Permission } from "@core/permission/permission.enum";
+import {
+  StructuredScopeAuthorityAssignment,
+  StructuredScopeAuthorityService,
+} from "@modules/role/domain/structured-scope-authority";
+import { RoleAssignmentScopeGrant } from "@modules/role/domain/role-assignment-scope";
 import { TalentAdminQueryService } from "@modules/talent/admin/admin.talent.query-service";
 import { TalentGroupAdminQueryService } from "@modules/talent-group/admin/admin.talent-group.query-service";
+import { TalentGroupPermissionScopeError } from "@modules/talent-group/domain/talent-group.errors";
 
-function createActor(params: {
-  readonly id?: string;
-  readonly permissions: readonly Permission[];
-  readonly kpiScopes?: readonly ("global" | "managedGroup" | "self")[];
-}): Actor {
+function createActor(permissions: readonly Permission[]): Actor {
   return new Actor({
-    id: params.id ?? "user-manager",
+    id: "user-manager",
     type: "admin",
     context: "ADMIN",
-    roles: [],
-    permissions: params.permissions,
-    scopeGrants: params.kpiScopes
-      ? {
-          kpi: params.kpiScopes,
-        }
-      : undefined,
+    roles: ["TEAM_MANAGER"],
+    permissions,
+    scopeGrants: {
+      kpi: ["managedGroup"],
+    },
     isActive: true,
   });
 }
@@ -40,41 +40,44 @@ function createManagedScopeDependencies(params?: {
     subjectReadonlyAccess: {
       async findActiveEmploymentProfileByLinkedUserId() {
         return employmentProfileId
-          ? {
-              employmentProfileId,
-            }
+          ? { employmentProfileId }
           : null;
       },
     },
     managerAssignmentRepository: {
       async listActiveAssignmentsByManagerEmploymentProfile() {
-        return groupIds.map((groupId) => ({
-          groupId,
-        }));
+        return groupIds.map((groupId) => ({ groupId }));
       },
     },
   } as never;
 }
 
-test("TEAM_MANAGER scoped TalentGroup list uses only active managed group ids", async () => {
+test("TalentGroup manager list intersects structured grant with active responsibility", async () => {
   let capturedGroupIds: readonly string[] | undefined;
   const service = new TalentGroupAdminQueryService(
     {
       async listTalentGroups(input: { readonly groupIds?: readonly string[] }) {
         capturedGroupIds = input.groupIds;
-        return {
-          items: [{ id: "group-managed" }],
-        };
+        return { items: [{ id: "group-managed" }] };
       },
     } as never,
-    createManagedScopeDependencies(),
+    createManagedScopeDependencies({
+      groupIds: ["group-managed", "group-responsibility-only"],
+    }),
+    authority([
+      grant(Permission.TALENT_GROUP_READ, {
+        scopeType: "managedTalentGroup",
+        targetId: "group-managed",
+      }),
+      grant(Permission.TALENT_GROUP_READ, {
+        scopeType: "managedTalentGroup",
+        targetId: "group-grant-only",
+      }),
+    ]),
   );
 
   const result = await service.listTalentGroups(
-    createActor({
-      permissions: [Permission.TALENT_GROUP_READ],
-      kpiScopes: ["managedGroup"],
-    }),
+    createActor([Permission.TALENT_GROUP_READ]),
     {},
   );
 
@@ -82,141 +85,85 @@ test("TEAM_MANAGER scoped TalentGroup list uses only active managed group ids", 
   assert.deepEqual(result.items.map((item) => item.id), ["group-managed"]);
 });
 
-test("TEAM_MANAGER TalentGroup detail allows managed group and denies unmanaged group", async () => {
-  const service = new TalentGroupAdminQueryService(
-    {
-      async getTalentGroupDetail(groupId: string) {
-        return {
-          id: groupId,
-        };
-      },
-    } as never,
+test("TalentGroup manager detail requires both exact grant and active responsibility", async () => {
+  const actor = createActor([Permission.TALENT_GROUP_READ]);
+  const repository = {
+    async getTalentGroupDetail(groupId: string) {
+      return { id: groupId };
+    },
+  };
+  const matching = new TalentGroupAdminQueryService(
+    repository as never,
     createManagedScopeDependencies(),
+    authority([
+      grant(Permission.TALENT_GROUP_READ, {
+        scopeType: "managedTalentGroup",
+        targetId: "group-managed",
+      }),
+    ]),
   );
-  const actor = createActor({
-    permissions: [Permission.TALENT_GROUP_READ],
-    kpiScopes: ["managedGroup"],
-  });
 
   assert.equal(
-    (await service.getTalentGroupDetail(actor, { groupId: "group-managed" })).id,
+    (await matching.getTalentGroupDetail(actor, { groupId: "group-managed" })).id,
     "group-managed",
   );
+
+  const missingResponsibility = new TalentGroupAdminQueryService(
+    repository as never,
+    createManagedScopeDependencies({ groupIds: [] }),
+    authority([
+      grant(Permission.TALENT_GROUP_READ, {
+        scopeType: "managedTalentGroup",
+        targetId: "group-managed",
+      }),
+    ]),
+  );
   await assert.rejects(
-    service.getTalentGroupDetail(actor, { groupId: "group-other" }),
-    (error) => {
-      assert.ok(error instanceof SystemInvariantError);
-      assert.equal(error.code, "PERMISSION_DENIED");
-      return true;
-    },
-  );
-});
-
-test("TEAM_MANAGER Talent list is constrained to active members of managed groups", async () => {
-  let capturedGroupIds: readonly string[] | undefined;
-  const service = new TalentAdminQueryService(
-    {
-      async listTalents(input: {
-        readonly activeMemberOfGroupIds?: readonly string[];
-      }) {
-        capturedGroupIds = input.activeMemberOfGroupIds;
-        return {
-          items: [{ id: "talent-managed" }],
-        };
-      },
-    } as never,
-    createManagedScopeDependencies(),
-  );
-
-  const result = await service.listTalents(
-    createActor({
-      permissions: [Permission.TALENT_READ],
-      kpiScopes: ["managedGroup"],
+    missingResponsibility.getTalentGroupDetail(actor, {
+      groupId: "group-managed",
     }),
-    {},
+    TalentGroupPermissionScopeError,
   );
 
-  assert.deepEqual(capturedGroupIds, ["group-managed"]);
-  assert.deepEqual(result.items.map((item) => item.id), ["talent-managed"]);
-});
-
-test("TEAM_MANAGER Talent detail allows active managed member and denies non-member", async () => {
-  const service = new TalentAdminQueryService(
-    {
-      async hasActiveMembershipInGroups(
-        talentId: string,
-        groupIds: readonly string[],
-      ) {
-        return talentId === "talent-managed" && groupIds.includes("group-managed");
-      },
-      async getTalentDetail(talentId: string) {
-        return {
-          id: talentId,
-        };
-      },
-    } as never,
+  const missingGrant = new TalentGroupAdminQueryService(
+    repository as never,
     createManagedScopeDependencies(),
-  );
-  const actor = createActor({
-    permissions: [Permission.TALENT_READ],
-    kpiScopes: ["managedGroup"],
-  });
-
-  assert.equal(
-    (await service.getTalentDetail(actor, { talentId: "talent-managed" })).id,
-    "talent-managed",
+    authority([]),
   );
   await assert.rejects(
-    service.getTalentDetail(actor, { talentId: "talent-other" }),
-    (error) => {
-      assert.ok(error instanceof SystemInvariantError);
-      assert.equal(error.code, "PERMISSION_DENIED");
-      return true;
-    },
+    missingGrant.getTalentGroupDetail(actor, { groupId: "group-managed" }),
+    TalentGroupPermissionScopeError,
   );
 });
 
-test("TEAM_MANAGER with no linked EmploymentProfile gets empty lists and denied detail", async () => {
-  const groupService = new TalentGroupAdminQueryService(
+test("direct Talent Admin list and detail deny scoped manager grants even for managed-group members", async () => {
+  let listCalls = 0;
+  let detailCalls = 0;
+  const service = new TalentAdminQueryService(
     {
-      async listTalentGroups(input: { readonly groupIds?: readonly string[] }) {
-        assert.deepEqual(input.groupIds, []);
-        return { items: [] };
-      },
-    } as never,
-    createManagedScopeDependencies({ employmentProfileId: null }),
-  );
-  const talentService = new TalentAdminQueryService(
-    {
-      async listTalents(input: {
-        readonly activeMemberOfGroupIds?: readonly string[];
-      }) {
-        assert.deepEqual(input.activeMemberOfGroupIds, []);
-        return { items: [] };
+      async listTalents() {
+        listCalls += 1;
+        return { items: [{ id: "talent-managed" }] };
       },
       async hasActiveMembershipInGroups() {
-        return false;
+        return true;
+      },
+      async getTalentDetail(talentId: string) {
+        detailCalls += 1;
+        return { id: talentId };
       },
     } as never,
-    createManagedScopeDependencies({ employmentProfileId: null }),
+    authority([
+      grant(Permission.TALENT_READ, {
+        scopeType: "managedTalentGroup",
+        targetId: "group-managed",
+      }),
+    ]),
   );
-  const groupActor = createActor({
-    permissions: [Permission.TALENT_GROUP_READ],
-    kpiScopes: ["managedGroup"],
-  });
-  const talentActor = createActor({
-    permissions: [Permission.TALENT_READ],
-    kpiScopes: ["managedGroup"],
-  });
+  const actor = createActor([Permission.TALENT_READ]);
 
-  assert.deepEqual(await groupService.listTalentGroups(groupActor, {}), {
-    items: [],
-  });
-  assert.deepEqual(await talentService.listTalents(talentActor, {}), {
-    items: [],
-  });
   await assert.rejects(
-    groupService.getTalentGroupDetail(groupActor, { groupId: "group-managed" }),
+    service.listTalents(actor, {}),
     (error) => {
       assert.ok(error instanceof SystemInvariantError);
       assert.equal(error.code, "PERMISSION_DENIED");
@@ -224,18 +171,19 @@ test("TEAM_MANAGER with no linked EmploymentProfile gets empty lists and denied 
     },
   );
   await assert.rejects(
-    talentService.getTalentDetail(talentActor, { talentId: "talent-managed" }),
+    service.getTalentDetail(actor, { talentId: "talent-managed" }),
     (error) => {
       assert.ok(error instanceof SystemInvariantError);
       assert.equal(error.code, "PERMISSION_DENIED");
       return true;
     },
   );
+  assert.equal(listCalls, 0);
+  assert.equal(detailCalls, 0);
 });
 
-test("global-read actors keep broad Talent and TalentGroup list/detail behavior", async () => {
+test("structured-global actors retain broad Talent and TalentGroup behavior", async () => {
   let groupListWasScoped = false;
-  let talentListWasScoped = false;
   const groupService = new TalentGroupAdminQueryService(
     {
       async listTalentGroups(input: { readonly groupIds?: readonly string[] }) {
@@ -246,43 +194,82 @@ test("global-read actors keep broad Talent and TalentGroup list/detail behavior"
         return { id: groupId };
       },
     } as never,
-    createManagedScopeDependencies(),
+    createManagedScopeDependencies({ employmentProfileId: null }),
+    authority([
+      grant(Permission.TALENT_GROUP_READ, { scopeType: "global" }),
+    ]),
   );
   const talentService = new TalentAdminQueryService(
     {
-      async listTalents(input: {
-        readonly activeMemberOfGroupIds?: readonly string[];
-      }) {
-        talentListWasScoped = input.activeMemberOfGroupIds !== undefined;
+      async listTalents() {
         return { items: [{ id: "talent-any" }] };
       },
       async getTalentDetail(talentId: string) {
         return { id: talentId };
       },
     } as never,
-    createManagedScopeDependencies(),
+    authority([
+      grant(Permission.TALENT_READ, { scopeType: "global" }),
+    ]),
   );
-  const adminFull = createActor({
-    permissions: [Permission.TALENT_GROUP_READ, Permission.TALENT_READ],
-    kpiScopes: ["global"],
-  });
+  const actor = createActor([
+    Permission.TALENT_GROUP_READ,
+    Permission.TALENT_READ,
+  ]);
 
-  assert.deepEqual(await groupService.listTalentGroups(adminFull, {}), {
+  assert.deepEqual(await groupService.listTalentGroups(actor, {}), {
     items: [{ id: "group-any" }],
   });
   assert.equal(
-    (await groupService.getTalentGroupDetail(adminFull, { groupId: "group-any" }))
+    (await groupService.getTalentGroupDetail(actor, { groupId: "group-any" }))
       .id,
     "group-any",
   );
-  assert.deepEqual(await talentService.listTalents(adminFull, {}), {
+  assert.deepEqual(await talentService.listTalents(actor, {}), {
     items: [{ id: "talent-any" }],
   });
   assert.equal(
-    (await talentService.getTalentDetail(adminFull, { talentId: "talent-any" }))
-      .id,
+    (await talentService.getTalentDetail(actor, { talentId: "talent-any" })).id,
     "talent-any",
   );
   assert.equal(groupListWasScoped, false);
-  assert.equal(talentListWasScoped, false);
 });
+
+function authority(
+  records: readonly StructuredScopeAuthorityAssignment[],
+): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService(
+    {
+      async listByUserId(userId: string) {
+        return userId === "user-manager" ? records : [];
+      },
+    },
+    () => 1_000,
+  );
+}
+
+function grant(
+  permission: Permission,
+  scope: RoleAssignmentScopeGrant,
+): StructuredScopeAuthorityAssignment {
+  return {
+    assignment: {
+      assignmentId: `${permission}:${scope.scopeType}:${scope.targetId ?? ""}`,
+      roleId: `role:${permission}:${scope.scopeType}`,
+      userId: "user-manager",
+      structuredScopeGrants: [scope],
+      state: "ACTIVE",
+      effectiveAt: 0,
+      expiresAt: null,
+      revokedAt: null,
+      reason: null,
+      createdAt: 0,
+      updatedAt: 0,
+    },
+    role: {
+      id: `role:${permission}:${scope.scopeType}`,
+      state: "ACTIVE",
+      permissions: [permission],
+    },
+  };
+}

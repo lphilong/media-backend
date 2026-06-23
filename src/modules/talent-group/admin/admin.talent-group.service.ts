@@ -31,6 +31,7 @@ import {
   TalentGroupInvalidTalentReferenceError,
   TalentGroupMemberNotFoundError,
   TalentGroupNotFoundError,
+  TalentGroupPermissionScopeError,
   TalentGroupStateError,
   TalentGroupValidationError,
 } from "@modules/talent-group/domain/talent-group.errors";
@@ -65,6 +66,8 @@ import {
   TalentGroupTalentReadonlyAccess,
 } from "@modules/talent/domain/talent-group-talent-readonly-access";
 import { TalentGroupPlatformAccountReadonlyAccess } from "@modules/talent-group/domain/talent-group-platform-account-readonly-access";
+import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 type TalentGroupFailureClassification =
   | "validation"
@@ -87,6 +90,7 @@ export class TalentGroupAdminService {
     private readonly eventAssignmentReadonlyAccess: TalentGroupEventAssignmentReadonlyAccess,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
     private readonly logger: StructuredLogger = createStructuredLogger(),
   ) {}
 
@@ -293,6 +297,11 @@ export class TalentGroupAdminService {
           groupId,
           session,
         );
+        await this.requireManagedTalentGroupAuthority(
+          actor,
+          Permission.TALENT_GROUP_UPDATE,
+          current.id,
+        );
 
         if (current.status === "ARCHIVED") {
           throw new TalentGroupStateError(
@@ -405,6 +414,11 @@ export class TalentGroupAdminService {
           groupId,
           session,
         );
+        await this.requireManagedTalentGroupAuthority(
+          actor,
+          Permission.TALENT_GROUP_MANAGE_LIFECYCLE,
+          current.id,
+        );
 
         if (current.status !== "INACTIVE") {
           throw new TalentGroupStateError(
@@ -477,6 +491,11 @@ export class TalentGroupAdminService {
         const current = await this.requireGroup(
           groupId,
           session,
+        );
+        await this.requireManagedTalentGroupAuthority(
+          actor,
+          Permission.TALENT_GROUP_MANAGE_LIFECYCLE,
+          current.id,
         );
 
         if (current.status !== "ACTIVE") {
@@ -580,6 +599,11 @@ export class TalentGroupAdminService {
         const current = await this.requireGroup(
           groupId,
           session,
+        );
+        await this.requireManagedTalentGroupAuthority(
+          actor,
+          Permission.TALENT_GROUP_MANAGE_LIFECYCLE,
+          current.id,
         );
 
         if (current.status !== "INACTIVE") {
@@ -695,6 +719,11 @@ export class TalentGroupAdminService {
         const group = await this.requireGroup(
           groupId,
           session,
+        );
+        await this.requireManagedTalentGroupAuthority(
+          actor,
+          Permission.TALENT_GROUP_MANAGE_MEMBERSHIP,
+          group.id,
         );
         assertActiveGroup(group, groupId);
 
@@ -844,6 +873,11 @@ export class TalentGroupAdminService {
           current.groupId,
           session,
         );
+        await this.requireManagedTalentGroupAuthority(
+          actor,
+          Permission.TALENT_GROUP_MANAGE_MEMBERSHIP,
+          group.id,
+        );
 
         if (group.status === "ARCHIVED") {
           throw new TalentGroupStateError(
@@ -964,6 +998,15 @@ export class TalentGroupAdminService {
           membershipId,
           session,
         );
+        const group = await this.requireGroup(
+          current.groupId,
+          session,
+        );
+        await this.requireManagedTalentGroupAuthority(
+          actor,
+          Permission.TALENT_GROUP_MANAGE_MEMBERSHIP,
+          group.id,
+        );
 
         if (
           current.membershipStatus !== "ACTIVE"
@@ -1067,6 +1110,11 @@ export class TalentGroupAdminService {
           current.groupId,
           session,
         );
+        await this.requireManagedTalentGroupAuthority(
+          actor,
+          Permission.TALENT_GROUP_MANAGE_MEMBERSHIP,
+          group.id,
+        );
         assertActiveGroup(group, group.id);
 
         await this.assertTalentEligibleForActiveMembership(
@@ -1153,6 +1201,15 @@ export class TalentGroupAdminService {
         const current = await this.requireMember(
           membershipId,
           session,
+        );
+        const group = await this.requireGroup(
+          current.groupId,
+          session,
+        );
+        await this.requireManagedTalentGroupAuthority(
+          actor,
+          Permission.TALENT_GROUP_MANAGE_MEMBERSHIP,
+          group.id,
         );
 
         if (
@@ -1244,6 +1301,22 @@ export class TalentGroupAdminService {
     }
 
     return group;
+  }
+
+  private async requireManagedTalentGroupAuthority(
+    actor: Actor,
+    permission: Permission,
+    groupId: string,
+  ): Promise<void> {
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission,
+      scope: { scopeType: "managedTalentGroup", targetId: groupId },
+      authority: this.structuredAuthority,
+      error: new TalentGroupPermissionScopeError(
+        `Talent group operation requires managedTalentGroup scope: ${groupId}`,
+      ),
+    });
   }
 
   private async allocateGeneratedCode(
@@ -2030,4 +2103,14 @@ function readOptionalLogString(
   return normalized.length > 0
     ? normalized
     : undefined;
+}
+
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(): Promise<never> {
+      throw new TalentGroupPermissionScopeError(
+        "Structured TalentGroup authority is unavailable",
+      );
+    },
+  });
 }

@@ -9,6 +9,7 @@ import {
 } from "@modules/studio-resource/domain/studio-resource.types";
 
 export interface ListStudioResourcesReadInput {
+  readonly studioResourceIds?: readonly string[];
   readonly resourceClass?: StudioResourceClass;
   readonly operationalStatus?: StudioResourceOperationalStatus;
   readonly hasMaxOccupancy?: boolean;

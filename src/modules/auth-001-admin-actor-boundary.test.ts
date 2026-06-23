@@ -14,6 +14,10 @@ import { TalentGroupAdminQueryService } from "@modules/talent-group/admin/admin.
 import { TalentGroupAdminService } from "@modules/talent-group/admin/admin.talent-group.service";
 import { PlatformAccountAdminQueryService } from "@modules/platform-account/admin/admin.platform-account.query-service";
 import { PlatformAccountAdminService } from "@modules/platform-account/admin/admin.platform-account.service";
+import {
+  StructuredScopeAuthorityAssignment,
+  StructuredScopeAuthorityService,
+} from "@modules/role/domain/structured-scope-authority";
 
 const BRIDGE_REACHED = new Error("mutation bridge reached");
 
@@ -34,6 +38,39 @@ function createActor(
     permissions,
     isActive: true,
   });
+}
+
+function structuredGlobalAuthority(
+  permission: Permission,
+): StructuredScopeAuthorityService {
+  const record: StructuredScopeAuthorityAssignment = {
+    assignment: {
+      assignmentId: `assignment:${permission}`,
+      roleId: `role:${permission}`,
+      userId: "admin-user-1",
+      structuredScopeGrants: [{ scopeType: "global" }],
+      state: "ACTIVE",
+      effectiveAt: 0,
+      expiresAt: null,
+      revokedAt: null,
+      reason: null,
+      createdAt: 0,
+      updatedAt: 0,
+    },
+    role: {
+      id: `role:${permission}`,
+      state: "ACTIVE",
+      permissions: [permission],
+    },
+  };
+  return new StructuredScopeAuthorityService(
+    {
+      async listByUserId(userId: string) {
+        return userId === "admin-user-1" ? [record] : [];
+      },
+    },
+    () => 1_000,
+  );
 }
 
 async function assertStaffActorDenied(
@@ -76,12 +113,15 @@ test(
   "AUTH-001 Org Unit enforces admin actor on query and mutation paths",
   async () => {
     let queryCallCount = 0;
-    const queryService = new OrgUnitAdminQueryService({
-      listOrgUnits: async () => {
-        queryCallCount += 1;
-        return { items: [] };
-      },
-    } as never);
+    const queryService = new OrgUnitAdminQueryService(
+      {
+        listOrgUnits: async () => {
+          queryCallCount += 1;
+          return { items: [] };
+        },
+      } as never,
+      structuredGlobalAuthority(Permission.ORG_UNIT_READ),
+    );
     const readStaff = createActor("staff", [
       Permission.ORG_UNIT_READ,
     ]);
@@ -107,6 +147,7 @@ test(
       {} as never,
       {} as never,
       bridgeProbe.bridge as never,
+      undefined,
       noopLogger as never,
     );
     const mutationStaff = createActor("staff", [
@@ -138,12 +179,17 @@ test(
   async () => {
     let queryCallCount = 0;
     const queryService =
-      new EmploymentProfileAdminQueryService({
-        listEmploymentProfiles: async () => {
-          queryCallCount += 1;
-          return { items: [] };
-        },
-      } as never);
+      new EmploymentProfileAdminQueryService(
+        {
+          listEmploymentProfiles: async () => {
+            queryCallCount += 1;
+            return { items: [] };
+          },
+        } as never,
+        structuredGlobalAuthority(
+          Permission.EMPLOYMENT_PROFILE_READ,
+        ),
+      );
     const readStaff = createActor("staff", [
       Permission.EMPLOYMENT_PROFILE_READ,
     ]);
@@ -172,6 +218,7 @@ test(
       {} as never,
       {} as never,
       bridgeProbe.bridge as never,
+      undefined,
       noopLogger as never,
     );
     const mutationStaff = createActor("staff", [
@@ -212,12 +259,15 @@ test(
   "AUTH-001 Talent enforces admin actor on query and mutation paths",
   async () => {
     let queryCallCount = 0;
-    const queryService = new TalentAdminQueryService({
-      listTalents: async () => {
-        queryCallCount += 1;
-        return { items: [] };
-      },
-    } as never);
+    const queryService = new TalentAdminQueryService(
+      {
+        listTalents: async () => {
+          queryCallCount += 1;
+          return { items: [] };
+        },
+      } as never,
+      structuredGlobalAuthority(Permission.TALENT_READ),
+    );
     const readStaff = createActor("staff", [
       Permission.TALENT_READ,
     ]);
@@ -280,12 +330,16 @@ test(
   async () => {
     let queryCallCount = 0;
     const queryService =
-      new TalentGroupAdminQueryService({
-        listTalentGroups: async () => {
-          queryCallCount += 1;
-          return { items: [] };
-        },
-      } as never);
+      new TalentGroupAdminQueryService(
+        {
+          listTalentGroups: async () => {
+            queryCallCount += 1;
+            return { items: [] };
+          },
+        } as never,
+        undefined,
+        structuredGlobalAuthority(Permission.TALENT_GROUP_READ),
+      );
     const readStaff = createActor("staff", [
       Permission.TALENT_GROUP_READ,
     ]);
@@ -313,6 +367,7 @@ test(
       {} as never,
       {} as never,
       bridgeProbe.bridge as never,
+      undefined,
       noopLogger as never,
     );
     const mutationStaff = createActor("staff", [
@@ -349,12 +404,17 @@ test(
   async () => {
     let queryCallCount = 0;
     const queryService =
-      new PlatformAccountAdminQueryService({
-        listPlatformAccounts: async () => {
-          queryCallCount += 1;
-          return { items: [] };
-        },
-      } as never);
+      new PlatformAccountAdminQueryService(
+        {
+          listPlatformAccounts: async () => {
+            queryCallCount += 1;
+            return { items: [] };
+          },
+        } as never,
+        structuredGlobalAuthority(
+          Permission.PLATFORM_ACCOUNT_READ,
+        ),
+      );
     const readStaff = createActor("staff", [
       Permission.PLATFORM_ACCOUNT_READ,
     ]);
@@ -418,5 +478,38 @@ test(
       ),
     );
     assert.equal(bridgeProbe.getCallCount(), 1);
+  },
+);
+
+test(
+  "AUTH-001 legacy admin actor and permission do not bypass structured-required query authority",
+  async () => {
+    let queryCallCount = 0;
+    const queryService = new TalentAdminQueryService(
+      {
+        async listTalents() {
+          queryCallCount += 1;
+          return { items: [] };
+        },
+      } as never,
+      new StructuredScopeAuthorityService({
+        async listByUserId() {
+          return [];
+        },
+      }),
+    );
+
+    await assert.rejects(
+      queryService.listTalents(
+        createActor("admin", [Permission.TALENT_READ]),
+        {},
+      ),
+      (error) => {
+        assert.ok(error instanceof SystemInvariantError);
+        assert.equal(error.code, "PERMISSION_DENIED");
+        return true;
+      },
+    );
+    assert.equal(queryCallCount, 0);
   },
 );

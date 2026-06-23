@@ -354,6 +354,10 @@ function createDefaultKpiStructuredAuthority(
       kpiStructuredRecord({
         userId: "admin-1",
         permissions: ALL_KPI_ADMIN_PERMISSIONS,
+        structuredScopeGrants: [
+          { scopeType: "global" },
+          ...DEFAULT_KPI_STRUCTURED_SCOPE_GRANTS,
+        ],
       }),
       kpiStructuredRecord({
         userId: "manager-user",

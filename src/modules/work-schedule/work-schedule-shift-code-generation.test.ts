@@ -10,6 +10,7 @@ import type {
 } from "@core/application/authoritative-admin-mutation.bridge";
 import type { AuditGuard } from "@core/audit/audit.guard";
 import { Permission } from "@core/permission/permission.enum";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import { bindTraceId } from "@core/trace/trace.context";
 import { WorkScheduleAdminController } from "@modules/work-schedule/admin/admin.work-schedule.controller";
 import { WorkScheduleAdminQueryService } from "@modules/work-schedule/admin/admin.work-schedule.query-service";
@@ -342,6 +343,34 @@ function createReadActor(): Actor {
       workSchedule: ["global"],
     },
     isActive: true,
+  });
+}
+
+function workScheduleGlobalReadAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(userId: string) {
+      if (userId !== "admin-user-1") return [];
+      return [{
+        assignment: {
+          assignmentId: "work-schedule-global",
+          roleId: "work-schedule-role",
+          userId,
+          structuredScopeGrants: [{ scopeType: "global" as const }],
+          state: "ACTIVE" as const,
+          effectiveAt: 0,
+          expiresAt: null,
+          revokedAt: null,
+          reason: null,
+          createdAt: 0,
+          updatedAt: 0,
+        },
+        role: {
+          id: "work-schedule-role",
+          state: "ACTIVE" as const,
+          permissions: [Permission.WORK_SCHEDULE_READ],
+        },
+      }];
+    },
   });
 }
 
@@ -1281,6 +1310,9 @@ test("Work Schedule list source filters are parsed and passed to read repository
         return [];
       },
     },
+    undefined,
+    undefined,
+    workScheduleGlobalReadAuthority(),
   );
 
   await service.listWorkShifts(createReadActor(), {
@@ -1299,7 +1331,7 @@ test("Work Schedule list source filters are parsed and passed to read repository
   assert.equal(captured?.sourceRosterMonth, "2026-05");
 });
 
-test("Work Schedule team read scope resolves active managed group memberships", async () => {
+test("Work Schedule broad Admin list rejects legacy coarse team scope", async () => {
   let capturedScopeIds: readonly string[] | undefined;
   let capturedGroupIds: readonly string[] | undefined;
   const service = new WorkScheduleAdminQueryService(
@@ -1370,15 +1402,10 @@ test("Work Schedule team read scope resolves active managed group memberships", 
     },
   );
 
-  await service.listWorkShifts(createStaleTeamManagerActor(), {
-    scope: "team",
-  });
-
-  assert.deepEqual(capturedGroupIds, ["group-managed"]);
-  assert.deepEqual(capturedScopeIds, [
-    "ep-managed-1",
-    "ep-managed-2",
-  ]);
+  await assert.rejects(
+    service.listWorkShifts(createStaleTeamManagerActor(), { scope: "team" }),
+    /structured global scope/,
+  );
 });
 
 test("Work Schedule read repository applies source metadata filters", async () => {

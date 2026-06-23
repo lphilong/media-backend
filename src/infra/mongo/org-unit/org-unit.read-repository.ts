@@ -95,6 +95,10 @@ export class NativeMongoOrgUnitReadRepository
     const queryFilters: Array<Record<string, unknown>> =
       [];
 
+    if (input.orgUnitIds) {
+      queryFilters.push({ _id: { $in: [...input.orgUnitIds] } });
+    }
+
     if (input.status) {
       queryFilters.push({
         status: input.status,
@@ -212,6 +216,10 @@ export class NativeMongoOrgUnitReadRepository
           },
         },
       ];
+
+    if (input.orgUnitIds) {
+      queryFilters.push({ _id: { $in: [...input.orgUnitIds] } });
+    }
 
     if (cursor) {
       queryFilters.push(
@@ -703,6 +711,7 @@ function buildListQueryKey(
   return JSON.stringify({
     surface: "list-org-units",
     status: input.status ?? "__DEFAULT_NON_ARCHIVED__",
+    orgUnitIds: input.orgUnitIds ? [...input.orgUnitIds].sort() : null,
     type: input.type ?? null,
     parentOrgUnitId: input.parentOrgUnitId ?? null,
     rootOnly: input.rootOnly ?? false,
@@ -717,6 +726,7 @@ function buildDirectChildrenQueryKey(
   return JSON.stringify({
     surface: "list-direct-children",
     parentOrgUnitId: input.parentOrgUnitId,
+    orgUnitIds: input.orgUnitIds ? [...input.orgUnitIds].sort() : null,
     status: "__DEFAULT_NON_ARCHIVED__",
     sort: {
       kind: "default",

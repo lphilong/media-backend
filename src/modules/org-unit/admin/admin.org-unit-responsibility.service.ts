@@ -22,6 +22,7 @@ import {
 import {
   OrgUnitConflictError,
   OrgUnitNotFoundError,
+  OrgUnitPermissionScopeError,
   OrgUnitStateError,
   OrgUnitValidationError,
 } from "@modules/org-unit/domain/org-unit.errors";
@@ -34,6 +35,8 @@ import {
   RevokeOrgUnitResponsibilityCommand,
   UpdateOrgUnitResponsibilityCommand,
 } from "@modules/org-unit/shared/org-unit.contracts";
+import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 const ASSIGN_RESPONSIBILITY_OPERATION: AuthoritativeAdminMutationIdentity =
   "org-unit.assign-responsibility";
@@ -66,6 +69,7 @@ export class OrgUnitResponsibilityAdminService {
     private readonly assignmentRepository: OrgUnitManagerAssignmentRepository,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
     private readonly clock: () => number = Date.now,
   ) {}
 
@@ -76,6 +80,11 @@ export class OrgUnitResponsibilityAdminService {
     this.assertPermission(actor, Permission.ORG_UNIT_READ);
     const orgUnitId = normalizeRequiredText(query.orgUnitId, "orgUnitId");
     const orgUnit = await this.requireOrgUnit(orgUnitId);
+    await this.requireManagedOrgUnitAuthority(
+      actor,
+      Permission.ORG_UNIT_READ,
+      orgUnit.id,
+    );
     const assignments =
       await this.assignmentRepository.listAssignmentsByOrgUnitId(orgUnitId);
 
@@ -103,6 +112,11 @@ export class OrgUnitResponsibilityAdminService {
       `org-unit-responsibility:create:${orgUnitId}:${managerEmploymentProfileId}:${normalized.role}`,
       async (session) => {
         const orgUnit = await this.requireOrgUnit(orgUnitId, session);
+        await this.requireManagedOrgUnitAuthority(
+          actor,
+          Permission.ORG_UNIT_UPDATE,
+          orgUnit.id,
+        );
         assertAssignableOrgUnit(orgUnit, orgUnitId);
         await this.assertManagerCandidate(managerEmploymentProfileId, session);
 
@@ -187,6 +201,11 @@ export class OrgUnitResponsibilityAdminService {
       `org-unit-responsibility:update:${orgUnitId}:${assignmentId}`,
       async (session) => {
         const orgUnit = await this.requireOrgUnit(orgUnitId, session);
+        await this.requireManagedOrgUnitAuthority(
+          actor,
+          Permission.ORG_UNIT_UPDATE,
+          orgUnit.id,
+        );
         const current =
           await this.assignmentRepository.findAssignmentById(
             assignmentId,
@@ -277,6 +296,11 @@ export class OrgUnitResponsibilityAdminService {
       `org-unit-responsibility:revoke:${orgUnitId}:${assignmentId}`,
       async (session) => {
         const orgUnit = await this.requireOrgUnit(orgUnitId, session);
+        await this.requireManagedOrgUnitAuthority(
+          actor,
+          Permission.ORG_UNIT_UPDATE,
+          orgUnit.id,
+        );
         const current =
           await this.assignmentRepository.findAssignmentById(
             assignmentId,
@@ -347,6 +371,22 @@ export class OrgUnitResponsibilityAdminService {
       throw new OrgUnitNotFoundError(orgUnitId);
     }
     return orgUnit;
+  }
+
+  private async requireManagedOrgUnitAuthority(
+    actor: Actor,
+    permission: Permission,
+    orgUnitId: string,
+  ): Promise<void> {
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission,
+      scope: { scopeType: "managedOrgUnit", targetId: orgUnitId },
+      authority: this.structuredAuthority,
+      error: new OrgUnitPermissionScopeError(
+        `Org unit responsibility requires managedOrgUnit scope: ${orgUnitId}`,
+      ),
+    });
   }
 
   private async assertManagerCandidate(
@@ -647,4 +687,14 @@ function rangesOverlap(
   const normalizedLeftTo = leftTo ?? Number.MAX_SAFE_INTEGER;
   const normalizedRightTo = rightTo ?? Number.MAX_SAFE_INTEGER;
   return leftFrom <= normalizedRightTo && rightFrom <= normalizedLeftTo;
+}
+
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(): Promise<never> {
+      throw new OrgUnitPermissionScopeError(
+        "Structured OrgUnit authority is unavailable",
+      );
+    },
+  });
 }

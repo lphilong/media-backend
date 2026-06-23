@@ -4,6 +4,7 @@ import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import {
   OrgUnitNotFoundError,
+  OrgUnitPermissionScopeError,
   OrgUnitValidationError,
 } from "@modules/org-unit/domain/org-unit.errors";
 import {
@@ -27,13 +28,30 @@ import {
   ListRootOrgUnitsQuery,
   ListRootOrgUnitsResult,
 } from "@modules/org-unit/shared/org-unit.contracts";
+import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
+import { KpiSubjectReadonlyAccess } from "@modules/kpi/domain/kpi-subject-readonly-access";
+import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
+interface OrgUnitScopedReadDependencies {
+  readonly subjectReadonlyAccess: Pick<
+    KpiSubjectReadonlyAccess,
+    "findActiveEmploymentProfileByLinkedUserId"
+  >;
+  readonly managerAssignmentRepository: Pick<
+    OrgUnitManagerAssignmentRepository,
+    "listActiveByManagerEmploymentProfileId"
+  >;
+}
+
 export class OrgUnitAdminQueryService {
   constructor(
     private readonly readRepository: OrgUnitReadRepository,
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
+    private readonly scopedReadDependencies?: OrgUnitScopedReadDependencies,
   ) {}
 
   async listOrgUnits(
@@ -45,6 +63,7 @@ export class OrgUnitAdminQueryService {
     );
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(actor, permission);
+    const authorizedOrgUnitIds = await this.resolveAuthorizedOrgUnitIds(actor);
 
     const rootOnly = parseOptionalRootOnly(
       query.rootOnly,
@@ -65,6 +84,7 @@ export class OrgUnitAdminQueryService {
     }
 
     return this.readRepository.listOrgUnits({
+      orgUnitIds: authorizedOrgUnitIds ?? undefined,
       status: parseOptionalStatus(query.status),
       type: parseOptionalType(query.type),
       parentOrgUnitId,
@@ -104,6 +124,8 @@ export class OrgUnitAdminQueryService {
       throw new OrgUnitNotFoundError(orgUnitId);
     }
 
+    await this.requireManagedOrgUnitAuthority(actor, orgUnitId);
+
     return detail;
   }
 
@@ -116,6 +138,7 @@ export class OrgUnitAdminQueryService {
     );
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(actor, permission);
+    await this.requireGlobalTreeAuthority(actor);
 
     return this.readRepository.listOrgUnits({
       rootOnly: true,
@@ -147,12 +170,139 @@ export class OrgUnitAdminQueryService {
       throw new OrgUnitNotFoundError(orgUnitId);
     }
 
-    return this.readRepository.listDirectChildren({
+    await this.requireManagedOrgUnitAuthority(actor, orgUnitId);
+    const authorizedOrgUnitIds = await this.resolveAuthorizedOrgUnitIds(actor);
+    const result = await this.readRepository.listDirectChildren({
       parentOrgUnitId: orgUnitId,
+      orgUnitIds: authorizedOrgUnitIds ?? undefined,
       limit: parseLimit(query.limit),
       cursor: parseOptionalCursor(query.cursor),
     });
+    if (authorizedOrgUnitIds === null) {
+      return result;
+    }
+    const allowed = new Set(authorizedOrgUnitIds);
+    return {
+      items: result.items.filter((item) => allowed.has(item.id)),
+      ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+    };
   }
+
+  private async requireManagedOrgUnitAuthority(
+    actor: Actor,
+    orgUnitId: string,
+  ): Promise<void> {
+    if (
+      await this.structuredAuthority.hasAuthority({
+        userId: actor.id,
+        permission: Permission.ORG_UNIT_READ,
+        scope: { scopeType: "global" },
+      })
+    ) {
+      return;
+    }
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission: Permission.ORG_UNIT_READ,
+      scope: { scopeType: "managedOrgUnit", targetId: orgUnitId },
+      authority: this.structuredAuthority,
+      error: new OrgUnitPermissionScopeError(
+        `Org unit read requires managedOrgUnit scope: ${orgUnitId}`,
+      ),
+    });
+    const dependencies = this.scopedReadDependencies;
+    if (!dependencies) {
+      throw new OrgUnitPermissionScopeError(
+        "OrgUnit manager responsibility dependencies are unavailable",
+      );
+    }
+    const profile =
+      await dependencies.subjectReadonlyAccess.findActiveEmploymentProfileByLinkedUserId(
+        actor.id,
+      );
+    const assignments = profile
+      ? await dependencies.managerAssignmentRepository.listActiveByManagerEmploymentProfileId(
+          profile.employmentProfileId,
+          Date.now(),
+        )
+      : [];
+    if (!assignments.some((assignment) => assignment.orgUnitId === orgUnitId)) {
+      throw new OrgUnitPermissionScopeError(
+        `Active OrgUnit manager responsibility is required: ${orgUnitId}`,
+      );
+    }
+  }
+
+  private async resolveAuthorizedOrgUnitIds(
+    actor: Actor,
+  ): Promise<readonly string[] | null> {
+    const grants = await this.structuredAuthority.listAuthorizedScopeGrants({
+      userId: actor.id,
+      permission: Permission.ORG_UNIT_READ,
+    });
+    if (grants.some((grant) => grant.scopeType === "global")) {
+      return null;
+    }
+    const grantedIds = new Set(
+      grants
+        .filter((grant) => grant.scopeType === "managedOrgUnit")
+        .map((grant) => grant.targetId)
+        .filter((id): id is string => Boolean(id)),
+    );
+    if (grantedIds.size === 0) {
+      throw new OrgUnitPermissionScopeError(
+        "OrgUnit list requires structured global or managedOrgUnit scope",
+      );
+    }
+    const dependencies = this.scopedReadDependencies;
+    if (!dependencies) {
+      throw new OrgUnitPermissionScopeError(
+        "OrgUnit scoped list dependencies are unavailable",
+      );
+    }
+    const profile =
+      await dependencies.subjectReadonlyAccess.findActiveEmploymentProfileByLinkedUserId(
+        actor.id,
+      );
+    if (!profile) {
+      return [];
+    }
+    const assignments =
+      await dependencies.managerAssignmentRepository.listActiveByManagerEmploymentProfileId(
+        profile.employmentProfileId,
+        Date.now(),
+      );
+    return [
+      ...new Set(
+        assignments
+          .map((assignment) => assignment.orgUnitId)
+          .filter((orgUnitId) => grantedIds.has(orgUnitId)),
+      ),
+    ].sort();
+  }
+
+  private async requireGlobalTreeAuthority(actor: Actor): Promise<void> {
+    const allowed = await this.structuredAuthority.hasAuthority({
+      userId: actor.id,
+      permission: Permission.ORG_UNIT_READ,
+      scope: { scopeType: "global" },
+    });
+    if (!allowed) {
+      throw new OrgUnitPermissionScopeError(
+        "OrgUnit roots/tree require structured global scope; minimal ancestor disclosure is not implemented",
+      );
+    }
+  }
+}
+
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(): Promise<never> {
+      throw new OrgUnitPermissionScopeError(
+        "Structured OrgUnit authority is unavailable",
+      );
+    },
+  });
 }
 
 function normalizeRequiredText(

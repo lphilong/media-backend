@@ -65,3 +65,14 @@ export class OrgUnitParentStateError extends DomainError {
     );
   }
 }
+
+export class OrgUnitPermissionScopeError extends DomainError {
+  constructor(message: string) {
+    super(
+      "ORG_UNIT_PERMISSION_SCOPE_ERROR",
+      message,
+      "Permission or scope denied",
+      403,
+    );
+  }
+}

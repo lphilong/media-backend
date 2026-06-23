@@ -18,6 +18,8 @@ import {
   ListHolidayCalendarsQuery,
   ListHolidayCalendarsResult,
 } from "@modules/work-schedule/shared/work-schedule.contracts";
+import { requireAdminGlobalScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -25,13 +27,14 @@ const MAX_LIMIT = 100;
 export class HolidayCalendarAdminQueryService {
   constructor(
     private readonly readRepository: HolidayCalendarReadRepository,
+    private readonly structuredAuthority: StructuredScopeAuthorityService,
   ) {}
 
   async listHolidayCalendars(
     actor: Actor,
     query: ListHolidayCalendarsQuery,
   ): Promise<ListHolidayCalendarsResult> {
-    this.assertReadPermission(actor);
+    await this.assertReadPermission(actor);
 
     return this.readRepository.listHolidayCalendars({
       status: parseOptionalStatus(query.status),
@@ -45,7 +48,7 @@ export class HolidayCalendarAdminQueryService {
     actor: Actor,
     query: GetHolidayCalendarDetailQuery,
   ): Promise<GetHolidayCalendarDetailResult> {
-    this.assertReadPermission(actor);
+    await this.assertReadPermission(actor);
 
     const holidayCalendarId = normalizeRequiredText(
       query.holidayCalendarId,
@@ -65,7 +68,7 @@ export class HolidayCalendarAdminQueryService {
     return detail;
   }
 
-  private assertReadPermission(actor: Actor): void {
+  private async assertReadPermission(actor: Actor): Promise<void> {
     assertAdminActorType(actor);
 
     const permission =
@@ -73,6 +76,14 @@ export class HolidayCalendarAdminQueryService {
         Permission.WORK_SCHEDULE_READ,
       );
     PermissionGuard.assert(actor, permission);
+    await requireAdminGlobalScopeAuthority({
+      actor,
+      permission: Permission.WORK_SCHEDULE_READ,
+      authority: this.structuredAuthority,
+      error: new WorkScheduleValidationError(
+        "Holiday Calendar Admin reads require structured global scope",
+      ),
+    });
   }
 }
 

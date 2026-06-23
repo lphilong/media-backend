@@ -10,6 +10,7 @@ import {
 } from "@modules/platform-account/domain/platform-account.types";
 
 export interface ListPlatformAccountReadInput {
+  readonly platformAccountIds?: readonly string[];
   readonly platform?: PlatformAccountPlatform;
   readonly platformSurfaceType?: PlatformAccountSurfaceType;
   readonly operationalStatus?: PlatformAccountOperationalStatus;

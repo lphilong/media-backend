@@ -31,6 +31,7 @@ import {
   EmploymentProfileInvalidUserLinkageError,
   EmploymentProfileManagerCycleError,
   EmploymentProfileNotFoundError,
+  EmploymentProfilePermissionScopeError,
   EmploymentProfileStateError,
   EmploymentProfileValidationError,
 } from "@modules/employment-profile/domain/employment-profile.errors";
@@ -71,6 +72,8 @@ import {
   UpdateEmploymentProfileContractStatusCommand,
   UpdateEmploymentProfileCoreCommand,
 } from "@modules/employment-profile/shared/employment-profile.contracts";
+import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 type EmploymentProfileFailureClassification =
   | "validation"
@@ -94,6 +97,7 @@ export class EmploymentProfileAdminService {
     private readonly eventAssignmentReadonlyAccess: EmploymentProfileEventAssignmentReadonlyAccess,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
     private readonly logger: StructuredLogger = createStructuredLogger(),
   ) {}
 
@@ -147,6 +151,11 @@ export class EmploymentProfileAdminService {
         await this.assertOrgUnitActive(
           input.orgUnitId,
           session,
+        );
+        await this.requireManagedOrgUnitAuthority(
+          actor,
+          Permission.EMPLOYMENT_PROFILE_CREATE,
+          input.orgUnitId,
         );
 
         if (input.managerEmploymentProfileId) {
@@ -459,6 +468,11 @@ export class EmploymentProfileAdminService {
             employmentProfileId,
             session,
           );
+        await this.requireManagedOrgUnitAuthority(
+          actor,
+          Permission.EMPLOYMENT_PROFILE_UPDATE,
+          current.orgUnitId,
+        );
 
         if (
           current.employmentStatus === "ARCHIVED"
@@ -589,7 +603,6 @@ export class EmploymentProfileAdminService {
             employmentProfileId,
             session,
           );
-
         if (
           current.employmentStatus === "ARCHIVED"
         ) {
@@ -690,6 +703,11 @@ export class EmploymentProfileAdminService {
             employmentProfileId,
             session,
           );
+        await this.requireManagedOrgUnitAuthority(
+          actor,
+          Permission.EMPLOYMENT_PROFILE_MANAGE_MANAGER_ASSIGNMENT,
+          current.orgUnitId,
+        );
 
         if (
           current.employmentStatus === "ARCHIVED"
@@ -816,7 +834,6 @@ export class EmploymentProfileAdminService {
             employmentProfileId,
             session,
           );
-
         if (
           current.employmentStatus === "ARCHIVED"
         ) {
@@ -921,7 +938,6 @@ export class EmploymentProfileAdminService {
             employmentProfileId,
             session,
           );
-
         if (
           current.employmentStatus === "ARCHIVED"
         ) {
@@ -1009,6 +1025,11 @@ export class EmploymentProfileAdminService {
             employmentProfileId,
             session,
           );
+        await this.requireManagedOrgUnitAuthority(
+          actor,
+          Permission.EMPLOYMENT_PROFILE_MANAGE_LIFECYCLE,
+          current.orgUnitId,
+        );
 
         if (
           current.employmentStatus !== "ACTIVE"
@@ -1107,6 +1128,11 @@ export class EmploymentProfileAdminService {
             employmentProfileId,
             session,
           );
+        await this.requireManagedOrgUnitAuthority(
+          actor,
+          Permission.EMPLOYMENT_PROFILE_MANAGE_LIFECYCLE,
+          current.orgUnitId,
+        );
 
         if (
           current.employmentStatus !== "ON_LEAVE"
@@ -1196,6 +1222,11 @@ export class EmploymentProfileAdminService {
             employmentProfileId,
             session,
           );
+        await this.requireManagedOrgUnitAuthority(
+          actor,
+          Permission.EMPLOYMENT_PROFILE_MANAGE_LIFECYCLE,
+          current.orgUnitId,
+        );
 
         if (
           current.employmentStatus !== "ACTIVE" &&
@@ -1307,6 +1338,11 @@ export class EmploymentProfileAdminService {
             employmentProfileId,
             session,
           );
+        await this.requireManagedOrgUnitAuthority(
+          actor,
+          Permission.EMPLOYMENT_PROFILE_MANAGE_LIFECYCLE,
+          current.orgUnitId,
+        );
 
         if (
           current.employmentStatus !==
@@ -1397,7 +1433,6 @@ export class EmploymentProfileAdminService {
             employmentProfileId,
             session,
           );
-
         if (
           current.employmentStatus !== "ACTIVE" &&
           current.employmentStatus !== "ON_LEAVE" &&
@@ -1536,6 +1571,11 @@ export class EmploymentProfileAdminService {
             employmentProfileId,
             session,
           );
+        await this.requireManagedOrgUnitAuthority(
+          actor,
+          Permission.EMPLOYMENT_PROFILE_MANAGE_LIFECYCLE,
+          current.orgUnitId,
+        );
 
         if (
           current.employmentStatus !==
@@ -1751,6 +1791,22 @@ export class EmploymentProfileAdminService {
     );
 
     return employmentProfile;
+  }
+
+  private async requireManagedOrgUnitAuthority(
+    actor: Actor,
+    permission: Permission,
+    orgUnitId: string,
+  ): Promise<void> {
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission,
+      scope: { scopeType: "managedOrgUnit", targetId: orgUnitId },
+      authority: this.structuredAuthority,
+      error: new EmploymentProfilePermissionScopeError(
+        `Employment profile operation requires managedOrgUnit scope: ${orgUnitId}`,
+      ),
+    });
   }
 
   private async allocateGeneratedCode(
@@ -3083,4 +3139,14 @@ function readOptionalLogString(
   return normalized.length > 0
     ? normalized
     : undefined;
+}
+
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(): Promise<never> {
+      throw new EmploymentProfilePermissionScopeError(
+        "Structured EmploymentProfile authority is unavailable",
+      );
+    },
+  });
 }

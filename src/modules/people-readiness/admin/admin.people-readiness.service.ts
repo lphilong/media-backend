@@ -34,6 +34,8 @@ import {
   PeopleReadinessIssueListResult,
   PeopleReadinessSummaryResult,
 } from "../shared/people-readiness.contracts";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
+import { requireAdminGlobalScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
@@ -52,10 +54,11 @@ export class PeopleReadinessAdminService {
     private readonly readRepository: PeopleReadinessReadRepository,
     private readonly employmentTermsReadiness: EmploymentTermsReadinessReadonlyAccess,
     private readonly now: NowProvider = Date.now,
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
   ) {}
 
   async getSummary(actor: Actor): Promise<PeopleReadinessSummaryResult> {
-    this.assertAccess(actor);
+    await this.assertAccess(actor);
     const generatedAt = this.now();
     const snapshot = await this.readRepository.getSnapshot();
     const issues = generateIssues(
@@ -80,7 +83,7 @@ export class PeopleReadinessAdminService {
     actor: Actor,
     query: ListPeopleReadinessIssuesQuery,
   ): Promise<PeopleReadinessIssueListResult> {
-    this.assertAccess(actor);
+    await this.assertAccess(actor);
     const generatedAt = this.now();
     const snapshot = await this.readRepository.getSnapshot();
     const filters = parseFilters(query);
@@ -103,12 +106,20 @@ export class PeopleReadinessAdminService {
     };
   }
 
-  private assertAccess(actor: Actor): void {
+  private async assertAccess(actor: Actor): Promise<void> {
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(
       actor,
       PermissionResolver.resolve(Permission.EMPLOYMENT_PROFILE_READ),
     );
+    await requireAdminGlobalScopeAuthority({
+      actor,
+      permission: Permission.EMPLOYMENT_PROFILE_READ,
+      authority: this.structuredAuthority,
+      error: new PeopleReadinessValidationError(
+        "People Readiness Admin surfaces require structured global scope",
+      ),
+    });
   }
 
   private readEmploymentTermsFacts(
@@ -123,6 +134,16 @@ export class PeopleReadinessAdminService {
       toHcmBusinessDateTimestamp(generatedAt),
     );
   }
+}
+
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(): Promise<never> {
+      throw new PeopleReadinessValidationError(
+        "Structured People Readiness authority is unavailable",
+      );
+    },
+  });
 }
 
 export function generateIssues(

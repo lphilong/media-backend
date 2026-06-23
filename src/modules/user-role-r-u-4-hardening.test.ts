@@ -686,7 +686,7 @@ test(
             params: { roleId: "role-1" },
             body: {
               userId: "user-2",
-              effectiveAt: Date.now(),
+              extra: true,
             },
           }),
           actor,

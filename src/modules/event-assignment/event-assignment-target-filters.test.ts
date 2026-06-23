@@ -117,7 +117,12 @@ function createServiceCapture(): {
   };
 
   return {
-    service: new EventAssignmentAdminQueryService(repository),
+    service: new EventAssignmentAdminQueryService(
+      repository,
+      structuredAuthority([
+        assignment(["event.read"], [{ scopeType: "global" }]),
+      ]),
+    ),
     get capturedInput() {
       return capture.capturedInput;
     },

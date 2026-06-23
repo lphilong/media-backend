@@ -9,6 +9,7 @@ import {
 } from "@modules/org-unit/domain/org-unit.types";
 
 export interface ListOrgUnitReadInput {
+  readonly orgUnitIds?: readonly string[];
   readonly status?: OrgUnitStatus;
   readonly type?: OrgUnitType;
   readonly parentOrgUnitId?: string | null;
@@ -27,6 +28,7 @@ export interface ListOrgUnitReadResult {
 
 export interface ListDirectChildrenReadInput {
   readonly parentOrgUnitId: string;
+  readonly orgUnitIds?: readonly string[];
   readonly limit: number;
   readonly cursor?: string;
 }

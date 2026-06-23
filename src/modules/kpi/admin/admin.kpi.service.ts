@@ -384,6 +384,11 @@ export class KpiAdminService {
     const input = this.toListPlansInput(query);
 
     if (this.hasKpiGlobalScope(actor)) {
+      await this.requireKpiGlobalStructuredAuthority(
+        actor,
+        Permission.KPI_READ,
+        "list KPI plans",
+      );
       const items = await this.repository.listPlans(input);
       return { items: await this.withAllocationWorkflowSummaries(items) };
     }
@@ -415,7 +420,14 @@ export class KpiAdminService {
     }
 
     const page = this.hasKpiGlobalScope(actor)
-      ? await this.listActualWorkspacePlanPage(input)
+      ? await (async () => {
+          await this.requireKpiGlobalStructuredAuthority(
+            actor,
+            Permission.KPI_READ_PROGRESS,
+            "list KPI actual workspace plans",
+          );
+          return this.listActualWorkspacePlanPage(input);
+        })()
       : await this.listManagedGroupActualWorkspacePlans(actor, input);
     const aggregates = await this.buildActualWorkspaceAggregates(
       actor,
@@ -828,7 +840,12 @@ export class KpiAdminService {
       );
     }
 
-    const managedGroupIds = await this.resolveManagedTalentGroupIds(actor);
+    const managedGroupIds = await this.filterStructuredManagedTargetIds(
+      actor,
+      Permission.KPI_READ,
+      "managedTalentGroup",
+      await this.resolveManagedTalentGroupIds(actor),
+    );
     const requestedGroups = groupId ? [groupId] : managedGroupIds;
     if (requestedGroups.some((id) => !managedGroupIds.includes(id))) {
       return { items: [] };
@@ -2500,7 +2517,12 @@ export class KpiAdminService {
         "KPI manager-scoped progress read is supported only for TALENT_GROUP plans",
       );
     }
-    const managedGroupIds = await this.resolveManagedTalentGroupIds(actor);
+    const managedGroupIds = await this.filterStructuredManagedTargetIds(
+      actor,
+      Permission.KPI_READ,
+      "managedTalentGroup",
+      await this.resolveManagedTalentGroupIds(actor),
+    );
     if (managedGroupIds.includes(plan.subjectId)) {
       return;
     }
@@ -2563,7 +2585,12 @@ export class KpiAdminService {
         "KPI manager-scoped actual grid read is supported only for TALENT_GROUP plans",
       );
     }
-    const managedGroupIds = await this.resolveManagedTalentGroupIds(actor);
+    const managedGroupIds = await this.filterStructuredManagedTargetIds(
+      actor,
+      Permission.KPI_READ_PROGRESS,
+      "managedTalentGroup",
+      await this.resolveManagedTalentGroupIds(actor),
+    );
     if (managedGroupIds.includes(plan.subjectId)) {
       return;
     }
@@ -3528,7 +3555,12 @@ export class KpiAdminService {
     actor: Actor,
     input: ListKpiPlansInput,
   ): Promise<readonly KpiPlan[]> {
-    const managedGroupIds = await this.resolveManagedTalentGroupIds(actor);
+    const managedGroupIds = await this.filterStructuredManagedTargetIds(
+      actor,
+      Permission.KPI_READ,
+      "managedTalentGroup",
+      await this.resolveManagedTalentGroupIds(actor),
+    );
     if (managedGroupIds.length === 0) {
       return [];
     }
@@ -3571,7 +3603,12 @@ export class KpiAdminService {
     if (input.groupId !== undefined) {
       return [];
     }
-    const managedOrgUnitIds = await this.resolveManagedOrgUnitIds(actor);
+    const managedOrgUnitIds = await this.filterStructuredManagedTargetIds(
+      actor,
+      Permission.KPI_READ,
+      "managedOrgUnit",
+      await this.resolveManagedOrgUnitIds(actor),
+    );
     if (managedOrgUnitIds.length === 0) {
       return [];
     }
@@ -3620,6 +3657,43 @@ export class KpiAdminService {
       session,
     );
     return groupIds ?? [];
+  }
+
+  private async filterStructuredManagedTargetIds(
+    actor: Actor,
+    permission: Permission,
+    scopeType: "managedTalentGroup" | "managedOrgUnit",
+    targetIds: readonly string[],
+  ): Promise<readonly string[]> {
+    const allowed = await Promise.all(
+      targetIds.map(async (targetId) =>
+        (await this.structuredAuthority.hasAuthority({
+          userId: actor.id,
+          permission,
+          scope: { scopeType, targetId },
+        }))
+          ? targetId
+          : null,
+      ),
+    );
+    return allowed.filter((id): id is string => id !== null);
+  }
+
+  private async requireKpiGlobalStructuredAuthority(
+    actor: Actor,
+    permission: Permission,
+    operation: string,
+  ): Promise<void> {
+    const allowed = await this.structuredAuthority.hasAuthority({
+      userId: actor.id,
+      permission,
+      scope: { scopeType: "global" },
+    });
+    if (!allowed) {
+      throw new KpiPermissionScopeError(
+        `Cannot ${operation}: structured global scope is required`,
+      );
+    }
   }
 
   private async resolveManagedOrgUnitIds(

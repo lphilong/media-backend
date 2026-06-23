@@ -42,7 +42,7 @@ interface WorkShiftReadDocument {
   readonly shiftEndAt: number;
   readonly description: string | null;
   readonly externalRef: string | null;
-  readonly sourceType?: WorkShiftSourceType | null;
+  readonly sourceType?: WorkShiftSourceType | string | null;
   readonly sourceRosterId?: string | null;
   readonly sourcePatternId?: string | null;
   readonly sourceExceptionId?: string | null;
@@ -661,6 +661,15 @@ function toWorkShiftBySubjectListItemView(
     status: document.status,
     shiftStartAt: document.shiftStartAt,
     shiftEndAt: document.shiftEndAt,
+    sourceType: normalizePersistedSourceType(
+      document.sourceType,
+      document.sourceRosterTargetType,
+      document.sourceRosterTargetId,
+    ),
+    sourceRosterTargetType:
+      document.sourceRosterTargetType ?? null,
+    sourceRosterTargetId:
+      document.sourceRosterTargetId ?? null,
   };
 }
 
@@ -694,7 +703,11 @@ function toWorkShiftDetailView(
     shiftEndAt: document.shiftEndAt,
     description: document.description,
     externalRef: document.externalRef,
-    sourceType: normalizeSourceType(document.sourceType),
+    sourceType: normalizePersistedSourceType(
+      document.sourceType,
+      document.sourceRosterTargetType,
+      document.sourceRosterTargetId,
+    ),
     sourceRosterId: document.sourceRosterId ?? null,
     sourcePatternId: document.sourcePatternId ?? null,
     sourceExceptionId: document.sourceExceptionId ?? null,
@@ -1216,9 +1229,33 @@ function toWorkPatternReferenceSummary(
 }
 
 function normalizeSourceType(
-  value: WorkShiftSourceType | null | undefined,
+  value: WorkShiftSourceType | string | null | undefined,
 ): WorkShiftSourceType {
   return value === "ROSTER_GENERATED" ? "ROSTER_GENERATED" : "MANUAL";
+}
+
+function normalizePersistedSourceType(
+  value: WorkShiftSourceType | string | null | undefined,
+  sourceRosterTargetType: unknown,
+  sourceRosterTargetId: unknown,
+): WorkShiftBySubjectListItemView["sourceType"] {
+  if (value === undefined || value === null) {
+    if (
+      sourceRosterTargetType !== undefined &&
+      sourceRosterTargetType !== null
+    ) {
+      return null;
+    }
+    if (
+      sourceRosterTargetId !== undefined &&
+      sourceRosterTargetId !== null
+    ) {
+      return null;
+    }
+    return "MANUAL";
+  }
+
+  return value;
 }
 
 function toSortSpec(

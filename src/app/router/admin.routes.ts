@@ -486,10 +486,16 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     orgUnitPlatformAccountReadonlyAccess,
     authoritativeAuditGuard,
     adminMutationBridge,
+    structuredScopeAuthority,
   );
 
   const orgUnitQueryService = new OrgUnitAdminQueryService(
     orgUnitReadRepository,
+    structuredScopeAuthority,
+    {
+      subjectReadonlyAccess: kpiSubjectReadonlyAccess,
+      managerAssignmentRepository: orgUnitManagerAssignmentRepository,
+    },
   );
 
   const orgUnitController = new OrgUnitAdminController(orgUnitService);
@@ -503,6 +509,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
         orgUnitManagerAssignmentRepository,
         authoritativeAuditGuard,
         adminMutationBridge,
+        structuredScopeAuthority,
       ),
     );
 
@@ -526,10 +533,12 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     employmentProfileEventAssignmentReadonlyAccess,
     authoritativeAuditGuard,
     adminMutationBridge,
+    structuredScopeAuthority,
   );
 
   const employmentProfileQueryService = new EmploymentProfileAdminQueryService(
     employmentProfileReadRepository,
+    structuredScopeAuthority,
   );
 
   const employmentProfileController = new EmploymentProfileAdminController(
@@ -578,10 +587,10 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     adminMutationBridge,
   );
 
-  const talentQueryService = new TalentAdminQueryService(talentReadRepository, {
-    subjectReadonlyAccess: kpiSubjectReadonlyAccess,
-    managerAssignmentRepository: talentGroupManagerAssignmentRepository,
-  });
+  const talentQueryService = new TalentAdminQueryService(
+    talentReadRepository,
+    structuredScopeAuthority,
+  );
 
   const talentController = new TalentAdminController(talentService);
   const talentQueryController = new TalentAdminQueryController(
@@ -600,6 +609,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     talentGroupEventAssignmentReadonlyAccess,
     authoritativeAuditGuard,
     adminMutationBridge,
+    structuredScopeAuthority,
   );
 
   const talentGroupQueryService = new TalentGroupAdminQueryService(
@@ -608,6 +618,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       subjectReadonlyAccess: kpiSubjectReadonlyAccess,
       managerAssignmentRepository: talentGroupManagerAssignmentRepository,
     },
+    structuredScopeAuthority,
   );
   const talentGroupManagerAssignmentService =
     new TalentGroupManagerAssignmentAdminService(
@@ -615,6 +626,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       talentGroupManagerAssignmentRepository,
       authoritativeAuditGuard,
       adminMutationBridge,
+      structuredScopeAuthority,
     );
 
   const talentGroupController = new TalentGroupAdminController(
@@ -715,6 +727,8 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     workShiftReadRepository,
     workScheduleEmploymentProfileReadonlyAccess,
     talentGroupManagerAssignmentRepository,
+    orgUnitManagerAssignmentRepository,
+    structuredScopeAuthority,
   );
   const workScheduleController = new WorkScheduleAdminController(
     workScheduleService,
@@ -802,6 +816,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   );
   const workPatternQueryService = new WorkPatternAdminQueryService(
     workPatternReadRepository,
+    structuredScopeAuthority,
   );
   const workPatternController = new WorkPatternAdminController(
     workPatternService,
@@ -823,6 +838,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   );
   const holidayCalendarQueryService = new HolidayCalendarAdminQueryService(
     holidayCalendarReadRepository,
+    structuredScopeAuthority,
   );
   const holidayCalendarController = new HolidayCalendarAdminController(
     holidayCalendarService,
@@ -1140,6 +1156,8 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
         new PeopleReadinessAdminService(
           peopleReadinessReadRepository,
           employmentTermsReadinessReadonlyAccess,
+          Date.now,
+          structuredScopeAuthority,
         ),
       ),
     ),

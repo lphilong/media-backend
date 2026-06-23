@@ -13,6 +13,7 @@ import {
   PEOPLE_READINESS_CATEGORIES,
   PEOPLE_READINESS_ISSUE_CODES,
 } from "./domain/people-readiness.types";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 const now = Date.UTC(2026, 5, 7);
 
@@ -345,6 +346,7 @@ test("People Readiness uses one request-wide HCM business date and one bulk prov
       },
     },
     () => timestamp,
+    globalAuthority(),
   );
 
   await service.getSummary(allowedActor());
@@ -376,7 +378,7 @@ test("People Readiness rejects unsupported filters, limits, and cursors", async 
   );
 });
 
-test("People Readiness authority is ADMIN actor plus EmploymentProfile read capability", async () => {
+test("People Readiness authority requires ADMIN actor, capability, and structured global scope", async () => {
   const service = serviceWith(snapshot());
   await assert.doesNotReject(() => service.getSummary(allowedActor()));
   await assert.rejects(() => service.getSummary(allowedActor({ permissions: [] })), /Missing permission/);
@@ -387,6 +389,16 @@ test("People Readiness authority is ADMIN actor plus EmploymentProfile read capa
     permissions: ["kpi.read"],
     scopeGrants: { kpi: ["managedGroup"] },
   })), /Missing permission/);
+  const scopedService = new PeopleReadinessAdminService(
+    { async getSnapshot() { return snapshot(); } },
+    { async getReadinessFacts() { return new Map(); } },
+    () => now,
+    new StructuredScopeAuthorityService({ async listByUserId() { return []; } }),
+  );
+  await assert.rejects(
+    () => scopedService.getSummary(allowedActor()),
+    /structured global scope/,
+  );
 });
 
 test("People Readiness routes register summary and issues under the module router", () => {
@@ -402,7 +414,35 @@ function serviceWith(data: PeopleReadinessSnapshot): PeopleReadinessAdminService
     { async getSnapshot() { return data; } },
     { async getReadinessFacts() { return new Map(); } },
     () => now,
+    globalAuthority(),
   );
+}
+
+function globalAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId() {
+      return [{
+        assignment: {
+          assignmentId: "readiness-global",
+          roleId: "readiness-role",
+          userId: "admin-1",
+          structuredScopeGrants: [{ scopeType: "global" as const }],
+          state: "ACTIVE" as const,
+          effectiveAt: 0,
+          expiresAt: null,
+          revokedAt: null,
+          reason: null,
+          createdAt: 0,
+          updatedAt: 0,
+        },
+        role: {
+          id: "readiness-role",
+          state: "ACTIVE" as const,
+          permissions: ["employmentProfile.read"],
+        },
+      }];
+    },
+  });
 }
 
 function allowedActor(overrides: Partial<ConstructorParameters<typeof Actor>[0]> = {}): Actor {

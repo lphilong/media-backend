@@ -18,6 +18,7 @@ import { AuditGuard } from "@core/audit/audit.guard";
 import { BusinessCodePolicy } from "@core/business-code/business-code-sequence.repository";
 import { Permission } from "@core/permission/permission.enum";
 import { bindTraceId } from "@core/trace/trace.context";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import { OrgUnitResponsibilityAdminService } from "@modules/org-unit/admin/admin.org-unit-responsibility.service";
 import { NativeMongoOrgUnitManagerAssignmentRepository } from "@infra/mongo/kpi/org-unit-manager-assignment.repository";
 import {
@@ -504,9 +505,48 @@ function createHarness(): {
     assignmentRepository,
     audit as unknown as AuditGuard,
     new ImmediateMutationBridge(),
+    createOrgUnitStructuredAuthority(),
     () => NOW,
   );
   return { service, assignmentRepository, audit };
+}
+
+function createOrgUnitStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(userId: string) {
+      return [
+        {
+          assignment: {
+            assignmentId: "assignment-org-unit-test",
+            roleId: "role-org-unit-test",
+            userId,
+            structuredScopeGrants: [
+              { scopeType: "managedOrgUnit" as const, targetId: "org-1" },
+              {
+                scopeType: "managedOrgUnit" as const,
+                targetId: "org-inactive",
+              },
+            ],
+            state: "ACTIVE" as const,
+            effectiveAt: 0,
+            expiresAt: null,
+            revokedAt: null,
+            reason: null,
+            createdAt: 0,
+            updatedAt: 0,
+          },
+          role: {
+            id: "role-org-unit-test",
+            state: "ACTIVE",
+            permissions: [
+              Permission.ORG_UNIT_READ,
+              Permission.ORG_UNIT_UPDATE,
+            ],
+          },
+        },
+      ];
+    },
+  });
 }
 
 function createActor(): Actor {

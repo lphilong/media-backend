@@ -12,6 +12,7 @@ import { Permission } from "@core/permission/permission.enum";
 import { bindTraceId } from "@core/trace/trace.context";
 import { OrgUnitAdminService } from "@modules/org-unit/admin/admin.org-unit.service";
 import { OrgUnitConflictError } from "@modules/org-unit/domain/org-unit.errors";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import type {
   FindLiveSiblingByNormalizedNameInput,
   OrgUnitRepository,
@@ -265,6 +266,7 @@ function createService(
     },
     audit,
     mutationBridge,
+    createOrgUnitStructuredAuthority(repository),
     {
       info() {},
       warn() {},
@@ -272,6 +274,40 @@ function createService(
       debug() {},
     } as never,
   );
+}
+
+function createOrgUnitStructuredAuthority(
+  repository: MemoryOrgUnitRepository,
+): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(userId: string) {
+      return [
+        {
+          assignment: {
+            assignmentId: "assignment-org-unit-name-test",
+            roleId: "role-org-unit-name-test",
+            userId,
+            structuredScopeGrants: repository.records.map((record) => ({
+              scopeType: "managedOrgUnit" as const,
+              targetId: record.id,
+            })),
+            state: "ACTIVE" as const,
+            effectiveAt: 0,
+            expiresAt: null,
+            revokedAt: null,
+            reason: null,
+            createdAt: 0,
+            updatedAt: 0,
+          },
+          role: {
+            id: "role-org-unit-name-test",
+            state: "ACTIVE",
+            permissions: [Permission.ORG_UNIT_MANAGE_LIFECYCLE],
+          },
+        },
+      ];
+    },
+  });
 }
 
 async function createOrgUnit(
@@ -282,13 +318,15 @@ async function createOrgUnit(
     readonly parentOrgUnitId?: string | null;
   },
 ) {
-  return service.createOrgUnit(createActor(), {
+  const created = await service.createOrgUnit(createActor(), {
     code: params.code,
     name: params.name,
     type: "DEPARTMENT",
     parentOrgUnitId: params.parentOrgUnitId ?? null,
     displayOrder: 1,
   });
+  assert.ok("code" in created);
+  return created;
 }
 
 test("Org Unit rejects duplicate live normalized sibling names", async () => {

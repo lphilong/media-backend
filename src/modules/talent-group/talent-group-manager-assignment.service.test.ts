@@ -9,6 +9,7 @@ import {
 import { AuditGuard } from "@core/audit/audit.guard";
 import { Permission } from "@core/permission/permission.enum";
 import { bindTraceId } from "@core/trace/trace.context";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import { TalentGroupManagerAssignmentAdminService } from "@modules/talent-group/admin/admin.talent-group-manager-assignment.service";
 import {
   TalentGroupConflictError,
@@ -228,9 +229,51 @@ function createHarness(): {
     managerRepository,
     audit as unknown as AuditGuard,
     new ImmediateMutationBridge(),
+    createTalentGroupStructuredAuthority(),
     () => NOW,
   );
   return { service, managerRepository, audit };
+}
+
+function createTalentGroupStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(userId: string) {
+      return [
+        {
+          assignment: {
+            assignmentId: "assignment-talent-group-test",
+            roleId: "role-talent-group-test",
+            userId,
+            structuredScopeGrants: [
+              {
+                scopeType: "managedTalentGroup" as const,
+                targetId: "group-1",
+              },
+              {
+                scopeType: "managedTalentGroup" as const,
+                targetId: "group-inactive",
+              },
+            ],
+            state: "ACTIVE" as const,
+            effectiveAt: 0,
+            expiresAt: null,
+            revokedAt: null,
+            reason: null,
+            createdAt: 0,
+            updatedAt: 0,
+          },
+          role: {
+            id: "role-talent-group-test",
+            state: "ACTIVE",
+            permissions: [
+              Permission.TALENT_GROUP_READ,
+              Permission.TALENT_GROUP_UPDATE,
+            ],
+          },
+        },
+      ];
+    },
+  });
 }
 
 function createActor(): Actor {

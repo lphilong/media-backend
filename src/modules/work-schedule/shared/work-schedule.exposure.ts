@@ -64,6 +64,9 @@ const WORK_SHIFT_ADMIN_BY_SUBJECT_FIELDS = [
   "status",
   "shiftStartAt",
   "shiftEndAt",
+  "sourceType",
+  "sourceRosterTargetType",
+  "sourceRosterTargetId",
 ] as const;
 
 const WORK_SHIFT_ADMIN_BY_RESOURCE_FIELDS = [
@@ -491,6 +494,11 @@ export const WorkScheduleAdminBySubjectListExposure =
             status: input.status,
             shiftStartAt: input.shiftStartAt,
             shiftEndAt: input.shiftEndAt,
+            sourceType: input.sourceType,
+            sourceRosterTargetType:
+              input.sourceRosterTargetType,
+            sourceRosterTargetId:
+              input.sourceRosterTargetId,
           },
           WORK_SHIFT_ADMIN_BY_SUBJECT_FIELDS,
         ),

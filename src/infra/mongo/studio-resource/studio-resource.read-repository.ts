@@ -140,6 +140,10 @@ export class NativeMongoStudioResourceReadRepository
     const queryFilters: Array<Record<string, unknown>> =
       [];
 
+    if (input.studioResourceIds) {
+      queryFilters.push({ _id: { $in: [...input.studioResourceIds] } });
+    }
+
     if (input.resourceClass) {
       queryFilters.push({
         resourceClass: input.resourceClass,
@@ -569,6 +573,9 @@ function buildCursorQueryShapeSignature(
 ): string {
   return JSON.stringify({
     view,
+    studioResourceIds: input.studioResourceIds
+      ? [...input.studioResourceIds].sort()
+      : null,
     resourceClass: input.resourceClass ?? null,
     operationalStatus:
       input.operationalStatus ?? null,

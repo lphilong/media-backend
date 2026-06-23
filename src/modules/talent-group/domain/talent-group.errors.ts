@@ -76,3 +76,14 @@ export class TalentGroupInvalidMembershipStateError extends DomainError {
     );
   }
 }
+
+export class TalentGroupPermissionScopeError extends DomainError {
+  constructor(message: string) {
+    super(
+      "TALENT_GROUP_PERMISSION_SCOPE_ERROR",
+      message,
+      "Permission or scope denied",
+      403,
+    );
+  }
+}

@@ -233,7 +233,7 @@ export interface WorkShiftDetailView {
   readonly shiftEndAt: number;
   readonly description: string | null;
   readonly externalRef: string | null;
-  readonly sourceType: WorkShiftSourceType;
+  readonly sourceType: WorkShiftSourceType | string | null;
   readonly sourceRosterId: string | null;
   readonly sourceRosterRef?: ReferenceSummary | null;
   readonly sourcePatternId: string | null;
@@ -287,6 +287,9 @@ export interface WorkShiftBySubjectListItemView {
   readonly status: WorkShiftStatus;
   readonly shiftStartAt: number;
   readonly shiftEndAt: number;
+  readonly sourceType: WorkShiftSourceType | string | null;
+  readonly sourceRosterTargetType: MonthlyRosterTargetType | null;
+  readonly sourceRosterTargetId: string | null;
 }
 
 export interface WorkShiftByResourceListItemView {

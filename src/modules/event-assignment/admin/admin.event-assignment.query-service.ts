@@ -298,14 +298,20 @@ export class EventAssignmentAdminQueryService {
   private async resolveReadScope(
     actor: Actor,
   ): Promise<EventAssignmentReadScope> {
-    if (PermissionGuard.hasEventAssignmentScopeGrant(actor, "global")) {
+    if (
+      await this.structuredAuthority.hasAuthority({
+        userId: actor.id,
+        permission: Permission.EVENT_READ,
+        scope: { scopeType: "global" },
+      })
+    ) {
       return {
         kind: "global",
       };
     }
 
     throw new EventAssignmentPermissionScopeError(
-      "Global Admin Event routes require global eventAssignment scope",
+      "Global Admin Event routes require structured global scope",
     );
   }
 

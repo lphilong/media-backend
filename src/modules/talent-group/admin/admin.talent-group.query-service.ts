@@ -3,12 +3,11 @@ import { Permission } from "@core/permission/permission.enum";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import {
-  assertManagedScopeIncludesGroup,
   ManagedGroupScopeDependencies,
-  resolveManagedTalentGroupIds,
 } from "@modules/kpi/domain/managed-group-scope";
 import {
   TalentGroupNotFoundError,
+  TalentGroupPermissionScopeError,
   TalentGroupValidationError,
 } from "@modules/talent-group/domain/talent-group.errors";
 import {
@@ -30,6 +29,8 @@ import {
   ListTalentGroupsQuery,
   ListTalentGroupsResult,
 } from "@modules/talent-group/shared/talent-group.contracts";
+import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -39,6 +40,7 @@ export class TalentGroupAdminQueryService {
   constructor(
     private readonly readRepository: TalentGroupReadRepository,
     private readonly managedGroupScopeDependencies?: ManagedGroupScopeDependencies,
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
   ) {}
 
   async listTalentGroups(
@@ -48,10 +50,7 @@ export class TalentGroupAdminQueryService {
     const permission = PermissionResolver.resolve(Permission.TALENT_GROUP_READ);
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(actor, permission);
-    const managedGroupIds = await resolveManagedTalentGroupIds(
-      actor,
-      this.managedGroupScopeDependencies,
-    );
+    const managedGroupIds = await this.resolveAuthorizedManagedGroupIds(actor);
 
     return this.readRepository.listTalentGroups({
       groupIds: managedGroupIds ?? undefined,
@@ -77,17 +76,13 @@ export class TalentGroupAdminQueryService {
     PermissionGuard.assert(actor, permission);
 
     const groupId = normalizeRequiredText(query.groupId, "groupId");
-    const managedGroupIds = await resolveManagedTalentGroupIds(
-      actor,
-      this.managedGroupScopeDependencies,
-    );
-    assertManagedScopeIncludesGroup(managedGroupIds, groupId);
-
     const detail = await this.readRepository.getTalentGroupDetail(groupId);
 
     if (!detail) {
       throw new TalentGroupNotFoundError(groupId);
     }
+
+    await this.requireManagedTalentGroupAuthority(actor, groupId);
 
     return detail;
   }
@@ -101,17 +96,13 @@ export class TalentGroupAdminQueryService {
     PermissionGuard.assert(actor, permission);
 
     const groupId = normalizeRequiredText(query.groupId, "groupId");
-    const managedGroupIds = await resolveManagedTalentGroupIds(
-      actor,
-      this.managedGroupScopeDependencies,
-    );
-    assertManagedScopeIncludesGroup(managedGroupIds, groupId);
-
     const group = await this.readRepository.getTalentGroupDetail(groupId);
 
     if (!group) {
       throw new TalentGroupNotFoundError(groupId);
     }
+
+    await this.requireManagedTalentGroupAuthority(actor, groupId);
 
     return this.readRepository.listTalentGroupMembers({
       groupId,
@@ -127,10 +118,7 @@ export class TalentGroupAdminQueryService {
     const permission = PermissionResolver.resolve(Permission.TALENT_GROUP_READ);
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(actor, permission);
-    const managedGroupIds = await resolveManagedTalentGroupIds(
-      actor,
-      this.managedGroupScopeDependencies,
-    );
+    const managedGroupIds = await this.resolveAuthorizedManagedGroupIds(actor);
 
     return this.readRepository.listTalentGroupsByTalent({
       talentId: normalizeRequiredText(query.talentId, "talentId"),
@@ -142,6 +130,107 @@ export class TalentGroupAdminQueryService {
       groupIds: managedGroupIds ?? undefined,
     });
   }
+
+  private async requireManagedTalentGroupAuthority(
+    actor: Actor,
+    groupId: string,
+  ): Promise<void> {
+    if (
+      await this.structuredAuthority.hasAuthority({
+        userId: actor.id,
+        permission: Permission.TALENT_GROUP_READ,
+        scope: { scopeType: "global" },
+      })
+    ) {
+      return;
+    }
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission: Permission.TALENT_GROUP_READ,
+      scope: { scopeType: "managedTalentGroup", targetId: groupId },
+      authority: this.structuredAuthority,
+      error: new TalentGroupPermissionScopeError(
+        `Talent group read requires managedTalentGroup scope: ${groupId}`,
+      ),
+    });
+    const dependencies = this.managedGroupScopeDependencies;
+    if (!dependencies) {
+      throw new TalentGroupPermissionScopeError(
+        "TalentGroup manager responsibility dependencies are unavailable",
+      );
+    }
+    const profile =
+      await dependencies.subjectReadonlyAccess.findActiveEmploymentProfileByLinkedUserId(
+        actor.id,
+      );
+    const assignments = profile
+      ? await dependencies.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
+          profile.employmentProfileId,
+          Date.now(),
+        )
+      : [];
+    if (!assignments.some((assignment) => assignment.groupId === groupId)) {
+      throw new TalentGroupPermissionScopeError(
+        `Active TalentGroup manager responsibility is required: ${groupId}`,
+      );
+    }
+  }
+
+  private async resolveAuthorizedManagedGroupIds(
+    actor: Actor,
+  ): Promise<readonly string[] | null> {
+    const grants = await this.structuredAuthority.listAuthorizedScopeGrants({
+      userId: actor.id,
+      permission: Permission.TALENT_GROUP_READ,
+    });
+    if (grants.some((grant) => grant.scopeType === "global")) {
+      return null;
+    }
+    const grantedIds = new Set(
+      grants
+        .filter((grant) => grant.scopeType === "managedTalentGroup")
+        .map((grant) => grant.targetId)
+        .filter((id): id is string => Boolean(id)),
+    );
+    if (grantedIds.size === 0) {
+      return [];
+    }
+    const dependencies = this.managedGroupScopeDependencies;
+    if (!dependencies) {
+      throw new TalentGroupPermissionScopeError(
+        "TalentGroup scoped list dependencies are unavailable",
+      );
+    }
+    const profile =
+      await dependencies.subjectReadonlyAccess.findActiveEmploymentProfileByLinkedUserId(
+        actor.id,
+      );
+    if (!profile) {
+      return [];
+    }
+    const assignments =
+      await dependencies.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
+        profile.employmentProfileId,
+        Date.now(),
+      );
+    return [
+      ...new Set(
+        assignments
+          .map((assignment) => assignment.groupId)
+          .filter((groupId) => grantedIds.has(groupId)),
+      ),
+    ].sort();
+  }
+}
+
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(): Promise<never> {
+      throw new TalentGroupPermissionScopeError(
+        "Structured TalentGroup authority is unavailable",
+      );
+    },
+  });
 }
 
 function normalizeRequiredText(value: unknown, field: string): string {

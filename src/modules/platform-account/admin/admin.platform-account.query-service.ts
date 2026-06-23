@@ -57,10 +57,12 @@ export class PlatformAccountAdminQueryService {
     );
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(actor, permission);
+    const platformAccountIds = await this.resolveListPlatformAccountIds(actor);
 
     const ownerFilters = parseOwnerFilters(query);
 
     return this.readRepository.listPlatformAccounts({
+      platformAccountIds,
       platform: parseOptionalPlatform(query.platform),
       platformSurfaceType: parseOptionalSurfaceType(query.platformSurfaceType),
       operationalStatus: parseOptionalOperationalStatus(
@@ -134,6 +136,26 @@ export class PlatformAccountAdminQueryService {
         `Platform account read requires assignedPlatformAccount scope: ${platformAccountId}`,
       ),
     });
+  }
+
+  private async resolveListPlatformAccountIds(
+    actor: Actor,
+  ): Promise<readonly string[] | undefined> {
+    const grants = await this.structuredAuthority.listAuthorizedScopeGrants({
+      userId: actor.id,
+      permission: Permission.PLATFORM_ACCOUNT_READ,
+    });
+    if (grants.some((grant) => grant.scopeType === "global")) {
+      return undefined;
+    }
+    return [
+      ...new Set(
+        grants
+          .filter((grant) => grant.scopeType === "assignedPlatformAccount")
+          .map((grant) => grant.targetId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ].sort();
   }
 }
 

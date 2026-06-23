@@ -31,6 +31,12 @@ export interface StructuredScopeAuthorityCheck {
   readonly now?: number;
 }
 
+export interface StructuredScopeAuthorityGrantQuery {
+  readonly userId: string;
+  readonly permission: string;
+  readonly now?: number;
+}
+
 export class StructuredScopeAuthorityService {
   constructor(
     private readonly reader: StructuredScopeAuthorityReader,
@@ -69,6 +75,33 @@ export class StructuredScopeAuthorityService {
       );
     });
   }
+
+  async listAuthorizedScopeGrants(
+    input: StructuredScopeAuthorityGrantQuery,
+  ): Promise<readonly RoleAssignmentScopeGrant[]> {
+    const userId = normalizeRequiredText(input.userId);
+    const permission = normalizeRequiredText(input.permission);
+    if (!userId || !permission) {
+      return [];
+    }
+    const now = input.now ?? this.clock();
+    const records = await this.reader.listByUserId(userId);
+    const grants = records.flatMap(({ assignment, role }) => {
+      if (
+        !isRoleAssignmentCurrentlyEffective(assignment, now) ||
+        !role ||
+        role.state !== "ACTIVE" ||
+        !role.permissions.includes(permission)
+      ) {
+        return [];
+      }
+      return assignment.structuredScopeGrants ?? [];
+    });
+    const unique = new Map(
+      grants.map((grant) => [scopeGrantKey(grant), grant] as const),
+    );
+    return [...unique.values()];
+  }
 }
 
 export function scopeGrantMatches(
@@ -93,4 +126,13 @@ function normalizeRequiredText(value: string): string {
 function normalizeOptionalText(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
+}
+
+function scopeGrantKey(grant: RoleAssignmentScopeGrant): string {
+  return [
+    grant.scopeType,
+    grant.targetId ?? "",
+    grant.targetKey ?? "",
+    grant.periodKey ?? "",
+  ].join("|");
 }

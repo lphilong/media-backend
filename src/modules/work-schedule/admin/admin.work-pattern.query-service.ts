@@ -18,6 +18,8 @@ import {
   ListWorkPatternsQuery,
   ListWorkPatternsResult,
 } from "@modules/work-schedule/shared/work-schedule.contracts";
+import { requireAdminGlobalScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -25,13 +27,14 @@ const MAX_LIMIT = 100;
 export class WorkPatternAdminQueryService {
   constructor(
     private readonly readRepository: WorkPatternReadRepository,
+    private readonly structuredAuthority: StructuredScopeAuthorityService,
   ) {}
 
   async listWorkPatterns(
     actor: Actor,
     query: ListWorkPatternsQuery,
   ): Promise<ListWorkPatternsResult> {
-    this.assertReadPermission(actor);
+    await this.assertReadPermission(actor);
 
     return this.readRepository.listWorkPatterns({
       status: parseOptionalStatus(query.status),
@@ -45,7 +48,7 @@ export class WorkPatternAdminQueryService {
     actor: Actor,
     query: GetWorkPatternDetailQuery,
   ): Promise<GetWorkPatternDetailResult> {
-    this.assertReadPermission(actor);
+    await this.assertReadPermission(actor);
 
     const workPatternId = normalizeRequiredText(
       query.workPatternId,
@@ -65,7 +68,7 @@ export class WorkPatternAdminQueryService {
     return detail;
   }
 
-  private assertReadPermission(actor: Actor): void {
+  private async assertReadPermission(actor: Actor): Promise<void> {
     assertAdminActorType(actor);
 
     const permission =
@@ -73,6 +76,14 @@ export class WorkPatternAdminQueryService {
         Permission.WORK_SCHEDULE_READ,
       );
     PermissionGuard.assert(actor, permission);
+    await requireAdminGlobalScopeAuthority({
+      actor,
+      permission: Permission.WORK_SCHEDULE_READ,
+      authority: this.structuredAuthority,
+      error: new WorkScheduleValidationError(
+        "Work Pattern Admin reads require structured global scope",
+      ),
+    });
   }
 }
 

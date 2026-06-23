@@ -29,3 +29,12 @@ export async function requireAdminObjectScopeAuthority(
     throw input.error;
   }
 }
+
+export async function requireAdminGlobalScopeAuthority(
+  input: Omit<RequireAdminObjectScopeAuthorityInput, "scope">,
+): Promise<void> {
+  await requireAdminObjectScopeAuthority({
+    ...input,
+    scope: { scopeType: "global" },
+  });
+}

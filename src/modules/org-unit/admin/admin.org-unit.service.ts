@@ -30,6 +30,7 @@ import {
   OrgUnitHierarchyCycleError,
   OrgUnitNotFoundError,
   OrgUnitParentStateError,
+  OrgUnitPermissionScopeError,
   OrgUnitStateError,
   OrgUnitValidationError,
 } from "@modules/org-unit/domain/org-unit.errors";
@@ -58,6 +59,8 @@ import {
   OrgUnitMutationResult,
   UpdateOrgUnitProfileCommand,
 } from "@modules/org-unit/shared/org-unit.contracts";
+import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 type OrgUnitFailureClassification =
   | "validation"
@@ -77,6 +80,7 @@ export class OrgUnitAdminService {
     private readonly platformAccountReadonlyAccess: OrgUnitPlatformAccountReadonlyAccess,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
     private readonly logger: StructuredLogger = createStructuredLogger(),
   ) {}
 
@@ -312,6 +316,11 @@ export class OrgUnitAdminService {
             orgUnitId,
             session,
           );
+        await this.requireManagedOrgUnitAuthority(
+          actor,
+          Permission.ORG_UNIT_UPDATE,
+          current.id,
+        );
         assertHierarchyRecordInvariant(
           current,
           "org unit",
@@ -631,6 +640,11 @@ export class OrgUnitAdminService {
             orgUnitId,
             session,
           );
+        await this.requireManagedOrgUnitAuthority(
+          actor,
+          Permission.ORG_UNIT_MANAGE_LIFECYCLE,
+          current.id,
+        );
         assertHierarchyRecordInvariant(
           current,
           "org unit",
@@ -726,6 +740,11 @@ export class OrgUnitAdminService {
             orgUnitId,
             session,
           );
+        await this.requireManagedOrgUnitAuthority(
+          actor,
+          Permission.ORG_UNIT_MANAGE_LIFECYCLE,
+          current.id,
+        );
         assertHierarchyRecordInvariant(
           current,
           "org unit",
@@ -835,6 +854,11 @@ export class OrgUnitAdminService {
             orgUnitId,
             session,
           );
+        await this.requireManagedOrgUnitAuthority(
+          actor,
+          Permission.ORG_UNIT_MANAGE_LIFECYCLE,
+          current.id,
+        );
         assertHierarchyRecordInvariant(
           current,
           "org unit",
@@ -947,6 +971,22 @@ export class OrgUnitAdminService {
     }
 
     return orgUnit;
+  }
+
+  private async requireManagedOrgUnitAuthority(
+    actor: Actor,
+    permission: Permission,
+    orgUnitId: string,
+  ): Promise<void> {
+    await requireAdminObjectScopeAuthority({
+      actor,
+      permission,
+      scope: { scopeType: "managedOrgUnit", targetId: orgUnitId },
+      authority: this.structuredAuthority,
+      error: new OrgUnitPermissionScopeError(
+        `Org unit operation requires managedOrgUnit scope: ${orgUnitId}`,
+      ),
+    });
   }
 
   private async assertNoActiveOwnedPlatformAccounts(
@@ -1675,4 +1715,14 @@ function readOptionalLogString(
   return normalized.length > 0
     ? normalized
     : undefined;
+}
+
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(): Promise<never> {
+      throw new OrgUnitPermissionScopeError(
+        "Structured OrgUnit authority is unavailable",
+      );
+    },
+  });
 }

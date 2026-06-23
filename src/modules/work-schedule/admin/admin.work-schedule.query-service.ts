@@ -4,6 +4,8 @@ import { Permission } from "@core/permission/permission.enum";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import type { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
+import type { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import {
   WorkScheduleNotFoundError,
   WorkSchedulePermissionScopeError,
@@ -58,6 +60,11 @@ interface ParsedWindowFilter {
   readonly windowEndAt?: number;
 }
 
+interface SupportedRosterTarget {
+  readonly kind: "ORG_UNIT" | "TALENT_GROUP";
+  readonly id: string;
+}
+
 export class WorkScheduleAdminQueryService {
   constructor(
     private readonly readRepository: WorkShiftReadRepository,
@@ -66,6 +73,11 @@ export class WorkScheduleAdminQueryService {
       TalentGroupManagerAssignmentRepository,
       "listActiveAssignmentsByManagerEmploymentProfile"
     >,
+    private readonly orgUnitManagerAssignmentRepository?: Pick<
+      OrgUnitManagerAssignmentRepository,
+      "listActiveByManagerEmploymentProfileId"
+    >,
+    private readonly structuredAuthority?: StructuredScopeAuthorityService,
   ) {}
 
   async listWorkShifts(
@@ -73,6 +85,7 @@ export class WorkScheduleAdminQueryService {
     query: ListWorkShiftsQuery,
   ): Promise<ListWorkShiftsResult> {
     this.assertReadPermission(actor);
+    await this.requireStructuredGlobalRead(actor);
 
     const subjectFilter = parseSubjectFilter({
       subjectKind: query.subjectKind,
@@ -83,15 +96,6 @@ export class WorkScheduleAdminQueryService {
       subjectTalentGroupId:
         query.subjectTalentGroupId,
     });
-    const requestedScope = parseRequestedScope(
-      query.scope,
-    );
-    const scopeEmploymentProfileIds =
-      await this.resolveScopeEmploymentProfileIdsForList(
-        actor,
-        requestedScope,
-        subjectFilter,
-      );
     const window = parseWindowFilter({
       windowStartAt: query.windowStartAt,
       windowEndAt: query.windowEndAt,
@@ -135,7 +139,7 @@ export class WorkScheduleAdminQueryService {
       sortDirection: parseOptionalSortDirection(
         query.sortDirection,
       ),
-      scopeEmploymentProfileIds,
+      scopeEmploymentProfileIds: undefined,
     });
   }
 
@@ -147,36 +151,19 @@ export class WorkScheduleAdminQueryService {
 
     const subject =
       parseExactSubjectQuery(query);
-    const requestedScope = parseRequestedScope(
-      query.scope,
-    );
-    const scope =
-      await this.resolveEffectiveScopeForExactSubject(
-        actor,
-        requestedScope,
-        subject,
-      );
+    parseRequestedScope(query.scope);
+    const hasGlobalRead =
+      await this.hasStructuredGlobalRead(actor);
+    if (!hasGlobalRead) {
+      await this.requireExactSubjectRead(actor, subject);
+    }
     const window = parseWindowFilter({
       windowStartAt: query.windowStartAt,
       windowEndAt: query.windowEndAt,
     });
 
-    let scopeEmploymentProfileIds:
-      | readonly string[]
-      | undefined;
-
-    if (scope !== "global") {
-      await this.assertEmploymentProfileScopeAccess(
-        actor,
-        scope,
-        subject,
-      );
-      scopeEmploymentProfileIds = [
-        subject.subjectEmploymentProfileId as string,
-      ];
-    }
-
-    return this.readRepository.listWorkShiftsBySubject(
+    const result =
+      await this.readRepository.listWorkShiftsBySubject(
       {
         subjectKind: subject.subjectKind,
         subjectEmploymentProfileId:
@@ -197,8 +184,20 @@ export class WorkScheduleAdminQueryService {
           parseOptionalSortDirection(
             query.sortDirection,
           ),
-        scopeEmploymentProfileIds,
+        scopeEmploymentProfileIds:
+          subject.subjectEmploymentProfileId
+            ? [subject.subjectEmploymentProfileId]
+            : undefined,
       },
+    );
+
+    if (hasGlobalRead) {
+      return result;
+    }
+
+    return this.filterAuthorizedSubjectRows(
+      actor,
+      result,
     );
   }
 
@@ -207,15 +206,9 @@ export class WorkScheduleAdminQueryService {
     query: ListWorkShiftsByResourceQuery,
   ): Promise<ListWorkShiftsByResourceResult> {
     this.assertReadPermission(actor);
+    await this.requireStructuredGlobalRead(actor);
 
-    const requestedScope = parseRequestedScope(
-      query.scope,
-    );
-    const scopeEmploymentProfileIds =
-      await this.resolveScopeEmploymentProfileIdsForResourceQuery(
-        actor,
-        requestedScope,
-      );
+    parseRequestedScope(query.scope);
     const window = parseWindowFilter({
       windowStartAt: query.windowStartAt,
       windowEndAt: query.windowEndAt,
@@ -240,7 +233,7 @@ export class WorkScheduleAdminQueryService {
           parseOptionalSortDirection(
             query.sortDirection,
           ),
-        scopeEmploymentProfileIds,
+        scopeEmploymentProfileIds: undefined,
       },
     );
   }
@@ -266,41 +259,205 @@ export class WorkScheduleAdminQueryService {
       );
     }
 
-    const requestedScope = parseRequestedScope(
-      query.scope,
+    parseRequestedScope(query.scope);
+    await this.requireExactSubjectRead(
+      actor,
+      {
+          subjectKind: detail.subjectKind,
+          subjectEmploymentProfileId:
+            detail.subjectEmploymentProfileId,
+          subjectTalentId:
+            detail.subjectTalentId,
+          subjectTalentGroupId:
+            detail.subjectTalentGroupId,
+        },
+      detail,
     );
-    const scope =
-      await this.resolveEffectiveScopeForExactSubject(
-        actor,
-        requestedScope,
-        {
-          subjectKind: detail.subjectKind,
-          subjectEmploymentProfileId:
-            detail.subjectEmploymentProfileId,
-          subjectTalentId:
-            detail.subjectTalentId,
-          subjectTalentGroupId:
-            detail.subjectTalentGroupId,
-        },
-      );
-
-    if (scope !== "global") {
-      await this.assertEmploymentProfileScopeAccess(
-        actor,
-        scope,
-        {
-          subjectKind: detail.subjectKind,
-          subjectEmploymentProfileId:
-            detail.subjectEmploymentProfileId,
-          subjectTalentId:
-            detail.subjectTalentId,
-          subjectTalentGroupId:
-            detail.subjectTalentGroupId,
-        },
-      );
-    }
 
     return detail;
+  }
+
+  private async requireStructuredGlobalRead(actor: Actor): Promise<void> {
+    if (await this.hasStructuredGlobalRead(actor)) {
+      return;
+    }
+    throw new WorkSchedulePermissionScopeError(
+      "Broad WorkShift Admin reads require structured global scope",
+    );
+  }
+
+  private async hasStructuredGlobalRead(actor: Actor): Promise<boolean> {
+    return Boolean(
+      this.structuredAuthority &&
+      (await this.structuredAuthority.hasAuthority({
+        userId: actor.id,
+        permission: Permission.WORK_SCHEDULE_READ,
+        scope: { scopeType: "global" },
+      })),
+    );
+  }
+
+  private async filterAuthorizedSubjectRows(
+    actor: Actor,
+    result: ListWorkShiftsBySubjectResult,
+  ): Promise<ListWorkShiftsBySubjectResult> {
+    const actorProfile =
+      await this.requireActorLinkedEmploymentProfile(actor.id);
+    const authorityByTarget = new Map<string, Promise<boolean>>();
+    const authorizedItems = await Promise.all(
+      result.items.map(async (item) => {
+        if (item.sourceType !== "ROSTER_GENERATED") {
+          return item.sourceType === "MANUAL" ? item : null;
+        }
+
+        const target = readSupportedRosterTarget(item);
+        if (!target) {
+          return null;
+        }
+
+        const targetKey = `${target.kind}:${target.id}`;
+        let authorized = authorityByTarget.get(targetKey);
+        if (!authorized) {
+          authorized = this.hasManagedTargetAuthority(
+            actor,
+            actorProfile.id,
+            target,
+          );
+          authorityByTarget.set(targetKey, authorized);
+        }
+
+        return (await authorized) ? item : null;
+      }),
+    );
+
+    return {
+      items: authorizedItems.filter(
+        (item): item is (typeof result.items)[number] =>
+          item !== null,
+      ),
+      ...(result.nextCursor
+        ? { nextCursor: result.nextCursor }
+        : {}),
+    };
+  }
+
+  private async requireExactSubjectRead(
+    actor: Actor,
+    subject: ParsedExactSubject,
+    detail?: GetWorkShiftDetailResult,
+  ): Promise<void> {
+    if (!this.structuredAuthority) {
+      throw new WorkSchedulePermissionScopeError(
+        "Structured WorkShift authority is unavailable",
+      );
+    }
+    if (
+      await this.structuredAuthority.hasAuthority({
+        userId: actor.id,
+        permission: Permission.WORK_SCHEDULE_READ,
+        scope: { scopeType: "global" },
+      })
+    ) {
+      return;
+    }
+    const actorProfile = await this.requireActorLinkedEmploymentProfile(actor.id);
+    if (detail) {
+      if (detail.sourceType === "ROSTER_GENERATED") {
+        const target = readSupportedRosterTarget(detail);
+        if (!target) {
+          throw new WorkSchedulePermissionScopeError(
+            "Roster-generated WorkShift target metadata is incomplete or unsupported",
+          );
+        }
+        if (await this.hasManagedTargetAuthority(actor, actorProfile.id, target)) {
+          return;
+        }
+        throw new WorkSchedulePermissionScopeError(
+          `WorkShift target is outside structured managed scope: ${target.kind}:${target.id}`,
+        );
+      }
+      if (detail.sourceType !== "MANUAL") {
+        throw new WorkSchedulePermissionScopeError(
+          "WorkShift source type cannot be proven safe for scoped access",
+        );
+      }
+    }
+    if (
+      subject.subjectKind === "EMPLOYMENT_PROFILE" &&
+      subject.subjectEmploymentProfileId === actorProfile.id &&
+      (await this.structuredAuthority.hasAuthority({
+        userId: actor.id,
+        permission: Permission.WORK_SCHEDULE_READ,
+        scope: { scopeType: "self" },
+      }))
+    ) {
+      return;
+    }
+    const target = subject.subjectKind === "TALENT_GROUP" && subject.subjectTalentGroupId
+        ? { kind: "TALENT_GROUP" as const, id: subject.subjectTalentGroupId }
+        : null;
+    if (target) {
+      if (await this.hasManagedTargetAuthority(actor, actorProfile.id, target)) {
+        return;
+      }
+      throw new WorkSchedulePermissionScopeError(
+        `WorkShift target is outside structured managed scope: ${target.kind}:${target.id}`,
+      );
+    }
+    if (subject.subjectKind === "TALENT") {
+      throw new WorkSchedulePermissionScopeError(
+        "Direct Talent WorkShift reads require structured global scope",
+      );
+    }
+    if (subject.subjectKind === "EMPLOYMENT_PROFILE" && subject.subjectEmploymentProfileId) {
+      const profile = await this.employmentProfileReadonlyAccess.findById(
+        subject.subjectEmploymentProfileId,
+      );
+      if (
+        profile &&
+        (await this.hasManagedTargetAuthority(actor, actorProfile.id, {
+          kind: "ORG_UNIT",
+          id: profile.orgUnitId,
+        }))
+      ) {
+        return;
+      }
+    }
+    throw new WorkSchedulePermissionScopeError(
+      "WorkShift subject cannot be proven inside structured self or managed scope",
+    );
+  }
+
+  private async hasManagedTargetAuthority(
+    actor: Actor,
+    managerEmploymentProfileId: string,
+    target: { readonly kind: "ORG_UNIT" | "TALENT_GROUP"; readonly id: string },
+  ): Promise<boolean> {
+    if (!this.structuredAuthority) return false;
+    if (target.kind === "TALENT_GROUP") {
+      const assignments =
+        await this.managerAssignmentRepository?.listActiveAssignmentsByManagerEmploymentProfile(
+          managerEmploymentProfileId,
+          Date.now(),
+        ) ?? [];
+      return assignments.some((assignment) => assignment.groupId === target.id) &&
+        this.structuredAuthority.hasAuthority({
+          userId: actor.id,
+          permission: Permission.WORK_SCHEDULE_READ,
+          scope: { scopeType: "managedTalentGroup", targetId: target.id },
+        });
+    }
+    const assignments =
+      await this.orgUnitManagerAssignmentRepository?.listActiveByManagerEmploymentProfileId(
+        managerEmploymentProfileId,
+        Date.now(),
+      ) ?? [];
+    return assignments.some((assignment) => assignment.orgUnitId === target.id) &&
+      this.structuredAuthority.hasAuthority({
+        userId: actor.id,
+        permission: Permission.WORK_SCHEDULE_READ,
+        scope: { scopeType: "managedOrgUnit", targetId: target.id },
+      });
   }
 
   private async resolveEffectiveScopeForExactSubject(
@@ -754,6 +911,33 @@ async function resolveScopedEmploymentProfileIds(params: {
     );
 
   return [...new Set(sourceIds)].sort();
+}
+
+function readSupportedRosterTarget(input: {
+  readonly sourceRosterTargetType?: unknown;
+  readonly sourceRosterTargetId?: unknown;
+}): SupportedRosterTarget | null {
+  const targetType = input.sourceRosterTargetType;
+  if (
+    targetType !== "ORG_UNIT" &&
+    targetType !== "TALENT_GROUP"
+  ) {
+    return null;
+  }
+
+  if (typeof input.sourceRosterTargetId !== "string") {
+    return null;
+  }
+
+  const targetId = input.sourceRosterTargetId.trim();
+  if (!targetId) {
+    return null;
+  }
+
+  return {
+    kind: targetType,
+    id: targetId,
+  };
 }
 
 function normalizeRequiredText(

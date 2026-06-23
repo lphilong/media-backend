@@ -45,8 +45,10 @@ export class StudioResourceAdminQueryService {
     query: ListStudioResourcesQuery,
   ): Promise<ListStudioResourcesResult> {
     this.assertReadPermission(actor);
+    const studioResourceIds = await this.resolveListResourceIds(actor);
 
     return this.readRepository.listStudioResources({
+      studioResourceIds,
       resourceClass: parseOptionalResourceClass(query.resourceClass),
       operationalStatus: parseOptionalOperationalStatus(
         query.operationalStatus,
@@ -68,8 +70,10 @@ export class StudioResourceAdminQueryService {
     query: ListStudioResourceAvailabilityQuery,
   ): Promise<ListStudioResourceAvailabilityResult> {
     this.assertReadPermission(actor);
+    const studioResourceIds = await this.resolveListResourceIds(actor);
 
     return this.readRepository.listStudioResourceAvailability({
+      studioResourceIds,
       resourceClass: parseOptionalResourceClass(query.resourceClass),
       operationalStatus: parseOptionalOperationalStatus(
         query.operationalStatus,
@@ -132,6 +136,26 @@ export class StudioResourceAdminQueryService {
         `Studio resource read requires assignedStudioResource scope: ${studioResourceId}`,
       ),
     });
+  }
+
+  private async resolveListResourceIds(
+    actor: Actor,
+  ): Promise<readonly string[] | undefined> {
+    const grants = await this.structuredAuthority.listAuthorizedScopeGrants({
+      userId: actor.id,
+      permission: Permission.STUDIO_RESOURCE_READ,
+    });
+    if (grants.some((grant) => grant.scopeType === "global")) {
+      return undefined;
+    }
+    return [
+      ...new Set(
+        grants
+          .filter((grant) => grant.scopeType === "assignedStudioResource")
+          .map((grant) => grant.targetId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ].sort();
   }
 }
 

@@ -4,10 +4,6 @@ import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import { SystemInvariantError } from "@core/error/system-error";
 import {
-  ManagedGroupScopeDependencies,
-  resolveManagedTalentGroupIds,
-} from "@modules/kpi/domain/managed-group-scope";
-import {
   TalentNotFoundError,
   TalentValidationError,
 } from "@modules/talent/domain/talent.errors";
@@ -30,6 +26,8 @@ import {
   ListTalentsQuery,
   ListTalentsResult,
 } from "@modules/talent/shared/talent.contracts";
+import { requireAdminGlobalScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -37,7 +35,7 @@ const MAX_LIMIT = 100;
 export class TalentAdminQueryService {
   constructor(
     private readonly readRepository: TalentReadRepository,
-    private readonly managedGroupScopeDependencies?: ManagedGroupScopeDependencies,
+    private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
   ) {}
 
   async listTalents(
@@ -47,13 +45,9 @@ export class TalentAdminQueryService {
     const permission = PermissionResolver.resolve(Permission.TALENT_READ);
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(actor, permission);
-    const managedGroupIds = await resolveManagedTalentGroupIds(
-      actor,
-      this.managedGroupScopeDependencies,
-    );
+    await this.requireGlobalRead(actor);
 
     return this.readRepository.listTalents({
-      activeMemberOfGroupIds: managedGroupIds ?? undefined,
       operationalStatus: parseOptionalOperationalStatus(
         query.operationalStatus,
       ),
@@ -89,27 +83,9 @@ export class TalentAdminQueryService {
     const permission = PermissionResolver.resolve(Permission.TALENT_READ);
     PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(actor, permission);
+    await this.requireGlobalRead(actor);
 
     const talentId = normalizeRequiredText(query.talentId, "talentId");
-    const managedGroupIds = await resolveManagedTalentGroupIds(
-      actor,
-      this.managedGroupScopeDependencies,
-    );
-
-    if (managedGroupIds !== null) {
-      const isManagedMember =
-        await this.readRepository.hasActiveMembershipInGroups(
-          talentId,
-          managedGroupIds,
-        );
-
-      if (!isManagedMember) {
-        throw new SystemInvariantError(
-          "PERMISSION_DENIED",
-          `Actor is not an active manager for talent ${talentId}`,
-        );
-      }
-    }
 
     const detail = await this.readRepository.getTalentDetail(talentId);
 
@@ -119,6 +95,29 @@ export class TalentAdminQueryService {
 
     return detail;
   }
+
+  private async requireGlobalRead(actor: Actor): Promise<void> {
+    await requireAdminGlobalScopeAuthority({
+      actor,
+      permission: Permission.TALENT_READ,
+      authority: this.structuredAuthority,
+      error: new SystemInvariantError(
+        "PERMISSION_DENIED",
+        "Direct Talent Admin reads require structured global scope",
+      ),
+    });
+  }
+}
+
+function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(): Promise<never> {
+      throw new SystemInvariantError(
+        "SYSTEM_INVARIANT_VIOLATION",
+        "Structured Talent authority is unavailable",
+      );
+    },
+  });
 }
 
 function normalizeRequiredText(value: unknown, field: string): string {
