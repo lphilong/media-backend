@@ -4,6 +4,14 @@ import { Permission } from "@core/permission/permission.enum";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import {
+  financePeriodMonthFromTimestamp,
+  financePeriodMonthRange,
+  hasFinanceGlobalAuthority,
+  normalizeFinancePeriodMonth,
+  requireFinancePeriodAuthority,
+} from "@modules/role/domain/finance-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
+import {
   RevenueLedgerNotFoundError,
   RevenueLedgerPermissionScopeError,
   RevenueLedgerValidationError,
@@ -56,6 +64,9 @@ interface FlatListSortCoverageInput {
   readonly revenueKind?: RevenueKind;
   readonly entrySource?: RevenueEntrySource;
   readonly currencyCode?: string;
+  readonly financePeriod?: string;
+  readonly financePeriodStartAt?: number;
+  readonly financePeriodEndAt?: number;
   readonly windowStartAt?: number;
   readonly windowEndAt?: number;
   readonly createdBeforeAt?: number;
@@ -69,6 +80,7 @@ interface FlatListSortCoverageInput {
 export class RevenueLedgerAdminQueryService {
   constructor(
     private readonly readRepository: RevenueLedgerReadRepository,
+    private readonly structuredAuthority: StructuredScopeAuthorityService,
   ) {}
 
   async listRevenueEntries(
@@ -76,10 +88,17 @@ export class RevenueLedgerAdminQueryService {
     query: ListRevenueEntriesQuery,
   ): Promise<ListRevenueEntriesResult> {
     this.assertReadPermission(actor);
-    assertGlobalScope(
-      actor,
-      "Revenue Ledger queries require global scope",
+    const financePeriod = parseOptionalFinancePeriod(
+      query.financePeriod,
     );
+    await this.requireFinanceListAuthority(
+      actor,
+      financePeriod,
+    );
+    const periodBounds =
+      financePeriod === undefined
+        ? undefined
+        : requireFinancePeriodBounds(financePeriod);
 
     const window = parseWindowFilter({
       windowStartAt: query.windowStartAt,
@@ -146,6 +165,9 @@ export class RevenueLedgerAdminQueryService {
       revenueKind,
       entrySource,
       currencyCode,
+      financePeriod,
+      financePeriodStartAt: periodBounds?.startAt,
+      financePeriodEndAt: periodBounds?.endAt,
       windowStartAt: window.windowStartAt,
       windowEndAt: window.windowEndAt,
       createdBeforeAt,
@@ -164,6 +186,9 @@ export class RevenueLedgerAdminQueryService {
       revenueKind,
       entrySource,
       currencyCode,
+      financePeriod,
+      financePeriodStartAt: periodBounds?.startAt,
+      financePeriodEndAt: periodBounds?.endAt,
       windowStartAt: window.windowStartAt,
       windowEndAt: window.windowEndAt,
       createdBeforeAt,
@@ -184,10 +209,17 @@ export class RevenueLedgerAdminQueryService {
     query: ListRevenueEntriesByTalentQuery,
   ): Promise<ListRevenueEntriesByTalentResult> {
     this.assertReadPermission(actor);
-    assertGlobalScope(
-      actor,
-      "Revenue Ledger queries require global scope",
+    const financePeriod = parseOptionalFinancePeriod(
+      query.financePeriod,
     );
+    await this.requireFinanceListAuthority(
+      actor,
+      financePeriod,
+    );
+    const periodBounds =
+      financePeriod === undefined
+        ? undefined
+        : requireFinancePeriodBounds(financePeriod);
 
     const window = parseWindowFilter({
       windowStartAt: query.windowStartAt,
@@ -208,6 +240,9 @@ export class RevenueLedgerAdminQueryService {
         "subjectTalentId",
       ),
       status: parseOptionalStatus(query.status),
+      financePeriod,
+      financePeriodStartAt: periodBounds?.startAt,
+      financePeriodEndAt: periodBounds?.endAt,
       windowStartAt: window.windowStartAt,
       windowEndAt: window.windowEndAt,
       limit: parseLimit(query.limit),
@@ -224,10 +259,17 @@ export class RevenueLedgerAdminQueryService {
     query: ListRevenueEntriesByPlatformQuery,
   ): Promise<ListRevenueEntriesByPlatformResult> {
     this.assertReadPermission(actor);
-    assertGlobalScope(
-      actor,
-      "Revenue Ledger queries require global scope",
+    const financePeriod = parseOptionalFinancePeriod(
+      query.financePeriod,
     );
+    await this.requireFinanceListAuthority(
+      actor,
+      financePeriod,
+    );
+    const periodBounds =
+      financePeriod === undefined
+        ? undefined
+        : requireFinancePeriodBounds(financePeriod);
 
     const window = parseWindowFilter({
       windowStartAt: query.windowStartAt,
@@ -250,6 +292,9 @@ export class RevenueLedgerAdminQueryService {
             "attributionPlatformAccountId",
           ),
         status: parseOptionalStatus(query.status),
+        financePeriod,
+        financePeriodStartAt: periodBounds?.startAt,
+        financePeriodEndAt: periodBounds?.endAt,
         windowStartAt: window.windowStartAt,
         windowEndAt: window.windowEndAt,
         limit: parseLimit(query.limit),
@@ -267,10 +312,17 @@ export class RevenueLedgerAdminQueryService {
     query: ListRevenueEntriesByEventQuery,
   ): Promise<ListRevenueEntriesByEventResult> {
     this.assertReadPermission(actor);
-    assertGlobalScope(
-      actor,
-      "Revenue Ledger queries require global scope",
+    const financePeriod = parseOptionalFinancePeriod(
+      query.financePeriod,
     );
+    await this.requireFinanceListAuthority(
+      actor,
+      financePeriod,
+    );
+    const periodBounds =
+      financePeriod === undefined
+        ? undefined
+        : requireFinancePeriodBounds(financePeriod);
 
     const window = parseWindowFilter({
       windowStartAt: query.windowStartAt,
@@ -292,6 +344,9 @@ export class RevenueLedgerAdminQueryService {
           "attributionEventId",
         ),
         status: parseOptionalStatus(query.status),
+        financePeriod,
+        financePeriodStartAt: periodBounds?.startAt,
+        financePeriodEndAt: periodBounds?.endAt,
         windowStartAt: window.windowStartAt,
         windowEndAt: window.windowEndAt,
         limit: parseLimit(query.limit),
@@ -309,10 +364,6 @@ export class RevenueLedgerAdminQueryService {
     query: GetRevenueEntryDetailQuery,
   ): Promise<GetRevenueEntryDetailResult> {
     this.assertReadPermission(actor);
-    assertGlobalScope(
-      actor,
-      "Revenue Ledger queries require global scope",
-    );
 
     const revenueEntryId = normalizeRequiredText(
       query.revenueEntryId,
@@ -329,6 +380,11 @@ export class RevenueLedgerAdminQueryService {
       );
     }
 
+    await this.requireFinanceAuthorityForTimestamp(
+      actor,
+      detail.recognizedAt,
+    );
+
     return detail;
   }
 
@@ -339,6 +395,61 @@ export class RevenueLedgerAdminQueryService {
       Permission.REVENUE_LEDGER_READ,
     );
     PermissionGuard.assert(actor, permission);
+  }
+
+  private async requireFinanceListAuthority(
+    actor: Actor,
+    financePeriod: string | undefined,
+  ): Promise<void> {
+    if (financePeriod) {
+      await requireFinancePeriodAuthority({
+        actor,
+        permission: Permission.REVENUE_LEDGER_READ,
+        periodMonth: financePeriod,
+        authority: this.structuredAuthority,
+        error: new RevenueLedgerPermissionScopeError(
+          "Revenue Entry list/search requires matching financePeriod or financeGlobal structured authority",
+        ),
+      });
+      return;
+    }
+
+    if (
+      await hasFinanceGlobalAuthority({
+        actor,
+        permission: Permission.REVENUE_LEDGER_READ,
+        authority: this.structuredAuthority,
+      })
+    ) {
+      return;
+    }
+
+    throw new RevenueLedgerPermissionScopeError(
+      "Revenue Entry list/search requires exact financePeriod filter or financeGlobal structured authority",
+    );
+  }
+
+  private async requireFinanceAuthorityForTimestamp(
+    actor: Actor,
+    recognizedAt: number,
+  ): Promise<void> {
+    const financePeriod =
+      financePeriodMonthFromTimestamp(recognizedAt);
+    if (!financePeriod) {
+      throw new RevenueLedgerPermissionScopeError(
+        "Revenue Entry detail requires valid recognizedAt-derived financePeriod",
+      );
+    }
+
+    await requireFinancePeriodAuthority({
+      actor,
+      permission: Permission.REVENUE_LEDGER_READ,
+      periodMonth: financePeriod,
+      authority: this.structuredAuthority,
+      error: new RevenueLedgerPermissionScopeError(
+        "Revenue Entry detail requires financePeriod(YYYY-MM from recognizedAt) or financeGlobal structured authority",
+      ),
+    });
   }
 }
 
@@ -526,6 +637,41 @@ function parseOptionalCurrencyCode(
   }
 
   return normalized;
+}
+
+function parseOptionalFinancePeriod(
+  value: unknown,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new RevenueLedgerValidationError(
+      "financePeriod must be a YYYY-MM string",
+    );
+  }
+
+  const normalized = normalizeFinancePeriodMonth(value);
+  if (!normalized) {
+    throw new RevenueLedgerValidationError(
+      "financePeriod must be a YYYY-MM string",
+    );
+  }
+
+  return normalized;
+}
+
+function requireFinancePeriodBounds(
+  financePeriod: string,
+): { readonly startAt: number; readonly endAt: number } {
+  const bounds = financePeriodMonthRange(financePeriod);
+  if (!bounds) {
+    throw new RevenueLedgerValidationError(
+      "financePeriod must be a YYYY-MM string",
+    );
+  }
+  return bounds;
 }
 
 function parseWindowFilter(input: {
@@ -723,6 +869,7 @@ function assertFlatListSortCoverage(
     input.revenueKind !== undefined ||
     input.entrySource !== undefined ||
     input.currencyCode !== undefined ||
+    input.financePeriod !== undefined ||
     input.windowStartAt !== undefined ||
     input.windowEndAt !== undefined ||
     input.createdBeforeAt !== undefined ||
@@ -768,22 +915,6 @@ function isFlatListFieldSort(
     sortField === "createdAt" ||
     sortField === "revenueEntryCode"
   );
-}
-
-function assertGlobalScope(
-  actor: Actor,
-  message: string,
-): void {
-  if (
-    PermissionGuard.hasRevenueLedgerScopeGrant(
-      actor,
-      "global",
-    )
-  ) {
-    return;
-  }
-
-  throw new RevenueLedgerPermissionScopeError(message);
 }
 
 function assertAdminActorType(

@@ -1100,9 +1100,11 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     revenueLedgerCommissionReadonlyAccess,
     authoritativeAuditGuard,
     adminMutationBridge,
+    structuredScopeAuthority,
   );
   const revenueLedgerQueryService = new RevenueLedgerAdminQueryService(
     revenueLedgerReadRepository,
+    structuredScopeAuthority,
   );
   const revenueLedgerController = new RevenueLedgerAdminController(
     revenueLedgerService,
@@ -1119,6 +1121,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     revenueLedgerEventReadonlyAccess,
     authoritativeAuditGuard,
     adminMutationBridge,
+    structuredScopeAuthority,
   );
   const platformEarningController = new PlatformEarningAdminController(
     platformEarningService,

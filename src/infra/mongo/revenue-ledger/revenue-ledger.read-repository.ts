@@ -177,6 +177,12 @@ export class NativeMongoRevenueLedgerReadRepository
           filters,
           input.currencyCode,
         );
+        applyFinancePeriodFilter(filters, {
+          financePeriodStartAt:
+            input.financePeriodStartAt,
+          financePeriodEndAt:
+            input.financePeriodEndAt,
+        });
         applyWindowFilter(filters, {
           windowStartAt: input.windowStartAt,
           windowEndAt: input.windowEndAt,
@@ -227,6 +233,12 @@ export class NativeMongoRevenueLedgerReadRepository
           filters,
           input.subjectTalentId,
         );
+        applyFinancePeriodFilter(filters, {
+          financePeriodStartAt:
+            input.financePeriodStartAt,
+          financePeriodEndAt:
+            input.financePeriodEndAt,
+        });
         applyWindowFilter(filters, {
           windowStartAt: input.windowStartAt,
           windowEndAt: input.windowEndAt,
@@ -254,6 +266,12 @@ export class NativeMongoRevenueLedgerReadRepository
           filters,
           input.attributionPlatformAccountId,
         );
+        applyFinancePeriodFilter(filters, {
+          financePeriodStartAt:
+            input.financePeriodStartAt,
+          financePeriodEndAt:
+            input.financePeriodEndAt,
+        });
         applyWindowFilter(filters, {
           windowStartAt: input.windowStartAt,
           windowEndAt: input.windowEndAt,
@@ -281,6 +299,12 @@ export class NativeMongoRevenueLedgerReadRepository
           filters,
           input.attributionEventId,
         );
+        applyFinancePeriodFilter(filters, {
+          financePeriodStartAt:
+            input.financePeriodStartAt,
+          financePeriodEndAt:
+            input.financePeriodEndAt,
+        });
         applyWindowFilter(filters, {
           windowStartAt: input.windowStartAt,
           windowEndAt: input.windowEndAt,
@@ -703,6 +727,28 @@ function applyCurrencyCodeFilter(
 
   filters.push({
     currencyCode,
+  });
+}
+
+function applyFinancePeriodFilter(
+  filters: Array<Record<string, unknown>>,
+  input: {
+    readonly financePeriodStartAt?: number;
+    readonly financePeriodEndAt?: number;
+  },
+): void {
+  if (
+    input.financePeriodStartAt === undefined ||
+    input.financePeriodEndAt === undefined
+  ) {
+    return;
+  }
+
+  filters.push({
+    recognizedAt: {
+      $gte: input.financePeriodStartAt,
+      $lt: input.financePeriodEndAt,
+    },
   });
 }
 
@@ -1237,6 +1283,7 @@ function buildCursorQueryShapeSignature(
         revenueKind: typed.revenueKind ?? null,
         entrySource: typed.entrySource ?? null,
         currencyCode: typed.currencyCode ?? null,
+        financePeriod: typed.financePeriod ?? null,
         windowStartAt: typed.windowStartAt ?? null,
         windowEndAt: typed.windowEndAt ?? null,
         createdBeforeAt: typed.createdBeforeAt ?? null,
@@ -1257,6 +1304,7 @@ function buildCursorQueryShapeSignature(
         view,
         subjectTalentId: typed.subjectTalentId,
         status: typed.status ?? null,
+        financePeriod: typed.financePeriod ?? null,
         windowStartAt: typed.windowStartAt ?? null,
         windowEndAt: typed.windowEndAt ?? null,
         sortSpec,
@@ -1272,6 +1320,7 @@ function buildCursorQueryShapeSignature(
         attributionPlatformAccountId:
           typed.attributionPlatformAccountId,
         status: typed.status ?? null,
+        financePeriod: typed.financePeriod ?? null,
         windowStartAt: typed.windowStartAt ?? null,
         windowEndAt: typed.windowEndAt ?? null,
         sortSpec,
@@ -1286,6 +1335,7 @@ function buildCursorQueryShapeSignature(
         view,
         attributionEventId: typed.attributionEventId,
         status: typed.status ?? null,
+        financePeriod: typed.financePeriod ?? null,
         windowStartAt: typed.windowStartAt ?? null,
         windowEndAt: typed.windowEndAt ?? null,
         sortSpec,

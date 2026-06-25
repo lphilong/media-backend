@@ -50,6 +50,11 @@ import {
 } from "@modules/revenue-ledger/domain/revenue-ledger.repository";
 import { RevenueLedgerTalentReadonlyAccess } from "@modules/revenue-ledger/domain/revenue-ledger-talent-readonly-access";
 import {
+  financePeriodMonthFromTimestamp,
+  requireFinancePeriodAuthority,
+} from "@modules/role/domain/finance-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
+import {
   REVENUE_ENTRY_KINDS,
   REVENUE_ENTRY_SOURCES,
   RevenueEntry,
@@ -170,6 +175,7 @@ export class RevenueLedgerAdminService {
     private readonly commissionReadonlyAccess: RevenueLedgerCommissionReadonlyAccess,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
+    private readonly structuredAuthority?: StructuredScopeAuthorityService,
     private readonly logger: StructuredLogger = createStructuredLogger(),
   ) {}
 
@@ -202,8 +208,10 @@ export class RevenueLedgerAdminService {
           entrySource: input.entrySource,
         },
         async (session) => {
-          const scope = resolveRequiredGlobalScope(
+          const scope = await this.requireFinanceAuthorityForTimestamp(
             actor,
+            permission.code,
+            input.recognizedAt,
           );
 
           if (input.revenueEntryCode !== undefined) {
@@ -390,12 +398,14 @@ export class RevenueLedgerAdminService {
         revenueEntryId: input.revenueEntryId,
       },
       async (session) => {
-        const scope = resolveRequiredGlobalScope(
-          actor,
-        );
         const current = await this.requireRevenueEntry(
           input.revenueEntryId,
           session,
+        );
+        const scope = await this.requireFinanceAuthorityForTimestamp(
+          actor,
+          permission.code,
+          current.recognizedAt,
         );
 
         if (current.status !== "DRAFT") {
@@ -408,6 +418,16 @@ export class RevenueLedgerAdminService {
           current,
           input,
         );
+        const newPeriod = financePeriodMonthFromTimestamp(
+          patch.candidate.recognizedAt,
+        );
+        if (newPeriod !== scope.financePeriod) {
+          await this.requireFinanceAuthorityForTimestamp(
+            actor,
+            permission.code,
+            patch.candidate.recognizedAt,
+          );
+        }
         await this.assertCandidateStateValid(
           patch.candidate,
           session,
@@ -487,12 +507,14 @@ export class RevenueLedgerAdminService {
         revenueEntryId: input.revenueEntryId,
       },
       async (session) => {
-        const scope = resolveRequiredGlobalScope(
-          actor,
-        );
         const current = await this.requireRevenueEntry(
           input.revenueEntryId,
           session,
+        );
+        const scope = await this.requireFinanceAuthorityForTimestamp(
+          actor,
+          permission.code,
+          current.recognizedAt,
         );
 
         if (current.status !== "DRAFT") {
@@ -594,12 +616,14 @@ export class RevenueLedgerAdminService {
         revenueEntryId: input.revenueEntryId,
       },
       async (session) => {
-        const scope = resolveRequiredGlobalScope(
-          actor,
-        );
         const current = await this.requireRevenueEntry(
           input.revenueEntryId,
           session,
+        );
+        const scope = await this.requireFinanceAuthorityForTimestamp(
+          actor,
+          permission.code,
+          current.recognizedAt,
         );
 
         if (current.status !== "FINALIZED") {
@@ -698,12 +722,14 @@ export class RevenueLedgerAdminService {
         revenueEntryId: input.revenueEntryId,
       },
       async (session) => {
-        const scope = resolveRequiredGlobalScope(
-          actor,
-        );
         const current = await this.requireRevenueEntry(
           input.revenueEntryId,
           session,
+        );
+        const scope = await this.requireFinanceAuthorityForTimestamp(
+          actor,
+          permission.code,
+          current.recognizedAt,
         );
 
         if (current.status !== "FINALIZED") {
@@ -780,12 +806,14 @@ export class RevenueLedgerAdminService {
         revenueEntryId: input.revenueEntryId,
       },
       async (session) => {
-        const scope = resolveRequiredGlobalScope(
-          actor,
-        );
         const current = await this.requireRevenueEntry(
           input.revenueEntryId,
           session,
+        );
+        const scope = await this.requireFinanceAuthorityForTimestamp(
+          actor,
+          permission.code,
+          current.recognizedAt,
         );
 
         if (
@@ -1049,6 +1077,37 @@ export class RevenueLedgerAdminService {
     throw new RevenueLedgerConflictError(
       `voidRevenueEntry is forbidden because RevenueEntry ${revenueEntryId} is referenced by FINALIZED CommissionSettlement ${reference.commissionSettlementId}`,
     );
+  }
+
+  private async requireFinanceAuthorityForTimestamp(
+    actor: Actor,
+    permission: Permission,
+    recognizedAt: number,
+  ): Promise<{ readonly financePeriod: string }> {
+    const financePeriod =
+      financePeriodMonthFromTimestamp(recognizedAt);
+    if (!financePeriod) {
+      throw new RevenueLedgerPermissionScopeError(
+        "Revenue Entry requires valid recognizedAt-derived financePeriod",
+      );
+    }
+    if (!this.structuredAuthority) {
+      throw new RevenueLedgerPermissionScopeError(
+        "Revenue Entry requires structured finance authority wiring",
+      );
+    }
+
+    await requireFinancePeriodAuthority({
+      actor,
+      permission,
+      periodMonth: financePeriod,
+      authority: this.structuredAuthority,
+      error: new RevenueLedgerPermissionScopeError(
+        "Revenue Entry requires financePeriod(YYYY-MM from recognizedAt) or financeGlobal structured authority",
+      ),
+    });
+
+    return { financePeriod };
   }
 
   private async recordAudit(params: {
@@ -1864,23 +1923,6 @@ function sanitizeNegativeZero(
   value: number,
 ): number {
   return Object.is(value, -0) ? 0 : value;
-}
-
-function resolveRequiredGlobalScope(
-  actor: Actor,
-): "global" {
-  if (
-    PermissionGuard.hasRevenueLedgerScopeGrant(
-      actor,
-      "global",
-    )
-  ) {
-    return "global";
-  }
-
-  throw new RevenueLedgerPermissionScopeError(
-    "Revenue Ledger mutation requires global scope",
-  );
 }
 
 function assertEntrySourceRule(

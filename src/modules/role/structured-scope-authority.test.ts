@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Actor } from "@core/actor/actor";
+import { Permission } from "@core/permission/permission.enum";
+import {
+  hasFinanceGlobalAuthority,
+  requireFinancePeriodAuthority,
+} from "./domain/finance-scope-authority";
 import {
   StructuredScopeAuthorityAssignment,
   StructuredScopeAuthorityReader,
@@ -154,6 +160,91 @@ test("legacy compatibility mode is explicit and does not affect structured check
   );
 });
 
+test("finance authority helper allows exact financePeriod or financeGlobal only", async () => {
+  const actor = actorWith([
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+  ]);
+  const exactPeriod = serviceWith([
+    record({
+      permissions: [
+        Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+      ],
+      structuredScopeGrants: [
+        {
+          scopeType: "financePeriod",
+          periodKey: "2026-06",
+        },
+      ],
+    }),
+  ]);
+
+  await requireFinancePeriodAuthority({
+    actor,
+    permission: Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+    periodMonth: "2026-06",
+    authority: exactPeriod,
+    error: new Error("denied"),
+  });
+  await assert.rejects(
+    requireFinancePeriodAuthority({
+      actor,
+      permission: Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+      periodMonth: "2026-07",
+      authority: exactPeriod,
+      error: new Error("denied"),
+    }),
+    /denied/u,
+  );
+
+  const global = serviceWith([
+    record({
+      permissions: [
+        Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+      ],
+      structuredScopeGrants: [{ scopeType: "financeGlobal" }],
+    }),
+  ]);
+  await requireFinancePeriodAuthority({
+    actor,
+    permission: Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+    periodMonth: "2026-07",
+    authority: global,
+    error: new Error("denied"),
+  });
+  assert.equal(
+    await hasFinanceGlobalAuthority({
+      actor,
+      permission: Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+      authority: global,
+    }),
+    true,
+  );
+});
+
+test("finance authority helper fails closed for malformed periodMonth", async () => {
+  await assert.rejects(
+    requireFinancePeriodAuthority({
+      actor: actorWith([
+        Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+      ]),
+      permission: Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+      periodMonth: "June-2026",
+      authority: serviceWith([
+        record({
+          permissions: [
+            Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+          ],
+          structuredScopeGrants: [
+            { scopeType: "financeGlobal" },
+          ],
+        }),
+      ]),
+      error: new Error("denied"),
+    }),
+    /denied/u,
+  );
+});
+
 function serviceWith(
   records: readonly StructuredScopeAuthorityAssignment[],
 ): StructuredScopeAuthorityService {
@@ -164,6 +255,18 @@ function serviceWith(
       },
     } satisfies StructuredScopeAuthorityReader,
   );
+}
+
+function actorWith(permissions: readonly Permission[]): Actor {
+  return new Actor({
+    id: "user-1",
+    type: "admin",
+    context: "ADMIN",
+    roles: [],
+    permissions,
+    scopeGrants: {},
+    isActive: true,
+  });
 }
 
 function record(input: {

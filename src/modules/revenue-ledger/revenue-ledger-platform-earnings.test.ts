@@ -28,6 +28,10 @@ import {
   PlatformEarningBatchStatus,
   RevenueEntry,
 } from "@modules/revenue-ledger/domain/revenue-ledger.types";
+import {
+  StructuredScopeAuthorityAssignment,
+  StructuredScopeAuthorityService,
+} from "@modules/role/domain/structured-scope-authority";
 
 const SESSION = {} as ClientSession;
 
@@ -136,6 +140,7 @@ test("RL-1 platform earning batch creates approved snapshots and links one summa
 
   const listed = await harness.service.listLines(finance, {
     status: "APPROVED",
+    periodMonth: "2026-06",
     limit: 1,
   });
   assert.equal(listed.items.length, 1);
@@ -517,7 +522,255 @@ test("RL-1 unauthorized actor cannot approve platform earning batch", async () =
   );
 });
 
-function createHarness(): {
+test("AUTH-3D-1 platform earning read and lifecycle require matching financePeriod authority", async () => {
+  const harness = createHarness();
+  const submitter = createActor("submitter", [
+    Permission.REVENUE_LEDGER_READ,
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+  ]);
+  const finance = createActor("finance", [
+    Permission.REVENUE_LEDGER_READ,
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW,
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_VOID,
+  ]);
+  const batch = await createDraftBatchWithLine(
+    harness,
+    submitter,
+  );
+
+  const listed = await harness.service.listBatches(finance, {
+    periodMonth: "2026-06",
+  });
+  assert.deepEqual(listed.items.map((item) => item.id), [
+    batch.id,
+  ]);
+  assert.equal(
+    (await harness.service.getBatch(finance, batch.id)).id,
+    batch.id,
+  );
+
+  await withTrace(() =>
+    harness.service.submitBatch(submitter, {
+      batchId: batch.id,
+    }),
+  );
+  assert.equal(
+    (
+      await withTrace(() =>
+        harness.service.startReview(finance, {
+          batchId: batch.id,
+        }),
+      )
+    ).status,
+    "UNDER_REVIEW",
+  );
+  assert.equal(
+    (
+      await withTrace(() =>
+        harness.service.rejectBatch(finance, {
+          batchId: batch.id,
+          reason: "invalid source",
+        }),
+      )
+    ).status,
+    "REJECTED",
+  );
+  assert.equal(
+    (
+      await withTrace(() =>
+        harness.service.archiveBatch(finance, {
+          batchId: batch.id,
+        }),
+      )
+    ).status,
+    "ARCHIVED",
+  );
+});
+
+test("AUTH-3D-1 financeGlobal can perform Platform Earnings lifecycle across periods", async () => {
+  const harness = createHarness({
+    structuredAssignments: [
+      ...financeAssignmentsFor("global-finance", [
+        Permission.REVENUE_LEDGER_READ,
+        Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+        Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW,
+        Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+        Permission.REVENUE_LEDGER_CREATE,
+      ], { scopeType: "financeGlobal" }),
+      ...financeAssignmentsFor("global-reviewer", [
+        Permission.REVENUE_LEDGER_READ,
+        Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW,
+        Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+        Permission.REVENUE_LEDGER_CREATE,
+      ], { scopeType: "financeGlobal" }),
+    ],
+  });
+  const finance = createActor("global-finance", [
+    Permission.REVENUE_LEDGER_READ,
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW,
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+    Permission.REVENUE_LEDGER_CREATE,
+  ]);
+
+  const batch = await withTrace(() =>
+    harness.service.createBatch(finance, {
+      platform: "tiktok",
+      platformAccountId: "pa-1",
+      sourceType: "TIKTOK_LIVESTREAM_DIAMOND",
+      periodMonth: "2026-07",
+      sourceDateFrom: 1,
+      sourceDateTo: 2,
+    }),
+  );
+  await withTrace(() =>
+    harness.service.addLine(finance, {
+      batchId: batch.id,
+      sourceDate: 1,
+      memberTalentId: "talent-1",
+      rawQuantity: 100,
+    }),
+  );
+  await withTrace(() =>
+    harness.service.submitBatch(finance, {
+      batchId: batch.id,
+    }),
+  );
+  const reviewer = createActor("global-reviewer", [
+    Permission.REVENUE_LEDGER_READ,
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW,
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+    Permission.REVENUE_LEDGER_CREATE,
+  ]);
+  await withTrace(() =>
+    harness.service.startReview(reviewer, {
+      batchId: batch.id,
+    }),
+  );
+  await withTrace(() =>
+    harness.service.approveBatch(reviewer, {
+      batchId: batch.id,
+      targetCurrency: "VND",
+      appliedRate: 500,
+      platformCutRate: 0.6,
+      companyShareRate: 0.4,
+    }),
+  );
+  const entry = await withTrace(() =>
+    harness.service.createRevenueEntry(reviewer, {
+      batchId: batch.id,
+    }),
+  );
+  assert.equal(entry.entrySource, "PLATFORM_EARNING_BATCH");
+});
+
+test("AUTH-3D-1 denies legacy revenueLedger.global without structured finance scope", async () => {
+  const harness = createHarness({ structuredAssignments: [] });
+  const legacyOnly = createActor("legacy-only", [
+    Permission.REVENUE_LEDGER_READ,
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+  ]);
+
+  await assert.rejects(
+    withTrace(() =>
+      harness.service.createBatch(legacyOnly, {
+        platform: "tiktok",
+        platformAccountId: "pa-1",
+        sourceType: "TIKTOK_LIVESTREAM_DIAMOND",
+        periodMonth: "2026-06",
+        sourceDateFrom: 1,
+        sourceDateTo: 2,
+      }),
+    ),
+    RevenueLedgerPermissionScopeError,
+  );
+});
+
+test("AUTH-3D-1 denies wrong financePeriod and Manager source-only scopes", async () => {
+  const wrongPeriodHarness = createHarness({
+    structuredAssignments: financeAssignmentsFor("wrong-period", [
+      Permission.REVENUE_LEDGER_READ,
+    ], {
+      scopeType: "financePeriod",
+      periodKey: "2026-05",
+    }),
+  });
+  const actor = createActor("wrong-period", [
+    Permission.REVENUE_LEDGER_READ,
+  ]);
+  wrongPeriodHarness.platformRepository.seedBatch(
+    batchRecord({ id: "june-batch", periodMonth: "2026-06" }),
+  );
+
+  await assert.rejects(
+    wrongPeriodHarness.service.getBatch(actor, "june-batch"),
+    RevenueLedgerPermissionScopeError,
+  );
+
+  const managerScopeHarness = createHarness({
+    structuredAssignments: [
+      structuredAssignment({
+        userId: "manager-source",
+        permission: Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+        scope: {
+          scopeType: "managedTalentGroup",
+          targetId: "tg-1",
+        },
+      }),
+      structuredAssignment({
+        userId: "manager-source",
+        permission: Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+        scope: {
+          scopeType: "assignedPlatformAccount",
+          targetId: "pa-1",
+        },
+      }),
+    ],
+  });
+  const managerSourceOnly = createActor("manager-source", [
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+  ]);
+  managerScopeHarness.platformRepository.seedBatch(
+    batchRecord({
+      id: "under-review",
+      periodMonth: "2026-06",
+      status: "UNDER_REVIEW",
+    }),
+  );
+
+  await assert.rejects(
+    withTrace(() =>
+      managerScopeHarness.service.approveBatch(managerSourceOnly, {
+        batchId: "under-review",
+        targetCurrency: "VND",
+        appliedRate: 500,
+        platformCutRate: 0.6,
+        companyShareRate: 0.4,
+      }),
+    ),
+    RevenueLedgerPermissionScopeError,
+  );
+});
+
+test("AUTH-3D-1 fails closed for missing periodMonth on persisted Platform Earnings batch", async () => {
+  const harness = createHarness();
+  const finance = createActor("finance", [
+    Permission.REVENUE_LEDGER_READ,
+  ]);
+  harness.platformRepository.seedBatch(
+    batchRecord({ id: "bad-period", periodMonth: "" }),
+  );
+
+  await assert.rejects(
+    harness.service.getBatch(finance, "bad-period"),
+    RevenueLedgerPermissionScopeError,
+  );
+});
+
+function createHarness(input: {
+  readonly structuredAssignments?: readonly StructuredScopeAuthorityAssignment[];
+} = {}): {
   readonly service: PlatformEarningAdminService;
   readonly platformRepository: InMemoryPlatformEarningRepository;
   readonly revenueRepository: InMemoryRevenueEntryRepository;
@@ -567,6 +820,9 @@ function createHarness(): {
         });
       },
     } satisfies AuthoritativeAdminMutationBridge,
+    structuredAuthority(
+      input.structuredAssignments ?? defaultFinanceAssignments(),
+    ),
   );
   return {
     service,
@@ -676,6 +932,10 @@ class InMemoryPlatformEarningRepository
     string,
     PlatformEarningLine
   >();
+
+  seedBatch(batch: PlatformEarningBatch): void {
+    this.batches.set(batch.id, batch);
+  }
 
   async insertBatch(input: {
     readonly id: string;
@@ -994,6 +1254,165 @@ function page<T extends { readonly id: string }>(
       sorted.length > limit
         ? selected[selected.length - 1]?.id
         : undefined,
+  };
+}
+
+function defaultFinanceAssignments(): readonly StructuredScopeAuthorityAssignment[] {
+  return [
+    ...financeAssignmentsFor("submitter", [
+      Permission.REVENUE_LEDGER_READ,
+      Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+    ]),
+    ...financeAssignmentsFor("finance", [
+      Permission.REVENUE_LEDGER_READ,
+      Permission.REVENUE_LEDGER_CREATE,
+      Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW,
+      Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+      Permission.REVENUE_LEDGER_PLATFORM_EARNING_VOID,
+    ]),
+    ...financeAssignmentsFor("same-actor", [
+      Permission.REVENUE_LEDGER_READ,
+      Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+      Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW,
+      Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+    ]),
+    ...financeAssignmentsFor("reviewer", [
+      Permission.REVENUE_LEDGER_READ,
+      Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW,
+    ]),
+  ];
+}
+
+function financeAssignmentsFor(
+  userId: string,
+  permissions: readonly Permission[],
+  scope:
+    | { readonly scopeType: "financeGlobal" }
+    | {
+        readonly scopeType: "financePeriod";
+        readonly periodKey: string;
+      } = {
+    scopeType: "financePeriod",
+    periodKey: "2026-06",
+  },
+): readonly StructuredScopeAuthorityAssignment[] {
+  return permissions.map((permission) =>
+    structuredAssignment({
+      userId,
+      permission,
+      scope,
+    }),
+  );
+}
+
+function structuredAuthority(
+  assignments: readonly StructuredScopeAuthorityAssignment[],
+): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService({
+    async listByUserId(userId) {
+      return assignments.filter(
+        (record) => record.assignment.userId === userId,
+      );
+    },
+  });
+}
+
+function structuredAssignment(input: {
+  readonly userId: string;
+  readonly permission: Permission;
+  readonly scope:
+    | { readonly scopeType: "financeGlobal" }
+    | {
+        readonly scopeType: "financePeriod";
+        readonly periodKey: string;
+      }
+    | {
+        readonly scopeType:
+          | "managedTalentGroup"
+          | "assignedPlatformAccount";
+        readonly targetId: string;
+      };
+}): StructuredScopeAuthorityAssignment {
+  const scopeKey =
+    input.scope.scopeType === "financePeriod"
+      ? input.scope.periodKey
+      : input.scope.scopeType === "financeGlobal"
+        ? "global"
+        : input.scope.targetId;
+  const assignmentId = [
+    "structured",
+    input.userId,
+    input.permission,
+    input.scope.scopeType,
+    scopeKey,
+  ].join("-");
+  return {
+    assignment: {
+      assignmentId,
+      roleId: assignmentId,
+      userId: input.userId,
+      structuredScopeGrants: [input.scope],
+      state: "ACTIVE",
+      effectiveAt: 1,
+      expiresAt: null,
+      revokedAt: null,
+      origin: "DIRECT",
+      bundleOrigin: null,
+      reason: null,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    role: {
+      id: assignmentId,
+      state: "ACTIVE",
+      permissions: [input.permission],
+    },
+  };
+}
+
+function batchRecord(
+  overrides: Partial<PlatformEarningBatch> = {},
+): PlatformEarningBatch {
+  return {
+    id: "seeded-batch",
+    batchCode: "RLEB-202606-00001",
+    platform: "TIKTOK",
+    platformAccountId: "pa-1",
+    talentGroupId: "tg-1",
+    sourceType: "TIKTOK_LIVESTREAM_DIAMOND",
+    sourceUnit: "DIAMOND",
+    periodMonth: "2026-06",
+    sourceDateFrom: 1,
+    sourceDateTo: 2,
+    status: "DRAFT",
+    sourceLineCount: 0,
+    rawQuantityTotal: 0,
+    conversionSnapshot: null,
+    platformCutSnapshot: null,
+    companyNetAmount: null,
+    commissionableBasisAmount: null,
+    submittedByActorId: null,
+    submittedAt: null,
+    reviewedByActorId: null,
+    reviewedAt: null,
+    approvedByActorId: null,
+    approvedAt: null,
+    rejectedByActorId: null,
+    rejectedAt: null,
+    rejectionReason: null,
+    voidedByActorId: null,
+    voidedAt: null,
+    voidReason: null,
+    archivedByActorId: null,
+    archivedAt: null,
+    sourceFingerprint: null,
+    revenueEntryId: null,
+    revenueEntryCreatedByActorId: null,
+    revenueEntryCreatedAt: null,
+    createdByActorId: "seed",
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides,
   };
 }
 

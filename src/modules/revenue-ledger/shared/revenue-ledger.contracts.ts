@@ -70,6 +70,7 @@ export interface ListRevenueEntriesQuery {
   readonly revenueKind?: RevenueKind | string;
   readonly entrySource?: RevenueEntrySource | string;
   readonly currencyCode?: string;
+  readonly financePeriod?: string;
   readonly windowStartAt?: number | string;
   readonly windowEndAt?: number | string;
   readonly createdBeforeAt?: number | string;
@@ -89,6 +90,7 @@ export interface ListRevenueEntriesQuery {
 export interface ListRevenueEntriesByTalentQuery {
   readonly subjectTalentId: string;
   readonly status?: RevenueEntryStatus | string;
+  readonly financePeriod?: string;
   readonly windowStartAt?: number | string;
   readonly windowEndAt?: number | string;
   readonly limit?: number | string;
@@ -102,6 +104,7 @@ export interface ListRevenueEntriesByTalentQuery {
 export interface ListRevenueEntriesByPlatformQuery {
   readonly attributionPlatformAccountId: string;
   readonly status?: RevenueEntryStatus | string;
+  readonly financePeriod?: string;
   readonly windowStartAt?: number | string;
   readonly windowEndAt?: number | string;
   readonly limit?: number | string;
@@ -115,6 +118,7 @@ export interface ListRevenueEntriesByPlatformQuery {
 export interface ListRevenueEntriesByEventQuery {
   readonly attributionEventId: string;
   readonly status?: RevenueEntryStatus | string;
+  readonly financePeriod?: string;
   readonly windowStartAt?: number | string;
   readonly windowEndAt?: number | string;
   readonly limit?: number | string;

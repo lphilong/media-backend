@@ -51,6 +51,11 @@ import {
   RevenueSourceSummarySnapshot,
 } from "@modules/revenue-ledger/domain/revenue-ledger.types";
 import {
+  hasFinanceGlobalAuthority,
+  requireFinancePeriodAuthority,
+} from "@modules/role/domain/finance-scope-authority";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
+import {
   ApprovePlatformEarningBatchCommand,
   CreatePlatformEarningBatchCommand,
   CreateRevenueEntryFromPlatformEarningBatchCommand,
@@ -110,6 +115,7 @@ export class PlatformEarningAdminService {
     private readonly eventReadonlyAccess: RevenueLedgerEventReadonlyAccess,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
+    private readonly structuredAuthority: StructuredScopeAuthorityService,
   ) {}
 
   async createBatch(
@@ -135,7 +141,11 @@ export class PlatformEarningAdminService {
         sourceType: input.sourceType,
       },
       async (session) => {
-        resolveRequiredGlobalScope(actor);
+        await this.requireFinanceAuthorityForPeriod(
+          actor,
+          Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+          input.periodMonth,
+        );
         await this.assertPlatformAccountResolvable(
           input.platformAccountId,
           session,
@@ -201,10 +211,14 @@ export class PlatformEarningAdminService {
       operation,
       { batchId: input.batchId },
       async (session) => {
-        resolveRequiredGlobalScope(actor);
         const current = await this.requireBatch(
           input.batchId,
           session,
+        );
+        await this.requireFinanceAuthorityForPeriod(
+          actor,
+          Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+          current.periodMonth,
         );
         assertBatchStatus(
           current,
@@ -270,10 +284,14 @@ export class PlatformEarningAdminService {
       operation,
       { batchId: input.batchId },
       async (session) => {
-        resolveRequiredGlobalScope(actor);
         const batch = await this.requireBatch(
           input.batchId,
           session,
+        );
+        await this.requireFinanceAuthorityForPeriod(
+          actor,
+          Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+          batch.periodMonth,
         );
         assertBatchStatus(
           batch,
@@ -380,10 +398,14 @@ export class PlatformEarningAdminService {
         lineId: input.lineId,
       },
       async (session) => {
-        resolveRequiredGlobalScope(actor);
         const batch = await this.requireBatch(
           input.batchId,
           session,
+        );
+        await this.requireFinanceAuthorityForPeriod(
+          actor,
+          Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+          batch.periodMonth,
         );
         assertBatchStatus(
           batch,
@@ -588,10 +610,14 @@ export class PlatformEarningAdminService {
       operation,
       { batchId: input.batchId },
       async (session) => {
-        resolveRequiredGlobalScope(actor);
         const batch = await this.requireBatch(
           input.batchId,
           session,
+        );
+        await this.requireFinanceAuthorityForPeriod(
+          actor,
+          Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+          batch.periodMonth,
         );
         assertBatchStatus(
           batch,
@@ -734,10 +760,14 @@ export class PlatformEarningAdminService {
       operation,
       { batchId: input.batchId },
       async (session) => {
-        resolveRequiredGlobalScope(actor);
         const batch = await this.requireBatch(
           input.batchId,
           session,
+        );
+        await this.requireFinanceAuthorityForPeriod(
+          actor,
+          Permission.REVENUE_LEDGER_CREATE,
+          batch.periodMonth,
         );
         assertBatchStatus(
           batch,
@@ -905,8 +935,13 @@ export class PlatformEarningAdminService {
       actor,
       Permission.REVENUE_LEDGER_READ,
     );
-    resolveRequiredGlobalScope(actor);
-    return this.requireBatch(batchId);
+    const batch = await this.requireBatch(batchId);
+    await this.requireFinanceAuthorityForPeriod(
+      actor,
+      Permission.REVENUE_LEDGER_READ,
+      batch.periodMonth,
+    );
+    return batch;
   }
 
   async listBatches(
@@ -917,7 +952,14 @@ export class PlatformEarningAdminService {
       actor,
       Permission.REVENUE_LEDGER_READ,
     );
-    resolveRequiredGlobalScope(actor);
+    const periodMonth = normalizeOptionalPeriodMonth(
+      query.periodMonth,
+    );
+    await this.requireFinanceListAuthority(
+      actor,
+      Permission.REVENUE_LEDGER_READ,
+      periodMonth,
+    );
     return this.platformEarningRepository.listBatches({
       status: normalizeOptionalBatchStatus(
         query.status,
@@ -934,9 +976,7 @@ export class PlatformEarningAdminService {
       sourceType: normalizeOptionalSourceType(
         query.sourceType,
       ),
-      periodMonth: normalizeOptionalPeriodMonth(
-        query.periodMonth,
-      ),
+      periodMonth,
       createdBeforeAt: normalizeOptionalTimestamp(
         query.createdBeforeAt,
         "createdBeforeAt",
@@ -956,11 +996,28 @@ export class PlatformEarningAdminService {
       actor,
       Permission.REVENUE_LEDGER_READ,
     );
-    resolveRequiredGlobalScope(actor);
+    const batchId = normalizeOptionalTextValue(
+      query.batchId,
+    );
+    const periodMonth = normalizeOptionalPeriodMonth(
+      query.periodMonth,
+    );
+    if (batchId) {
+      const batch = await this.requireBatch(batchId);
+      await this.requireFinanceAuthorityForPeriod(
+        actor,
+        Permission.REVENUE_LEDGER_READ,
+        batch.periodMonth,
+      );
+    } else {
+      await this.requireFinanceListAuthority(
+        actor,
+        Permission.REVENUE_LEDGER_READ,
+        periodMonth,
+      );
+    }
     return this.platformEarningRepository.listLines({
-      batchId: normalizeOptionalTextValue(
-        query.batchId,
-      ),
+      batchId,
       status: normalizeOptionalBatchStatus(
         query.status,
       ),
@@ -976,9 +1033,7 @@ export class PlatformEarningAdminService {
       memberTalentId: normalizeOptionalTextValue(
         query.memberTalentId,
       ),
-      periodMonth: normalizeOptionalPeriodMonth(
-        query.periodMonth,
-      ),
+      periodMonth,
       limit: normalizeLimit(query.limit),
       cursor: normalizeOptionalTextValue(
         query.cursor,
@@ -1008,10 +1063,14 @@ export class PlatformEarningAdminService {
       operation,
       { batchId },
       async (session) => {
-        resolveRequiredGlobalScope(actor);
         const current = await this.requireBatch(
           batchId,
           session,
+        );
+        await this.requireFinanceAuthorityForPeriod(
+          actor,
+          permissionCode,
+          current.periodMonth,
         );
         assertBatchStatus(
           current,
@@ -1072,6 +1131,51 @@ export class PlatformEarningAdminService {
       throw new RevenueLedgerNotFoundError(batchId);
     }
     return batch;
+  }
+
+  private async requireFinanceAuthorityForPeriod(
+    actor: Actor,
+    permission: Permission,
+    periodMonth: string,
+  ): Promise<void> {
+    await requireFinancePeriodAuthority({
+      actor,
+      permission,
+      periodMonth,
+      authority: this.structuredAuthority,
+      error: new RevenueLedgerPermissionScopeError(
+        "Revenue Ledger Platform Earnings requires financePeriod(periodMonth) or financeGlobal structured authority",
+      ),
+    });
+  }
+
+  private async requireFinanceListAuthority(
+    actor: Actor,
+    permission: Permission,
+    periodMonth: string | undefined,
+  ): Promise<void> {
+    if (periodMonth) {
+      await this.requireFinanceAuthorityForPeriod(
+        actor,
+        permission,
+        periodMonth,
+      );
+      return;
+    }
+
+    if (
+      await hasFinanceGlobalAuthority({
+        actor,
+        permission,
+        authority: this.structuredAuthority,
+      })
+    ) {
+      return;
+    }
+
+    throw new RevenueLedgerPermissionScopeError(
+      "Revenue Ledger Platform Earnings list requires periodMonth filter with financePeriod authority or financeGlobal structured authority",
+    );
   }
 
   private async assertDuplicateKeyAvailable(
@@ -1755,22 +1859,6 @@ function assertPermission(
     PermissionResolver.resolve(permissionCode);
   PermissionGuard.assert(actor, permission);
   return permission;
-}
-
-function resolveRequiredGlobalScope(
-  actor: Actor,
-): "global" {
-  if (
-    PermissionGuard.hasRevenueLedgerScopeGrant(
-      actor,
-      "global",
-    )
-  ) {
-    return "global";
-  }
-  throw new RevenueLedgerPermissionScopeError(
-    "Revenue Ledger platform earning mutation requires global scope",
-  );
 }
 
 function assertBatchStatus(
