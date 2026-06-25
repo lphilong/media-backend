@@ -7,6 +7,10 @@ import {
 } from "@modules/user/read/user.read-repository";
 import { UserValidationError } from "@modules/user/domain/user.errors";
 import {
+  normalizeAccountContexts,
+  type AccountContext,
+} from "@modules/account-context/domain/account-context.types";
+import {
   UserDetailView,
   UserListItemView,
 } from "@modules/user/domain/user.types";
@@ -30,6 +34,7 @@ interface UserReadDocument {
   readonly contextAccess: {
     readonly contexts: readonly ["ADMIN"];
   };
+  readonly accountContexts?: readonly AccountContext[];
   readonly preferences: {
     readonly locale?: string;
     readonly timezone?: string;
@@ -200,6 +205,7 @@ function toUserDetailView(document: UserReadDocument): UserDetailView {
     contextAccess: {
       contexts: document.contextAccess.contexts,
     },
+    accountContexts: normalizeAccountContexts(document.accountContexts),
     profile: {
       displayName: document.profile.displayName,
       email: document.profile.email,

@@ -8,7 +8,11 @@ import {
 import { Actor, ActorScopeGrants } from "@core/actor/actor";
 import { ContextType } from "@core/context/context.types";
 import { SystemInvariantError } from "@core/error/system-error";
-import { PermissionGuard } from "@core/permission/permission.guard";
+import { AccountContext } from "@modules/account-context/domain/account-context.types";
+import {
+  WorkspaceAvailability,
+  buildWorkspaceAvailability,
+} from "@modules/account-context/account-context.workspace-availability";
 
 type CurrentActorCapabilitiesCommand = "CURRENT_ACTOR_CAPABILITIES";
 
@@ -20,6 +24,8 @@ interface CurrentActorCapabilitiesSnapshot {
   readonly roles: readonly string[];
   readonly permissions: readonly string[];
   readonly scopeGrants: Readonly<ActorScopeGrants>;
+  readonly accountContexts: readonly AccountContext[];
+  readonly workspaceAvailability: WorkspaceAvailability;
   readonly generatedAt: string;
 }
 
@@ -38,8 +44,6 @@ export class CurrentActorCapabilitiesController extends SecureController {
       );
     }
 
-    PermissionGuard.assertAdminActor(actor);
-
     return {
       id: actor.id,
       type: actor.type,
@@ -48,6 +52,11 @@ export class CurrentActorCapabilitiesController extends SecureController {
       roles: [...actor.roles],
       permissions: [...actor.permissions],
       scopeGrants: cloneScopeGrants(actor.scopeGrants),
+      accountContexts: [...actor.accountContexts],
+      workspaceAvailability: buildWorkspaceAvailability({
+        accountContexts: actor.accountContexts,
+        effectiveAccessTraceAvailable: true,
+      }),
       generatedAt: new Date().toISOString(),
     };
   }

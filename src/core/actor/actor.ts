@@ -1,5 +1,9 @@
 import { SystemInvariantError } from "@core/error/system-error";
 import { ContextType } from "@core/context/context.types";
+import {
+  AccountContext,
+  normalizeAccountContexts,
+} from "@modules/account-context/domain/account-context.types";
 
 export type ActorType = "admin" | "staff" | "customer" | "public" | "system";
 export type WorkScheduleActorScopeGrant =
@@ -118,6 +122,7 @@ export class Actor {
   readonly roles: readonly string[];
   readonly permissions: readonly string[];
   readonly scopeGrants: Readonly<ActorScopeGrants>;
+  readonly accountContexts: readonly AccountContext[];
   readonly trace?: ActorTrace;
   readonly isActive: boolean;
 
@@ -128,6 +133,7 @@ export class Actor {
     roles: readonly string[];
     permissions: readonly string[];
     scopeGrants?: ActorScopeGrants;
+    accountContexts?: readonly AccountContext[];
     trace?: ActorTrace;
     isActive: boolean;
   }) {
@@ -146,6 +152,7 @@ export class Actor {
     this.scopeGrants = normalizeActorScopeGrants(
       params.scopeGrants,
     );
+    this.accountContexts = normalizeAccountContexts(params.accountContexts);
     this.trace = params.trace;
     this.isActive = params.isActive;
 

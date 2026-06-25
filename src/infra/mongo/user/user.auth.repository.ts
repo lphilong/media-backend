@@ -12,6 +12,7 @@ import {
   WorkScheduleActorScopeGrant,
 } from "@core/actor/actor";
 import { InfrastructureError } from "@infra/errors/infrastructure.error";
+import { AccountContext } from "@modules/account-context/domain/account-context.types";
 import {
   RoleMaxDelegatableBandForCapability,
   UserAdminCapabilityRepository,
@@ -57,6 +58,7 @@ interface UserAuthResolutionAggregateDocument {
   readonly _id: string;
   readonly actorKind: UserPersistence["actorKind"];
   readonly accountStatus: UserPersistence["accountStatus"];
+  readonly accountContexts?: readonly AccountContext[];
   readonly assignmentRoleIds?: readonly unknown[];
   readonly resolvedRoleIds?: readonly unknown[];
   readonly rolePermissions?: readonly unknown[];
@@ -127,6 +129,7 @@ export class MongoUserAuthRepository
         _id: doc._id,
         actorKind: doc.actorKind,
         accountStatus: doc.accountStatus,
+        accountContexts: doc.accountContexts,
         permissions: toRuntimePermissionSet(doc.rolePermissions, doc._id),
         scopeGrants: toRuntimeActorScopeGrants(
           doc.scopeGrants,
@@ -519,6 +522,7 @@ function buildAuthResolutionPipeline(authSubject: string): Document[] {
         _id: 1,
         actorKind: 1,
         accountStatus: 1,
+        accountContexts: 1,
         assignmentRoleIds: 1,
         resolvedRoleIds: 1,
         rolePermissions: 1,

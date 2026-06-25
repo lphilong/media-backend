@@ -3,6 +3,7 @@ import {
   ActorScopeGrants,
 } from "@core/actor/actor";
 import { ContextType } from "@core/context/context.types";
+import { AccountContext } from "@modules/account-context/domain/account-context.types";
 import {
   deriveActorScopeGrantsFromPermissions,
 } from "@core/permission/permission.guard";
@@ -14,6 +15,7 @@ export interface ActorSnapshot {
   roles: readonly string[];
   permissions: readonly string[];
   scopeGrants?: ActorScopeGrants;
+  accountContexts?: readonly AccountContext[];
   isActive: boolean;
   authorizationValidUntil?: number;
 }
@@ -42,6 +44,7 @@ export function actorFromSnapshot(
     roles: snapshot.roles,
     permissions: snapshot.permissions,
     scopeGrants,
+    accountContexts: snapshot.accountContexts,
     trace,
     isActive: snapshot.isActive,
   });

@@ -457,6 +457,7 @@ test("effective access deduplicates permissions and traces child assignment scop
           _id: "user-1",
           actorKind: "ADMIN",
           accountStatus: "ACTIVE",
+          accountContexts: ["MANAGER_CONSOLE"],
           profile: { displayName: "User One" },
           reportingManagerId: "manager-1",
         },
@@ -516,6 +517,18 @@ test("effective access deduplicates permissions and traces child assignment scop
 
   const result = await service.getForUser("user-1");
   assert.deepEqual(result.permissions, ["event:read", "kpi:read"]);
+  assert.deepEqual(
+    (result.accountContextSignals as Record<string, unknown>).accountContexts,
+    ["MANAGER_CONSOLE"],
+  );
+  assert.equal(
+    (
+      result.workspaceAvailability as {
+        primaryWorkspace: string | null;
+      }
+    ).primaryWorkspace,
+    "MANAGER_CONSOLE",
+  );
   const trace = result.permissionSourceTrace as Array<{
     permission: string;
     sources: Array<Record<string, unknown>>;
@@ -548,6 +561,7 @@ test("effective access materializes only currently effective assignments and exp
           _id: "user-1",
           actorKind: "ADMIN",
           accountStatus: "ACTIVE",
+          accountContexts: ["STAFF_CONSOLE"],
         },
       ],
       role_assignments: [
@@ -648,6 +662,7 @@ test("actorKind, route labels, and reporting manager alone grant no effective pe
           _id: "user-1",
           actorKind: "ADMIN",
           accountStatus: "ACTIVE",
+          accountContexts: [],
           reportingManagerId: "manager-1",
           route: "/admin",
           workspaceLabel: "Owner",
@@ -664,6 +679,19 @@ test("actorKind, route labels, and reporting manager alone grant no effective pe
     (result.accountContextSignals as Record<string, unknown>)
       .grantsAuthorityByItself,
     false,
+  );
+  assert.deepEqual(
+    (result.accountContextSignals as Record<string, unknown>)
+      .compatibilityContexts,
+    [],
+  );
+  assert.equal(
+    (
+      result.workspaceAvailability as {
+        primaryWorkspace: string | null;
+      }
+    ).primaryWorkspace,
+    null,
   );
 });
 

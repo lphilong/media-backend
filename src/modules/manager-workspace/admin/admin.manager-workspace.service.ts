@@ -116,6 +116,12 @@ export class ManagerWorkspaceAdminService {
   ) {}
 
   async getContext(actor: Actor): Promise<ManagerWorkspaceContextView> {
+    if (!actor.accountContexts.includes("MANAGER_CONSOLE")) {
+      return emptyContext({ id: actor.id, displayName: actor.id }, null, [
+        "MANAGER_CONSOLE_ACCOUNT_CONTEXT_MISSING",
+      ]);
+    }
+
     const profile =
       await this.employmentProfileRepository.findNonArchivedByLinkedUserId(
         actor.id,

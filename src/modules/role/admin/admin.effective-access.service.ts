@@ -1,5 +1,12 @@
 import { Db } from "mongodb";
 import { ActorScopeGrants } from "@core/actor/actor";
+import {
+  buildWorkspaceAvailability,
+} from "@modules/account-context/account-context.workspace-availability";
+import {
+  AccountContext,
+  normalizeAccountContexts,
+} from "@modules/account-context/domain/account-context.types";
 import { RoleAssignmentScopeGrant, buildRoleAssignmentScopeFingerprint } from "@modules/role/domain/role-assignment-scope";
 import { isRoleAssignmentCurrentlyEffective } from "@modules/role/domain/role-assignment-lifecycle";
 import { RoleDependencyError } from "@modules/role/domain/role.errors";
@@ -9,6 +16,7 @@ interface UserDocument {
   readonly _id: string;
   readonly actorKind: "ADMIN" | "STAFF";
   readonly accountStatus: string;
+  readonly accountContexts?: readonly AccountContext[];
   readonly profile?: { readonly displayName?: string; readonly email?: string };
 }
 
@@ -122,6 +130,13 @@ export class EffectiveAccessAdminService {
       };
     });
 
+    const accountContexts = normalizeAccountContexts(user.accountContexts);
+    const workspaceAvailability = buildWorkspaceAvailability({
+      accountContexts,
+      effectiveAccessTraceAvailable: true,
+      legacyActorKind: user.actorKind,
+    });
+
     return {
       readOnly: true,
       sourceTruth: false,
@@ -132,12 +147,14 @@ export class EffectiveAccessAdminService {
         accountStatus: user.accountStatus,
       },
       accountContextSignals: {
-        canonicalAccountContextImplemented: false,
+        canonicalAccountContextImplemented: true,
+        canonicalSource: "ACCOUNT_CONTEXT",
+        accountContexts,
         legacyActorKind: user.actorKind,
-        compatibilityContexts:
-          user.actorKind === "ADMIN" ? ["ADMIN_CONSOLE"] : ["STAFF_CONSOLE"],
+        compatibilityContexts: [],
         grantsAuthorityByItself: false,
       },
+      workspaceAvailability,
       activeRoleAssignments: assignments,
       roles: roles.map((role) => ({
         id: role._id,

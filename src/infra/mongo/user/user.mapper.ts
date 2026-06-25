@@ -1,5 +1,6 @@
 import { InfrastructureError } from "@infra/errors/infrastructure.error";
 import { ActorScopeGrants } from "@core/actor/actor";
+import { normalizeAccountContexts } from "@modules/account-context/domain/account-context.types";
 import {
   UserAuthResolutionCandidate,
 } from "@modules/user/shared/user.actor-resolution.facade";
@@ -40,6 +41,7 @@ export class UserMapper {
       contextAccess: {
         contexts: ["ADMIN"],
       },
+      accountContexts: normalizeAccountContexts(doc.accountContexts),
       preferences: {
         locale: doc.preferences.locale,
         timezone: doc.preferences.timezone,
@@ -57,7 +59,8 @@ export class UserMapper {
       UserPersistence,
       "_id" |
       "actorKind" |
-      "accountStatus"
+      "accountStatus" |
+      "accountContexts"
     > & {
       readonly permissions: readonly string[];
       readonly scopeGrants?: ActorScopeGrants;
@@ -71,6 +74,7 @@ export class UserMapper {
       userId: doc._id,
       actorKind: doc.actorKind,
       accountStatus: doc.accountStatus,
+      accountContexts: normalizeAccountContexts(doc.accountContexts),
       permissions: [...doc.permissions],
       scopeGrants: doc.scopeGrants,
       authorizationValidUntil: doc.authorizationValidUntil,

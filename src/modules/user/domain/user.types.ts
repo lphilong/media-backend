@@ -1,5 +1,6 @@
 import { ContextType } from "@core/context/context.types";
 import type { ActorScopeGrants } from "@core/actor/actor";
+import type { AccountContext } from "@modules/account-context/domain/account-context.types";
 
 export type UserAccountStatus = "PENDING" | "ACTIVE" | "DISABLED" | "ARCHIVED";
 
@@ -42,6 +43,7 @@ export interface UserRecord {
   readonly authLinkage: UserAuthLinkage;
   readonly profile: UserProfile;
   readonly contextAccess: UserContextAccess;
+  readonly accountContexts?: readonly AccountContext[];
   readonly preferences: UserPreferences;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -92,6 +94,7 @@ export interface UserDetailView {
   readonly authLinkage: UserDetailAuthLinkageView;
   readonly profile: UserDetailProfileView;
   readonly contextAccess: UserDetailContextAccessView;
+  readonly accountContexts?: readonly AccountContext[];
   readonly preferences: UserDetailPreferencesView;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -106,6 +109,7 @@ export interface ResolvedActorUser {
   readonly accountStatus: UserAccountStatus;
   readonly permissions: readonly string[];
   readonly context: Extract<ContextType, "ADMIN" | "SELF_SERVICE">;
+  readonly accountContexts: readonly AccountContext[];
   readonly scopeGrants?: ActorScopeGrants;
   readonly authorizationValidUntil?: number;
 }

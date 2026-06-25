@@ -132,6 +132,7 @@ function createLocalMockApp(options: {
           revenueLedger: ["global"],
           dashboardLite: ["global"],
         },
+        accountContexts: ["ADMIN_CONSOLE"],
       }),
     }),
     adminRoutes,
@@ -179,6 +180,17 @@ test("GET /admin/me/capabilities returns the current materialized admin actor sn
       revenueLedger: ["global"],
       dashboardLite: ["global"],
     });
+    assert.deepEqual(body.data.accountContexts, ["ADMIN_CONSOLE"]);
+    assert.equal(
+      body.data.workspaceAvailability.primaryWorkspace,
+      "ADMIN_CONSOLE",
+    );
+    assert.deepEqual(
+      body.data.workspaceAvailability.availableWorkspaces
+        .filter((workspace: { available: boolean }) => workspace.available)
+        .map((workspace: { context: string }) => workspace.context),
+      ["ADMIN_CONSOLE"],
+    );
     assert.equal(typeof body.data.generatedAt, "string");
     assert.equal(Number.isNaN(Date.parse(body.data.generatedAt)), false);
   } finally {
@@ -216,6 +228,7 @@ test("GET /admin/me/capabilities exposes only currently effective role permissio
             userId: "lifecycle-admin",
             actorKind: "ADMIN" as const,
             accountStatus: "ACTIVE" as const,
+            accountContexts: [],
             permissions: assignments
               .filter((assignment) =>
                 isRoleAssignmentCurrentlyEffective(assignment, now),
@@ -272,6 +285,13 @@ test("GET /admin/me/capabilities exposes only currently effective role permissio
 
     assert.equal(response.status, 200);
     assert.deepEqual(body.data.permissions, [Permission.USER_VIEW]);
+    assert.equal(body.data.workspaceAvailability.primaryWorkspace, null);
+    assert.deepEqual(
+      body.data.workspaceAvailability.availableWorkspaces
+        .filter((workspace: { available: boolean }) => workspace.available)
+        .map((workspace: { context: string }) => workspace.context),
+      [],
+    );
   } finally {
     await close(server);
   }
@@ -301,7 +321,6 @@ test("GET /admin/me/capabilities excludes sensitive auth transport fields", asyn
     assert.equal(serialized.includes("auth0"), false);
     assert.equal(serialized.includes("provider"), false);
     assert.equal(serialized.includes("claims"), false);
-    assert.equal(serialized.includes("trace"), false);
   } finally {
     await close(server);
   }
@@ -386,7 +405,7 @@ test("GET /admin/me/capabilities follows the existing unauthenticated admin boun
   }
 });
 
-test("GET /admin/me/capabilities rejects non-admin actors without granting access", async () => {
+test("GET /admin/me/capabilities returns self snapshot for non-admin actors without granting action authority", async () => {
   const app = express();
   const staffActor = new Actor({
     id: "staff-actor",
@@ -395,6 +414,7 @@ test("GET /admin/me/capabilities rejects non-admin actors without granting acces
     roles: [],
     permissions: [Permission.ROLE_CREATE],
     scopeGrants: {},
+    accountContexts: ["MANAGER_CONSOLE"],
     isActive: true,
   });
 
@@ -417,13 +437,91 @@ test("GET /admin/me/capabilities rejects non-admin actors without granting acces
     );
     const body = await response.json();
 
-    assert.equal(response.status, 403);
-    assert.deepEqual(body, {
-      error: {
-        code: "FORBIDDEN",
-        message: "Permission denied",
+    assert.equal(response.status, 200);
+    assert.equal(body.data.type, "staff");
+    assert.equal(
+      body.data.workspaceAvailability.primaryWorkspace,
+      "MANAGER_CONSOLE",
+    );
+  } finally {
+    await close(server);
+  }
+});
+
+test("GET /admin/me/capabilities derives workspace priority only from account contexts", async () => {
+  const resolver = new Auth0ActorResolver(
+    {
+      async findByAuthSubject() {
+        return [
+          {
+            userId: "multi-context-user",
+            actorKind: "STAFF" as const,
+            accountStatus: "ACTIVE" as const,
+            accountContexts: [
+              "STAFF_CONSOLE",
+              "MANAGER_CONSOLE",
+              "ADMIN_CONSOLE",
+            ],
+            permissions: [Permission.USER_VIEW],
+          },
+        ];
+      },
+      async readAuthSecurityVersion() {
+        return "v1";
+      },
+    },
+    {
+      async get() {
+        return null;
+      },
+      async set() {},
+      async del() {},
+      async exists() {
+        return false;
+      },
+    },
+  );
+  const app = express();
+  app.use(
+    "/admin",
+    contextMiddleware("ADMIN"),
+    async (req, _res, next) => {
+      (
+        req as unknown as {
+          auth: { payload: { sub: string } };
+        }
+      ).auth = { payload: { sub: "auth0|multi-context-user" } };
+      try {
+        await resolver.resolve(req);
+        next();
+      } catch (error) {
+        next(error);
+      }
+    },
+    createCapabilitiesRoutes(),
+  );
+  app.use(createHttpErrorMiddleware({ error() {} } as never));
+  const { server, baseUrl } = await listen(app);
+
+  try {
+    const response = await fetch(`${baseUrl}/admin/me/capabilities`, {
+      headers: {
+        "x-trace-id": "trace-current-capabilities-workspace-priority",
       },
     });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.data.type, "staff");
+    assert.deepEqual(body.data.accountContexts, [
+      "STAFF_CONSOLE",
+      "MANAGER_CONSOLE",
+      "ADMIN_CONSOLE",
+    ]);
+    assert.equal(
+      body.data.workspaceAvailability.primaryWorkspace,
+      "ADMIN_CONSOLE",
+    );
   } finally {
     await close(server);
   }

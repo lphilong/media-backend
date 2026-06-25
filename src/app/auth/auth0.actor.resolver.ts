@@ -39,6 +39,7 @@ import {
   ActorSnapshot,
   actorFromSnapshot,
 } from "./auth0.actor.cache";
+import { normalizeAccountContexts } from "@modules/account-context/domain/account-context.types";
 
 const WORK_SCHEDULE_SCOPE_GRANT_SET = new Set<
   WorkScheduleActorScopeGrant
@@ -192,6 +193,7 @@ export class Auth0ActorResolver {
           resolveResolvedActorScopeGrants(
             resolved.actor,
           ),
+        accountContexts: resolved.actor.accountContexts,
         isActive: true,
         ...(resolved.actor.authorizationValidUntil !== undefined
           ? {
@@ -505,6 +507,8 @@ function isTrustedActorSnapshot(
   ) {
     return false;
   }
+
+  normalizeAccountContexts(candidate.accountContexts);
 
   if (candidate.isActive !== true) {
     return false;

@@ -23,6 +23,7 @@ const USER_ADMIN_DETAIL_FIELDS = [
   "id",
   "accountStatus",
   "actorKind",
+  "accountContexts",
   "authLinkage",
   "contextAccess",
   "preferences",
@@ -47,6 +48,7 @@ function toDetailView(user: UserRecord): UserDetailView {
     contextAccess: {
       contexts: user.contextAccess.contexts,
     },
+    accountContexts: user.accountContexts ?? [],
     profile: {
       displayName: user.profile.displayName,
       email: user.profile.email,
@@ -104,6 +106,7 @@ export const UserAdminDetailExposure = Object.freeze({
               context,
             })),
           },
+          accountContexts: input.accountContexts ?? [],
           profile: input.profile,
           preferences: input.preferences,
           createdAt: input.createdAt,

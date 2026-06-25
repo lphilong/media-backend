@@ -1,4 +1,7 @@
 import {
+  AccountContext,
+} from "@modules/account-context/domain/account-context.types";
+import {
   UserAccountStatus,
   UserActorKind,
 } from "@modules/user/domain/user.types";
@@ -22,6 +25,7 @@ export interface UserPersistence {
   readonly contextAccess: {
     readonly contexts: readonly ["ADMIN"];
   };
+  readonly accountContexts?: readonly AccountContext[];
   readonly preferences: {
     readonly locale?: string;
     readonly timezone?: string;

@@ -3,6 +3,7 @@ import {
   ResolveActorByAuthLinkageResult,
 } from "./user.contracts";
 import { ActorScopeGrants } from "@core/actor/actor";
+import { AccountContext } from "@modules/account-context/domain/account-context.types";
 import {
   ResolvedActorUser,
   UserAccountStatus,
@@ -18,6 +19,7 @@ export interface UserAuthResolutionCandidate {
   readonly userId: string;
   readonly actorKind: UserActorKind;
   readonly accountStatus: UserAccountStatus;
+  readonly accountContexts?: readonly AccountContext[];
   readonly permissions: readonly string[];
   readonly scopeGrants?: ActorScopeGrants;
   readonly authorizationValidUntil?: number;
@@ -84,6 +86,7 @@ export class UserActorResolutionFacade {
       userId: candidate.userId,
       actorKind: candidate.actorKind,
       accountStatus: candidate.accountStatus,
+      accountContexts: candidate.accountContexts ?? [],
       permissions: candidate.permissions,
       context: input.context,
       scopeGrants: candidate.scopeGrants,

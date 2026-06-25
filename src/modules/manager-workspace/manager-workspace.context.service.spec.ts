@@ -226,6 +226,20 @@ test("manager workspace context fail-closes without linked EmploymentProfile", a
   assert.deepEqual(context.readiness.reasons, ["NO_LINKED_EMPLOYMENT_PROFILE"]);
 });
 
+test("manager workspace context fail-closes without MANAGER_CONSOLE account context", async () => {
+  const service = createService({ profile: activeProfile() });
+  const context = await service.getContext(
+    managerActor({ accountContexts: ["STAFF_CONSOLE"] }),
+  );
+
+  assert.equal(context.employmentProfile, null);
+  assert.equal(context.readiness.canUseManagerWorkspace, false);
+  assert.deepEqual(context.readiness.reasons, [
+    "MANAGER_CONSOLE_ACCOUNT_CONTEXT_MISSING",
+  ]);
+  assert.equal(context.modules.kpi.visible, false);
+});
+
 test("manager workspace context shows readiness empty state with active profile and no assignments", async () => {
   const service = createService({ profile: activeProfile() });
   const context = await service.getContext(managerActor());
@@ -588,6 +602,7 @@ function managerActor(
     scopeGrants: {
       kpi: ["managedGroup"],
     },
+    accountContexts: ["MANAGER_CONSOLE"],
     isActive: true,
     ...overrides,
   });

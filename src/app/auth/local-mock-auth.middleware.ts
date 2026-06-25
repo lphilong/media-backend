@@ -7,6 +7,7 @@ import {
 import { Actor, ActorScopeGrants } from "@core/actor/actor";
 import { bindActor } from "@core/actor/actor-context";
 import { ContextType } from "@core/context/context.types";
+import { AccountContext } from "@modules/account-context/domain/account-context.types";
 import {
   createStructuredLogger,
   StructuredLogger,
@@ -21,6 +22,7 @@ export interface LocalMockAuthConfig {
   readonly email?: string;
   readonly permissions: readonly string[];
   readonly scopeGrants: ActorScopeGrants;
+  readonly accountContexts?: readonly AccountContext[];
 }
 
 export const LOCAL_MOCK_AUTH_DISABLED_CONFIG: LocalMockAuthConfig =
@@ -29,6 +31,7 @@ export const LOCAL_MOCK_AUTH_DISABLED_CONFIG: LocalMockAuthConfig =
     actorId: "local-mock-admin-actor",
     permissions: Object.freeze([]),
     scopeGrants: Object.freeze({}),
+    accountContexts: Object.freeze([]),
   });
 
 export function createLocalMockAuthConfig(params: {
@@ -37,6 +40,7 @@ export function createLocalMockAuthConfig(params: {
   readonly email?: string;
   readonly permissions: readonly string[];
   readonly scopeGrants: ActorScopeGrants;
+  readonly accountContexts?: readonly AccountContext[];
 }): LocalMockAuthConfig {
   return Object.freeze({
     enabled: params.enabled,
@@ -44,6 +48,7 @@ export function createLocalMockAuthConfig(params: {
     email: params.email,
     permissions: Object.freeze([...params.permissions]),
     scopeGrants: params.scopeGrants,
+    accountContexts: Object.freeze([...(params.accountContexts ?? [])]),
   });
 }
 
@@ -90,6 +95,7 @@ export function createLocalMockAuthMiddleware(params: {
           roles: [],
           permissions: config.permissions,
           scopeGrants: config.scopeGrants,
+          accountContexts: config.accountContexts,
           trace: {
             ip: req.ip,
             userAgent: req.headers["user-agent"],
