@@ -1151,6 +1151,7 @@ function createActor(
     id: "admin-user-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions,
     scopeGrants: {

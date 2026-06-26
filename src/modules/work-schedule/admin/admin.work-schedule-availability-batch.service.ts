@@ -11,7 +11,6 @@ import { Permission } from "@core/permission/permission.enum";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import { getTraceIdOrThrow } from "@core/trace/trace.context";
-import { SystemInvariantError } from "@core/error/system-error";
 import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
 import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
@@ -838,12 +837,7 @@ export class WorkScheduleAvailabilityBatchAdminService {
     actor: Actor,
     code: Permission,
   ): PermissionContract {
-    if (actor.type !== "admin") {
-      throw new SystemInvariantError(
-        "PERMISSION_DENIED",
-        "WorkSchedule availability access requires ADMIN context actor",
-      );
-    }
+    PermissionGuard.assertAdminActor(actor);
     const permission = PermissionResolver.resolve(code);
     PermissionGuard.assert(actor, permission);
     return permission;

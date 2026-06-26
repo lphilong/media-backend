@@ -798,6 +798,7 @@ function createActor(
     id,
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions,
     scopeGrants: {
@@ -3092,6 +3093,7 @@ test("Admin apply availability route requires update plus exact structured scope
           id: "self-user",
           type: "staff",
           context: "SELF_SERVICE",
+          accountContexts: ["STAFF_CONSOLE"],
           roles: [],
           permissions: [Permission.WORK_SCHEDULE_UPDATE],
           scopeGrants: { workSchedule: ["global"] },

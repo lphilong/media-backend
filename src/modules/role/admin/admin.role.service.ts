@@ -22,6 +22,7 @@ import {
   createStructuredLogger,
   StructuredLogger,
 } from "@infra/logger.adapter";
+import { AccountContext } from "@modules/account-context/domain/account-context.types";
 import { ActorSnapshotCacheInvalidator } from "@infra/cache/actor.snapshot.cache";
 import { getCurrentDomainEventCollector } from "@system/event-bridge/domain-event.types";
 import { RoleAssignmentRuleRepository } from "@modules/role/domain/role-assignment-rule.repository";
@@ -61,7 +62,6 @@ import {
   RoleTemplateCode,
 } from "@modules/role/domain/role-template.catalog";
 import { RoleUserReadonlyAccess } from "@modules/role/domain/role-user-readonly-access";
-import { UserActorKind } from "@modules/user/domain/user.types";
 import { UserAdminCapabilityRepository } from "@modules/user/domain/user.admin-capability.repository";
 import {
   ROLE_ASSIGNMENT_RULE_STATES,
@@ -130,19 +130,6 @@ type RoleFailureClassification =
   | "dependency_error"
   | "invariant"
   | "unknown";
-
-const ADMIN_CONSOLE_ROLE_CODES: readonly string[] = Object.freeze([
-  "ADMIN_FULL",
-  "HR_OPERATIONS",
-  "TEAM_MANAGER",
-  "PRODUCTION_OPS",
-  "COMMERCIAL_FINANCE",
-  "VIEWER_AUDITOR",
-]);
-
-const SELF_SERVICE_ROLE_CODES: readonly string[] = Object.freeze([
-  "TALENT_STAFF_SELF",
-]);
 
 export class RoleAdminService {
   constructor(
@@ -1160,7 +1147,10 @@ export class RoleAdminService {
               );
             }
 
-            assertRoleActorKindCompatible(role, targetUser.actorKind);
+            assertRoleAccountContextCompatible(
+              role,
+              targetUser.accountContexts,
+            );
 
             const existingActiveAssignment =
               structuredScopeGrants &&
@@ -1877,27 +1867,21 @@ function assertRoleStateAllowed(
   );
 }
 
-function assertRoleActorKindCompatible(
+function assertRoleAccountContextCompatible(
   role: RoleRecord,
-  actorKind: UserActorKind,
+  accountContexts: readonly AccountContext[],
 ): void {
   const governingCode = role.templateCode ?? role.code;
+  const template = getRoleTemplate(governingCode);
+  const requiredAccountContext = template?.recommendedAccountContext;
 
-  if (
-    ADMIN_CONSOLE_ROLE_CODES.includes(governingCode) &&
-    actorKind !== "ADMIN"
-  ) {
-    throw new RoleValidationError(
-      `${governingCode} requires an admin console account.`,
-    );
+  if (!requiredAccountContext) {
+    return;
   }
 
-  if (
-    SELF_SERVICE_ROLE_CODES.includes(governingCode) &&
-    actorKind !== "STAFF"
-  ) {
+  if (!accountContexts.includes(requiredAccountContext)) {
     throw new RoleValidationError(
-      `${governingCode} requires a self-service staff account.`,
+      `${governingCode} requires ${requiredAccountContext} account context.`,
     );
   }
 }

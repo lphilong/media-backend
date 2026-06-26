@@ -40,6 +40,7 @@ function createActor(): Actor {
     id: "admin-user-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [Permission.EVENT_READ],
     scopeGrants: {
@@ -54,6 +55,7 @@ function createManagedGroupActor(): Actor {
     id: "manager-user-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [Permission.EVENT_READ],
     scopeGrants: {
@@ -68,6 +70,7 @@ function createExactScopedActor(): Actor {
     id: "admin-user-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [Permission.EVENT_READ],
     scopeGrants: {},

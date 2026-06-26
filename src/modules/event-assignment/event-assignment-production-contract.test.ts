@@ -477,6 +477,7 @@ function actor(): Actor {
     id: "admin-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [
       "event.create",

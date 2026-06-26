@@ -454,46 +454,56 @@ test("role template endpoints return catalog and preview without mutating roles"
   }
 });
 
-test("role assignment validates role code against target user actorKind", async () => {
+test("role assignment validates required account context and ignores target user actorKind", async () => {
   const cases: Array<{
     readonly roleCode: string;
     readonly actorKind: "ADMIN" | "STAFF";
+    readonly accountContexts: readonly (
+      | "ADMIN_CONSOLE"
+      | "MANAGER_CONSOLE"
+      | "STAFF_CONSOLE"
+    )[];
     readonly allowed: boolean;
     readonly errorPattern?: RegExp;
   }> = [
     {
       roleCode: "HR_OPERATIONS",
       actorKind: "STAFF",
-      allowed: false,
-      errorPattern: /HR_OPERATIONS requires an admin console account/u,
+      accountContexts: ["ADMIN_CONSOLE"],
+      allowed: true,
     },
     {
       roleCode: "HR_OPERATIONS",
       actorKind: "ADMIN",
+      accountContexts: ["STAFF_CONSOLE"],
+      allowed: false,
+      errorPattern: /HR_OPERATIONS requires ADMIN_CONSOLE account context/u,
+    },
+    {
+      roleCode: "TEAM_MANAGER",
+      actorKind: "ADMIN",
+      accountContexts: ["MANAGER_CONSOLE"],
       allowed: true,
     },
     {
       roleCode: "TEAM_MANAGER",
       actorKind: "STAFF",
+      accountContexts: ["STAFF_CONSOLE"],
       allowed: false,
-      errorPattern: /TEAM_MANAGER requires an admin console account/u,
+      errorPattern: /TEAM_MANAGER requires MANAGER_CONSOLE account context/u,
     },
     {
       roleCode: "TALENT_STAFF_SELF",
       actorKind: "ADMIN",
-      allowed: false,
-      errorPattern: /TALENT_STAFF_SELF requires a self-service staff account/u,
-    },
-    {
-      roleCode: "TALENT_STAFF_SELF",
-      actorKind: "STAFF",
+      accountContexts: ["STAFF_CONSOLE"],
       allowed: true,
     },
     {
       roleCode: "ADMIN_FULL",
-      actorKind: "STAFF",
+      actorKind: "ADMIN",
+      accountContexts: [],
       allowed: false,
-      errorPattern: /ADMIN_FULL requires an admin console account/u,
+      errorPattern: /ADMIN_FULL requires ADMIN_CONSOLE account context/u,
     },
   ];
 
@@ -505,7 +515,10 @@ test("role assignment validates role code against target user actorKind", async 
       assignmentRepository,
       new InMemoryRoleAssignmentRuleRepository(),
       new InMemoryBusinessCodeSequenceRepository(),
-      new AlwaysAssignableUserAccess(testCase.actorKind),
+      new AlwaysAssignableUserAccess(
+        testCase.actorKind,
+        testCase.accountContexts,
+      ),
       new PermissiveAdminCapabilityRepository(),
       createAuditGuard(),
       new InlineMutationBridge(),
@@ -868,7 +881,7 @@ test("TALENT_STAFF_SELF assignment to ADMIN rejects", async () => {
           }),
         ),
       ),
-    /TALENT_STAFF_SELF requires a self-service staff account/u,
+    /TALENT_STAFF_SELF requires STAFF_CONSOLE account context/u,
   );
   assert.equal(assignmentRepository.insertCount, 0);
 });
@@ -1208,6 +1221,7 @@ function createActor(
     roles: [],
     permissions,
     scopeGrants,
+    accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
   });
 }
@@ -1539,7 +1553,14 @@ async function executeRoleMutation<T>(
 }
 
 class AlwaysAssignableUserAccess implements RoleUserReadonlyAccess {
-  constructor(private readonly actorKind: "ADMIN" | "STAFF" = "ADMIN") {}
+  constructor(
+    private readonly actorKind: "ADMIN" | "STAFF" = "ADMIN",
+    private readonly accountContexts: readonly (
+      | "ADMIN_CONSOLE"
+      | "MANAGER_CONSOLE"
+      | "STAFF_CONSOLE"
+    )[] = actorKind === "ADMIN" ? ["ADMIN_CONSOLE"] : ["STAFF_CONSOLE"],
+  ) {}
 
   async isAssignableById(): Promise<boolean> {
     return true;
@@ -1548,6 +1569,11 @@ class AlwaysAssignableUserAccess implements RoleUserReadonlyAccess {
   async getAssignableById(): Promise<{
     readonly id: string;
     readonly actorKind: "ADMIN" | "STAFF";
+    readonly accountContexts: readonly (
+      | "ADMIN_CONSOLE"
+      | "MANAGER_CONSOLE"
+      | "STAFF_CONSOLE"
+    )[];
     readonly ref: {
       readonly id: string;
       readonly displayName: string;
@@ -1556,6 +1582,7 @@ class AlwaysAssignableUserAccess implements RoleUserReadonlyAccess {
     return {
       id: "target-user",
       actorKind: this.actorKind,
+      accountContexts: this.accountContexts,
       ref: {
         id: "target-user",
         displayName: "Target User",

@@ -152,6 +152,7 @@ function readOnlyLocalMockConfig() {
       Permission.ROLE_VIEW,
       Permission.ROLE_ASSIGNMENT_VIEW,
     ],
+    accountContexts: ["ADMIN_CONSOLE"],
     scopeGrants: {
       workSchedule: ["self", "team", "department"],
       eventAssignment: ["global"],

@@ -109,6 +109,7 @@ function createActor(): Actor {
     id: "admin-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [
       Permission.KPI_READ,
@@ -153,6 +154,7 @@ function createBackofficeTeamManagerActor(): Actor {
     id: "manager-user",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [
       Permission.KPI_READ,
@@ -191,6 +193,8 @@ function createProgressReadOnlyBackofficeTeamManagerActor(
     id: params.id ?? "manager-user",
     type: "admin",
     context: params.context ?? "ADMIN",
+    accountContexts:
+      params.context === "SELF_SERVICE" ? ["STAFF_CONSOLE"] : ["ADMIN_CONSOLE"],
     roles: ["TEAM_MANAGER"],
     permissions: params.permissions ?? [Permission.KPI_READ_PROGRESS],
     scopeGrants: {
@@ -235,6 +239,7 @@ function createKpiReadOnlyActor(): Actor {
     id: "read-only-user",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [Permission.KPI_READ, Permission.KPI_READ_PROGRESS],
     scopeGrants: {
@@ -252,6 +257,7 @@ function createActorWithPermissions(
     id,
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions,
     scopeGrants: {
@@ -271,6 +277,7 @@ function createScopedActor(params: {
     id: params.id,
     type: params.type ?? "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: params.permissions,
     scopeGrants: params.kpiScopes ? { kpi: params.kpiScopes } : {},

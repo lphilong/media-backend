@@ -527,6 +527,7 @@ function managerActor(id = "manager-user"): Actor {
     id,
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: ["TEAM_MANAGER"],
     permissions: [Permission.WORK_SCHEDULE_READ],
     scopeGrants: { workSchedule: ["team"] },
@@ -539,6 +540,7 @@ function opsActor(): Actor {
     id: "ops-user",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: ["PRODUCTION_OPS"],
     permissions: [
       Permission.WORK_SCHEDULE_READ,

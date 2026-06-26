@@ -36,6 +36,7 @@ import {
 } from "../shared/people-readiness.contracts";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import { requireAdminGlobalScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { normalizeAccountContexts } from "@modules/account-context/domain/account-context.types";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
@@ -498,7 +499,12 @@ function addManagerAssignmentIssues(params: {
     }));
   }
   const user = profile?.linkedUserId ? params.users.get(profile.linkedUserId) : undefined;
-  if (!user || user.accountStatus !== "ACTIVE" || user.actorKind !== "ADMIN") {
+  const accountContexts = normalizeAccountContexts(user?.accountContexts);
+  if (
+    !user ||
+    user.accountStatus !== "ACTIVE" ||
+    !accountContexts.includes("MANAGER_CONSOLE")
+  ) {
     params.issues.push(issue({
       code: `${prefix}_MANAGER_NOT_LOGIN_READY` as PeopleReadinessIssueCode,
       category: "MANAGER_ASSIGNMENT_READY",

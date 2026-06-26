@@ -335,6 +335,7 @@ test("GET /admin/me/capabilities does not mutate the bound actor", async () => {
     roles: ["role-admin"],
     permissions: [Permission.USER_VIEW],
     scopeGrants: { commission: ["global"] },
+    accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
   });
 
@@ -512,7 +513,7 @@ test("GET /admin/me/capabilities derives workspace priority only from account co
     const body = await response.json();
 
     assert.equal(response.status, 200);
-    assert.equal(body.data.type, "staff");
+    assert.equal(body.data.type, "admin");
     assert.deepEqual(body.data.accountContexts, [
       "STAFF_CONSOLE",
       "MANAGER_CONSOLE",

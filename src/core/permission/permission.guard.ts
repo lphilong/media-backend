@@ -120,13 +120,16 @@ export class PermissionGuard {
   ): asserts actor is Actor {
     this.assertActorPresentAndActive(actor);
 
-    if (actor.type === "admin") {
+    if (
+      actor.context === "ADMIN" &&
+      actor.accountContexts.includes("ADMIN_CONSOLE")
+    ) {
       return;
     }
 
     throw new SystemInvariantError(
       "PERMISSION_DENIED",
-      `Admin access requires actor.type admin, received ${actor.type}`,
+      "Admin access requires ADMIN_CONSOLE account context",
     );
   }
 

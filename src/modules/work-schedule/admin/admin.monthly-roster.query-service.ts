@@ -807,14 +807,7 @@ function assertPreviewRosterState(
 }
 
 function assertAdminActorType(actor: Actor): void {
-  if (actor.type === "admin") {
-    return;
-  }
-
-  throw new SystemInvariantError(
-    "PERMISSION_DENIED",
-    `Monthly Roster access requires actor.type admin, received ${actor.type}`,
-  );
+  PermissionGuard.assertAdminActor(actor);
 }
 
 function createMissingTalentGroupReadonlyAccess(): WorkScheduleTalentGroupReadonlyAccess {

@@ -438,6 +438,7 @@ function actor(id: string): Actor {
     id,
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [
       Permission.CONTRACT_OBLIGATION_READ,

@@ -20,6 +20,7 @@ function createActor(): Actor {
     id: "admin-user-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [Permission.REVENUE_LEDGER_READ],
     scopeGrants: {
@@ -561,6 +562,7 @@ function createActorWithId(id: string): Actor {
     id,
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [Permission.REVENUE_LEDGER_READ],
     scopeGrants: {

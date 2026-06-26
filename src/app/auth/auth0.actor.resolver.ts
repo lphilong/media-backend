@@ -39,7 +39,10 @@ import {
   ActorSnapshot,
   actorFromSnapshot,
 } from "./auth0.actor.cache";
-import { normalizeAccountContexts } from "@modules/account-context/domain/account-context.types";
+import {
+  AccountContext,
+  normalizeAccountContexts,
+} from "@modules/account-context/domain/account-context.types";
 
 const WORK_SCHEDULE_SCOPE_GRANT_SET = new Set<
   WorkScheduleActorScopeGrant
@@ -181,8 +184,8 @@ export class Auth0ActorResolver {
 
       const authoritativeSnapshot: ActorSnapshot = {
         id: resolved.actor.userId,
-        type: mapActorType(
-          resolved.actor.actorKind,
+        type: mapActorTypeFromAccountContexts(
+          resolved.actor.accountContexts,
         ),
         context,
         roles: [],
@@ -440,10 +443,10 @@ export class Auth0ActorResolver {
   }
 }
 
-function mapActorType(
-  actorKind: "ADMIN" | "STAFF",
+function mapActorTypeFromAccountContexts(
+  accountContexts: readonly AccountContext[] | undefined,
 ): "admin" | "staff" {
-  return actorKind === "ADMIN"
+  return normalizeAccountContexts(accountContexts).includes("ADMIN_CONSOLE")
     ? "admin"
     : "staff";
 }
@@ -508,7 +511,11 @@ function isTrustedActorSnapshot(
     return false;
   }
 
-  normalizeAccountContexts(candidate.accountContexts);
+  const accountContexts = normalizeAccountContexts(candidate.accountContexts);
+
+  if (candidate.type !== mapActorTypeFromAccountContexts(accountContexts)) {
+    return false;
+  }
 
   if (candidate.isActive !== true) {
     return false;

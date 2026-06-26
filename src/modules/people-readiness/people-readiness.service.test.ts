@@ -58,6 +58,56 @@ test("People Readiness generates exact supported issues with deterministic safe 
   );
 });
 
+test("People Readiness manager login readiness uses MANAGER_CONSOLE instead of actorKind", () => {
+  const issues = generateIssues(
+    {
+      ...snapshot(),
+      users: [
+        {
+          id: "legacy-admin-manager",
+          displayName: "Legacy Admin Manager",
+          accountStatus: "ACTIVE",
+          actorKind: "ADMIN",
+          accountContexts: ["ADMIN_CONSOLE"],
+        },
+      ],
+      employmentProfiles: [
+        {
+          id: "ep-legacy-admin-manager",
+          employeeCode: "EP-LEGACY",
+          displayName: "Legacy Admin Manager",
+          orgUnitId: "ou-ready",
+          linkedUserId: "legacy-admin-manager",
+          employmentStatus: "ACTIVE",
+        },
+      ],
+      orgUnitManagerAssignments: [
+        {
+          id: "ou-assignment-legacy-admin",
+          targetId: "ou-ready",
+          managerEmploymentProfileId: "ep-legacy-admin-manager",
+          role: "UNIT_MANAGER",
+          status: "ACTIVE",
+          effectiveFrom: now - 1,
+          effectiveTo: null,
+        },
+      ],
+      talentGroupManagerAssignments: [],
+      talents: [],
+      talentGroupMembers: [],
+    },
+    now,
+  );
+
+  assert.equal(
+    issues.some(
+      (issue) =>
+        issue.issueCode === "ORGUNIT_MANAGER_ASSIGNMENT_MANAGER_NOT_LOGIN_READY",
+    ),
+    true,
+  );
+});
+
 test("People Readiness summary, filters, and cursor pagination use the same exact issue set", async () => {
   const service = serviceWith(snapshot());
   const actor = allowedActor();
@@ -382,7 +432,10 @@ test("People Readiness authority requires ADMIN actor, capability, and structure
   const service = serviceWith(snapshot());
   await assert.doesNotReject(() => service.getSummary(allowedActor()));
   await assert.rejects(() => service.getSummary(allowedActor({ permissions: [] })), /Missing permission/);
-  await assert.rejects(() => service.getSummary(allowedActor({ type: "staff" })), /Admin access requires/);
+  await assert.rejects(
+    () => service.getSummary(allowedActor({ accountContexts: ["STAFF_CONSOLE"] })),
+    /Admin access requires/,
+  );
   await assert.rejects(() => service.getSummary(allowedActor({ roles: ["ADMIN_FULL"], permissions: [] })), /Missing permission/);
   await assert.rejects(() => service.getSummary(allowedActor({
     roles: ["TEAM_MANAGER"],
@@ -453,6 +506,7 @@ function allowedActor(overrides: Partial<ConstructorParameters<typeof Actor>[0]>
     roles: [],
     permissions: ["employmentProfile.read"],
     scopeGrants: {},
+    accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
     ...overrides,
   });
@@ -461,9 +515,9 @@ function allowedActor(overrides: Partial<ConstructorParameters<typeof Actor>[0]>
 function snapshot(): PeopleReadinessSnapshot {
   return {
     users: [
-      { id: "user-orphan", displayName: "Orphan Account", accountStatus: "ACTIVE", actorKind: "STAFF" },
-      { id: "user-disabled", displayName: "Disabled Account", accountStatus: "DISABLED", actorKind: "ADMIN" },
-      { id: "user-ready", displayName: "Ready Account", accountStatus: "ACTIVE", actorKind: "STAFF" },
+      { id: "user-orphan", displayName: "Orphan Account", accountStatus: "ACTIVE", actorKind: "STAFF", accountContexts: ["STAFF_CONSOLE"] },
+      { id: "user-disabled", displayName: "Disabled Account", accountStatus: "DISABLED", actorKind: "ADMIN", accountContexts: ["ADMIN_CONSOLE"] },
+      { id: "user-ready", displayName: "Ready Account", accountStatus: "ACTIVE", actorKind: "STAFF", accountContexts: ["STAFF_CONSOLE"] },
     ],
     employmentProfiles: [
       { id: "ep-ready", employeeCode: "EP-READY", displayName: "Ready Person", orgUnitId: "ou-ready", linkedUserId: "user-ready", employmentStatus: "ACTIVE" },

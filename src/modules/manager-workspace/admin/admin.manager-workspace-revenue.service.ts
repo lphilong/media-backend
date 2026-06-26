@@ -852,10 +852,10 @@ export class ManagerWorkspaceRevenueAdminService {
   }
 
   private assertSubmitPermission(actor: Actor): PermissionContract {
-    if (actor.type !== "admin") {
+    if (!actor.accountContexts.includes("MANAGER_CONSOLE")) {
       throw new SystemInvariantError(
         "PERMISSION_DENIED",
-        `Manager Workspace access requires actor.type admin, received ${actor.type}`,
+        "Manager Workspace access requires MANAGER_CONSOLE account context",
       );
     }
     const permission = PermissionResolver.resolve(

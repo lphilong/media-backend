@@ -1,5 +1,6 @@
 import { Db } from "mongodb";
 import { PeopleReadinessReadRepository } from "@modules/people-readiness/read/people-readiness.read-repository";
+import { normalizeAccountContexts } from "@modules/account-context/domain/account-context.types";
 import {
   PeopleReadinessEmploymentProfile,
   PeopleReadinessManagerAssignment,
@@ -28,7 +29,7 @@ export class NativeMongoPeopleReadinessReadRepository
       talentGroupManagerAssignmentDocs,
     ] = await Promise.all([
       this.db.collection("users").find({}, {
-        projection: { _id: 1, accountStatus: 1, actorKind: 1, "profile.displayName": 1 },
+        projection: { _id: 1, accountStatus: 1, actorKind: 1, accountContexts: 1, "profile.displayName": 1 },
       }).sort({ _id: 1 }).toArray(),
       this.db.collection("employment_profiles").find({}, {
         projection: {
@@ -71,6 +72,7 @@ export class NativeMongoPeopleReadinessReadRepository
         displayName: readText(doc.profile, "displayName") ?? String(doc._id),
         accountStatus: String(doc.accountStatus ?? "UNKNOWN"),
         actorKind: String(doc.actorKind ?? "UNKNOWN"),
+        accountContexts: normalizeAccountContexts(doc.accountContexts),
       } satisfies PeopleReadinessUser)),
       employmentProfiles: employmentProfileDocs.map((doc) => ({
         id: String(doc._id),

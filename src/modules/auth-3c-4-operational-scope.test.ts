@@ -666,6 +666,7 @@ function actor(): Actor {
     id: "admin-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: ["ADMIN_FULL"],
     permissions: [
       Permission.STUDIO_RESOURCE_READ,

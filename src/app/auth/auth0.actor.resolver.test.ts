@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Request } from "express";
 import { Permission } from "@core/permission/permission.enum";
+import { PermissionGuard } from "@core/permission/permission.guard";
 import { bindContext } from "@core/context/context.middleware";
 import { Auth0ActorResolver } from "@app/auth/auth0.actor.resolver";
 import {
@@ -69,6 +70,7 @@ test(
             userId: "admin-user-1",
             actorKind: "ADMIN",
             accountStatus: "ACTIVE",
+            accountContexts: ["ADMIN_CONSOLE"],
             permissions: [
               Permission.COMMISSION_RULE_READ,
             ],
@@ -144,6 +146,103 @@ test(
 );
 
 test(
+  "Auth0ActorResolver does not materialize admin authority from actorKind alone",
+  async () => {
+    const repository = {
+      async findByAuthSubject(): Promise<
+        readonly UserAuthResolutionCandidate[]
+      > {
+        return [
+          {
+            userId: "legacy-admin-kind-user",
+            actorKind: "ADMIN",
+            accountStatus: "ACTIVE",
+            accountContexts: [],
+            permissions: [Permission.ROLE_CREATE],
+          },
+        ];
+      },
+      async readAuthSecurityVersion(): Promise<string> {
+        return "v1";
+      },
+    };
+
+    const resolver = new Auth0ActorResolver(repository, new InMemoryCache());
+    const req = {
+      ip: "127.0.0.1",
+      headers: {
+        "x-trace-id": "trace-auth0-actor-kind-no-admin-context",
+        "user-agent": "node-test",
+      },
+      auth: {
+        payload: {
+          sub: "auth0|legacy-admin-kind-user",
+        },
+      },
+    } as unknown as Request & {
+      auth: { payload: { sub: string } };
+    };
+    bindContext(req, "ADMIN");
+
+    const actor = await resolver.resolve(req);
+
+    assert.equal(actor.type, "staff");
+    assert.deepEqual(actor.accountContexts, []);
+    assert.throws(
+      () => PermissionGuard.assertAdminActor(actor),
+      /ADMIN_CONSOLE account context/u,
+    );
+  },
+);
+
+test(
+  "Auth0ActorResolver allows ADMIN_CONSOLE account context without actorKind admin",
+  async () => {
+    const repository = {
+      async findByAuthSubject(): Promise<
+        readonly UserAuthResolutionCandidate[]
+      > {
+        return [
+          {
+            userId: "staff-kind-admin-context-user",
+            actorKind: "STAFF",
+            accountStatus: "ACTIVE",
+            accountContexts: ["ADMIN_CONSOLE"],
+            permissions: [Permission.ROLE_CREATE],
+          },
+        ];
+      },
+      async readAuthSecurityVersion(): Promise<string> {
+        return "v1";
+      },
+    };
+
+    const resolver = new Auth0ActorResolver(repository, new InMemoryCache());
+    const req = {
+      ip: "127.0.0.1",
+      headers: {
+        "x-trace-id": "trace-auth0-staff-kind-admin-context",
+        "user-agent": "node-test",
+      },
+      auth: {
+        payload: {
+          sub: "auth0|staff-kind-admin-context-user",
+        },
+      },
+    } as unknown as Request & {
+      auth: { payload: { sub: string } };
+    };
+    bindContext(req, "ADMIN");
+
+    const actor = await resolver.resolve(req);
+
+    assert.equal(actor.type, "admin");
+    assert.deepEqual(actor.accountContexts, ["ADMIN_CONSOLE"]);
+    PermissionGuard.assertAdminActor(actor);
+  },
+);
+
+test(
   "Auth0ActorResolver refreshes cached permissions at assignment lifecycle boundaries",
   async () => {
     let repositoryCalls = 0;
@@ -157,6 +256,7 @@ test(
             userId: "admin-user-1",
             actorKind: "ADMIN",
             accountStatus: "ACTIVE",
+            accountContexts: ["ADMIN_CONSOLE"],
             permissions: [Permission.USER_VIEW],
             authorizationValidUntil: Date.now() + 60_000,
           },

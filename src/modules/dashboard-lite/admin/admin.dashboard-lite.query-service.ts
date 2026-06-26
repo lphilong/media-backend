@@ -1,6 +1,5 @@
 import { env } from "@config/env";
 import { Actor } from "@core/actor/actor";
-import { SystemInvariantError } from "@core/error/system-error";
 import { Permission } from "@core/permission/permission.enum";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
@@ -235,12 +234,5 @@ function assertGlobalScope(actor: Actor, message: string): void {
 }
 
 function assertAdminActorType(actor: Actor): void {
-  if (actor.type === "admin") {
-    return;
-  }
-
-  throw new SystemInvariantError(
-    "PERMISSION_DENIED",
-    `Dashboard Lite access requires actor.type admin, received ${actor.type}`,
-  );
+  PermissionGuard.assertAdminActor(actor);
 }

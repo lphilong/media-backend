@@ -446,6 +446,7 @@ test("Monthly Roster preview decorates rows and eligible profiles with refs afte
     id: "admin-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [Permission.WORK_SCHEDULE_READ],
     scopeGrants: { workSchedule: ["global"] },

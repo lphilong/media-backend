@@ -1,5 +1,6 @@
 import { Permission } from "@core/permission/permission.enum";
 import { ActorScopeGrants } from "@core/actor/actor";
+import { AccountContext } from "@modules/account-context/domain/account-context.types";
 
 export const ROLE_TEMPLATE_CODES = [
   "ADMIN_FULL",
@@ -31,6 +32,7 @@ export interface RoleTemplateDefinition {
   readonly name: string;
   readonly description: string;
   readonly category: string;
+  readonly recommendedAccountContext: AccountContext;
   readonly permissions: readonly Permission[];
   readonly recommendedScopeGrants: Readonly<ActorScopeGrants>;
   readonly scopePlan: readonly RoleTemplateScopePlanEntry[];
@@ -76,6 +78,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       description:
         "Full explicit permission preset for administrative operators.",
       category: "ADMINISTRATION",
+      recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: ALL_PERMISSIONS,
       recommendedScopeGrants: scopeGrants({
         workSchedule: Object.freeze(["global"]),
@@ -105,6 +108,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       description:
         "People, organization, employment, talent, and talent-group operations preset.",
       category: "PEOPLE_OPERATIONS",
+      recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: Object.freeze([
         Permission.ORG_UNIT_READ,
         Permission.ORG_UNIT_LOOKUP,
@@ -188,6 +192,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       description:
         "Conservative team operations preset for schedules, assignments, labels, and KPI management.",
       category: "MANAGEMENT",
+      recommendedAccountContext: "MANAGER_CONSOLE",
       permissions: Object.freeze([
         Permission.WORK_SCHEDULE_READ,
         Permission.EVENT_READ,
@@ -247,6 +252,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       description:
         "Production operations preset for events, studio resources, work schedules, and platform display references.",
       category: "PRODUCTION",
+      recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: Object.freeze([
         Permission.EVENT_READ,
         Permission.EVENT_CREATE,
@@ -305,6 +311,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       description:
         "Commercial finance preset for revenue, commission, settlement, contract read, and dashboard read workflows.",
       category: "FINANCE",
+      recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: Object.freeze([
         Permission.EMPLOYMENT_TERMS_READ,
         Permission.EMPLOYMENT_TERMS_READ_SENSITIVE,
@@ -381,6 +388,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       description:
         "Read-only self-intended baseline for talent-facing staff access.",
       category: "SELF_SERVICE",
+      recommendedAccountContext: "STAFF_CONSOLE",
       permissions: Object.freeze([
         Permission.WORK_SCHEDULE_READ,
         Permission.EVENT_READ,
@@ -423,6 +431,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       description:
         "Read-only auditor preset across operational and commercial modules.",
       category: "AUDIT",
+      recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: Object.freeze([
         Permission.EMPLOYMENT_TERMS_READ,
         Permission.EMPLOYMENT_TERMS_AUDIT,
@@ -493,6 +502,7 @@ export function listRoleTemplates(): readonly RoleTemplateListItem[] {
     name: template.name,
     description: template.description,
     category: template.category,
+    recommendedAccountContext: template.recommendedAccountContext,
     scopePlan: template.scopePlan,
     recommendedScopeGrants: template.recommendedScopeGrants,
     warnings: template.warnings,

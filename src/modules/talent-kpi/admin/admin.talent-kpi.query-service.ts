@@ -1,5 +1,4 @@
 import { Actor } from "@core/actor/actor";
-import { SystemInvariantError } from "@core/error/system-error";
 import { Permission } from "@core/permission/permission.enum";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
@@ -648,12 +647,5 @@ function assertGlobalScope(
 function assertAdminActorType(
   actor: Actor,
 ): void {
-  if (actor.type === "admin") {
-    return;
-  }
-
-  throw new SystemInvariantError(
-    "PERMISSION_DENIED",
-    `Talent KPI access requires actor.type admin, received ${actor.type}`,
-  );
+  PermissionGuard.assertAdminActor(actor);
 }

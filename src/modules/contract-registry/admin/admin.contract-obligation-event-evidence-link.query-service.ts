@@ -1,5 +1,4 @@
 import { Actor } from "@core/actor/actor";
-import { SystemInvariantError } from "@core/error/system-error";
 import { Permission } from "@core/permission/permission.enum";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
@@ -56,12 +55,7 @@ export class ContractObligationEventEvidenceLinkAdminQueryService {
   }
 
   private assertRead(actor: Actor): void {
-    if (actor.type !== "admin") {
-      throw new SystemInvariantError(
-        "PERMISSION_DENIED",
-        "Contract obligation event evidence link reads require actor.type admin",
-      );
-    }
+    PermissionGuard.assertAdminActor(actor);
     PermissionGuard.assert(
       actor,
       PermissionResolver.resolve(

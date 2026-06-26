@@ -431,6 +431,7 @@ function adminActor(
     id,
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions,
     scopeGrants: {

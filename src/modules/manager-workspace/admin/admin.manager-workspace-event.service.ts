@@ -66,9 +66,9 @@ export class ManagerWorkspaceEventAdminService {
     readonly orgUnitIds: readonly string[];
     readonly talentGroupIds: readonly string[];
   }> {
-    if (actor.type !== "admin") {
+    if (!actor.accountContexts.includes("MANAGER_CONSOLE")) {
       throw new EventAssignmentPermissionScopeError(
-        "Manager Workspace Events requires ADMIN context actor",
+        "Manager Workspace Events requires MANAGER_CONSOLE account context",
       );
     }
     PermissionGuard.assert(

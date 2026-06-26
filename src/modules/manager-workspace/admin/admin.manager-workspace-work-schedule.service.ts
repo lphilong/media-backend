@@ -225,9 +225,9 @@ export class ManagerWorkspaceWorkScheduleAdminService {
   }
 
   private assertReadAuthority(actor: Actor): void {
-    if (actor.type !== "admin") {
+    if (!actor.accountContexts.includes("MANAGER_CONSOLE")) {
       throw new WorkSchedulePermissionScopeError(
-        "Manager Workspace WorkSchedule requires ADMIN context actor",
+        "Manager Workspace WorkSchedule requires MANAGER_CONSOLE account context",
       );
     }
     PermissionGuard.assert(

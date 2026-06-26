@@ -583,6 +583,7 @@ function managerActor(): Actor {
     roles: ["TEAM_MANAGER"],
     permissions: ["revenueLedger.platformEarning.submit"],
     scopeGrants: {},
+    accountContexts: ["MANAGER_CONSOLE"],
     isActive: true,
   });
 }

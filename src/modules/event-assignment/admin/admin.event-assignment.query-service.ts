@@ -851,12 +851,5 @@ function parseOptionalSortDirection(
 }
 
 function assertAdminActorType(actor: Actor): void {
-  if (actor.type === "admin") {
-    return;
-  }
-
-  throw new SystemInvariantError(
-    "PERMISSION_DENIED",
-    `Event assignment access requires actor.type admin, received ${actor.type}`,
-  );
+  PermissionGuard.assertAdminActor(actor);
 }

@@ -24,6 +24,10 @@ import {
 } from "@modules/role/domain/role.types";
 import { RoleUserReadonlyAccess } from "@modules/role/domain/role-user-readonly-access";
 import { RoleAssignableUser } from "@modules/role/domain/role-user-readonly-access";
+import {
+  AccountContext,
+  normalizeAccountContexts,
+} from "@modules/account-context/domain/account-context.types";
 import { isRoleTemplateCode } from "@modules/role/domain/role-template.catalog";
 import {
   buildRoleAssignmentScopeFingerprint,
@@ -87,6 +91,7 @@ interface RoleAssignmentDocument {
 interface UserDocument {
   readonly _id: string;
   readonly actorKind: "ADMIN" | "STAFF";
+  readonly accountContexts?: readonly AccountContext[];
   readonly profile: {
     readonly displayName: string;
     readonly email?: string;
@@ -363,6 +368,7 @@ export class NativeMongoRoleUserReadonlyAccess implements RoleUserReadonlyAccess
         projection: {
           _id: 1,
           actorKind: 1,
+          accountContexts: 1,
           profile: 1,
           accountStatus: 1,
         },
@@ -374,6 +380,7 @@ export class NativeMongoRoleUserReadonlyAccess implements RoleUserReadonlyAccess
       ? {
           id: user._id,
           actorKind: user.actorKind,
+          accountContexts: normalizeAccountContexts(user.accountContexts),
           ref: toUserReferenceSummary(user),
         }
       : null;

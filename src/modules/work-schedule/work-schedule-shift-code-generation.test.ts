@@ -269,6 +269,7 @@ function createAdminActor(): Actor {
     id: "admin-user-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [
       Permission.WORK_SCHEDULE_CREATE,
@@ -286,6 +287,7 @@ function createGlobalDispatcherActor(): Actor {
     id: "production-ops-user-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: ["PRODUCTION_OPS"],
     permissions: [
       Permission.WORK_SCHEDULE_CREATE,
@@ -304,6 +306,7 @@ function createStaleTeamManagerActor(): Actor {
     id: "team-manager-user-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: ["TEAM_MANAGER"],
     permissions: [
       Permission.WORK_SCHEDULE_READ,
@@ -323,6 +326,7 @@ function createHrReadActor(): Actor {
     id: "hr-user-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: ["HR_OPERATIONS"],
     permissions: [Permission.WORK_SCHEDULE_READ],
     scopeGrants: {
@@ -337,6 +341,7 @@ function createReadActor(): Actor {
     id: "admin-user-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [Permission.WORK_SCHEDULE_READ],
     scopeGrants: {

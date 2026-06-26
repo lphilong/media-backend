@@ -478,6 +478,7 @@ function teamManagerActor(): Actor {
     id: "manager-user",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: ["TEAM_MANAGER"],
     permissions: [Permission.WORK_SCHEDULE_READ],
     scopeGrants: {
@@ -492,6 +493,7 @@ function productionOpsActor(): Actor {
     id: "ops-user",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: ["PRODUCTION_OPS"],
     permissions: [
       Permission.WORK_SCHEDULE_READ,
@@ -511,6 +513,7 @@ function adminFullActor(): Actor {
     id: "admin-user",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: ["ADMIN_FULL"],
     permissions: [
       Permission.WORK_SCHEDULE_READ,
@@ -530,6 +533,7 @@ function hrActor(): Actor {
     id: "hr-user",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: ["HR_OPERATIONS"],
     permissions: [Permission.WORK_SCHEDULE_READ],
     scopeGrants: {

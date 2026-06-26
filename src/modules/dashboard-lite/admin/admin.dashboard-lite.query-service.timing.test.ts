@@ -161,6 +161,7 @@ function createDashboardLiteActor(): Actor {
     id: "admin-dashboard-lite",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [Permission.DASHBOARD_LITE_READ],
     scopeGrants: {

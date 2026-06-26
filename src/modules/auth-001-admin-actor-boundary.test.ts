@@ -34,6 +34,8 @@ function createActor(
     id: `${type}-user-1`,
     type,
     context: "ADMIN",
+    accountContexts:
+      type === "admin" ? ["ADMIN_CONSOLE"] : ["STAFF_CONSOLE"],
     roles: [],
     permissions,
     isActive: true,
@@ -79,7 +81,7 @@ async function assertStaffActorDenied(
   await assert.rejects(promise, (error) => {
     assert.ok(error instanceof SystemInvariantError);
     assert.equal(error.code, "PERMISSION_DENIED");
-    assert.match(error.message, /actor\.type admin/i);
+    assert.match(error.message, /ADMIN_CONSOLE account context/i);
     return true;
   });
 }

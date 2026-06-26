@@ -33,6 +33,7 @@ function createActor(): Actor {
     id: "admin-user-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [Permission.CONTRACT_REGISTRY_READ],
     scopeGrants: {
@@ -47,6 +48,7 @@ function createMutationActor(): Actor {
     id: "admin-user-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [
       Permission.CONTRACT_REGISTRY_CREATE,

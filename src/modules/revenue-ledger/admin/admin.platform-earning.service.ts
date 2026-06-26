@@ -11,7 +11,6 @@ import {
   BusinessCodeSequenceRepository,
   formatBusinessCode,
 } from "@core/business-code/business-code-sequence.repository";
-import { SystemInvariantError } from "@core/error/system-error";
 import { Permission } from "@core/permission/permission.enum";
 import { PermissionContract } from "@core/permission/permission.contract";
 import { PermissionGuard } from "@core/permission/permission.guard";
@@ -1849,12 +1848,7 @@ function assertPermission(
   actor: Actor,
   permissionCode: Permission,
 ): PermissionContract {
-  if (actor.type !== "admin") {
-    throw new SystemInvariantError(
-      "PERMISSION_DENIED",
-      `Revenue Ledger access requires actor.type admin, received ${actor.type}`,
-    );
-  }
+  PermissionGuard.assertAdminActor(actor);
   const permission =
     PermissionResolver.resolve(permissionCode);
   PermissionGuard.assert(actor, permission);

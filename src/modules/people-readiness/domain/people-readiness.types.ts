@@ -1,3 +1,5 @@
+import { AccountContext } from "@modules/account-context/domain/account-context.types";
+
 export const PEOPLE_READINESS_CATEGORIES = [
   "ACCOUNT_LOGIN_READY",
   "EMPLOYMENT_PROFILE_LIFECYCLE",
@@ -99,6 +101,7 @@ export interface PeopleReadinessUser {
   readonly displayName: string;
   readonly accountStatus: string;
   readonly actorKind: string;
+  readonly accountContexts: readonly AccountContext[];
 }
 
 export interface PeopleReadinessEmploymentProfile {

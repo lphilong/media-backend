@@ -4602,11 +4602,7 @@ export class KpiAdminService {
 }
 
 function assertAdminActorType(actor: Actor): void {
-  if (actor.type !== "admin" || actor.context !== "ADMIN") {
-    throw new KpiPermissionScopeError(
-      "KPI V2 admin operations require ADMIN actor context",
-    );
-  }
+  PermissionGuard.assertAdminActor(actor);
 }
 
 function normalizeTargetMetrics(

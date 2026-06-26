@@ -343,14 +343,7 @@ function canonicalizeSearchToken(value: string): string {
 }
 
 function assertAdminActorType(actor: Actor): void {
-  if (actor.type === "admin") {
-    return;
-  }
-
-  throw new SystemInvariantError(
-    "PERMISSION_DENIED",
-    `Studio resource access requires actor.type admin, received ${actor.type}`,
-  );
+  PermissionGuard.assertAdminActor(actor);
 }
 
 function parseOptionalSortField(
