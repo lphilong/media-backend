@@ -19,6 +19,7 @@ import { ActorSnapshotCacheInvalidator } from "@infra/cache/actor.snapshot.cache
 import { StructuredLogger } from "@infra/logger.adapter";
 import { runWithDomainEventCollector } from "@system/event-bridge/domain-event.types";
 import {
+  LEGACY_ROLE_TEMPLATE_CODES,
   ROLE_TEMPLATE_CATALOG,
   ROLE_TEMPLATE_CODES,
   getRoleTemplate,
@@ -53,7 +54,7 @@ import { UserAdminCapabilityRepository } from "@modules/user/domain/user.admin-c
 
 const ALL_PERMISSION_CODES = Object.values(Permission);
 
-test("role template catalog contains exactly the seven core templates with valid unique permissions", () => {
+test("role template catalog contains target templates only with valid unique permissions", () => {
   validateRoleTemplateCatalog();
 
   assert.deepEqual(
@@ -61,7 +62,14 @@ test("role template catalog contains exactly the seven core templates with valid
     [...ROLE_TEMPLATE_CODES].sort(),
   );
 
+  const targetCodes = new Set(ROLE_TEMPLATE_CATALOG.map((item) => item.code));
+  for (const legacyCode of LEGACY_ROLE_TEMPLATE_CODES) {
+    assert.equal(targetCodes.has(legacyCode as never), false);
+    assert.equal(getRoleTemplate(legacyCode), null);
+  }
+
   for (const template of ROLE_TEMPLATE_CATALOG) {
+    assert.equal(typeof template.recommendedAccountContext, "string");
     const permissions = template.permissions.map((permission) => permission);
     assert.equal(
       new Set(permissions).size,
@@ -78,13 +86,12 @@ test("role template catalog contains exactly the seven core templates with valid
     }
   }
 
-  assert.deepEqual(
-    getRoleTemplate("ADMIN_FULL")?.permissions,
-    ALL_PERMISSION_CODES,
-  );
+  const owner = getRoleTemplate("OWNER_ADMIN");
+  assert.notEqual(owner, null);
+  assert.deepEqual(owner?.permissions, ALL_PERMISSION_CODES);
 });
 
-test("CR-3B role templates keep contract obligation evidence mutation authority admin-global first", () => {
+test("target role templates keep contract obligation evidence mutation authority admin-global first", () => {
   const obligationCapabilities = [
     Permission.CONTRACT_OBLIGATION_READ,
     Permission.CONTRACT_OBLIGATION_MANAGE_DRAFT,
@@ -103,18 +110,18 @@ test("CR-3B role templates keep contract obligation evidence mutation authority 
           Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_READ,
     );
 
-  const admin = getRoleTemplate("ADMIN_FULL");
-  assert.notEqual(admin, null);
+  const owner = getRoleTemplate("OWNER_ADMIN");
+  assert.notEqual(owner, null);
   for (const permission of obligationCapabilities) {
     assert.equal(
-      admin?.permissions.includes(permission),
+      owner?.permissions.includes(permission),
       true,
-      `ADMIN_FULL must include ${permission}`,
+      `OWNER_ADMIN must include ${permission}`,
     );
   }
 
-  const manager = getRoleTemplate("TEAM_MANAGER");
-  const self = getRoleTemplate("TALENT_STAFF_SELF");
+  const manager = getRoleTemplate("TALENT_GROUP_MANAGER");
+  const self = getRoleTemplate("STAFF_CONSOLE_USER");
   const auditor = getRoleTemplate("VIEWER_AUDITOR");
   for (const template of [manager, self, auditor]) {
     assert.notEqual(template, null);
@@ -127,55 +134,55 @@ test("CR-3B role templates keep contract obligation evidence mutation authority 
     }
   }
 
-  const finance = getRoleTemplate("COMMERCIAL_FINANCE");
-  assert.notEqual(finance, null);
+  const commercial = getRoleTemplate("COMMERCIAL_CONTRACT_OPS");
+  assert.notEqual(commercial, null);
   assert.equal(
-    finance?.permissions.includes(
+    commercial?.permissions.includes(
       Permission.CONTRACT_OBLIGATION_READ,
     ),
     true,
   );
   assert.equal(
-    finance?.permissions.includes(
+    commercial?.permissions.includes(
       Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_READ,
     ),
     true,
   );
   assert.equal(
-    finance?.permissions.includes(
+    commercial?.permissions.includes(
       Permission.CONTRACT_OBLIGATION_MANAGE_DRAFT,
     ),
     true,
   );
   assert.equal(
-    finance?.permissions.includes(
+    commercial?.permissions.includes(
       Permission.CONTRACT_OBLIGATION_REVIEW,
     ),
-    true,
+    false,
   );
   assert.equal(
-    finance?.permissions.includes(
+    commercial?.permissions.includes(
       Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
     ),
     true,
   );
   assert.equal(
-    finance?.permissions.includes(
+    commercial?.permissions.includes(
       Permission.CONTRACT_OBLIGATION_DELIVER,
     ),
-    false,
+    true,
   );
   assert.equal(
-    finance?.permissions.includes(
+    commercial?.permissions.includes(
       Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK,
     ),
-    false,
+    true,
   );
   assert.equal(
-    finance?.permissions.includes(
+    commercial?.permissions.includes(
       Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_REMOVE,
     ),
-    false,
+    true,
   );
 
   assert.equal(
@@ -193,18 +200,20 @@ test("CR-3B role templates keep contract obligation evidence mutation authority 
   assert.equal(externalTalentTemplates.length, 0);
 });
 
-test("seven role templates align KPI V2 permissions with runtime scope recommendations", () => {
-  const admin = getRoleTemplate("ADMIN_FULL");
+test("target role templates align KPI V2 permissions with runtime scope recommendations", () => {
+  const admin = getRoleTemplate("OWNER_ADMIN");
   const hr = getRoleTemplate("HR_OPERATIONS");
-  const manager = getRoleTemplate("TEAM_MANAGER");
+  const manager = getRoleTemplate("TALENT_GROUP_MANAGER");
   const production = getRoleTemplate("PRODUCTION_OPS");
-  const finance = getRoleTemplate("COMMERCIAL_FINANCE");
-  const self = getRoleTemplate("TALENT_STAFF_SELF");
+  const finance = getRoleTemplate("REVENUE_FINANCE_OPS");
+  const self = getRoleTemplate("STAFF_CONSOLE_USER");
   const auditor = getRoleTemplate("VIEWER_AUDITOR");
 
+  assert.equal(admin?.recommendedAccountContext, "ADMIN_CONSOLE");
   assert.deepEqual(admin?.recommendedScopeGrants.kpi, ["global"]);
   assert.equal(admin?.permissions.includes(Permission.KPI_FINALIZE), true);
 
+  assert.equal(hr?.recommendedAccountContext, "ADMIN_CONSOLE");
   assert.equal(
     hr?.permissions.includes(Permission.USER_PROVISION_ACCOUNT),
     true,
@@ -225,15 +234,15 @@ test("seven role templates align KPI V2 permissions with runtime scope recommend
   assert.equal(hr?.permissions.includes(Permission.KPI_ENTER_ACTUAL), false);
   assert.equal(
     hr?.permissions.includes(Permission.STUDIO_RESOURCE_LOOKUP),
-    true,
+    false,
   );
   assert.equal(
     hr?.permissions.includes(Permission.STUDIO_RESOURCE_READ),
     false,
   );
 
+  assert.equal(manager?.recommendedAccountContext, "MANAGER_CONSOLE");
   assert.deepEqual(manager?.recommendedScopeGrants.workSchedule, [
-    "self",
     "team",
   ]);
   assert.equal(
@@ -275,6 +284,7 @@ test("seven role templates align KPI V2 permissions with runtime scope recommend
   );
   assert.equal(manager?.permissions.includes(Permission.KPI_PUBLISH), false);
 
+  assert.equal(production?.recommendedAccountContext, "ADMIN_CONSOLE");
   assert.equal(production?.recommendedScopeGrants.kpi, undefined);
   assert.deepEqual(production?.recommendedScopeGrants.workSchedule, ["global"]);
   assert.deepEqual(production?.recommendedScopeGrants.eventAssignment, [
@@ -298,31 +308,43 @@ test("seven role templates align KPI V2 permissions with runtime scope recommend
     false,
   );
 
-  assert.deepEqual(finance?.recommendedScopeGrants.kpi, ["global"]);
+  assert.equal(finance?.recommendedAccountContext, "ADMIN_CONSOLE");
+  assert.equal(finance?.recommendedScopeGrants.kpi, undefined);
   assert.equal(finance?.recommendedScopeGrants.eventAssignment, undefined);
-  assert.equal(finance?.permissions.includes(Permission.EVENT_LOOKUP), true);
+  assert.equal(finance?.permissions.includes(Permission.EVENT_LOOKUP), false);
   assert.equal(finance?.permissions.includes(Permission.EVENT_READ), false);
-  assert.equal(finance?.permissions.includes(Permission.KPI_READ), true);
+  assert.equal(finance?.permissions.includes(Permission.KPI_READ), false);
   assert.equal(
     finance?.permissions.includes(Permission.KPI_READ_PROGRESS),
-    true,
+    false,
   );
   assert.equal(
     finance?.permissions.includes(Permission.KPI_ENTER_ACTUAL),
     false,
   );
   assert.equal(finance?.permissions.includes(Permission.KPI_FINALIZE), false);
-  assert.equal(finance?.permissions.includes(Permission.TALENT_LOOKUP), true);
+  assert.equal(finance?.permissions.includes(Permission.TALENT_LOOKUP), false);
   assert.equal(finance?.permissions.includes(Permission.TALENT_READ), false);
   assert.equal(
     finance?.permissions.includes(Permission.PLATFORM_ACCOUNT_LOOKUP),
-    true,
+    false,
   );
   assert.equal(
     finance?.permissions.includes(Permission.PLATFORM_ACCOUNT_READ),
     false,
   );
+  assert.equal(
+    finance?.permissions.includes(Permission.REVENUE_LEDGER_CREATE),
+    true,
+  );
+  assert.equal(
+    finance?.permissions.includes(
+      Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+    ),
+    false,
+  );
 
+  assert.equal(self?.recommendedAccountContext, "STAFF_CONSOLE");
   assert.deepEqual(self?.recommendedScopeGrants.kpi, ["self"]);
   assert.equal(self?.recommendedScopeGrants.eventAssignment, undefined);
   assert.equal(self?.permissions.includes(Permission.KPI_READ_PROGRESS), true);
@@ -341,6 +363,10 @@ test("seven role templates align KPI V2 permissions with runtime scope recommend
   );
   assert.equal(auditor?.permissions.includes(Permission.EVENT_READ), true);
   assert.equal(auditor?.permissions.includes(Permission.EVENT_UPDATE), false);
+  assert.equal(
+    auditor?.permissions.includes(Permission.EMPLOYMENT_TERMS_READ_SENSITIVE),
+    false,
+  );
 });
 
 test("role template list and preview service are permission-gated and preview-only", () => {
@@ -348,7 +374,17 @@ test("role template list and preview service are permission-gated and preview-on
   const actor = createActor([Permission.ROLE_LIST, Permission.ROLE_VIEW]);
 
   const listed = service.listRoleTemplates(actor);
-  assert.equal(listed.items.length, 7);
+  assert.equal(listed.items.length, ROLE_TEMPLATE_CODES.length);
+  assert.equal(
+    listed.items.every((item) => item.recommendedAccountContext !== undefined),
+    true,
+  );
+  for (const legacyCode of LEGACY_ROLE_TEMPLATE_CODES) {
+    assert.equal(
+      listed.items.some((item) => String(item.code) === legacyCode),
+      false,
+    );
+  }
   assert.equal(
     listed.items.every((item) => item.warnings.length > 0),
     true,
@@ -356,18 +392,28 @@ test("role template list and preview service are permission-gated and preview-on
 
   const beforeStoreSize = 0;
   const preview = service.previewRoleTemplate(actor, {
-    templateCode: "commercial_finance",
+    templateCode: "revenue_finance_ops",
   });
 
-  assert.equal(preview.template.code, "COMMERCIAL_FINANCE");
+  assert.equal(preview.template.code, "REVENUE_FINANCE_OPS");
   assert.equal(
-    preview.permissions.includes(Permission.REVENUE_LEDGER_RECONCILE),
+    preview.permissions.includes(Permission.REVENUE_LEDGER_CREATE),
     true,
   );
+  assert.equal(preview.template.recommendedAccountContext, "ADMIN_CONSOLE");
   assert.equal(preview.scopePlan.length > 0, true);
   assert.equal(preview.warnings.length > 0, true);
-  assert.equal(preview.unsupportedScopeNotes.length > 0, true);
   assert.equal(beforeStoreSize, 0);
+
+  for (const legacyCode of LEGACY_ROLE_TEMPLATE_CODES) {
+    assert.throws(
+      () =>
+        service.previewRoleTemplate(actor, {
+          templateCode: legacyCode,
+        }),
+      /Unknown role template code/,
+    );
+  }
 
   assert.throws(
     () =>
@@ -415,11 +461,26 @@ test("role template endpoints return catalog and preview without mutating roles"
     const listResponse = await fetch(`${baseUrl}/admin/role-templates`);
     assert.equal(listResponse.status, 200);
     const listBody = await listResponse.json();
-    assert.equal(listBody.data.length, 7);
+    assert.equal(listBody.data.length, ROLE_TEMPLATE_CODES.length);
     assert.equal(listBody.data[0].warnings.length > 0, true);
+    assert.equal(
+      listBody.data.every(
+        (item: { recommendedAccountContext?: string }) =>
+          typeof item.recommendedAccountContext === "string",
+      ),
+      true,
+    );
+    for (const legacyCode of LEGACY_ROLE_TEMPLATE_CODES) {
+      assert.equal(
+        listBody.data.some(
+          (item: { code: string }) => item.code === legacyCode,
+        ),
+        false,
+      );
+    }
 
     const previewResponse = await fetch(
-      `${baseUrl}/admin/role-templates/ADMIN_FULL/preview`,
+      `${baseUrl}/admin/role-templates/OWNER_ADMIN/preview`,
       {
         method: "POST",
         headers: {
@@ -430,7 +491,11 @@ test("role template endpoints return catalog and preview without mutating roles"
     );
     assert.equal(previewResponse.status, 200);
     const previewBody = await previewResponse.json();
-    assert.equal(previewBody.data.template.code, "ADMIN_FULL");
+    assert.equal(previewBody.data.template.code, "OWNER_ADMIN");
+    assert.equal(
+      previewBody.data.template.recommendedAccountContext,
+      "ADMIN_CONSOLE",
+    );
     assert.equal(
       previewBody.data.permissions.length,
       ALL_PERMISSION_CODES.length,
@@ -441,6 +506,14 @@ test("role template endpoints return catalog and preview without mutating roles"
       ),
       true,
     );
+
+    const legacyResponse = await fetch(
+      `${baseUrl}/admin/role-templates/ADMIN_FULL/preview`,
+      {
+        method: "POST",
+      },
+    );
+    assert.equal(legacyResponse.status, 400);
 
     const unknownResponse = await fetch(
       `${baseUrl}/admin/role-templates/NOPE/preview`,
@@ -480,30 +553,31 @@ test("role assignment validates required account context and ignores target user
       errorPattern: /HR_OPERATIONS requires ADMIN_CONSOLE account context/u,
     },
     {
-      roleCode: "TEAM_MANAGER",
+      roleCode: "TALENT_GROUP_MANAGER",
       actorKind: "ADMIN",
       accountContexts: ["MANAGER_CONSOLE"],
       allowed: true,
     },
     {
-      roleCode: "TEAM_MANAGER",
+      roleCode: "TALENT_GROUP_MANAGER",
       actorKind: "STAFF",
       accountContexts: ["STAFF_CONSOLE"],
       allowed: false,
-      errorPattern: /TEAM_MANAGER requires MANAGER_CONSOLE account context/u,
+      errorPattern:
+        /TALENT_GROUP_MANAGER requires MANAGER_CONSOLE account context/u,
     },
     {
-      roleCode: "TALENT_STAFF_SELF",
+      roleCode: "STAFF_CONSOLE_USER",
       actorKind: "ADMIN",
       accountContexts: ["STAFF_CONSOLE"],
       allowed: true,
     },
     {
-      roleCode: "ADMIN_FULL",
+      roleCode: "OWNER_ADMIN",
       actorKind: "ADMIN",
       accountContexts: [],
       allowed: false,
-      errorPattern: /ADMIN_FULL requires ADMIN_CONSOLE account context/u,
+      errorPattern: /OWNER_ADMIN requires ADMIN_CONSOLE account context/u,
     },
   ];
 
@@ -836,7 +910,66 @@ test("role revocation preserves assignment reason and records revoke metadata", 
   assert.equal(assignmentRepository.assignments[0]?.state, "REVOKED");
 });
 
-test("TALENT_STAFF_SELF assignment to ADMIN rejects", async () => {
+test("direct assignment rejects active persisted legacy-only RoleRecords by roleId", async () => {
+  for (const legacyCode of LEGACY_ROLE_TEMPLATE_CODES) {
+    const roleRepository = new InMemoryRoleRepository();
+    const assignmentRepository = new InMemoryUserRoleAssignmentRepository();
+    const service = new RoleAdminService(
+      roleRepository,
+      assignmentRepository,
+      new InMemoryRoleAssignmentRuleRepository(),
+      new InMemoryBusinessCodeSequenceRepository(),
+      new AlwaysAssignableUserAccess("ADMIN", [
+        "ADMIN_CONSOLE",
+        "MANAGER_CONSOLE",
+        "STAFF_CONSOLE",
+      ]),
+      new PermissiveAdminCapabilityRepository(),
+      createAuditGuard(),
+      new InlineMutationBridge(),
+      createActorSnapshotCacheInvalidator(),
+      noOpLogger,
+    );
+    const now = Date.now();
+    await roleRepository.insert(
+      {
+        id: `role-${legacyCode}`,
+        code: legacyCode,
+        name: legacyCode,
+        description: null,
+        state: "ACTIVE",
+        permissions: [Permission.USER_VIEW],
+        delegationBand: "LIMITED",
+        maxDelegatableBand: "NONE",
+        createdAt: now,
+        updatedAt: now,
+        activatedAt: now,
+        archivedAt: null,
+      },
+      {} as ClientSession,
+    );
+
+    await assert.rejects(
+      () =>
+        bindTraceId(`trace-role-assignment-${legacyCode}-reject`, async () =>
+          runWithDomainEventCollector(() =>
+            service.assignRoleToUser(createActor(ALL_PERMISSION_CODES), {
+              roleId: `role-${legacyCode}`,
+              userId: "target-user",
+              reason: "Legacy role assignment must be blocked",
+            }),
+          ),
+        ),
+      new RegExp(
+        `Legacy role template ${legacyCode} cannot be assigned to users`,
+        "u",
+      ),
+    );
+    assert.equal(assignmentRepository.insertCount, 0);
+  }
+});
+
+test("direct assignment rejects unknown persisted template metadata instead of bypassing account context", async () => {
   const roleRepository = new InMemoryRoleRepository();
   const assignmentRepository = new InMemoryUserRoleAssignmentRepository();
   const service = new RoleAdminService(
@@ -844,7 +977,7 @@ test("TALENT_STAFF_SELF assignment to ADMIN rejects", async () => {
     assignmentRepository,
     new InMemoryRoleAssignmentRuleRepository(),
     new InMemoryBusinessCodeSequenceRepository(),
-    new AlwaysAssignableUserAccess("ADMIN"),
+    new AlwaysAssignableUserAccess("ADMIN", ["ADMIN_CONSOLE"]),
     new PermissiveAdminCapabilityRepository(),
     createAuditGuard(),
     new InlineMutationBridge(),
@@ -854,34 +987,35 @@ test("TALENT_STAFF_SELF assignment to ADMIN rejects", async () => {
   const now = Date.now();
   await roleRepository.insert(
     {
-      id: "role-self",
-      code: "TALENT_STAFF_SELF",
-      name: "Talent Staff Self",
+      id: "role-unknown-template",
+      code: "CUSTOM_ROLE_WITH_BAD_TEMPLATE",
+      name: "Custom Role With Bad Template",
       description: null,
       state: "ACTIVE",
       permissions: [Permission.USER_VIEW],
       delegationBand: "LIMITED",
       maxDelegatableBand: "NONE",
+      templateCode: "UNKNOWN_TEMPLATE",
       createdAt: now,
       updatedAt: now,
       activatedAt: now,
       archivedAt: null,
-    },
+    } as unknown as RoleRecord,
     {} as ClientSession,
   );
 
   await assert.rejects(
     () =>
-      bindTraceId("trace-role-assignment-staff-self-admin-reject", async () =>
+      bindTraceId("trace-role-assignment-unknown-template-reject", async () =>
         runWithDomainEventCollector(() =>
           service.assignRoleToUser(createActor(ALL_PERMISSION_CODES), {
-            roleId: "role-self",
+            roleId: "role-unknown-template",
             userId: "target-user",
-            reason: "ActorKind mismatch",
+            reason: "Unknown template must fail closed",
           }),
         ),
       ),
-    /TALENT_STAFF_SELF requires STAFF_CONSOLE account context/u,
+    /Unknown role template code: UNKNOWN_TEMPLATE/u,
   );
   assert.equal(assignmentRepository.insertCount, 0);
 });
@@ -970,19 +1104,19 @@ test("create role from template persists explicit permissions and provenance onl
   const result = await bindTraceId("trace-role-template-create", async () =>
     runWithDomainEventCollector(() =>
       service.createRoleFromTemplate(actor, {
-        templateCode: "TALENT_STAFF_SELF",
-        code: "talent_staff_self_custom",
-        name: "Talent Staff Self Custom",
-        description: "Self-service baseline",
+        templateCode: "STAFF_CONSOLE_USER",
+        code: "staff_console_user_custom",
+        name: "Staff Console User Custom",
+        description: "Staff console baseline",
       }),
     ),
   );
 
-  const template = getRoleTemplate("TALENT_STAFF_SELF");
+  const template = getRoleTemplate("STAFF_CONSOLE_USER");
   assert.notEqual(template, null);
-  assert.equal(result.code, "TALENT_STAFF_SELF_CUSTOM");
+  assert.equal(result.code, "STAFF_CONSOLE_USER_CUSTOM");
   assert.deepEqual(result.permissions, template?.permissions);
-  assert.equal(result.templateCode, "TALENT_STAFF_SELF");
+  assert.equal(result.templateCode, "STAFF_CONSOLE_USER");
   assert.equal(result.templateVersion, template?.version);
   assert.equal(typeof result.templateAppliedAt, "number");
   assert.equal(assignmentRepository.insertCount, 0);
@@ -1015,9 +1149,9 @@ test("create role from template respects existing permission authoring constrain
       bindTraceId("trace-role-template-denied", async () =>
         runWithDomainEventCollector(() =>
           service.createRoleFromTemplate(actor, {
-            templateCode: "ADMIN_FULL",
-            code: "admin_full_copy",
-            name: "Admin Full Copy",
+            templateCode: "OWNER_ADMIN",
+            code: "owner_admin_copy",
+            name: "Owner Admin Copy",
           }),
         ),
       ),
@@ -1606,7 +1740,7 @@ class PermissiveAdminCapabilityRepository implements UserAdminCapabilityReposito
   }
 
   async listActiveAdminConsoleRoleCodesByUserId(): Promise<readonly string[]> {
-    return ["ADMIN_FULL"];
+    return ["OWNER_ADMIN"];
   }
 
   async listActiveDelegationCeilingsByUserId(): Promise<

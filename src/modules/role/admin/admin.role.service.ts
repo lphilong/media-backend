@@ -58,7 +58,9 @@ import { RoleRepository } from "@modules/role/domain/role.repository";
 import { ROLE_CODE_POLICY } from "@modules/role/domain/role-code-policy";
 import {
   getRoleTemplate,
+  isLegacyRoleTemplateCode,
   isRoleTemplateCode,
+  normalizeRoleTemplateCode,
   RoleTemplateCode,
 } from "@modules/role/domain/role-template.catalog";
 import { RoleUserReadonlyAccess } from "@modules/role/domain/role-user-readonly-access";
@@ -1120,6 +1122,8 @@ export class RoleAdminService {
               );
             }
 
+            assertRoleTemplateAssignable(role);
+
             if (userId === actor.id) {
               throw new RoleDependencyError(
                 "Cannot assign role to the current actor",
@@ -1882,6 +1886,27 @@ function assertRoleAccountContextCompatible(
   if (!accountContexts.includes(requiredAccountContext)) {
     throw new RoleValidationError(
       `${governingCode} requires ${requiredAccountContext} account context.`,
+    );
+  }
+}
+
+function assertRoleTemplateAssignable(role: RoleRecord): void {
+  const governingCodes = [role.templateCode, role.code].filter(
+    (value): value is string => typeof value === "string",
+  );
+
+  for (const code of governingCodes) {
+    const normalized = normalizeRoleTemplateCode(code);
+    if (isLegacyRoleTemplateCode(normalized)) {
+      throw new RoleValidationError(
+        `Legacy role template ${normalized} cannot be assigned to users.`,
+      );
+    }
+  }
+
+  if (role.templateCode !== undefined && !getRoleTemplate(role.templateCode)) {
+    throw new RoleValidationError(
+      `Unknown role template code: ${role.templateCode}`,
     );
   }
 }

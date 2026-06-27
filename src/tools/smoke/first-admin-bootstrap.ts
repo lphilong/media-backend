@@ -187,12 +187,12 @@ interface FirstAdminBootstrapDependencies {
   readonly idFactory?: () => string;
 }
 
-const ADMIN_FULL_CODE: RoleTemplateCode = "ADMIN_FULL";
+const OWNER_ADMIN_CODE: RoleTemplateCode = "OWNER_ADMIN";
 const BOOTSTRAP_ASSIGNMENT_REASON =
   "Smoke first admin bootstrap.";
 const DEFAULT_DISPLAY_NAME = "First Admin";
 
-const NORMALIZED_REQUIRED_ADMIN_FULL_SCOPE_GRANTS =
+const NORMALIZED_REQUIRED_OWNER_ADMIN_SCOPE_GRANTS =
   normalizeAssignmentScopeGrants({
     workSchedule: ["global"],
     eventAssignment: ["global"],
@@ -204,12 +204,12 @@ const NORMALIZED_REQUIRED_ADMIN_FULL_SCOPE_GRANTS =
     kpi: ["global"],
   });
 
-if (!NORMALIZED_REQUIRED_ADMIN_FULL_SCOPE_GRANTS) {
-  throw new Error("Required ADMIN_FULL scope grants are invalid");
+if (!NORMALIZED_REQUIRED_OWNER_ADMIN_SCOPE_GRANTS) {
+  throw new Error("Required OWNER_ADMIN scope grants are invalid");
 }
 
-export const REQUIRED_ADMIN_FULL_SCOPE_GRANTS: ActorScopeGrants =
-  NORMALIZED_REQUIRED_ADMIN_FULL_SCOPE_GRANTS;
+export const REQUIRED_OWNER_ADMIN_SCOPE_GRANTS: ActorScopeGrants =
+  NORMALIZED_REQUIRED_OWNER_ADMIN_SCOPE_GRANTS;
 
 export class FirstAdminBootstrapService {
   constructor(
@@ -240,7 +240,7 @@ export class FirstAdminBootstrapService {
       });
       const roleSummary = await this.ensureRuntimeRoles(mode, session);
       const adminRole = await this.requireRuntimeRole(
-        ADMIN_FULL_CODE,
+        OWNER_ADMIN_CODE,
         mode,
         session,
       );
@@ -397,9 +397,9 @@ export class FirstAdminBootstrapService {
           description: template.description,
           state: "ACTIVE",
           permissions: [...template.permissions],
-          delegationBand: code === ADMIN_FULL_CODE ? "PRIVILEGED" : "LIMITED",
+          delegationBand: code === OWNER_ADMIN_CODE ? "PRIVILEGED" : "LIMITED",
           maxDelegatableBand:
-            code === ADMIN_FULL_CODE ? "PRIVILEGED" : "NONE",
+            code === OWNER_ADMIN_CODE ? "PRIVILEGED" : "NONE",
           templateCode: template.code,
           templateVersion: template.version,
           templateAppliedAt: now,
@@ -651,7 +651,7 @@ export class FirstAdminBootstrapService {
     if (activeAssignments.length > 1) {
       throw new FirstAdminBootstrapError(
         "FIRST_ADMIN_ASSIGNMENT_AMBIGUOUS",
-        "Multiple active ADMIN_FULL assignments exist for first admin; bootstrap stopped",
+        "Multiple active OWNER_ADMIN assignments exist for first admin; bootstrap stopped",
       );
     }
     const existing = activeAssignments[0] ?? null;
@@ -667,7 +667,7 @@ export class FirstAdminBootstrapService {
           assignmentId: this.id(),
           roleId: params.roleId,
           userId: params.userId,
-          scopeGrants: REQUIRED_ADMIN_FULL_SCOPE_GRANTS,
+          scopeGrants: REQUIRED_OWNER_ADMIN_SCOPE_GRANTS,
           state: "ACTIVE",
           effectiveAt: now,
           revokedAt: null,
@@ -686,7 +686,7 @@ export class FirstAdminBootstrapService {
 
     const merged = mergeScopeGrants(
       existing.scopeGrants,
-      REQUIRED_ADMIN_FULL_SCOPE_GRANTS,
+      REQUIRED_OWNER_ADMIN_SCOPE_GRANTS,
     );
 
     if (scopeGrantsEqual(existing.scopeGrants, merged)) {
@@ -713,7 +713,7 @@ export class FirstAdminBootstrapService {
     if (!updated) {
       throw new FirstAdminBootstrapError(
         "FIRST_ADMIN_ASSIGNMENT_UPDATE_FAILED",
-        "Failed to repair ADMIN_FULL assignment scope grants",
+        "Failed to repair OWNER_ADMIN assignment scope grants",
       );
     }
 
@@ -855,9 +855,9 @@ function validateReusableRuntimeRole(
   }
 
   const expectedDelegationBand =
-    code === ADMIN_FULL_CODE ? "PRIVILEGED" : "LIMITED";
+    code === OWNER_ADMIN_CODE ? "PRIVILEGED" : "LIMITED";
   const expectedMaxDelegatableBand =
-    code === ADMIN_FULL_CODE ? "PRIVILEGED" : "NONE";
+    code === OWNER_ADMIN_CODE ? "PRIVILEGED" : "NONE";
 
   if (
     role.delegationBand !== expectedDelegationBand ||
@@ -929,9 +929,9 @@ function buildDryRunRuntimeRole(params: {
     state: "ACTIVE",
     permissions: [...template.permissions],
     delegationBand:
-      params.code === ADMIN_FULL_CODE ? "PRIVILEGED" : "LIMITED",
+      params.code === OWNER_ADMIN_CODE ? "PRIVILEGED" : "LIMITED",
     maxDelegatableBand:
-      params.code === ADMIN_FULL_CODE ? "PRIVILEGED" : "NONE",
+      params.code === OWNER_ADMIN_CODE ? "PRIVILEGED" : "NONE",
     templateCode: template.code,
     templateVersion: template.version,
     templateAppliedAt: params.now,
@@ -972,7 +972,7 @@ function mergeScopeGrants(
   if (!merged) {
     throw new FirstAdminBootstrapError(
       "FIRST_ADMIN_SCOPE_GRANTS_INVALID",
-      "Merged ADMIN_FULL scope grants are invalid",
+      "Merged OWNER_ADMIN scope grants are invalid",
     );
   }
 
@@ -994,7 +994,7 @@ function mergeArray<T extends string>(
 }
 
 function describeRequiredScopeGrants(): readonly string[] {
-  return Object.entries(REQUIRED_ADMIN_FULL_SCOPE_GRANTS).map(
+  return Object.entries(REQUIRED_OWNER_ADMIN_SCOPE_GRANTS).map(
     ([module, scopes]) => `${module}.${scopes.join("+")}`,
   );
 }

@@ -308,8 +308,8 @@ test("role assignment persistence and exposure preserve AUTH-2 lifecycle and aud
     origin: "BUNDLE" as const,
     bundleOrigin: {
       bundleAssignmentId: "bundle-assignment-1",
-      bundleCode: "HR_OPERATIONS_BUNDLE",
-      bundleVersion: "2026-06-18",
+      bundleCode: "HR_STAFF_BUNDLE",
+      bundleVersion: "2026-06-26",
     },
     reason: "Original assignment reason",
     createdAt: 5,

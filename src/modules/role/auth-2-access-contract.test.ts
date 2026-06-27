@@ -247,6 +247,81 @@ test("every runtime user-auth role-assignment pipeline includes lifecycle filter
   );
 });
 
+test("Mongo user auth admin-console role signal uses target codes only", async () => {
+  const pipelines: unknown[][] = [];
+  const repository = new MongoUserAuthRepository({
+    collection(name: string) {
+      if (name === "users") {
+        return {
+          aggregate(pipeline: unknown[]) {
+            pipelines.push(pipeline);
+            return {
+              toArray: async () => [
+                {
+                  activeAdminConsoleRoleCodes: [
+                    "OWNER_ADMIN",
+                    "ACCESS_ADMIN",
+                    "HR_OPERATIONS",
+                    "PRODUCTION_OPS",
+                    "TALENT_GROUP_MANAGER",
+                    "ORG_UNIT_MANAGER",
+                    "STAFF_CONSOLE_USER",
+                    "ADMIN_FULL",
+                    "TEAM_MANAGER",
+                    "COMMERCIAL_FINANCE",
+                    "TALENT_STAFF_SELF",
+                  ],
+                },
+              ],
+            };
+          },
+        };
+      }
+      return { findOne: async () => null };
+    },
+  } as never);
+
+  const codes = await repository.listActiveAdminConsoleRoleCodesByUserId(
+    "user-1",
+    {} as never,
+  );
+
+  assert.deepEqual(codes, [
+    "ACCESS_ADMIN",
+    "HR_OPERATIONS",
+    "OWNER_ADMIN",
+    "PRODUCTION_OPS",
+  ]);
+  assert.equal(codes.includes("ADMIN_FULL"), false);
+  assert.equal(codes.includes("TEAM_MANAGER"), false);
+  assert.equal(codes.includes("COMMERCIAL_FINANCE"), false);
+  assert.equal(codes.includes("TALENT_STAFF_SELF"), false);
+  assert.equal(codes.includes("TALENT_GROUP_MANAGER"), false);
+  assert.equal(codes.includes("ORG_UNIT_MANAGER"), false);
+  assert.equal(codes.includes("STAFF_CONSOLE_USER"), false);
+
+  const serializedPipeline = JSON.stringify(pipelines[0]);
+  for (const code of [
+    "OWNER_ADMIN",
+    "ACCESS_ADMIN",
+    "REVENUE_FINANCE_OPS",
+    "REVENUE_APPROVER",
+    "COMMISSION_OPS",
+    "COMMISSION_APPROVER",
+    "VIEWER_AUDITOR",
+  ]) {
+    assert.equal(serializedPipeline.includes(code), true);
+  }
+  for (const legacyCode of [
+    "ADMIN_FULL",
+    "TEAM_MANAGER",
+    "COMMERCIAL_FINANCE",
+    "TALENT_STAFF_SELF",
+  ]) {
+    assert.equal(serializedPipeline.includes(legacyCode), false);
+  }
+});
+
 test("same role and user lookup is fingerprint-specific while legacy lookup remains compatible", async () => {
   const queries: Record<string, unknown>[] = [];
   const repository = new NativeMongoUserRoleAssignmentRepository({
@@ -283,16 +358,27 @@ test("same role and user lookup is fingerprint-specific while legacy lookup rema
   ]);
 });
 
+test("HR manager bundle expands to target HR operations and terms approval roles", () => {
+  const bundle = getRoleBundle("HR_MANAGER_BUNDLE", "2026-06-26");
+
+  assert.ok(bundle);
+  assert.deepEqual(bundle.childRoles, [
+    "HR_OPERATIONS",
+    "HR_TERMS_APPROVER",
+  ]);
+  assert.equal(bundle.recommendedAccountContext, "ADMIN_CONSOLE");
+});
+
 test("bundle assignment expands to child assignments and records immutable origin", async () => {
-  const bundle = getRoleBundle("TALENT_GROUP_MANAGER_BUNDLE", "2026-06-18");
+  const bundle = getRoleBundle("TALENT_GROUP_MANAGER_BUNDLE", "2026-06-26");
   assert.ok(bundle);
   const calls: Array<Record<string, unknown>> = [];
   const service = new RoleBundleAdminService(
     {
       findByCode: async () => ({
-        id: "role-team-manager",
-        code: "TEAM_MANAGER",
-        name: "Team Manager",
+        id: "role-talent-group-manager",
+        code: "TALENT_GROUP_MANAGER",
+        name: "Talent Group Manager",
         description: null,
         state: "ACTIVE",
         permissions: ["kpi:read"],
@@ -309,7 +395,7 @@ test("bundle assignment expands to child assignments and records immutable origi
         calls.push(command);
         return {
           assignmentId: "assignment-1",
-          roleId: "role-team-manager",
+          roleId: "role-talent-group-manager",
           userId: "user-1",
         };
       },
@@ -341,7 +427,7 @@ test("bundle duplicate child assignment is idempotently reported as existing", a
     {
       findByCode: async () => ({
         id: "role-self",
-        code: "TALENT_STAFF_SELF",
+        code: "STAFF_CONSOLE_USER",
         state: "ACTIVE",
       }),
     } as never,
@@ -354,7 +440,7 @@ test("bundle duplicate child assignment is idempotently reported as existing", a
 
   const result = await service.assignBundle(actor(), {
     bundleCode: "STAFF_CONSOLE_BUNDLE",
-    bundleVersion: "2026-06-18",
+    bundleVersion: "2026-06-26",
     userId: "user-1",
     reason: "Staff access",
     structuredScopeGrants: [{ scopeType: "self" }],
@@ -363,7 +449,7 @@ test("bundle duplicate child assignment is idempotently reported as existing", a
   assert.deepEqual(result.childAssignments, [
     {
       roleId: "role-self",
-      roleCode: "TALENT_STAFF_SELF",
+      roleCode: "STAFF_CONSOLE_USER",
       status: "EXISTING",
       assignmentId: null,
     },
@@ -752,7 +838,7 @@ function fakeDb(input: {
 
 function multiChildBundle(): RoleBundleTemplate {
   return {
-    code: "HR_OPERATIONS_BUNDLE",
+    code: "HR_STAFF_BUNDLE",
     name: "Test multi-child bundle",
     description: "Test only",
     businessPurpose: "Verify preflight behavior",

@@ -1,18 +1,44 @@
-import { Permission } from "@core/permission/permission.enum";
 import { ActorScopeGrants } from "@core/actor/actor";
+import { Permission } from "@core/permission/permission.enum";
 import { AccountContext } from "@modules/account-context/domain/account-context.types";
 
 export const ROLE_TEMPLATE_CODES = [
-  "ADMIN_FULL",
+  "OWNER_ADMIN",
+  "ACCESS_ADMIN",
   "HR_OPERATIONS",
-  "TEAM_MANAGER",
+  "HR_TERMS_APPROVER",
   "PRODUCTION_OPS",
+  "PLATFORM_CHANNEL_OPS",
+  "CREATIVE_VISUAL_LEAD",
+  "CONTENT_OPS",
+  "TALENT_GROUP_MANAGER",
+  "ORG_UNIT_MANAGER",
+  "KPI_OPERATIONS",
+  "COMMERCIAL_CONTRACT_OPS",
+  "REVENUE_FINANCE_OPS",
+  "REVENUE_APPROVER",
+  "REVENUE_RECONCILER",
+  "COMMISSION_OPS",
+  "COMMISSION_APPROVER",
+  "ATTENDANCE_OPS",
+  "LEAVE_REVIEWER",
+  "ATTENDANCE_APPROVER",
+  "MONTHLY_CLOSE_OWNER",
+  "PAYROLL_DRAFT_OPS",
+  "PAYROLL_DRAFT_APPROVER",
+  "VIEWER_AUDITOR",
+  "STAFF_CONSOLE_USER",
+] as const;
+
+export const LEGACY_ROLE_TEMPLATE_CODES = [
+  "ADMIN_FULL",
+  "TEAM_MANAGER",
   "COMMERCIAL_FINANCE",
   "TALENT_STAFF_SELF",
-  "VIEWER_AUDITOR",
 ] as const;
 
 export type RoleTemplateCode = (typeof ROLE_TEMPLATE_CODES)[number];
+export type LegacyRoleTemplateCode = (typeof LEGACY_ROLE_TEMPLATE_CODES)[number];
 
 export type RoleTemplateStatus =
   | "READY"
@@ -41,6 +67,13 @@ export interface RoleTemplateDefinition {
   readonly status: RoleTemplateStatus;
 }
 
+export interface LegacyRoleTemplateMapping {
+  readonly legacyCode: LegacyRoleTemplateCode;
+  readonly replacementRoleCodes: readonly RoleTemplateCode[];
+  readonly replacementBundleCodes: readonly string[];
+  readonly note: string;
+}
+
 export type RoleTemplateListItem = Omit<
   RoleTemplateDefinition,
   "permissions"
@@ -48,35 +81,258 @@ export type RoleTemplateListItem = Omit<
   readonly permissionCount: number;
 };
 
-const TEMPLATE_VERSION = "2026-05-20";
+const TEMPLATE_VERSION = "2026-06-26";
 
 const ALL_PERMISSIONS = Object.freeze([...Object.values(Permission)]);
 
-const GLOBAL_PREVIEW_SCOPE_PLAN: readonly RoleTemplateScopePlanEntry[] =
+export const LEGACY_ROLE_TEMPLATE_COMPATIBILITY: readonly LegacyRoleTemplateMapping[] =
   Object.freeze([
-    scopePlan("Work Schedule", ["global"], "PREVIEW_ONLY"),
-    scopePlan("Event Assignment", ["global"], "PREVIEW_ONLY"),
-    scopePlan("Contract Registry", ["global"], "PREVIEW_ONLY"),
-    scopePlan("Talent KPI", ["global"], "PREVIEW_ONLY"),
-    scopePlan(
-      "KPI",
-      ["global"],
-      "READY",
-      'Runtime grant: scopeGrants.kpi = ["global"].',
+    legacyMap("ADMIN_FULL", ["OWNER_ADMIN", "ACCESS_ADMIN"], [
+      "OWNER_ADMIN_BUNDLE",
+      "ACCESS_ADMIN_BUNDLE",
+    ]),
+    legacyMap("TEAM_MANAGER", ["TALENT_GROUP_MANAGER", "ORG_UNIT_MANAGER"], [
+      "TALENT_GROUP_MANAGER_BUNDLE",
+      "ORG_UNIT_MANAGER_BUNDLE",
+    ]),
+    legacyMap(
+      "COMMERCIAL_FINANCE",
+      [
+        "COMMERCIAL_CONTRACT_OPS",
+        "REVENUE_FINANCE_OPS",
+        "REVENUE_APPROVER",
+        "REVENUE_RECONCILER",
+        "COMMISSION_OPS",
+        "COMMISSION_APPROVER",
+      ],
+      [
+        "COMMERCIAL_STAFF_BUNDLE",
+        "FINANCE_STAFF_BUNDLE",
+        "FINANCE_APPROVER_BUNDLE",
+        "COMMISSION_APPROVER_BUNDLE",
+      ],
     ),
-    scopePlan("Revenue Ledger", ["global"], "PREVIEW_ONLY"),
-    scopePlan("Commission", ["global"], "PREVIEW_ONLY"),
-    scopePlan("Dashboard Lite", ["global"], "PREVIEW_ONLY"),
+    legacyMap("TALENT_STAFF_SELF", ["STAFF_CONSOLE_USER"], [
+      "STAFF_CONSOLE_BUNDLE",
+    ]),
   ]);
+
+const GOVERNANCE_PERMISSIONS = Object.freeze([
+  Permission.USER_VIEW,
+  Permission.USER_CREATE,
+  Permission.USER_EDIT,
+  Permission.USER_ACTIVATE,
+  Permission.USER_DISABLE,
+  Permission.USER_ARCHIVE,
+  Permission.USER_AUTH_LINKAGE_SET,
+  Permission.USER_AUTH_LINKAGE_UNLINK,
+  Permission.USER_PROVISION_ACCOUNT,
+  Permission.USER_PASSWORD_SETUP_SEND,
+  Permission.USER_ACTOR_KIND_UPDATE,
+  Permission.ROLE_LIST,
+  Permission.ROLE_VIEW,
+  Permission.ROLE_CREATE,
+  Permission.ROLE_UPDATE,
+  Permission.ROLE_ACTIVATE,
+  Permission.ROLE_DEACTIVATE,
+  Permission.ROLE_ARCHIVE,
+  Permission.ROLE_PERMISSION_ASSIGN,
+  Permission.ROLE_ASSIGNMENT_RULE_SET,
+  Permission.ROLE_ASSIGN_TO_USER,
+  Permission.ROLE_REVOKE_FROM_USER,
+  Permission.ROLE_ASSIGNMENT_VIEW,
+]);
+
+const PEOPLE_OPERATIONS_PERMISSIONS = Object.freeze([
+  Permission.ORG_UNIT_READ,
+  Permission.ORG_UNIT_LOOKUP,
+  Permission.ORG_UNIT_CREATE,
+  Permission.ORG_UNIT_UPDATE,
+  Permission.ORG_UNIT_MANAGE_HIERARCHY,
+  Permission.ORG_UNIT_MANAGE_LIFECYCLE,
+  Permission.EMPLOYMENT_PROFILE_READ,
+  Permission.EMPLOYMENT_PROFILE_LOOKUP,
+  Permission.EMPLOYMENT_PROFILE_CREATE,
+  Permission.EMPLOYMENT_PROFILE_UPDATE,
+  Permission.EMPLOYMENT_PROFILE_MANAGE_ORG_ASSIGNMENT,
+  Permission.EMPLOYMENT_PROFILE_MANAGE_MANAGER_ASSIGNMENT,
+  Permission.EMPLOYMENT_PROFILE_MANAGE_USER_LINKAGE,
+  Permission.EMPLOYMENT_PROFILE_MANAGE_LIFECYCLE,
+  Permission.EMPLOYMENT_TERMS_READ,
+  Permission.EMPLOYMENT_TERMS_MANAGE_DRAFT,
+  Permission.TALENT_READ,
+  Permission.TALENT_LOOKUP,
+  Permission.TALENT_CREATE,
+  Permission.TALENT_UPDATE,
+  Permission.TALENT_MANAGE_MANAGER,
+  Permission.TALENT_MANAGE_EMPLOYMENT_LINK,
+  Permission.TALENT_MANAGE_LIFECYCLE,
+  Permission.TALENT_GROUP_READ,
+  Permission.TALENT_GROUP_LOOKUP,
+  Permission.TALENT_GROUP_CREATE,
+  Permission.TALENT_GROUP_UPDATE,
+  Permission.TALENT_GROUP_MANAGE_LIFECYCLE,
+  Permission.TALENT_GROUP_MANAGE_MEMBERSHIP,
+  Permission.USER_VIEW,
+  Permission.USER_CREATE,
+  Permission.USER_PROVISION_ACCOUNT,
+  Permission.USER_AUTH_LINKAGE_SET,
+  Permission.USER_PASSWORD_SETUP_SEND,
+  Permission.WORK_SCHEDULE_READ,
+  Permission.KPI_READ,
+  Permission.KPI_READ_PROGRESS,
+]);
+
+const PRODUCTION_PERMISSIONS = Object.freeze([
+  Permission.EVENT_READ,
+  Permission.EVENT_LOOKUP,
+  Permission.EVENT_CREATE,
+  Permission.EVENT_UPDATE,
+  Permission.EVENT_MANAGE_ASSIGNMENTS,
+  Permission.EVENT_MANAGE_LIFECYCLE,
+  Permission.ORG_UNIT_LOOKUP,
+  Permission.EMPLOYMENT_PROFILE_LOOKUP,
+  Permission.TALENT_LOOKUP,
+  Permission.TALENT_GROUP_LOOKUP,
+  Permission.PLATFORM_ACCOUNT_READ,
+  Permission.PLATFORM_ACCOUNT_LOOKUP,
+  Permission.STUDIO_RESOURCE_READ,
+  Permission.STUDIO_RESOURCE_LOOKUP,
+  Permission.STUDIO_RESOURCE_CREATE,
+  Permission.STUDIO_RESOURCE_UPDATE,
+  Permission.STUDIO_RESOURCE_MANAGE_AVAILABILITY,
+  Permission.STUDIO_RESOURCE_MANAGE_LIFECYCLE,
+  Permission.WORK_SCHEDULE_READ,
+  Permission.WORK_SCHEDULE_CREATE,
+  Permission.WORK_SCHEDULE_UPDATE,
+  Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+]);
+
+const PLATFORM_PERMISSIONS = Object.freeze([
+  Permission.PLATFORM_ACCOUNT_READ,
+  Permission.PLATFORM_ACCOUNT_LOOKUP,
+  Permission.PLATFORM_ACCOUNT_CREATE,
+  Permission.PLATFORM_ACCOUNT_UPDATE,
+  Permission.PLATFORM_ACCOUNT_MANAGE_OWNERSHIP,
+  Permission.PLATFORM_ACCOUNT_MANAGE_LIFECYCLE,
+  Permission.PLATFORM_ACCOUNT_MANAGE_CAPABILITIES,
+]);
+
+const KPI_OPERATIONS_PERMISSIONS = Object.freeze([
+  Permission.KPI_READ,
+  Permission.KPI_CREATE_PLAN,
+  Permission.KPI_UPDATE_DRAFT,
+  Permission.KPI_PUBLISH,
+  Permission.KPI_MANAGE_ALLOCATION,
+  Permission.KPI_ARCHIVE,
+  Permission.KPI_ENTER_ACTUAL,
+  Permission.KPI_CORRECT_ACTUAL,
+  Permission.KPI_READ_PROGRESS,
+  Permission.KPI_FINALIZE,
+]);
+
+const COMMERCIAL_CONTRACT_PERMISSIONS = Object.freeze([
+  Permission.CONTRACT_REGISTRY_READ,
+  Permission.CONTRACT_REGISTRY_LOOKUP,
+  Permission.CONTRACT_REGISTRY_CREATE,
+  Permission.CONTRACT_REGISTRY_UPDATE,
+  Permission.CONTRACT_REGISTRY_MANAGE_OWNER,
+  Permission.CONTRACT_REGISTRY_MANAGE_FILE_REFERENCE,
+  Permission.CONTRACT_REGISTRY_MANAGE_LIFECYCLE,
+  Permission.CONTRACT_OBLIGATION_READ,
+  Permission.CONTRACT_OBLIGATION_MANAGE_DRAFT,
+  Permission.CONTRACT_OBLIGATION_DELIVER,
+  Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
+  Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_READ,
+  Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK,
+  Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_REMOVE,
+  Permission.EMPLOYMENT_PROFILE_LOOKUP,
+  Permission.TALENT_LOOKUP,
+  Permission.PLATFORM_ACCOUNT_LOOKUP,
+  Permission.EVENT_LOOKUP,
+]);
+
+const REVENUE_FINANCE_PERMISSIONS = Object.freeze([
+  Permission.REVENUE_LEDGER_READ,
+  Permission.REVENUE_LEDGER_LOOKUP,
+  Permission.REVENUE_LEDGER_CREATE,
+  Permission.REVENUE_LEDGER_UPDATE,
+  Permission.REVENUE_LEDGER_MANAGE_LIFECYCLE,
+  Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+  Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW,
+  Permission.DASHBOARD_LITE_READ,
+]);
+
+const REVENUE_APPROVER_PERMISSIONS = Object.freeze([
+  Permission.REVENUE_LEDGER_READ,
+  Permission.REVENUE_LEDGER_LOOKUP,
+  Permission.REVENUE_LEDGER_MANAGE_LIFECYCLE,
+  Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW,
+  Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+  Permission.REVENUE_LEDGER_PLATFORM_EARNING_VOID,
+  Permission.DASHBOARD_LITE_READ,
+]);
+
+const COMMISSION_OPS_PERMISSIONS = Object.freeze([
+  Permission.COMMISSION_RULE_READ,
+  Permission.COMMISSION_RULE_LOOKUP,
+  Permission.COMMISSION_RULE_CREATE,
+  Permission.COMMISSION_RULE_UPDATE,
+  Permission.COMMISSION_RULE_MANAGE_LIFECYCLE,
+  Permission.COMMISSION_SETTLEMENT_READ,
+  Permission.COMMISSION_SETTLEMENT_CREATE,
+  Permission.COMMISSION_SETTLEMENT_UPDATE,
+  Permission.COMMISSION_SETTLEMENT_MANAGE_LIFECYCLE,
+]);
+
+const VIEWER_AUDITOR_PERMISSIONS = Object.freeze([
+  Permission.EMPLOYMENT_TERMS_READ,
+  Permission.EMPLOYMENT_TERMS_AUDIT,
+  Permission.ORG_UNIT_READ,
+  Permission.EMPLOYMENT_PROFILE_READ,
+  Permission.TALENT_READ,
+  Permission.TALENT_GROUP_READ,
+  Permission.PLATFORM_ACCOUNT_READ,
+  Permission.STUDIO_RESOURCE_READ,
+  Permission.EVENT_READ,
+  Permission.WORK_SCHEDULE_READ,
+  Permission.CONTRACT_REGISTRY_READ,
+  Permission.CONTRACT_OBLIGATION_READ,
+  Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_READ,
+  Permission.TALENT_KPI_READ,
+  Permission.KPI_READ,
+  Permission.KPI_READ_PROGRESS,
+  Permission.COMMISSION_RULE_READ,
+  Permission.COMMISSION_SETTLEMENT_READ,
+  Permission.REVENUE_LEDGER_READ,
+  Permission.DASHBOARD_LITE_READ,
+]);
+
+const STAFF_CONSOLE_PERMISSIONS = Object.freeze([
+  Permission.WORK_SCHEDULE_READ,
+  Permission.EVENT_READ,
+  Permission.TALENT_KPI_READ,
+  Permission.KPI_READ_PROGRESS,
+  Permission.EMPLOYMENT_PROFILE_READ,
+  Permission.TALENT_READ,
+]);
+
+const GLOBAL_SCOPE_PLAN: readonly RoleTemplateScopePlanEntry[] = Object.freeze([
+  scopePlan("Work Schedule", ["global"], "READY"),
+  scopePlan("Event Assignment", ["global"], "READY"),
+  scopePlan("Contract Registry", ["global"], "READY"),
+  scopePlan("KPI", ["global"], "READY"),
+  scopePlan("Revenue Ledger", ["financeGlobal"], "READY"),
+  scopePlan("Commission", ["financeGlobal"], "READY"),
+  scopePlan("Dashboard Lite", ["global"], "READY"),
+]);
 
 export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
   Object.freeze([
-    {
-      code: "ADMIN_FULL",
-      version: TEMPLATE_VERSION,
-      name: "Admin Full",
-      description:
-        "Full explicit permission preset for administrative operators.",
+    template({
+      code: "OWNER_ADMIN",
+      name: "Owner Admin",
+      description: "Owner-controlled full administration preset.",
       category: "ADMINISTRATION",
       recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: ALL_PERMISSIONS,
@@ -90,370 +346,424 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         commission: Object.freeze(["global"]),
         dashboardLite: Object.freeze(["global"]),
       }),
-      scopePlan: GLOBAL_PREVIEW_SCOPE_PLAN,
-      warnings: Object.freeze([
-        "Scope grants are preview-only until Batch 3-F assignment-scope materialization or existing user-level grants are configured.",
-        "This template does not create elevated implicit access; every permission remains explicit.",
-      ]),
-      implementationNotes: Object.freeze([
-        "Includes every current Permission enum value.",
-        "Actor.roles remain non-authoritative for enforcement.",
-      ]),
-      status: "PREVIEW_ONLY",
-    },
-    {
+      scopePlan: GLOBAL_SCOPE_PLAN,
+      warnings: [
+        "Owner Admin is the explicit break-glass role and includes every current permission enum value.",
+        "Separation-of-duties constraints are not enforced by the template catalog.",
+      ],
+      implementationNotes: [
+        "Replaces legacy ADMIN_FULL for new role creation and bundle expansion.",
+      ],
+      status: "READY",
+    }),
+    template({
+      code: "ACCESS_ADMIN",
+      name: "Access Admin",
+      description: "User, role, and access assignment administration preset.",
+      category: "ACCESS_GOVERNANCE",
+      recommendedAccountContext: "ADMIN_CONSOLE",
+      permissions: GOVERNANCE_PERMISSIONS,
+      recommendedScopeGrants: scopeGrants({}),
+      scopePlan: [
+        scopePlan("Access Governance", ["global"], "READY"),
+      ],
+      warnings: [
+        "Can assign roles and modify user linkage; operational module permissions are intentionally excluded.",
+      ],
+      implementationNotes: [
+        "Uses current user and role governance permission keys only.",
+      ],
+      status: "READY",
+    }),
+    template({
       code: "HR_OPERATIONS",
-      version: TEMPLATE_VERSION,
       name: "HR Operations",
-      description:
-        "People, organization, employment, talent, and talent-group operations preset.",
+      description: "People, organization, employment, talent, and talent-group operations preset.",
       category: "PEOPLE_OPERATIONS",
       recommendedAccountContext: "ADMIN_CONSOLE",
-      permissions: Object.freeze([
-        Permission.ORG_UNIT_READ,
-        Permission.ORG_UNIT_LOOKUP,
-        Permission.ORG_UNIT_CREATE,
-        Permission.ORG_UNIT_UPDATE,
-        Permission.ORG_UNIT_MANAGE_HIERARCHY,
-        Permission.ORG_UNIT_MANAGE_LIFECYCLE,
-        Permission.EMPLOYMENT_PROFILE_READ,
-        Permission.EMPLOYMENT_PROFILE_LOOKUP,
-        Permission.EMPLOYMENT_PROFILE_CREATE,
-        Permission.EMPLOYMENT_PROFILE_UPDATE,
-        Permission.EMPLOYMENT_PROFILE_MANAGE_ORG_ASSIGNMENT,
-        Permission.EMPLOYMENT_PROFILE_MANAGE_MANAGER_ASSIGNMENT,
-        Permission.EMPLOYMENT_PROFILE_MANAGE_USER_LINKAGE,
-        Permission.EMPLOYMENT_PROFILE_MANAGE_LIFECYCLE,
-        Permission.EMPLOYMENT_TERMS_READ,
-        Permission.EMPLOYMENT_TERMS_READ_SENSITIVE,
-        Permission.EMPLOYMENT_TERMS_MANAGE_DRAFT,
-        Permission.EMPLOYMENT_TERMS_APPROVE,
-        Permission.EMPLOYMENT_TERMS_AUDIT,
-        Permission.TALENT_READ,
-        Permission.TALENT_LOOKUP,
-        Permission.TALENT_CREATE,
-        Permission.TALENT_UPDATE,
-        Permission.TALENT_MANAGE_MANAGER,
-        Permission.TALENT_MANAGE_EMPLOYMENT_LINK,
-        Permission.TALENT_MANAGE_LIFECYCLE,
-        Permission.TALENT_GROUP_READ,
-        Permission.TALENT_GROUP_LOOKUP,
-        Permission.TALENT_GROUP_CREATE,
-        Permission.TALENT_GROUP_UPDATE,
-        Permission.TALENT_GROUP_MANAGE_LIFECYCLE,
-        Permission.TALENT_GROUP_MANAGE_MEMBERSHIP,
-        Permission.STUDIO_RESOURCE_LOOKUP,
-        Permission.USER_VIEW,
-        Permission.USER_CREATE,
-        Permission.USER_PROVISION_ACCOUNT,
-        Permission.USER_AUTH_LINKAGE_SET,
-        Permission.USER_PASSWORD_SETUP_SEND,
-        Permission.WORK_SCHEDULE_READ,
-        Permission.KPI_READ,
-        Permission.KPI_READ_PROGRESS,
-      ]),
+      permissions: PEOPLE_OPERATIONS_PERMISSIONS,
       recommendedScopeGrants: scopeGrants({
         workSchedule: Object.freeze(["department"]),
         kpi: Object.freeze(["global"]),
       }),
-      scopePlan: Object.freeze([
-        scopePlan(
-          "People and Organization",
-          ["org-unit", "department"],
-          "REQUIRES_FUTURE_SCOPE",
-          "Desired HR scoping is org-unit or department, but these modules do not yet materialize object scope grants.",
-        ),
-        scopePlan(
-          "KPI",
-          ["global"],
-          "READY",
-          'Runtime grant: scopeGrants.kpi = ["global"] for read/progress visibility only; this template does not include KPI mutation permissions.',
-        ),
-        scopePlan(
-          "Work Schedule",
-          ["department"],
-          "PREVIEW_ONLY",
-          "Department scope can be expressed by current actor scope grants after Batch 3-F materialization.",
-        ),
-      ]),
-      warnings: Object.freeze([
-        "HR module scope is mostly future policy; generated permissions are global unless existing runtime grants restrict a route.",
-        "Revenue, commission, finance lifecycle, and role-management permissions are intentionally excluded.",
-      ]),
-      implementationNotes: Object.freeze([
-        "Uses current people, org, talent, talent-group, user-view, auth-linkage, and work-schedule read permissions.",
-      ]),
+      scopePlan: [
+        scopePlan("People and Organization", ["managedOrgUnit"], "REQUIRES_FUTURE_SCOPE"),
+        scopePlan("Work Schedule", ["department"], "READY"),
+        scopePlan("KPI", ["global"], "READY"),
+      ],
+      warnings: [
+        "Sensitive employment terms read, approval, audit, revenue, commission, and role-management permissions are intentionally excluded.",
+      ],
+      implementationNotes: [
+        "Normalizes the previous HR template to staff operations only; approval is split to HR_TERMS_APPROVER.",
+      ],
       status: "REQUIRES_FUTURE_SCOPE",
-    },
-    {
-      code: "TEAM_MANAGER",
-      version: TEMPLATE_VERSION,
-      name: "Team Manager",
-      description:
-        "Conservative team operations preset for schedules, assignments, labels, and KPI management.",
-      category: "MANAGEMENT",
-      recommendedAccountContext: "MANAGER_CONSOLE",
-      permissions: Object.freeze([
-        Permission.WORK_SCHEDULE_READ,
-        Permission.EVENT_READ,
-        Permission.EVENT_UPDATE,
-        Permission.EVENT_MANAGE_ASSIGNMENTS,
-        Permission.EVENT_MANAGE_LIFECYCLE,
-        Permission.TALENT_READ,
-        Permission.TALENT_GROUP_READ,
-        Permission.TALENT_KPI_READ,
-        Permission.TALENT_KPI_CREATE,
-        Permission.TALENT_KPI_UPDATE,
-        Permission.TALENT_KPI_MANAGE_METRICS,
-        Permission.KPI_READ,
-        Permission.KPI_READ_PROGRESS,
-        Permission.KPI_ENTER_ACTUAL,
-        Permission.KPI_CORRECT_ACTUAL,
-      ]),
-      recommendedScopeGrants: scopeGrants({
-        workSchedule: Object.freeze(["self", "team"]),
-        eventAssignment: Object.freeze(["managedGroup"]),
-        kpi: Object.freeze(["managedGroup"]),
-      }),
-      scopePlan: Object.freeze([
-        scopePlan(
-          "Work Schedule",
-          ["self", "team"],
-          "PREVIEW_ONLY",
-          "Team Managers may view managed team schedules. Official WorkShift mutation remains with global Production Ops dispatchers.",
-        ),
-        scopePlan(
-          "KPI",
-          ["managedGroup"],
-          "READY",
-          'Runtime grant: scopeGrants.kpi = ["managedGroup"]; access still requires active manager assignment.',
-        ),
-        scopePlan(
-          "Event Assignment",
-          ["managedGroup"],
-          "READY",
-          'Runtime grant: scopeGrants.eventAssignment = ["managedGroup"]; access is limited to events assigned to managed groups or active talents in those groups.',
-        ),
-      ]),
-      warnings: Object.freeze([
-        "Talent KPI object scope remains future policy.",
-        "Actual KPI workflow behavior is unchanged by this template.",
-        "User, role, finance finalize, and reconcile permissions are intentionally excluded.",
-      ]),
-      implementationNotes: Object.freeze([
-        "Includes work-schedule read permission only; official WorkShift mutation permissions are intentionally excluded.",
-      ]),
-      status: "REQUIRES_FUTURE_SCOPE",
-    },
-    {
-      code: "PRODUCTION_OPS",
-      version: TEMPLATE_VERSION,
-      name: "Production Ops",
-      description:
-        "Production operations preset for events, studio resources, work schedules, and platform display references.",
-      category: "PRODUCTION",
+    }),
+    template({
+      code: "HR_TERMS_APPROVER",
+      name: "HR Terms Approver",
+      description: "Employment terms sensitive-read, approval, and audit preset.",
+      category: "PEOPLE_APPROVAL",
       recommendedAccountContext: "ADMIN_CONSOLE",
-      permissions: Object.freeze([
-        Permission.EVENT_READ,
-        Permission.EVENT_CREATE,
-        Permission.EVENT_UPDATE,
-        Permission.EVENT_MANAGE_ASSIGNMENTS,
-        Permission.EVENT_MANAGE_LIFECYCLE,
-        Permission.ORG_UNIT_LOOKUP,
-        Permission.EMPLOYMENT_PROFILE_LOOKUP,
-        Permission.TALENT_LOOKUP,
-        Permission.TALENT_GROUP_LOOKUP,
-        Permission.PLATFORM_ACCOUNT_LOOKUP,
-        Permission.STUDIO_RESOURCE_LOOKUP,
-        Permission.EVENT_LOOKUP,
-        Permission.STUDIO_RESOURCE_READ,
-        Permission.STUDIO_RESOURCE_CREATE,
-        Permission.STUDIO_RESOURCE_UPDATE,
-        Permission.STUDIO_RESOURCE_MANAGE_AVAILABILITY,
-        Permission.STUDIO_RESOURCE_MANAGE_LIFECYCLE,
-        Permission.WORK_SCHEDULE_READ,
-        Permission.WORK_SCHEDULE_CREATE,
-        Permission.WORK_SCHEDULE_UPDATE,
-        Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
-        Permission.PLATFORM_ACCOUNT_READ,
-      ]),
-      recommendedScopeGrants: scopeGrants({
-        workSchedule: Object.freeze(["global"]),
-        eventAssignment: Object.freeze(["global"]),
-      }),
-      scopePlan: Object.freeze([
-        scopePlan(
-          "Production Operations",
-          ["event", "global", "studio", "department"],
-          "READY",
-          'Runtime grant: scopeGrants.eventAssignment = ["global"] because Production Ops is the current central event dispatcher.',
-        ),
-        scopePlan(
-          "Work Schedule",
-          ["global"],
-          "READY",
-          'Runtime grant: scopeGrants.workSchedule = ["global"] because Production Ops is the central Work Schedule dispatcher.',
-        ),
-      ]),
-      warnings: Object.freeze([
-        "Studio scope is not materialized by this batch.",
-        "Platform Account is read-only for assignment and display references.",
-      ]),
-      implementationNotes: Object.freeze([
-        "Uses current event-assignment, studio-resource, work-schedule, and platform-account read permissions.",
-      ]),
-      status: "REQUIRES_FUTURE_SCOPE",
-    },
-    {
-      code: "COMMERCIAL_FINANCE",
-      version: TEMPLATE_VERSION,
-      name: "Commercial Finance",
-      description:
-        "Commercial finance preset for revenue, commission, settlement, contract read, and dashboard read workflows.",
-      category: "FINANCE",
-      recommendedAccountContext: "ADMIN_CONSOLE",
-      permissions: Object.freeze([
+      permissions: [
         Permission.EMPLOYMENT_TERMS_READ,
         Permission.EMPLOYMENT_TERMS_READ_SENSITIVE,
         Permission.EMPLOYMENT_TERMS_APPROVE,
         Permission.EMPLOYMENT_TERMS_AUDIT,
-        Permission.REVENUE_LEDGER_READ,
-        Permission.REVENUE_LEDGER_LOOKUP,
-        Permission.REVENUE_LEDGER_CREATE,
-        Permission.REVENUE_LEDGER_UPDATE,
-        Permission.REVENUE_LEDGER_MANAGE_LIFECYCLE,
-        Permission.REVENUE_LEDGER_RECONCILE,
-        Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
-        Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW,
-        Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
-        Permission.REVENUE_LEDGER_PLATFORM_EARNING_VOID,
-        Permission.COMMISSION_RULE_READ,
-        Permission.COMMISSION_RULE_LOOKUP,
-        Permission.COMMISSION_RULE_CREATE,
-        Permission.COMMISSION_RULE_UPDATE,
-        Permission.COMMISSION_RULE_MANAGE_LIFECYCLE,
-        Permission.COMMISSION_SETTLEMENT_READ,
-        Permission.COMMISSION_SETTLEMENT_CREATE,
-        Permission.COMMISSION_SETTLEMENT_UPDATE,
-        Permission.COMMISSION_SETTLEMENT_MANAGE_LIFECYCLE,
-        Permission.CONTRACT_REGISTRY_READ,
-        Permission.CONTRACT_REGISTRY_LOOKUP,
-        Permission.CONTRACT_OBLIGATION_READ,
-        Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_READ,
-        Permission.CONTRACT_OBLIGATION_MANAGE_DRAFT,
-        Permission.CONTRACT_OBLIGATION_REVIEW,
-        Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
-        Permission.EMPLOYMENT_PROFILE_LOOKUP,
-        Permission.TALENT_LOOKUP,
-        Permission.PLATFORM_ACCOUNT_LOOKUP,
-        Permission.EVENT_LOOKUP,
-        Permission.KPI_READ,
-        Permission.KPI_READ_PROGRESS,
-        Permission.DASHBOARD_LITE_READ,
-      ]),
-      recommendedScopeGrants: scopeGrants({
-        contractRegistry: Object.freeze(["global"]),
-        kpi: Object.freeze(["global"]),
-        revenueLedger: Object.freeze(["global"]),
-        commission: Object.freeze(["global"]),
-        dashboardLite: Object.freeze(["global"]),
-      }),
-      scopePlan: Object.freeze([
-        scopePlan(
-          "Commercial Finance",
-          ["finance", "business-unit", "global"],
-          "REQUIRES_FUTURE_SCOPE",
-          "Current commercial finance route scope is mostly global-only until assignment-scope grants are implemented.",
-        ),
-        scopePlan(
-          "KPI",
-          ["global"],
-          "READY",
-          'Runtime grant: scopeGrants.kpi = ["global"] for read/progress reporting only; actual entry, correction, and finalization are excluded.',
-        ),
-      ]),
-      warnings: Object.freeze([
-        "Future separation-of-duties policy is needed for create, finalize, and reconcile combinations.",
-        "No assignment scope or scope grants are persisted by this template.",
-      ]),
-      implementationNotes: Object.freeze([
-        "Includes explicit revenue-ledger, commission-rule, commission-settlement, contract-read, and dashboard-read permissions.",
-      ]),
+      ],
+      recommendedScopeGrants: scopeGrants({}),
+      scopePlan: [
+        scopePlan("Employment Terms", ["managedOrgUnit"], "REQUIRES_FUTURE_SCOPE"),
+      ],
+      warnings: [
+        "Includes sensitive employment terms access and approval authority.",
+      ],
+      implementationNotes: [
+        "Separated from HR_OPERATIONS to avoid granting sensitive approval by default.",
+      ],
       status: "REQUIRES_FUTURE_SCOPE",
-    },
-    {
-      code: "TALENT_STAFF_SELF",
-      version: TEMPLATE_VERSION,
-      name: "Talent Staff Self",
-      description:
-        "Read-only self-intended baseline for talent-facing staff access.",
-      category: "SELF_SERVICE",
-      recommendedAccountContext: "STAFF_CONSOLE",
-      permissions: Object.freeze([
+    }),
+    template({
+      code: "PRODUCTION_OPS",
+      name: "Production Ops",
+      description: "Production operations preset for events, studio resources, and work schedules.",
+      category: "PRODUCTION",
+      recommendedAccountContext: "ADMIN_CONSOLE",
+      permissions: PRODUCTION_PERMISSIONS,
+      recommendedScopeGrants: scopeGrants({
+        workSchedule: Object.freeze(["global"]),
+        eventAssignment: Object.freeze(["global"]),
+      }),
+      scopePlan: [
+        scopePlan("Event Assignment", ["global", "assignedEvent"], "READY"),
+        scopePlan("Work Schedule", ["global"], "READY"),
+        scopePlan("Studio Resource", ["assignedStudioResource"], "REQUIRES_FUTURE_SCOPE"),
+      ],
+      warnings: [
+        "Platform Account is read/lookup only for assignment and display references.",
+      ],
+      implementationNotes: [
+        "Normalizes PRODUCTION_OPS by excluding Platform Account create/update/ownership/lifecycle/capabilities permissions.",
+      ],
+      status: "REQUIRES_FUTURE_SCOPE",
+    }),
+    template({
+      code: "PLATFORM_CHANNEL_OPS",
+      name: "Platform Channel Ops",
+      description: "Platform account metadata, ownership, lifecycle, and capability operations preset.",
+      category: "PLATFORM",
+      recommendedAccountContext: "ADMIN_CONSOLE",
+      permissions: PLATFORM_PERMISSIONS,
+      recommendedScopeGrants: scopeGrants({}),
+      scopePlan: [
+        scopePlan("Platform Account", ["assignedPlatformAccount", "global"], "REQUIRES_FUTURE_SCOPE"),
+      ],
+      warnings: [
+        "Credential access is outside the current Permission enum and is not granted by this template.",
+      ],
+      implementationNotes: [
+        "Uses existing platform account metadata and lifecycle permissions.",
+      ],
+      status: "REQUIRES_FUTURE_SCOPE",
+    }),
+    template({
+      code: "CREATIVE_VISUAL_LEAD",
+      name: "Creative Visual Lead",
+      description: "Creative lead preset for scoped event, studio-resource, talent, and schedule visibility.",
+      category: "CREATIVE",
+      recommendedAccountContext: "ADMIN_CONSOLE",
+      permissions: [
+        Permission.EVENT_READ,
+        Permission.EVENT_LOOKUP,
+        Permission.STUDIO_RESOURCE_READ,
+        Permission.STUDIO_RESOURCE_LOOKUP,
+        Permission.WORK_SCHEDULE_READ,
+        Permission.TALENT_READ,
+        Permission.TALENT_LOOKUP,
+        Permission.TALENT_GROUP_READ,
+        Permission.TALENT_GROUP_LOOKUP,
+      ],
+      recommendedScopeGrants: scopeGrants({
+        workSchedule: Object.freeze(["team"]),
+        eventAssignment: Object.freeze(["managedGroup"]),
+      }),
+      scopePlan: [
+        scopePlan("Creative Workflow", ["managedTalentGroup", "assignedEvent"], "REQUIRES_FUTURE_SCOPE"),
+      ],
+      warnings: [
+        "Creative project and visual-approval permissions do not exist yet; this is a visibility-only source-backed preset.",
+      ],
+      implementationNotes: [
+        "Uses event, studio, talent, and schedule read permissions available today.",
+      ],
+      status: "REQUIRES_FUTURE_SCOPE",
+    }),
+    template({
+      code: "CONTENT_OPS",
+      name: "Content Ops",
+      description: "Content operations preset for scoped event and studio operational visibility.",
+      category: "CONTENT",
+      recommendedAccountContext: "ADMIN_CONSOLE",
+      permissions: [
+        Permission.EVENT_READ,
+        Permission.EVENT_LOOKUP,
+        Permission.STUDIO_RESOURCE_READ,
+        Permission.STUDIO_RESOURCE_LOOKUP,
+        Permission.WORK_SCHEDULE_READ,
+        Permission.PLATFORM_ACCOUNT_READ,
+        Permission.PLATFORM_ACCOUNT_LOOKUP,
+      ],
+      recommendedScopeGrants: scopeGrants({
+        workSchedule: Object.freeze(["team"]),
+        eventAssignment: Object.freeze(["managedGroup"]),
+      }),
+      scopePlan: [
+        scopePlan("Content Workflow", ["managedTalentGroup", "assignedEvent"], "REQUIRES_FUTURE_SCOPE"),
+      ],
+      warnings: [
+        "Content project permissions do not exist yet; this is a source-backed operational visibility preset.",
+      ],
+      implementationNotes: [
+        "Uses event, studio, platform reference, and schedule read permissions available today.",
+      ],
+      status: "REQUIRES_FUTURE_SCOPE",
+    }),
+    template({
+      code: "TALENT_GROUP_MANAGER",
+      name: "Talent Group Manager",
+      description: "Manager capability preset for an explicitly assigned TalentGroup.",
+      category: "MANAGEMENT",
+      recommendedAccountContext: "MANAGER_CONSOLE",
+      permissions: [
         Permission.WORK_SCHEDULE_READ,
         Permission.EVENT_READ,
-        Permission.TALENT_KPI_READ,
-        Permission.KPI_READ_PROGRESS,
-        Permission.EMPLOYMENT_PROFILE_READ,
         Permission.TALENT_READ,
-      ]),
+        Permission.TALENT_GROUP_READ,
+        Permission.TALENT_KPI_READ,
+        Permission.KPI_READ,
+        Permission.KPI_READ_PROGRESS,
+        Permission.KPI_ENTER_ACTUAL,
+        Permission.KPI_CORRECT_ACTUAL,
+      ],
       recommendedScopeGrants: scopeGrants({
-        workSchedule: Object.freeze(["self"]),
-        kpi: Object.freeze(["self"]),
+        workSchedule: Object.freeze(["team"]),
+        eventAssignment: Object.freeze(["managedGroup"]),
+        kpi: Object.freeze(["managedGroup"]),
       }),
-      scopePlan: Object.freeze([
-        scopePlan(
-          "KPI",
-          ["self"],
-          "READY",
-          'Runtime grant: scopeGrants.kpi = ["self"] for own progress only.',
-        ),
-        scopePlan(
-          "Self Service",
-          ["self"],
-          "REQUIRES_FUTURE_SCOPE",
-          "Self-facing routes and object scope are mostly not implemented outside Work Schedule.",
-        ),
-      ]),
-      warnings: Object.freeze([
-        "Self-scope intent is preview-only and does not limit generated permissions by itself.",
-        "This template does not create staff-facing routes.",
-      ]),
-      implementationNotes: Object.freeze([
-        "Includes only read permissions needed to preview self-service intent.",
-      ]),
+      scopePlan: [
+        scopePlan("Talent Group", ["managedTalentGroup"], "READY"),
+        scopePlan("KPI", ["managedGroup"], "READY"),
+      ],
+      warnings: [
+        "Talent KPI object scope remains future policy; role enforcement remains permission-based.",
+      ],
+      implementationNotes: [
+        "Replaces legacy TEAM_MANAGER for target catalog and bundle expansion.",
+      ],
       status: "REQUIRES_FUTURE_SCOPE",
-    },
-    {
-      code: "VIEWER_AUDITOR",
-      version: TEMPLATE_VERSION,
-      name: "Viewer Auditor",
-      description:
-        "Read-only auditor preset across operational and commercial modules.",
-      category: "AUDIT",
-      recommendedAccountContext: "ADMIN_CONSOLE",
-      permissions: Object.freeze([
-        Permission.EMPLOYMENT_TERMS_READ,
-        Permission.EMPLOYMENT_TERMS_AUDIT,
+    }),
+    template({
+      code: "ORG_UNIT_MANAGER",
+      name: "Org Unit Manager",
+      description: "Manager capability preset for an explicitly assigned OrgUnit.",
+      category: "MANAGEMENT",
+      recommendedAccountContext: "MANAGER_CONSOLE",
+      permissions: [
         Permission.ORG_UNIT_READ,
         Permission.EMPLOYMENT_PROFILE_READ,
         Permission.TALENT_READ,
-        Permission.TALENT_GROUP_READ,
-        Permission.PLATFORM_ACCOUNT_READ,
-        Permission.STUDIO_RESOURCE_READ,
-        Permission.EVENT_READ,
         Permission.WORK_SCHEDULE_READ,
-        Permission.CONTRACT_REGISTRY_READ,
-        Permission.CONTRACT_OBLIGATION_READ,
-        Permission.CONTRACT_OBLIGATION_EVENT_EVIDENCE_LINK_READ,
-        Permission.TALENT_KPI_READ,
         Permission.KPI_READ,
         Permission.KPI_READ_PROGRESS,
-        Permission.COMMISSION_RULE_READ,
-        Permission.COMMISSION_SETTLEMENT_READ,
+        Permission.KPI_ENTER_ACTUAL,
+        Permission.KPI_CORRECT_ACTUAL,
+      ],
+      recommendedScopeGrants: scopeGrants({
+        workSchedule: Object.freeze(["department"]),
+        kpi: Object.freeze(["managedGroup"]),
+      }),
+      scopePlan: [
+        scopePlan("Org Unit", ["managedOrgUnit"], "REQUIRES_FUTURE_SCOPE"),
+      ],
+      warnings: [
+        "OrgUnit manager object scoping is not yet materialized outside structured assignment scope metadata.",
+      ],
+      implementationNotes: [
+        "Uses source-backed people, schedule, and KPI permissions only.",
+      ],
+      status: "REQUIRES_FUTURE_SCOPE",
+    }),
+    template({
+      code: "KPI_OPERATIONS",
+      name: "KPI Operations",
+      description: "KPI plan, allocation, actual, correction, progress, and finalize operations preset.",
+      category: "KPI",
+      recommendedAccountContext: "ADMIN_CONSOLE",
+      permissions: KPI_OPERATIONS_PERMISSIONS,
+      recommendedScopeGrants: scopeGrants({
+        kpi: Object.freeze(["global"]),
+      }),
+      scopePlan: [
+        scopePlan("KPI", ["global"], "READY"),
+      ],
+      warnings: [
+        "Includes KPI finalize authority; approval policy is not split by the current Permission enum.",
+      ],
+      implementationNotes: [
+        "Uses current KPI V2 permission keys.",
+      ],
+      status: "READY",
+    }),
+    template({
+      code: "COMMERCIAL_CONTRACT_OPS",
+      name: "Commercial Contract Ops",
+      description: "Contract registry and obligation operations preset without finance approval authority.",
+      category: "COMMERCIAL",
+      recommendedAccountContext: "ADMIN_CONSOLE",
+      permissions: COMMERCIAL_CONTRACT_PERMISSIONS,
+      recommendedScopeGrants: scopeGrants({
+        contractRegistry: Object.freeze(["global"]),
+      }),
+      scopePlan: [
+        scopePlan("Contract Portfolio", ["contractPortfolio"], "READY"),
+      ],
+      warnings: [
+        "Contract obligation review is intentionally excluded from this operations preset.",
+      ],
+      implementationNotes: [
+        "Uses current contract registry and obligation operation permissions.",
+      ],
+      status: "READY",
+    }),
+    template({
+      code: "REVENUE_FINANCE_OPS",
+      name: "Revenue Finance Ops",
+      description: "Revenue ledger maker and platform earning review operations preset.",
+      category: "FINANCE",
+      recommendedAccountContext: "ADMIN_CONSOLE",
+      permissions: REVENUE_FINANCE_PERMISSIONS,
+      recommendedScopeGrants: scopeGrants({
+        revenueLedger: Object.freeze(["global"]),
+        dashboardLite: Object.freeze(["global"]),
+      }),
+      scopePlan: [
+        scopePlan("Revenue Ledger", ["financeGlobal", "financePeriod"], "READY"),
+      ],
+      warnings: [
+        "Approval, void, and reconcile permissions are split to approver/reconciler roles.",
+      ],
+      implementationNotes: [
+        "Replaces the revenue portion of legacy COMMERCIAL_FINANCE for new roles.",
+      ],
+      status: "READY",
+    }),
+    template({
+      code: "REVENUE_APPROVER",
+      name: "Revenue Approver",
+      description: "Revenue ledger approval, void, and lifecycle authority preset.",
+      category: "FINANCE_APPROVAL",
+      recommendedAccountContext: "ADMIN_CONSOLE",
+      permissions: REVENUE_APPROVER_PERMISSIONS,
+      recommendedScopeGrants: scopeGrants({
+        revenueLedger: Object.freeze(["global"]),
+        dashboardLite: Object.freeze(["global"]),
+      }),
+      scopePlan: [
+        scopePlan("Revenue Ledger", ["financeGlobal", "financePeriod"], "READY"),
+      ],
+      warnings: [
+        "Includes sensitive revenue approval and void authority.",
+      ],
+      implementationNotes: [
+        "Uses current revenue platform earning approval permissions.",
+      ],
+      status: "READY",
+    }),
+    template({
+      code: "REVENUE_RECONCILER",
+      name: "Revenue Reconciler",
+      description: "Revenue ledger reconciliation and reporting preset.",
+      category: "FINANCE_RECONCILIATION",
+      recommendedAccountContext: "ADMIN_CONSOLE",
+      permissions: [
         Permission.REVENUE_LEDGER_READ,
+        Permission.REVENUE_LEDGER_LOOKUP,
+        Permission.REVENUE_LEDGER_RECONCILE,
         Permission.DASHBOARD_LITE_READ,
-      ]),
+      ],
+      recommendedScopeGrants: scopeGrants({
+        revenueLedger: Object.freeze(["global"]),
+        dashboardLite: Object.freeze(["global"]),
+      }),
+      scopePlan: [
+        scopePlan("Revenue Ledger", ["financeGlobal", "financePeriod"], "READY"),
+      ],
+      warnings: [
+        "Includes reconciliation authority.",
+      ],
+      implementationNotes: [
+        "Separated from Revenue Finance Ops for target SoD alignment.",
+      ],
+      status: "READY",
+    }),
+    template({
+      code: "COMMISSION_OPS",
+      name: "Commission Ops",
+      description: "Commission rule and settlement operations preset.",
+      category: "COMMISSION",
+      recommendedAccountContext: "ADMIN_CONSOLE",
+      permissions: COMMISSION_OPS_PERMISSIONS,
+      recommendedScopeGrants: scopeGrants({
+        commission: Object.freeze(["global"]),
+      }),
+      scopePlan: [
+        scopePlan("Commission", ["financeGlobal", "financePeriod"], "READY"),
+      ],
+      warnings: [
+        "The current Permission enum does not split commission draft from finalize.",
+      ],
+      implementationNotes: [
+        "Replaces the commission operations portion of legacy COMMERCIAL_FINANCE for new roles.",
+      ],
+      status: "READY",
+    }),
+    template({
+      code: "COMMISSION_APPROVER",
+      name: "Commission Approver",
+      description: "Commission settlement approval-oriented preset using available settlement lifecycle permission.",
+      category: "COMMISSION_APPROVAL",
+      recommendedAccountContext: "ADMIN_CONSOLE",
+      permissions: [
+        Permission.COMMISSION_SETTLEMENT_READ,
+        Permission.COMMISSION_SETTLEMENT_MANAGE_LIFECYCLE,
+      ],
+      recommendedScopeGrants: scopeGrants({
+        commission: Object.freeze(["global"]),
+      }),
+      scopePlan: [
+        scopePlan("Commission", ["financeGlobal", "financePeriod"], "REQUIRES_FUTURE_SCOPE"),
+      ],
+      warnings: [
+        "The current Permission enum does not expose a distinct commission approval permission.",
+      ],
+      implementationNotes: [
+        "Uses settlement lifecycle as the closest available source-backed approver capability.",
+      ],
+      status: "REQUIRES_FUTURE_SCOPE",
+    }),
+    futureTemplate("ATTENDANCE_OPS", "Attendance Ops", "Attendance operations preset.", "ATTENDANCE", "ADMIN_CONSOLE", ["attendancePeriodOrg"]),
+    futureTemplate("LEAVE_REVIEWER", "Leave Reviewer", "Leave request review preset.", "ATTENDANCE_REVIEW", "ADMIN_CONSOLE", ["attendancePeriodOrg"]),
+    futureTemplate("ATTENDANCE_APPROVER", "Attendance Approver", "Attendance approval preset.", "ATTENDANCE_APPROVAL", "ADMIN_CONSOLE", ["attendancePeriodOrg"]),
+    futureTemplate("MONTHLY_CLOSE_OWNER", "Monthly Close Owner", "Monthly close ownership preset.", "MONTHLY_CLOSE", "ADMIN_CONSOLE", ["financePeriod", "payrollPeriod"]),
+    futureTemplate("PAYROLL_DRAFT_OPS", "Payroll Draft Ops", "Payroll draft operations preset.", "PAYROLL", "ADMIN_CONSOLE", ["payrollPeriod"]),
+    futureTemplate("PAYROLL_DRAFT_APPROVER", "Payroll Draft Approver", "Payroll draft approval preset.", "PAYROLL_APPROVAL", "ADMIN_CONSOLE", ["payrollPeriod"]),
+    template({
+      code: "VIEWER_AUDITOR",
+      name: "Viewer Auditor",
+      description: "Read-only auditor preset across operational and commercial modules.",
+      category: "AUDIT",
+      recommendedAccountContext: "ADMIN_CONSOLE",
+      permissions: VIEWER_AUDITOR_PERMISSIONS,
       recommendedScopeGrants: scopeGrants({
         workSchedule: Object.freeze(["global"]),
         eventAssignment: Object.freeze(["global"]),
@@ -464,51 +774,65 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         commission: Object.freeze(["global"]),
         dashboardLite: Object.freeze(["global"]),
       }),
-      scopePlan: Object.freeze([
-        scopePlan(
-          "Read Only Audit",
-          ["module", "org", "global"],
-          "REQUIRES_FUTURE_SCOPE",
-          "Final auditor scope policy must be product-confirmed per module.",
-        ),
-        scopePlan(
-          "KPI",
-          ["global"],
-          "READY",
-          'Runtime grant: scopeGrants.kpi = ["global"] for read/progress audit only; no KPI mutations are included.',
-        ),
-      ]),
-      warnings: Object.freeze([
-        "User and Role read permissions are excluded by default because governance visibility is sensitive.",
-        "No create, update, lifecycle, finalize, or reconcile permissions are included.",
-      ]),
-      implementationNotes: Object.freeze([
-        "Uses current read-only Permission enum values across non-governance modules.",
-      ]),
+      scopePlan: GLOBAL_SCOPE_PLAN,
+      warnings: [
+        "Sensitive employment terms read and user/role governance visibility are excluded by default.",
+        "No create, update, lifecycle, finalize, approve, void, or reconcile permissions are included.",
+      ],
+      implementationNotes: [
+        "Normalizes VIEWER_AUDITOR as the target auditor role and replaces AUDITOR_READ_ONLY_BUNDLE usage with AUDITOR_BUNDLE.",
+      ],
+      status: "READY",
+    }),
+    template({
+      code: "STAFF_CONSOLE_USER",
+      name: "Staff Console User",
+      description: "Read-only self-intended baseline for staff console access.",
+      category: "SELF_SERVICE",
+      recommendedAccountContext: "STAFF_CONSOLE",
+      permissions: STAFF_CONSOLE_PERMISSIONS,
+      recommendedScopeGrants: scopeGrants({
+        workSchedule: Object.freeze(["self"]),
+        kpi: Object.freeze(["self"]),
+      }),
+      scopePlan: [
+        scopePlan("Self Service", ["self"], "REQUIRES_FUTURE_SCOPE"),
+        scopePlan("KPI", ["self"], "READY"),
+      ],
+      warnings: [
+        "Self-scope intent relies on route-level object checks; generated permissions alone are not a scope boundary.",
+      ],
+      implementationNotes: [
+        "Replaces legacy TALENT_STAFF_SELF for new role creation and staff-console bundles.",
+      ],
       status: "REQUIRES_FUTURE_SCOPE",
-    },
+    }),
   ]);
 
 const CATALOG_BY_CODE = new Map<RoleTemplateCode, RoleTemplateDefinition>(
-  ROLE_TEMPLATE_CATALOG.map((template) => [template.code, template]),
+  ROLE_TEMPLATE_CATALOG.map((item) => [item.code, item]),
+);
+
+const LEGACY_BY_CODE = new Map<LegacyRoleTemplateCode, LegacyRoleTemplateMapping>(
+  LEGACY_ROLE_TEMPLATE_COMPATIBILITY.map((item) => [item.legacyCode, item]),
 );
 
 validateRoleTemplateCatalog();
 
 export function listRoleTemplates(): readonly RoleTemplateListItem[] {
-  return ROLE_TEMPLATE_CATALOG.map((template) => ({
-    code: template.code,
-    version: template.version,
-    name: template.name,
-    description: template.description,
-    category: template.category,
-    recommendedAccountContext: template.recommendedAccountContext,
-    scopePlan: template.scopePlan,
-    recommendedScopeGrants: template.recommendedScopeGrants,
-    warnings: template.warnings,
-    implementationNotes: template.implementationNotes,
-    status: template.status,
-    permissionCount: template.permissions.length,
+  return ROLE_TEMPLATE_CATALOG.map((item) => ({
+    code: item.code,
+    version: item.version,
+    name: item.name,
+    description: item.description,
+    category: item.category,
+    recommendedAccountContext: item.recommendedAccountContext,
+    scopePlan: item.scopePlan,
+    recommendedScopeGrants: item.recommendedScopeGrants,
+    warnings: item.warnings,
+    implementationNotes: item.implementationNotes,
+    status: item.status,
+    permissionCount: item.permissions.length,
   }));
 }
 
@@ -521,8 +845,25 @@ export function getRoleTemplate(code: string): RoleTemplateDefinition | null {
   return CATALOG_BY_CODE.get(normalized) ?? null;
 }
 
+export function getLegacyRoleTemplateMapping(
+  code: string,
+): LegacyRoleTemplateMapping | null {
+  const normalized = normalizeRoleTemplateCode(code);
+  if (!isLegacyRoleTemplateCode(normalized)) {
+    return null;
+  }
+
+  return LEGACY_BY_CODE.get(normalized) ?? null;
+}
+
 export function isRoleTemplateCode(code: string): code is RoleTemplateCode {
   return ROLE_TEMPLATE_CODES.includes(code as RoleTemplateCode);
+}
+
+export function isLegacyRoleTemplateCode(
+  code: string,
+): code is LegacyRoleTemplateCode {
+  return LEGACY_ROLE_TEMPLATE_CODES.includes(code as LegacyRoleTemplateCode);
 }
 
 export function normalizeRoleTemplateCode(code: string): string {
@@ -533,23 +874,23 @@ export function validateRoleTemplateCatalog(): void {
   const knownPermissionCodes = new Set<string>(Object.values(Permission));
   const seenCodes = new Set<string>();
 
-  for (const template of ROLE_TEMPLATE_CATALOG) {
-    if (seenCodes.has(template.code)) {
-      throw new Error(`Duplicate role template code: ${template.code}`);
+  for (const item of ROLE_TEMPLATE_CATALOG) {
+    if (seenCodes.has(item.code)) {
+      throw new Error(`Duplicate role template code: ${item.code}`);
     }
-    seenCodes.add(template.code);
+    seenCodes.add(item.code);
 
     const seenPermissions = new Set<Permission>();
-    for (const permission of template.permissions) {
+    for (const permission of item.permissions) {
       if (!knownPermissionCodes.has(permission)) {
         throw new Error(
-          `Role template ${template.code} contains unknown permission: ${permission}`,
+          `Role template ${item.code} contains unknown permission: ${permission}`,
         );
       }
 
       if (seenPermissions.has(permission)) {
         throw new Error(
-          `Role template ${template.code} contains duplicate permission: ${permission}`,
+          `Role template ${item.code} contains duplicate permission: ${permission}`,
         );
       }
 
@@ -570,11 +911,67 @@ export function validateRoleTemplateCatalog(): void {
   }
 }
 
+function template(
+  definition: Omit<RoleTemplateDefinition, "version">,
+): RoleTemplateDefinition {
+  return Object.freeze({
+    ...definition,
+    version: TEMPLATE_VERSION,
+    permissions: Object.freeze([...definition.permissions]),
+    recommendedScopeGrants: scopeGrants(definition.recommendedScopeGrants),
+    scopePlan: Object.freeze([...definition.scopePlan]),
+    warnings: Object.freeze([...definition.warnings]),
+    implementationNotes: Object.freeze([...definition.implementationNotes]),
+  });
+}
+
+function futureTemplate(
+  code: RoleTemplateCode,
+  name: string,
+  description: string,
+  category: string,
+  recommendedAccountContext: AccountContext,
+  scopes: readonly string[],
+): RoleTemplateDefinition {
+  return template({
+    code,
+    name,
+    description,
+    category,
+    recommendedAccountContext,
+    permissions: Object.freeze([]),
+    recommendedScopeGrants: scopeGrants({}),
+    scopePlan: [
+      scopePlan(name, scopes, "REQUIRES_FUTURE_SCOPE"),
+    ],
+    warnings: [
+      "No source permission keys exist for this target role yet; this placeholder grants no runtime permissions.",
+    ],
+    implementationNotes: [
+      "Kept in the active catalog so target role/bundle codes are stable while implementation catches up.",
+    ],
+    status: "REQUIRES_FUTURE_SCOPE",
+  });
+}
+
+function legacyMap(
+  legacyCode: LegacyRoleTemplateCode,
+  replacementRoleCodes: readonly RoleTemplateCode[],
+  replacementBundleCodes: readonly string[],
+): LegacyRoleTemplateMapping {
+  return Object.freeze({
+    legacyCode,
+    replacementRoleCodes: Object.freeze([...replacementRoleCodes]),
+    replacementBundleCodes: Object.freeze([...replacementBundleCodes]),
+    note: "Compatibility metadata only; legacy code is not returned by the active template catalog and cannot be used for new template creation.",
+  });
+}
+
 function scopePlan(
   module: string,
   scopes: readonly string[],
   status: RoleTemplateStatus,
-  note = "Preview-only scope plan; this batch does not persist or materialize scope grants.",
+  note = "Scope plan records target policy intent; runtime enforcement remains permission and route-guard based unless the module already materializes assignment scope.",
 ): RoleTemplateScopePlanEntry {
   return Object.freeze({
     module,
