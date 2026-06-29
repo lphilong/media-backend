@@ -3,9 +3,10 @@ import { Actor } from "@core/actor/actor";
 import { SystemInvariantError } from "@core/error/system-error";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { KpiSubjectReadonlyAccess } from "./kpi-subject-readonly-access";
-import { OrgUnitManagerAssignmentRepository } from "./org-unit-manager-assignment.repository";
-import { TalentGroupManagerAssignmentRepository } from "./talent-group-manager-assignment.repository";
-import { OrgUnitManagerAssignment, OrgUnitManagerRole } from "./kpi.types";
+import {
+  ResponsibilityManagedOrgUnitScope,
+  ResponsibilityManagedScopeReader,
+} from "@modules/responsibility/domain/responsibility-managed-scope";
 
 export const MANAGED_UNIT_KINDS = ["TALENT_GROUP", "ORG_UNIT"] as const;
 
@@ -13,9 +14,10 @@ export type ManagedUnitKind = (typeof MANAGED_UNIT_KINDS)[number];
 
 export interface ManagedOrgUnitScope {
   readonly orgUnitId: string;
-  readonly role: OrgUnitManagerRole;
+  readonly role: string | null;
   readonly includeDescendants: boolean;
   readonly actionMask: readonly string[];
+  readonly isPrimary: boolean;
 }
 
 export interface ManagedUnitScope {
@@ -34,14 +36,7 @@ export interface ManagedUnitAuthorityDependencies {
     KpiSubjectReadonlyAccess,
     "findActiveEmploymentProfileByLinkedUserId"
   >;
-  readonly managerAssignmentRepository: Pick<
-    TalentGroupManagerAssignmentRepository,
-    "listActiveAssignmentsByManagerEmploymentProfile"
-  >;
-  readonly orgUnitManagerAssignmentRepository?: Pick<
-    OrgUnitManagerAssignmentRepository,
-    "listActiveByManagerEmploymentProfileId"
-  >;
+  readonly managedScopeReader: ResponsibilityManagedScopeReader;
 }
 
 export interface ResolveManagedUnitAuthorityOptions {
@@ -83,23 +78,19 @@ export async function resolveManagedUnitAuthority(
     return createManagedUnitAuthority(null, [], []);
   }
 
-  const talentGroupAssignments =
-    await dependencies.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-      employmentProfile.employmentProfileId,
-      options.asOf ?? Date.now(),
+  const managedScope =
+    await dependencies.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
+      {
+        responsibleEmploymentProfileId: employmentProfile.employmentProfileId,
+        asOf: options.asOf ?? Date.now(),
+      },
       options.session,
     );
-  const orgUnitAssignments =
-    (await dependencies.orgUnitManagerAssignmentRepository?.listActiveByManagerEmploymentProfileId(
-      employmentProfile.employmentProfileId,
-      options.asOf ?? Date.now(),
-      options.session,
-    )) ?? [];
 
   return createManagedUnitAuthority(
     employmentProfile.employmentProfileId,
-    talentGroupAssignments.map((assignment) => assignment.groupId),
-    orgUnitAssignments,
+    managedScope.talentGroupIds,
+    managedScope.orgUnitScopes,
   );
 }
 
@@ -116,7 +107,7 @@ export function managedUnitScopeIncludes(
 function createManagedUnitAuthority(
   actorEmploymentProfileId: string | null,
   talentGroupIds: readonly string[],
-  orgUnitAssignments: readonly OrgUnitManagerAssignment[],
+  orgUnitAssignments: readonly ResponsibilityManagedOrgUnitScope[],
 ): ManagedUnitAuthority {
   const orgUnitScopes = uniqueOrgUnitScopes(orgUnitAssignments);
   return {
@@ -138,7 +129,7 @@ function uniqueNonEmpty(values: readonly string[]): readonly string[] {
 }
 
 function uniqueOrgUnitScopes(
-  assignments: readonly OrgUnitManagerAssignment[],
+  assignments: readonly ResponsibilityManagedOrgUnitScope[],
 ): readonly ManagedOrgUnitScope[] {
   const scopes = new Map<string, ManagedOrgUnitScope>();
   for (const assignment of assignments) {
@@ -158,6 +149,7 @@ function uniqueOrgUnitScopes(
         role: assignment.role,
         includeDescendants: assignment.includeDescendants,
         actionMask: uniqueNonEmpty(assignment.actionMask),
+        isPrimary: assignment.isPrimary,
       });
     }
   }

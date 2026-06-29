@@ -6,8 +6,7 @@ import { EmploymentProfileRepository } from "@modules/employment-profile/domain/
 import { EventAssignmentPermissionScopeError } from "@modules/event-assignment/domain/event-assignment.errors";
 import { ManagerEventSummaryView } from "@modules/event-assignment/domain/event-assignment.types";
 import { EventAssignmentReadRepository } from "@modules/event-assignment/read/event-assignment.read-repository";
-import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
-import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
+import { ResponsibilityManagedScopeReader } from "@modules/responsibility/domain/responsibility-managed-scope";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 export class ManagerWorkspaceEventAdminService {
@@ -16,14 +15,7 @@ export class ManagerWorkspaceEventAdminService {
       EmploymentProfileRepository,
       "findNonArchivedByLinkedUserId"
     >,
-    private readonly talentGroupManagerAssignmentRepository: Pick<
-      TalentGroupManagerAssignmentRepository,
-      "listActiveAssignmentsByManagerEmploymentProfile"
-    >,
-    private readonly orgUnitManagerAssignmentRepository: Pick<
-      OrgUnitManagerAssignmentRepository,
-      "listActiveByManagerEmploymentProfileId"
-    >,
+    private readonly managedScopeReader: ResponsibilityManagedScopeReader,
     private readonly readRepository: Pick<
       EventAssignmentReadRepository,
       "listManagerEventSummaries" | "getManagerEventSummary"
@@ -84,23 +76,23 @@ export class ManagerWorkspaceEventAdminService {
         "Active linked EmploymentProfile is required",
       );
     }
-    const asOf = this.clock();
-    const [orgUnits, talentGroups] = await Promise.all([
-      this.orgUnitManagerAssignmentRepository.listActiveByManagerEmploymentProfileId(
-        profile.id,
-        asOf,
-      ),
-      this.talentGroupManagerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-        profile.id,
-        asOf,
-      ),
-    ]);
+    const managedScope =
+      await this.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
+        {
+          responsibleEmploymentProfileId: profile.id,
+          asOf: this.clock(),
+        },
+      );
     const [orgUnitIds, talentGroupIds] = await Promise.all([
-      filterManagedOrgUnitIds(this.structuredAuthority, actor, orgUnits),
+      filterManagedOrgUnitIds(
+        this.structuredAuthority,
+        actor,
+        managedScope.orgUnitIds,
+      ),
       filterManagedTalentGroupIds(
         this.structuredAuthority,
         actor,
-        talentGroups.map((item) => item.groupId),
+        managedScope.talentGroupIds,
       ),
     ]);
     return {
@@ -113,18 +105,17 @@ export class ManagerWorkspaceEventAdminService {
 async function filterManagedOrgUnitIds(
   service: StructuredScopeAuthorityService,
   actor: Actor,
-  assignments: readonly { readonly orgUnitId: string }[],
+  orgUnitIds: readonly string[],
 ): Promise<readonly string[]> {
   const authorized = await Promise.all(
-    [...new Set(assignments.map((item) => item.orgUnitId))].map(
-      async (orgUnitId) =>
-        (await service.hasAuthority({
-          userId: actor.id,
-          permission: Permission.EVENT_READ,
-          scope: { scopeType: "managedOrgUnit", targetId: orgUnitId },
-        }))
-          ? orgUnitId
-          : null,
+    [...new Set(orgUnitIds)].map(async (orgUnitId) =>
+      (await service.hasAuthority({
+        userId: actor.id,
+        permission: Permission.EVENT_READ,
+        scope: { scopeType: "managedOrgUnit", targetId: orgUnitId },
+      }))
+        ? orgUnitId
+        : null,
     ),
   );
   return authorized.filter((id): id is string => id !== null).sort();

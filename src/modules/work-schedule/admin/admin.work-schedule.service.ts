@@ -21,6 +21,7 @@ import {
   createStructuredLogger,
   StructuredLogger,
 } from "@infra/logger.adapter";
+import { ResponsibilityManagedScopeReader } from "@modules/responsibility/domain/responsibility-managed-scope";
 import {
   WorkScheduleConflictError,
   WorkScheduleInvalidResourceReferenceError,
@@ -138,6 +139,7 @@ export class WorkScheduleAdminService {
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
     private readonly logger: StructuredLogger = createStructuredLogger(),
+    private readonly managedScopeReader?: ResponsibilityManagedScopeReader,
   ) {}
 
   async createWorkShift(
@@ -1319,8 +1321,12 @@ export class WorkScheduleAdminService {
 
       case "team":
         if (
-          targetProfile.managerEmploymentProfileId ===
-          actorProfile.id
+          (
+            await this.resolveManagedEmploymentProfileIds(
+              actorProfile.id,
+              session,
+            )
+          ).includes(targetProfile.id)
         ) {
           return;
         }
@@ -1358,6 +1364,35 @@ export class WorkScheduleAdminService {
     }
 
     return actorProfile;
+  }
+
+  private async resolveManagedEmploymentProfileIds(
+    managerEmploymentProfileId: string,
+    session?: ClientSession,
+  ): Promise<readonly string[]> {
+    if (!this.managedScopeReader) {
+      throw new SystemInvariantError(
+        "SYSTEM_INVARIANT_VIOLATION",
+        "WorkSchedule team scope requires central responsibility managed-scope reader",
+      );
+    }
+    const managedScope =
+      await this.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
+        {
+          responsibleEmploymentProfileId: managerEmploymentProfileId,
+          asOf: Date.now(),
+        },
+        session,
+      );
+    if (managedScope.talentGroupIds.length === 0) {
+      return [];
+    }
+    const ids =
+      await this.employmentProfileReadonlyAccess.listIdsByActiveTalentGroupIds(
+        managedScope.talentGroupIds,
+        session,
+      );
+    return [...new Set(ids)].sort();
   }
 
   private async recordAudit(params: {

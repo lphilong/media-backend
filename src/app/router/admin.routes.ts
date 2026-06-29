@@ -19,6 +19,7 @@ import { createCommissionRevenueShareInfra } from "@infra/providers/commission.i
 import { createRevenueLedgerInfra } from "@infra/providers/revenue-ledger.infra";
 import { createDashboardLiteInfra } from "@infra/providers/dashboard-lite.infra";
 import { createPeopleReadinessInfra } from "@infra/providers/people-readiness.infra";
+import { createResponsibilityInfra } from "@infra/providers/responsibility.infra";
 import { NativeMongoReferenceLookupReadRepository } from "@infra/mongo/reference-lookup/reference-lookup.read-repository";
 import { auditScopeMiddleware } from "@core/audit/audit.scope.middleware";
 import { MongoAuthoritativeAdminMutationBridge } from "@core/application/mongo-authoritative-admin-mutation.bridge";
@@ -210,6 +211,9 @@ import { DashboardLiteAdminQueryService } from "@modules/dashboard-lite/admin/ad
 import { adminPeopleReadinessRoutes } from "@modules/people-readiness/admin/admin.people-readiness.routes";
 import { PeopleReadinessAdminController } from "@modules/people-readiness/admin/admin.people-readiness.controller";
 import { PeopleReadinessAdminService } from "@modules/people-readiness/admin/admin.people-readiness.service";
+import { adminResponsibilityRoutes } from "@modules/responsibility/admin/admin.responsibility.routes";
+import { ResponsibilityAdminController } from "@modules/responsibility/admin/admin.responsibility.controller";
+import { ResponsibilityAdminService } from "@modules/responsibility/admin/admin.responsibility.service";
 
 export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   const r = Router();
@@ -449,9 +453,10 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     kpiActualRepository,
     kpiBusinessCodeSequenceRepository,
     kpiSubjectReadonlyAccess,
-    talentGroupManagerAssignmentRepository,
-    orgUnitManagerAssignmentRepository,
   } = createKpiInfra(infra.primaryDb);
+  const { responsibilityAssignmentRepository } = createResponsibilityInfra(
+    infra.primaryDb,
+  );
   const {
     commissionRepository,
     businessCodeSequenceRepository: commissionBusinessCodeSequenceRepository,
@@ -479,6 +484,16 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     employmentTermsReadinessReadonlyAccess,
   } = createPeopleReadinessInfra(infra.primaryDb);
 
+  const responsibilityService = new ResponsibilityAdminService(
+    responsibilityAssignmentRepository,
+    authoritativeAuditGuard,
+    adminMutationBridge,
+  );
+  const responsibilityController = new ResponsibilityAdminController(
+    responsibilityService,
+  );
+  r.use("/responsibilities", adminResponsibilityRoutes(responsibilityController));
+
   const orgUnitService = new OrgUnitAdminService(
     orgUnitRepository,
     orgUnitBusinessCodeSequenceRepository,
@@ -494,7 +509,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     structuredScopeAuthority,
     {
       subjectReadonlyAccess: kpiSubjectReadonlyAccess,
-      managerAssignmentRepository: orgUnitManagerAssignmentRepository,
+      managedScopeReader: responsibilityAssignmentRepository,
     },
   );
 
@@ -506,10 +521,11 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     new OrgUnitResponsibilityAdminController(
       new OrgUnitResponsibilityAdminService(
         orgUnitRepository,
-        orgUnitManagerAssignmentRepository,
+        undefined,
         authoritativeAuditGuard,
         adminMutationBridge,
         structuredScopeAuthority,
+        responsibilityService,
       ),
     );
 
@@ -535,6 +551,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     adminMutationBridge,
     structuredScopeAuthority,
   );
+  employmentProfileService.attachResponsibilityService(responsibilityService);
 
   const employmentProfileQueryService = new EmploymentProfileAdminQueryService(
     employmentProfileReadRepository,
@@ -586,6 +603,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     authoritativeAuditGuard,
     adminMutationBridge,
   );
+  talentService.attachResponsibilityService(responsibilityService);
 
   const talentQueryService = new TalentAdminQueryService(
     talentReadRepository,
@@ -616,17 +634,18 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     talentGroupReadRepository,
     {
       subjectReadonlyAccess: kpiSubjectReadonlyAccess,
-      managerAssignmentRepository: talentGroupManagerAssignmentRepository,
+      managedScopeReader: responsibilityAssignmentRepository,
     },
     structuredScopeAuthority,
   );
   const talentGroupManagerAssignmentService =
     new TalentGroupManagerAssignmentAdminService(
       talentGroupRepository,
-      talentGroupManagerAssignmentRepository,
+      undefined,
       authoritativeAuditGuard,
       adminMutationBridge,
       structuredScopeAuthority,
+      responsibilityService,
     );
 
   const talentGroupController = new TalentGroupAdminController(
@@ -722,12 +741,13 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     workScheduleStudioResourceReadonlyAccess,
     authoritativeAuditGuard,
     adminMutationBridge,
+    undefined,
+    responsibilityAssignmentRepository,
   );
   const workScheduleQueryService = new WorkScheduleAdminQueryService(
     workShiftReadRepository,
     workScheduleEmploymentProfileReadonlyAccess,
-    talentGroupManagerAssignmentRepository,
-    orgUnitManagerAssignmentRepository,
+    responsibilityAssignmentRepository,
     structuredScopeAuthority,
   );
   const workScheduleController = new WorkScheduleAdminController(
@@ -742,7 +762,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     workShiftCodeSequenceRepository,
     workScheduleEmploymentProfileReadonlyAccess,
     workScheduleStudioResourceReadonlyAccess,
-    talentGroupManagerAssignmentRepository,
+    responsibilityAssignmentRepository,
     authoritativeAuditGuard,
     adminMutationBridge,
   );
@@ -756,8 +776,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       workShiftCodeSequenceRepository,
       workScheduleEmploymentProfileReadonlyAccess,
       workScheduleStudioResourceReadonlyAccess,
-      talentGroupManagerAssignmentRepository,
-      orgUnitManagerAssignmentRepository,
+      responsibilityAssignmentRepository,
       authoritativeAuditGuard,
       adminMutationBridge,
     );
@@ -772,8 +791,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       workScheduleEmploymentProfileReadonlyAccess,
       workScheduleOrgUnitReadonlyAccess,
       workScheduleTalentGroupReadonlyAccess,
-      talentGroupManagerAssignmentRepository,
-      orgUnitManagerAssignmentRepository,
+      responsibilityAssignmentRepository,
       authoritativeAuditGuard,
       adminMutationBridge,
       structuredScopeAuthority,
@@ -1011,8 +1029,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     kpiActualRepository,
     kpiBusinessCodeSequenceRepository,
     kpiSubjectReadonlyAccess,
-    talentGroupManagerAssignmentRepository,
-    orgUnitManagerAssignmentRepository,
+    responsibilityAssignmentRepository,
     authoritativeAuditGuard,
     adminMutationBridge,
     structuredScopeAuthority,
@@ -1026,15 +1043,13 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     new ManagerWorkspaceAdminService(
       employmentProfileRepository,
       kpiSubjectReadonlyAccess,
-      talentGroupManagerAssignmentRepository,
-      orgUnitManagerAssignmentRepository,
+      responsibilityAssignmentRepository,
       structuredScopeAuthority,
     ),
     new ManagerWorkspaceWorkScheduleAdminService(
       employmentProfileRepository,
       workScheduleEmploymentProfileReadonlyAccess,
-      talentGroupManagerAssignmentRepository,
-      orgUnitManagerAssignmentRepository,
+      responsibilityAssignmentRepository,
       workShiftReadRepository,
       structuredScopeAuthority,
     ),
@@ -1042,14 +1057,13 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     workScheduleAvailabilityBatchService,
     new ManagerWorkspaceEventAdminService(
       employmentProfileRepository,
-      talentGroupManagerAssignmentRepository,
-      orgUnitManagerAssignmentRepository,
+      responsibilityAssignmentRepository,
       eventAssignmentReadRepository,
       structuredScopeAuthority,
     ),
     new ManagerWorkspaceRevenueAdminService(
       employmentProfileRepository,
-      talentGroupManagerAssignmentRepository,
+      responsibilityAssignmentRepository,
       platformAccountRepository,
       platformAccountReadRepository,
       workScheduleEmploymentProfileReadonlyAccess,

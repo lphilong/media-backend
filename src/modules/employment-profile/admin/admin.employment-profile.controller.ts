@@ -50,7 +50,6 @@ const CREATE_EMPLOYMENT_PROFILE_ALLOWED_BODY_KEYS =
     "employmentKind",
     "jobTitle",
     "orgUnitId",
-    "managerEmploymentProfileId",
     "linkedUserId",
     "recruiterEmploymentProfileId",
     "hrOwnerEmploymentProfileId",
@@ -252,11 +251,6 @@ function parseCreateEmploymentProfileCommand(
       body.employmentKind as CreateEmploymentProfileCommand["employmentKind"],
     jobTitle: body.jobTitle as string,
     orgUnitId: body.orgUnitId as string,
-    managerEmploymentProfileId:
-      body.managerEmploymentProfileId as
-        | string
-        | null
-        | undefined,
     linkedUserId:
       body.linkedUserId as
         | string

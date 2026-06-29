@@ -60,7 +60,7 @@ test("Native Mongo self-service TalentGroup repository exposes only active produ
     "group-",
     "talent-",
     "ep-",
-    "manager-assignment-",
+    "responsibility-assignment-",
     "membership-",
     "linkedEmploymentProfileId",
     "linkedUserId",
@@ -93,6 +93,7 @@ function createEmploymentProfileRepository(): EmploymentProfileRepository {
       assert.equal(linkedUserId, "user-staff");
       return {
         id: "ep-staff",
+        employmentStatus: "ACTIVE",
       } as never;
     },
   } as unknown as EmploymentProfileRepository;
@@ -184,15 +185,15 @@ function createFakeDb(): Db {
       ],
     ],
     [
-      "talent_group_manager_assignments",
+      "responsibility_assignments",
       [
-        managerAssignment("manager-assignment-active", "ep-manager-active"),
-        managerAssignment("manager-assignment-inactive", "ep-manager-active", "INACTIVE"),
-        managerAssignment("manager-assignment-removed", "ep-manager-active", "REMOVED"),
-        managerAssignment("manager-assignment-expired", "ep-manager-active", "ACTIVE", 1, 49),
-        managerAssignment("manager-assignment-future", "ep-manager-active", "ACTIVE", 51),
-        managerAssignment("manager-assignment-inactive-profile", "ep-manager-inactive"),
-        managerAssignment("manager-assignment-unrelated", "ep-manager-active", "ACTIVE", 1, null, "group-unrelated"),
+        responsibilityAssignment("responsibility-assignment-active", "ep-manager-active"),
+        responsibilityAssignment("responsibility-assignment-inactive", "ep-manager-active", "INACTIVE"),
+        responsibilityAssignment("responsibility-assignment-removed", "ep-manager-active", "REMOVED"),
+        responsibilityAssignment("responsibility-assignment-expired", "ep-manager-active", "ACTIVE", 1, 49),
+        responsibilityAssignment("responsibility-assignment-future", "ep-manager-active", "ACTIVE", 51),
+        responsibilityAssignment("responsibility-assignment-inactive-profile", "ep-manager-inactive"),
+        responsibilityAssignment("responsibility-assignment-unrelated", "ep-manager-active", "ACTIVE", 1, null, "group-unrelated"),
       ],
     ],
   ]);
@@ -360,21 +361,24 @@ function employmentProfile(
   };
 }
 
-function managerAssignment(
+function responsibilityAssignment(
   _id: string,
-  managerEmploymentProfileId: string,
+  responsibleEmploymentProfileId: string,
   status = "ACTIVE",
-  effectiveFrom = 1,
-  effectiveTo: number | null = null,
-  groupId = "group-active",
+  effectiveAt = 1,
+  expiresAt: number | null = null,
+  subjectId = "group-active",
 ): Document {
   return {
     _id,
-    groupId,
-    managerEmploymentProfileId,
+    subjectType: "TALENT_GROUP",
+    subjectId,
+    responsibleEmploymentProfileId,
+    responsibilityType: "TALENT_GROUP_MANAGER",
+    responsibilityRole: "MANAGER",
     status,
-    effectiveFrom,
-    effectiveTo,
+    effectiveAt,
+    expiresAt,
     isPrimary: true,
   };
 }

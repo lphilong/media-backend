@@ -41,7 +41,6 @@ import { EmploymentProfileEventAssignmentReadonlyAccess } from "@modules/employm
 import { EmploymentProfileOrgUnitReadonlyAccess } from "@modules/employment-profile/domain/employment-profile-org-unit-readonly-access";
 import { EmploymentProfileTalentReadonlyAccess } from "@modules/employment-profile/domain/employment-profile-talent-readonly-access";
 import {
-  AssignEmploymentProfileManagerInput,
   EmploymentProfileRepository,
   UpdateEmploymentProfileCoreInput,
 } from "@modules/employment-profile/domain/employment-profile.repository";
@@ -74,6 +73,7 @@ import {
 } from "@modules/employment-profile/shared/employment-profile.contracts";
 import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
+import { ResponsibilityAdminService } from "@modules/responsibility/admin/admin.responsibility.service";
 
 type EmploymentProfileFailureClassification =
   | "validation"
@@ -87,6 +87,8 @@ type EmploymentProfileFailureClassification =
   | "unknown";
 
 export class EmploymentProfileAdminService {
+  private responsibilityService: ResponsibilityAdminService | null = null;
+
   constructor(
     private readonly repository: EmploymentProfileRepository,
     private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
@@ -100,6 +102,10 @@ export class EmploymentProfileAdminService {
     private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
     private readonly logger: StructuredLogger = createStructuredLogger(),
   ) {}
+
+  attachResponsibilityService(service: ResponsibilityAdminService): void {
+    this.responsibilityService = service;
+  }
 
   async createEmploymentProfile(
     actor: Actor,
@@ -123,10 +129,6 @@ export class EmploymentProfileAdminService {
         orgUnitId: readOptionalLogString(
           command.orgUnitId,
         ),
-        managerEmploymentProfileId:
-          readOptionalLogString(
-            command.managerEmploymentProfileId,
-          ) ?? undefined,
         linkedUserId: readOptionalLogString(
           command.linkedUserId,
         ),
@@ -157,20 +159,6 @@ export class EmploymentProfileAdminService {
           Permission.EMPLOYMENT_PROFILE_CREATE,
           input.orgUnitId,
         );
-
-        if (input.managerEmploymentProfileId) {
-          const manager =
-            await this.requireEmploymentProfile(
-              input.managerEmploymentProfileId,
-              session,
-            );
-          assertManagerEligible(manager);
-          await this.assertManagerAssignmentHasNoCycle(
-            employmentProfileId,
-            manager.id,
-            session,
-          );
-        }
 
         if (input.linkedUserId) {
           await this.assertLinkedUserEligible(
@@ -235,8 +223,7 @@ export class EmploymentProfileAdminService {
                 input.titleDescription,
               externalRef: input.externalRef,
               orgUnitId: input.orgUnitId,
-              managerEmploymentProfileId:
-                input.managerEmploymentProfileId,
+              managerEmploymentProfileId: null,
               recruiterEmploymentProfileId:
                 input.recruiterEmploymentProfileId,
               hrOwnerEmploymentProfileId:
@@ -290,8 +277,7 @@ export class EmploymentProfileAdminService {
           metadata: {
             employeeCode: created.employeeCode,
             orgUnitId: created.orgUnitId,
-            managerEmploymentProfileId:
-              created.managerEmploymentProfileId,
+            managerEmploymentProfileId: null,
             linkedUserId: created.linkedUserId,
             recruiterEmploymentProfileId:
               created.recruiterEmploymentProfileId,
@@ -331,6 +317,7 @@ export class EmploymentProfileAdminService {
         command.employmentProfileId,
         "employmentProfileId",
       );
+    rejectLegacyManagerField(command, "EmploymentProfile update");
 
     const hasLegalName =
       command.legalName !== undefined;
@@ -666,132 +653,20 @@ export class EmploymentProfileAdminService {
     actor: Actor,
     command: AssignEmploymentProfileManagerCommand,
   ): Promise<EmploymentProfileMutationResult> {
-    const operation =
-      "employment-profile.assign-manager";
-    const permission = this.assertPermission(
+    this.assertPermission(
       actor,
       Permission.EMPLOYMENT_PROFILE_MANAGE_MANAGER_ASSIGNMENT,
     );
-    const employmentProfileId =
-      normalizeRequiredText(
-        command.employmentProfileId,
-        "employmentProfileId",
-      );
-    const newManagerEmploymentProfileId =
-      normalizeRequiredNullableId(
-        command.newManagerEmploymentProfileId,
-        "newManagerEmploymentProfileId",
-      );
-
-    return this.executeMutation(
-      actor,
-      permission,
-      operation,
-      {
-        employmentProfileId:
-          readOptionalLogString(
-            command.employmentProfileId,
-          ),
-        newManagerEmploymentProfileId:
-          readOptionalLogString(
-            command.newManagerEmploymentProfileId,
-          ) ?? undefined,
-      },
-      async (session, controls) => {
-        const current =
-          await this.requireEmploymentProfile(
-            employmentProfileId,
-            session,
-          );
-        await this.requireManagedOrgUnitAuthority(
-          actor,
-          Permission.EMPLOYMENT_PROFILE_MANAGE_MANAGER_ASSIGNMENT,
-          current.orgUnitId,
-        );
-
-        if (
-          current.employmentStatus === "ARCHIVED"
-        ) {
-          throw new EmploymentProfileStateError(
-            `Archived employment profile cannot change manager: ${employmentProfileId}`,
-          );
-        }
-
-        if (
-          current.managerEmploymentProfileId ===
-          newManagerEmploymentProfileId
-        ) {
-          controls.markExplicitNoOpSuccess();
-          return toEmploymentProfileMutationView(
-            current,
-          );
-        }
-
-        const patch: AssignEmploymentProfileManagerInput =
-          {
-            employmentProfileId,
-            managerEmploymentProfileId:
-              newManagerEmploymentProfileId,
-            updatedAt: Date.now(),
-          };
-
-        if (newManagerEmploymentProfileId !== null) {
-          if (
-            newManagerEmploymentProfileId ===
-            current.id
-          ) {
-            throw new EmploymentProfileManagerCycleError(
-              "Employment profile cannot manage itself",
-            );
-          }
-
-          const manager =
-            await this.requireEmploymentProfile(
-              newManagerEmploymentProfileId,
-              session,
-            );
-          assertManagerEligible(manager);
-          await this.assertManagerAssignmentHasNoCycle(
-            current.id,
-            manager.id,
-            session,
-          );
-        }
-
-        const updated =
-          await this.repository.assignManager(
-            patch,
-            session,
-          );
-
-        if (!updated) {
-          throw new EmploymentProfileConflictError(
-            `Failed to assign manager: ${employmentProfileId}`,
-          );
-        }
-
-        await this.recordAudit({
-          actor,
-          permission,
-          employmentProfileId,
-          mutationType: operation,
-          metadata: {
-            previousManagerEmploymentProfileId:
-              current.managerEmploymentProfileId,
-            newManagerEmploymentProfileId,
-          },
-          session,
-        });
-
-        return toEmploymentProfileMutationView(
-          updated,
-        );
-      },
-      (result) => ({
-        employmentProfileId: result.id,
-        managerEmploymentProfileId:
-          result.managerEmploymentProfileId,
-      }),
+    normalizeRequiredText(
+      command.employmentProfileId,
+      "employmentProfileId",
+    );
+    normalizeRequiredNullableId(
+      command.newManagerEmploymentProfileId,
+      "newManagerEmploymentProfileId",
+    );
+    throw new EmploymentProfileValidationError(
+      "EmploymentProfile manager writes must use central responsibility assignments",
     );
   }
 
@@ -2212,7 +2087,6 @@ interface NormalizedCreateCommand {
   readonly titleDescription: string | null;
   readonly externalRef: string | null;
   readonly orgUnitId: string;
-  readonly managerEmploymentProfileId: string | null;
   readonly linkedUserId: string | null;
   readonly recruiterEmploymentProfileId: string | null;
   readonly hrOwnerEmploymentProfileId: string | null;
@@ -2227,6 +2101,7 @@ interface NormalizedCreateCommand {
 function normalizeCreateCommand(
   command: CreateEmploymentProfileCommand,
 ): NormalizedCreateCommand {
+  rejectLegacyManagerField(command, "EmploymentProfile create");
   const legalName = normalizePersonName(
     command.legalName,
     "legalName",
@@ -2292,11 +2167,6 @@ function normalizeCreateCommand(
       command.orgUnitId,
       "orgUnitId",
     ),
-    managerEmploymentProfileId:
-      normalizeOptionalNullableId(
-        command.managerEmploymentProfileId,
-        "managerEmploymentProfileId",
-      ),
     linkedUserId: normalizeOptionalNullableId(
       command.linkedUserId,
       "linkedUserId",
@@ -2330,6 +2200,22 @@ function normalizeCreateCommand(
     hiredAt,
     onboardedAt,
   };
+}
+
+function rejectLegacyManagerField(
+  command: object,
+  operation: string,
+): void {
+  if (
+    Object.prototype.hasOwnProperty.call(
+      command as unknown as Readonly<Record<string, unknown>>,
+      "managerEmploymentProfileId",
+    )
+  ) {
+    throw new EmploymentProfileValidationError(
+      `managerEmploymentProfileId is not accepted on ${operation}. Use central responsibility assignments for HR reporting manager responsibility.`,
+    );
+  }
 }
 
 function normalizeOptionalCreateCode(
@@ -2503,21 +2389,6 @@ function buildEmploymentProfileCorePatch(params: {
   return patch;
 }
 
-function assertManagerEligible(
-  manager: EmploymentProfileRecord,
-): void {
-  if (
-    manager.employmentStatus === "ACTIVE" ||
-    manager.employmentStatus === "ON_LEAVE"
-  ) {
-    return;
-  }
-
-  throw new EmploymentProfileStateError(
-    `Manager must be ACTIVE or ON_LEAVE: ${manager.id}`,
-  );
-}
-
 function assertContractStatusTransitionAllowed(
   currentStatus: EmploymentContractStatus,
   nextStatus: EmploymentContractStatus,
@@ -2650,8 +2521,6 @@ function toEmploymentProfileMutationView(
       employmentProfile.titleDescription,
     externalRef: employmentProfile.externalRef,
     orgUnitId: employmentProfile.orgUnitId,
-    managerEmploymentProfileId:
-      employmentProfile.managerEmploymentProfileId,
     recruiterEmploymentProfileId:
       employmentProfile.recruiterEmploymentProfileId,
     hrOwnerEmploymentProfileId:

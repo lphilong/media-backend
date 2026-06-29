@@ -54,7 +54,31 @@ test("internal Talent create accepts linked EmploymentProfile without duplicate 
   assert.equal(result.legalName, "Employment Legal");
   assert.equal(result.displayShortName, null);
   assert.equal(harness.repository.records[0]?.legalName, "Employment Legal");
+  assert.equal(harness.repository.records[0]?.managerEmploymentProfileId, null);
   assert.equal(harness.audit.records.length, 1);
+});
+
+test("Talent create rejects legacy direct manager field", async () => {
+  const harness = createHarness();
+
+  await assert.rejects(
+    runWithTrace(() =>
+      harness.service.createTalent(createActor(), {
+        talentOrigin: "INTERNAL",
+        linkedEmploymentProfileId: "ep-talent",
+        managerEmploymentProfileId: "ep-manager",
+        commercialParticipationStatus: "ELIGIBLE",
+        livestreamEligible: true,
+        eventEligible: true,
+      } as Parameters<TalentAdminService["createTalent"]>[1] & {
+        readonly managerEmploymentProfileId: string;
+      }),
+    ),
+    TalentValidationError,
+  );
+
+  assert.equal(harness.repository.records.length, 0);
+  assert.equal(harness.audit.records.length, 0);
 });
 
 test("internal Talent create and update require linkedEmploymentProfileId", async () => {
@@ -312,6 +336,7 @@ function createActor(): Actor {
     roles: [],
     permissions: [Permission.TALENT_CREATE, Permission.TALENT_UPDATE],
     scopeGrants: {},
+    accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
   });
 }

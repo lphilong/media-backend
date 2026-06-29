@@ -17,7 +17,6 @@ export interface CreateEmploymentProfileCommand {
   readonly employmentKind: EmploymentKind;
   readonly jobTitle: string;
   readonly orgUnitId: string;
-  readonly managerEmploymentProfileId?: string | null;
   readonly linkedUserId?: string | null;
   readonly recruiterEmploymentProfileId?: string | null;
   readonly hrOwnerEmploymentProfileId?: string | null;
@@ -105,7 +104,6 @@ export interface ListEmploymentProfilesQuery {
   readonly contractStatus?: EmploymentContractStatus | string;
   readonly employmentKind?: EmploymentKind | string;
   readonly orgUnitId?: string;
-  readonly managerEmploymentProfileId?: string;
   readonly hasLinkedUser?: boolean | string;
   readonly limit?: number | string;
   readonly cursor?: string;

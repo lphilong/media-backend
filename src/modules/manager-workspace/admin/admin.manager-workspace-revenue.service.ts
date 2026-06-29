@@ -18,10 +18,10 @@ import { PermissionResolver } from "@core/permission/permission.resolver";
 import { getTraceIdOrThrow } from "@core/trace/trace.context";
 import { EmploymentProfileRepository } from "@modules/employment-profile/domain/employment-profile.repository";
 import { EmploymentProfileRecord } from "@modules/employment-profile/domain/employment-profile.types";
-import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import { PlatformAccountReadRepository } from "@modules/platform-account/read/platform-account.read-repository";
 import { PlatformAccountRepository } from "@modules/platform-account/domain/platform-account.repository";
 import { PlatformAccountListItemView } from "@modules/platform-account/domain/platform-account.types";
+import { ResponsibilityManagedScopeReader } from "@modules/responsibility/domain/responsibility-managed-scope";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import {
   PlatformEarningBatch,
@@ -133,10 +133,7 @@ export class ManagerWorkspaceRevenueAdminService {
       EmploymentProfileRepository,
       "findNonArchivedByLinkedUserId"
     >,
-    private readonly talentGroupManagerAssignmentRepository: Pick<
-      TalentGroupManagerAssignmentRepository,
-      "listActiveAssignmentsByManagerEmploymentProfile"
-    >,
+    private readonly managedScopeReader: ResponsibilityManagedScopeReader,
     private readonly platformAccountRepository: Pick<
       PlatformAccountRepository,
       "findById"
@@ -590,15 +587,17 @@ export class ManagerWorkspaceRevenueAdminService {
         "Manager source submission requires ACTIVE or ON_LEAVE employment profile",
       );
     }
-    const assignments =
-      await this.talentGroupManagerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-        profile.id,
-        this.clock(),
+    const managedScope =
+      await this.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
+        {
+          responsibleEmploymentProfileId: profile.id,
+          asOf: this.clock(),
+        },
       );
     const authorized = await filterManagedTalentGroupIds(
       this.structuredAuthority,
       actor,
-      assignments.map((assignment) => assignment.groupId),
+      managedScope.talentGroupIds,
     );
     return {
       profile,

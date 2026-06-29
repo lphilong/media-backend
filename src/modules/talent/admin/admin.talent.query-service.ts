@@ -52,10 +52,6 @@ export class TalentAdminQueryService {
         query.operationalStatus,
       ),
       talentOrigin: parseOptionalTalentOrigin(query.talentOrigin),
-      managerEmploymentProfileId: parseOptionalId(
-        query.managerEmploymentProfileId,
-        "managerEmploymentProfileId",
-      ),
       hasLinkedEmploymentProfile: parseOptionalBoolean(
         query.hasLinkedEmploymentProfile,
         "hasLinkedEmploymentProfile",

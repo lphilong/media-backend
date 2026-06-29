@@ -48,8 +48,7 @@ import {
   KpiSubjectReadonlyAccess,
   kpiSubjectRefKey,
 } from "@modules/kpi/domain/kpi-subject-readonly-access";
-import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
-import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
+import { ResponsibilityManagedScopeReader } from "@modules/responsibility/domain/responsibility-managed-scope";
 import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
 import { RoleAssignmentScopeGrant } from "@modules/role/domain/role-assignment-scope";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
@@ -260,10 +259,7 @@ export class KpiAdminService {
     private readonly actualRepository: KpiActualRepository,
     private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
     private readonly subjectReadonlyAccess: KpiSubjectReadonlyAccess,
-    private readonly managerAssignmentRepository: TalentGroupManagerAssignmentRepository,
-    private readonly orgUnitManagerAssignmentRepository:
-      | OrgUnitManagerAssignmentRepository
-      | undefined,
+    private readonly managedScopeReader: ResponsibilityManagedScopeReader,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
     private readonly structuredAuthority: StructuredScopeAuthorityService,
@@ -3649,9 +3645,7 @@ export class KpiAdminService {
       actor,
       {
         subjectReadonlyAccess: this.subjectReadonlyAccess,
-        managerAssignmentRepository: this.managerAssignmentRepository,
-        orgUnitManagerAssignmentRepository:
-          this.orgUnitManagerAssignmentRepository,
+        managedScopeReader: this.managedScopeReader,
       },
       this.clock(),
       session,
@@ -3736,9 +3730,7 @@ export class KpiAdminService {
       actor,
       {
         subjectReadonlyAccess: this.subjectReadonlyAccess,
-        managerAssignmentRepository: this.managerAssignmentRepository,
-        orgUnitManagerAssignmentRepository:
-          this.orgUnitManagerAssignmentRepository,
+        managedScopeReader: this.managedScopeReader,
       },
       { asOf: this.clock(), session },
     );

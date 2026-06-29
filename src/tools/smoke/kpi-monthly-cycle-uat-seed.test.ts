@@ -259,7 +259,7 @@ test("KPI UAT seed dry-run plan covers monthly lifecycle and published actual", 
     "01-05-2026",
   );
   assert.equal(
-    publicPlan.countsByCollection.talent_group_manager_assignments,
+    publicPlan.countsByCollection.responsibility_assignments,
     1,
   );
 });
@@ -380,14 +380,19 @@ test("KPI UAT seed accepts manager linked ACTIVE ADMIN user with existing Employ
     false,
   );
   assert.equal(
-    findInsertedRecord(repository, "support.manager-assignment").document
-      .managerEmploymentProfileId,
+    findInsertedRecord(
+      repository,
+      "support.talent-group-manager-responsibility",
+    ).document.responsibleEmploymentProfileId,
     "ep-existing-manager",
   );
   assert.equal(
-    findInsertedRecord(repository, "member.published.employment-profile")
-      .document.managerEmploymentProfileId,
-    "ep-existing-manager",
+    Object.prototype.hasOwnProperty.call(
+      findInsertedRecord(repository, "member.published.employment-profile")
+        .document,
+      "managerEmploymentProfileId",
+    ),
+    false,
   );
 });
 

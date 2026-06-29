@@ -79,8 +79,6 @@ export interface TalentListItemView {
   readonly displayShortName: string | null;
   readonly talentOrigin: TalentOrigin;
   readonly operationalStatus: TalentOperationalStatus;
-  readonly managerEmploymentProfileId: string | null;
-  readonly managerEmploymentProfileRef?: ReferenceSummary | null;
   readonly linkedEmploymentProfileId: string | null;
   readonly linkedEmploymentProfileRef?: ReferenceSummary | null;
   readonly commercialParticipationStatus: TalentCommercialParticipationStatus;

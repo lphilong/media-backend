@@ -10,8 +10,8 @@ import { PermissionContract } from "@core/permission/permission.contract";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import { getTraceIdOrThrow } from "@core/trace/trace.context";
-import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import { ReferenceSummary } from "@modules/reference-summary";
+import { ResponsibilityManagedScopeReader } from "@modules/responsibility/domain/responsibility-managed-scope";
 import {
   WorkScheduleConflictError,
   WorkScheduleInvalidResourceReferenceError,
@@ -86,10 +86,7 @@ export class WorkScheduleRequestAdminService {
     private readonly codeSequenceRepository: WorkScheduleCodeSequenceRepository,
     private readonly employmentProfileReadonlyAccess: WorkScheduleEmploymentProfileReadonlyAccess,
     private readonly studioResourceReadonlyAccess: WorkScheduleStudioResourceReadonlyAccess,
-    private readonly managerAssignmentRepository: Pick<
-      TalentGroupManagerAssignmentRepository,
-      "listActiveAssignmentsByManagerEmploymentProfile"
-    >,
+    private readonly managedScopeReader: ResponsibilityManagedScopeReader,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
   ) {}
@@ -772,15 +769,15 @@ export class WorkScheduleRequestAdminService {
     managerEmploymentProfileId: string,
     session?: ClientSession,
   ): Promise<readonly string[]> {
-    const assignments =
-      await this.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-        managerEmploymentProfileId,
-        Date.now(),
+    const managedScope =
+      await this.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
+        {
+          responsibleEmploymentProfileId: managerEmploymentProfileId,
+          asOf: Date.now(),
+        },
         session,
       );
-    const groupIds = [
-      ...new Set(assignments.map((assignment) => assignment.groupId)),
-    ].sort();
+    const groupIds = [...new Set(managedScope.talentGroupIds)].sort();
 
     if (groupIds.length === 0) {
       return [];

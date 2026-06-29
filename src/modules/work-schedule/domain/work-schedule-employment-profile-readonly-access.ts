@@ -6,7 +6,6 @@ export interface WorkScheduleReferencedEmploymentProfile {
   readonly id: string;
   readonly employmentStatus: EmploymentStatus;
   readonly orgUnitId: string;
-  readonly managerEmploymentProfileId: string | null;
   readonly linkedUserId: string | null;
   readonly ref?: ReferenceSummary;
 }
@@ -31,11 +30,6 @@ export interface WorkScheduleEmploymentProfileReadonlyAccess {
     linkedUserId: string,
     session?: ClientSession,
   ): Promise<WorkScheduleReferencedEmploymentProfile | null>;
-
-  listIdsByManagerEmploymentProfileId(
-    managerEmploymentProfileId: string,
-    session?: ClientSession,
-  ): Promise<readonly string[]>;
 
   listIdsByActiveTalentGroupIds(
     groupIds: readonly string[],

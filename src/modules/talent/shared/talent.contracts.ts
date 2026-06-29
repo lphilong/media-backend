@@ -14,7 +14,6 @@ export interface CreateTalentCommand {
   readonly stageName?: string | null;
   readonly legalName?: string | null;
   readonly talentOrigin: TalentOrigin;
-  readonly managerEmploymentProfileId?: string | null;
   readonly linkedEmploymentProfileId?: string | null;
   readonly commercialParticipationStatus: TalentCommercialParticipationStatus;
   readonly livestreamEligible: boolean;
@@ -73,7 +72,6 @@ export interface GetTalentDetailQuery {
 export interface ListTalentsQuery {
   readonly operationalStatus?: TalentOperationalStatus | string;
   readonly talentOrigin?: TalentOrigin | string;
-  readonly managerEmploymentProfileId?: string;
   readonly hasLinkedEmploymentProfile?: boolean | string;
   readonly commercialParticipationStatus?: TalentCommercialParticipationStatus | string;
   readonly livestreamEligible?: boolean | string;

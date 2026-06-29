@@ -289,8 +289,13 @@ function createHarness(input: {
       },
     },
     {
-      async listActiveAssignmentsByManagerEmploymentProfile() {
-        return input.assignments ?? [managerAssignment()];
+      async resolveManagedScopeByResponsibleEmploymentProfile() {
+        const assignments = input.assignments ?? [managerAssignment()];
+        return {
+          talentGroupIds: [...new Set(assignments.map((item) => item.groupId))],
+          orgUnitIds: [],
+          orgUnitScopes: [],
+        };
       },
     },
     {

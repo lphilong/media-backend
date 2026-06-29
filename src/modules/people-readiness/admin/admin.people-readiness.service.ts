@@ -12,8 +12,8 @@ import {
   PeopleReadinessEntityType,
   PeopleReadinessIssue,
   PeopleReadinessIssueCode,
-  PeopleReadinessManagerAssignment,
   PeopleReadinessOrgUnit,
+  PeopleReadinessResponsibilityAssignment,
   PeopleReadinessSafeEntitySummary,
   PeopleReadinessSeverity,
   PeopleReadinessSnapshot,
@@ -44,7 +44,7 @@ const OPERATIONALLY_READY_STATUSES = new Set(["ACTIVE", "ON_LEAVE"]);
 const COVERAGE_NOTES = Object.freeze([
   "Exact counts cover the supported issue codes generated from full projected repository snapshots.",
   "The B1 read repository uses projected full-collection snapshots; aggregation or indexed summary queries may be needed at larger runtime scale.",
-  "EMPLOYMENT_PROFILE_REQUIRES_LOGIN_BUT_MISSING_ACTIVE_USER is limited to profiles with active/effective manager assignments.",
+  "EMPLOYMENT_PROFILE_REQUIRES_LOGIN_BUT_MISSING_ACTIVE_USER is limited to profiles with active/effective central manager responsibilities.",
   "WORKSCHEDULE_MEMBER_NOT_READY and KPI_PARTICIPANT_NOT_READY are not duplicated; core readiness issues remain the canonical rows.",
 ]);
 
@@ -164,14 +164,14 @@ export function generateIssues(
       .map((profile) => [profile.linkedUserId as string, profile]),
   );
   const managerProfileIds = new Set<string>();
-  const effectiveOrgAssignments = snapshot.orgUnitManagerAssignments.filter((assignment) =>
-    isEffectiveAssignment(assignment, generatedAt),
+  const effectiveOrgResponsibilities = snapshot.orgUnitResponsibilities.filter((assignment) =>
+    isEffectiveResponsibility(assignment, generatedAt),
   );
-  const effectiveGroupAssignments = snapshot.talentGroupManagerAssignments.filter((assignment) =>
-    isEffectiveAssignment(assignment, generatedAt),
+  const effectiveGroupResponsibilities = snapshot.talentGroupResponsibilities.filter((assignment) =>
+    isEffectiveResponsibility(assignment, generatedAt),
   );
-  [...effectiveOrgAssignments, ...effectiveGroupAssignments].forEach((assignment) =>
-    managerProfileIds.add(assignment.managerEmploymentProfileId),
+  [...effectiveOrgResponsibilities, ...effectiveGroupResponsibilities].forEach((assignment) =>
+    managerProfileIds.add(assignment.responsibleEmploymentProfileId),
   );
 
   for (const user of snapshot.users.filter((item) => item.accountStatus === "ACTIVE")) {
@@ -393,13 +393,13 @@ export function generateIssues(
     }
   }
 
-  effectiveOrgAssignments.forEach((assignment) => addManagerAssignmentIssues({
-    issues, assignment, target: orgUnits.get(assignment.targetId), profile: profiles.get(assignment.managerEmploymentProfileId),
-    users, generatedAt, assignmentType: "ORG_UNIT_MANAGER_ASSIGNMENT",
+  effectiveOrgResponsibilities.forEach((assignment) => addResponsibilityIssues({
+    issues, assignment, target: orgUnits.get(assignment.targetId), profile: profiles.get(assignment.responsibleEmploymentProfileId),
+    users, generatedAt, responsibilityEntityType: "ORG_UNIT_RESPONSIBILITY",
   }));
-  effectiveGroupAssignments.forEach((assignment) => addManagerAssignmentIssues({
-    issues, assignment, target: groups.get(assignment.targetId), profile: profiles.get(assignment.managerEmploymentProfileId),
-    users, generatedAt, assignmentType: "TALENT_GROUP_MANAGER_ASSIGNMENT",
+  effectiveGroupResponsibilities.forEach((assignment) => addResponsibilityIssues({
+    issues, assignment, target: groups.get(assignment.targetId), profile: profiles.get(assignment.responsibleEmploymentProfileId),
+    users, generatedAt, responsibilityEntityType: "TALENT_GROUP_RESPONSIBILITY",
   }));
 
   return issues.sort(compareIssues);
@@ -464,36 +464,36 @@ function employmentTermsIssue(
   });
 }
 
-function addManagerAssignmentIssues(params: {
+function addResponsibilityIssues(params: {
   issues: PeopleReadinessIssue[];
-  assignment: PeopleReadinessManagerAssignment;
+  assignment: PeopleReadinessResponsibilityAssignment;
   target?: PeopleReadinessOrgUnit | PeopleReadinessTalentGroup;
   profile?: PeopleReadinessEmploymentProfile;
   users: ReadonlyMap<string, PeopleReadinessUser>;
   generatedAt: number;
-  assignmentType: "ORG_UNIT_MANAGER_ASSIGNMENT" | "TALENT_GROUP_MANAGER_ASSIGNMENT";
+  responsibilityEntityType: "ORG_UNIT_RESPONSIBILITY" | "TALENT_GROUP_RESPONSIBILITY";
 }): void {
   const { assignment, profile, generatedAt } = params;
   const targetSummary = params.target
     ? "code" in params.target ? orgUnitSummary(params.target) : groupSummary(params.target)
     : undefined;
-  const primary = assignmentSummary(assignment, params.assignmentType);
+  const primary = responsibilitySummary(assignment, params.responsibilityEntityType);
   const related = [
     ...(targetSummary ? [targetSummary] : []),
     ...(profile ? [profileSummary(profile)] : []),
   ];
-  const prefix = params.assignmentType === "ORG_UNIT_MANAGER_ASSIGNMENT"
-    ? "ORGUNIT_MANAGER_ASSIGNMENT"
-    : "TALENTGROUP_MANAGER_ASSIGNMENT";
+  const prefix = params.responsibilityEntityType === "ORG_UNIT_RESPONSIBILITY"
+    ? "ORGUNIT_RESPONSIBILITY"
+    : "TALENTGROUP_RESPONSIBILITY";
   if (!profile || !isProfileReady(profile)) {
     params.issues.push(issue({
       code: `${prefix}_MANAGER_NOT_PROFILE_READY` as PeopleReadinessIssueCode,
-      category: "MANAGER_ASSIGNMENT_READY",
+      category: "RESPONSIBILITY_READY",
       severity: "BLOCKER",
       primary,
       related,
-      summary: "Active/effective manager assignment manager is not profile-ready.",
-      repair: profile ? repair(profileSummary(profile), "Review manager EmploymentProfile lifecycle") : repair(primary, "Review manager assignment"),
+      summary: "Active/effective central manager responsibility owner is not profile-ready.",
+      repair: profile ? repair(profileSummary(profile), "Review manager EmploymentProfile lifecycle") : repair(primary, "Review central responsibility assignment"),
       generatedAt,
       blocking: true,
     }));
@@ -507,12 +507,12 @@ function addManagerAssignmentIssues(params: {
   ) {
     params.issues.push(issue({
       code: `${prefix}_MANAGER_NOT_LOGIN_READY` as PeopleReadinessIssueCode,
-      category: "MANAGER_ASSIGNMENT_READY",
+      category: "RESPONSIBILITY_READY",
       severity: "BLOCKER",
       primary,
       related: [...related, ...(user ? [userSummary(user)] : [])],
-      summary: "Active/effective manager assignment manager lacks an active linked account.",
-      repair: profile ? repair(profileSummary(profile), "Review manager account linkage") : repair(primary, "Review manager assignment"),
+      summary: "Active/effective central manager responsibility owner lacks an active linked account.",
+      repair: profile ? repair(profileSummary(profile), "Review manager account linkage") : repair(primary, "Review central responsibility assignment"),
       generatedAt,
       blocking: true,
     }));
@@ -614,11 +614,11 @@ function groupSummary(group: PeopleReadinessTalentGroup): PeopleReadinessSafeEnt
 function memberSummary(member: PeopleReadinessTalentGroupMember): PeopleReadinessSafeEntitySummary {
   return { entityType: "TALENT_GROUP_MEMBER", id: member.id, displayName: `TalentGroup member ${member.id}`, status: member.membershipStatus, adminRepairTarget: `/talent-groups/${member.groupId}` };
 }
-function assignmentSummary(
-  assignment: PeopleReadinessManagerAssignment,
-  entityType: "ORG_UNIT_MANAGER_ASSIGNMENT" | "TALENT_GROUP_MANAGER_ASSIGNMENT",
+function responsibilitySummary(
+  assignment: PeopleReadinessResponsibilityAssignment,
+  entityType: "ORG_UNIT_RESPONSIBILITY" | "TALENT_GROUP_RESPONSIBILITY",
 ): PeopleReadinessSafeEntitySummary {
-  return { entityType, id: assignment.id, displayName: `${assignment.role} assignment`, status: assignment.status };
+  return { entityType, id: assignment.id, displayName: `${assignment.responsibilityRole} responsibility`, status: assignment.status };
 }
 function repair(entity: PeopleReadinessSafeEntitySummary, suggestedAction: string): PeopleReadinessIssue["repairTarget"] {
   return { targetType: entity.entityType, targetId: entity.id, suggestedSurface: entity.adminRepairTarget ?? "ADMIN_PEOPLE_READINESS", suggestedAction };
@@ -634,8 +634,8 @@ function withCanonicalInternalTalentDisplay(
   if (talent.talentOrigin !== "INTERNAL" || !profile) return talent;
   return { ...talent, displayName: profile.displayName };
 }
-function isEffectiveAssignment(assignment: PeopleReadinessManagerAssignment, asOf: number): boolean {
-  return assignment.status === "ACTIVE" && assignment.effectiveFrom <= asOf && (assignment.effectiveTo === null || assignment.effectiveTo >= asOf);
+function isEffectiveResponsibility(assignment: PeopleReadinessResponsibilityAssignment, asOf: number): boolean {
+  return assignment.status === "ACTIVE" && assignment.effectiveAt <= asOf && (assignment.expiresAt === null || assignment.expiresAt >= asOf);
 }
 function countBy(issues: readonly PeopleReadinessIssue[], key: (issue: PeopleReadinessIssue) => string): Readonly<Record<string, number>> {
   const counts: Record<string, number> = {};
@@ -671,7 +671,7 @@ function parseEnum<T extends string>(value: string, values: readonly T[], name: 
 function parseEntityType(value: string): PeopleReadinessEntityType {
   const values: readonly PeopleReadinessEntityType[] = [
     "USER", "EMPLOYMENT_PROFILE", "TALENT", "ORG_UNIT", "TALENT_GROUP",
-    "TALENT_GROUP_MEMBER", "ORG_UNIT_MANAGER_ASSIGNMENT", "TALENT_GROUP_MANAGER_ASSIGNMENT",
+    "TALENT_GROUP_MEMBER", "ORG_UNIT_RESPONSIBILITY", "TALENT_GROUP_RESPONSIBILITY",
   ];
   return parseEnum(value, values, "entityType");
 }

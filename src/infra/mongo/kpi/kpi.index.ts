@@ -15,16 +15,6 @@ export const KPI_ALLOCATION_ORG_UNIT_PLAN_PROFILE_UNIQ_INDEX_NAME =
   "uniq_kpi_allocation_org_unit_plan_profile";
 export const KPI_ALLOCATION_GROUP_MEMBER_INDEX_NAME =
   "idx_kpi_allocation_group_member";
-export const TALENT_GROUP_MANAGER_ASSIGNMENT_GROUP_ACTIVE_INDEX_NAME =
-  "idx_tg_manager_assignment_group_active";
-export const TALENT_GROUP_MANAGER_ASSIGNMENT_MANAGER_ACTIVE_INDEX_NAME =
-  "idx_tg_manager_assignment_manager_active";
-export const ORG_UNIT_MANAGER_ASSIGNMENT_MANAGER_ACTIVE_INDEX_NAME =
-  "idx_ou_manager_assignment_manager_active";
-export const ORG_UNIT_MANAGER_ASSIGNMENT_ORG_UNIT_ACTIVE_INDEX_NAME =
-  "idx_ou_manager_assignment_org_unit_active";
-export const ORG_UNIT_MANAGER_ASSIGNMENT_MANAGER_ROLE_ACTIVE_INDEX_NAME =
-  "idx_ou_manager_assignment_manager_role_active";
 export const KPI_ACTUAL_ENTRY_UNIQ_INDEX_NAME =
   "uniq_kpi_actual_entry_identity";
 export const KPI_ACTUAL_ENTRY_LOOKUP_INDEX_NAME =
@@ -47,12 +37,6 @@ export async function initKpiIndexes(db: Db): Promise<void> {
   const actualEntries = db.collection("kpi_actual_entries");
   const actualCorrections = db.collection("kpi_actual_corrections");
   const actualSlotExcuses = db.collection("kpi_actual_slot_excuses");
-  const managerAssignments = db.collection(
-    "talent_group_manager_assignments",
-  );
-  const orgUnitManagerAssignments = db.collection(
-    "org_unit_manager_assignments",
-  );
 
   await plans.createIndex(
     { planCode: 1 },
@@ -96,44 +80,6 @@ export async function initKpiIndexes(db: Db): Promise<void> {
   await allocations.createIndex(
     { groupId: 1, memberTalentId: 1, allocationStatus: 1 },
     { name: KPI_ALLOCATION_GROUP_MEMBER_INDEX_NAME },
-  );
-  await managerAssignments.createIndex(
-    { groupId: 1, status: 1, effectiveFrom: 1, effectiveTo: 1 },
-    { name: TALENT_GROUP_MANAGER_ASSIGNMENT_GROUP_ACTIVE_INDEX_NAME },
-  );
-  await managerAssignments.createIndex(
-    {
-      managerEmploymentProfileId: 1,
-      status: 1,
-      effectiveFrom: 1,
-      effectiveTo: 1,
-    },
-    {
-      name: TALENT_GROUP_MANAGER_ASSIGNMENT_MANAGER_ACTIVE_INDEX_NAME,
-    },
-  );
-  await orgUnitManagerAssignments.createIndex(
-    {
-      managerEmploymentProfileId: 1,
-      status: 1,
-      effectiveFrom: 1,
-      effectiveTo: 1,
-    },
-    { name: ORG_UNIT_MANAGER_ASSIGNMENT_MANAGER_ACTIVE_INDEX_NAME },
-  );
-  await orgUnitManagerAssignments.createIndex(
-    { orgUnitId: 1, status: 1, effectiveFrom: 1, effectiveTo: 1 },
-    { name: ORG_UNIT_MANAGER_ASSIGNMENT_ORG_UNIT_ACTIVE_INDEX_NAME },
-  );
-  await orgUnitManagerAssignments.createIndex(
-    {
-      managerEmploymentProfileId: 1,
-      role: 1,
-      status: 1,
-      effectiveFrom: 1,
-      effectiveTo: 1,
-    },
-    { name: ORG_UNIT_MANAGER_ASSIGNMENT_MANAGER_ROLE_ACTIVE_INDEX_NAME },
   );
   await actualEntries.createIndex(
     { kpiPlanId: 1, allocationId: 1, metricCode: 1, actualDate: 1 },

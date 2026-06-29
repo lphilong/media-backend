@@ -379,6 +379,12 @@ function workScheduleGlobalReadAuthority(): StructuredScopeAuthorityService {
   });
 }
 
+const emptyManagedScopeReader = {
+  async resolveManagedScopeByResponsibleEmploymentProfile() {
+    return { talentGroupIds: [], orgUnitIds: [], orgUnitScopes: [] };
+  },
+};
+
 function createService(params?: {
   readonly repository?: MemoryWorkShiftRepository;
   readonly sequenceRepository?: MemoryWorkShiftCodeSequenceRepository;
@@ -394,15 +400,11 @@ function createService(params?: {
           id: employmentProfileId,
           employmentStatus: "ACTIVE",
           orgUnitId: "org-1",
-          managerEmploymentProfileId: null,
           linkedUserId: null,
         };
       },
       async findByLinkedUserId() {
         return null;
-      },
-      async listIdsByManagerEmploymentProfileId() {
-        return [];
       },
       async listIdsByActiveTalentGroupIds() {
         return [];
@@ -449,6 +451,7 @@ function createService(params?: {
       error() {},
       debug() {},
     } as never,
+    emptyManagedScopeReader,
   );
 }
 
@@ -1299,9 +1302,6 @@ test("Work Schedule list source filters are parsed and passed to read repository
       async findByLinkedUserId() {
         return null;
       },
-      async listIdsByManagerEmploymentProfileId() {
-        return [];
-      },
       async listIdsByActiveTalentGroupIds() {
         return [];
       },
@@ -1315,7 +1315,6 @@ test("Work Schedule list source filters are parsed and passed to read repository
         return [];
       },
     },
-    undefined,
     undefined,
     workScheduleGlobalReadAuthority(),
   );
@@ -1358,15 +1357,9 @@ test("Work Schedule broad Admin list rejects legacy coarse team scope", async ()
               id: "manager-profile-1",
               employmentStatus: "ACTIVE",
               orgUnitId: "org-1",
-              managerEmploymentProfileId: null,
               linkedUserId,
             }
           : null;
-      },
-      async listIdsByManagerEmploymentProfileId() {
-        throw new Error(
-          "managerEmploymentProfileId must not authorize team schedules",
-        );
       },
       async listIdsByActiveTalentGroupIds(groupIds: readonly string[]) {
         capturedGroupIds = groupIds;
@@ -1383,26 +1376,15 @@ test("Work Schedule broad Admin list rejects legacy coarse team scope", async ()
       },
     },
     {
-      async listActiveAssignmentsByManagerEmploymentProfile(
-        managerEmploymentProfileId: string,
-      ) {
-        assert.equal(managerEmploymentProfileId, "manager-profile-1");
-        return [
-          {
-            id: "assignment-1",
-            groupId: "group-managed",
-            managerEmploymentProfileId,
-            role: "MANAGER",
-            effectiveFrom: 1,
-            effectiveTo: null,
-            status: "ACTIVE",
-            isPrimary: true,
-            createdAt: 1,
-            createdByActorId: "admin-user-1",
-            updatedAt: 1,
-            updatedByActorId: "admin-user-1",
-          },
-        ];
+      async resolveManagedScopeByResponsibleEmploymentProfile(input: {
+        readonly responsibleEmploymentProfileId: string;
+      }) {
+        assert.equal(input.responsibleEmploymentProfileId, "manager-profile-1");
+        return {
+          talentGroupIds: ["group-managed"],
+          orgUnitIds: [],
+          orgUnitScopes: [],
+        };
       },
     },
   );

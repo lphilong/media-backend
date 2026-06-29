@@ -37,10 +37,10 @@ test("People Readiness generates exact supported issues with deterministic safe 
     "TALENTGROUP_ACTIVE_MEMBER_TALENT_NOT_ACTIVE",
     "TALENTGROUP_HAS_NO_OPERATIONAL_MEMBERS",
     "ORGUNIT_HAS_NO_ACTIVE_EMPLOYMENT_PROFILES",
-    "ORGUNIT_MANAGER_ASSIGNMENT_MANAGER_NOT_PROFILE_READY",
-    "ORGUNIT_MANAGER_ASSIGNMENT_MANAGER_NOT_LOGIN_READY",
-    "TALENTGROUP_MANAGER_ASSIGNMENT_MANAGER_NOT_PROFILE_READY",
-    "TALENTGROUP_MANAGER_ASSIGNMENT_MANAGER_NOT_LOGIN_READY",
+    "ORGUNIT_RESPONSIBILITY_MANAGER_NOT_PROFILE_READY",
+    "ORGUNIT_RESPONSIBILITY_MANAGER_NOT_LOGIN_READY",
+    "TALENTGROUP_RESPONSIBILITY_MANAGER_NOT_PROFILE_READY",
+    "TALENTGROUP_RESPONSIBILITY_MANAGER_NOT_LOGIN_READY",
     "SELF_SERVICE_PROFILE_NOT_ACTIVE",
   ].forEach((code) => assert.equal(codes.has(code as never), true, code));
 
@@ -81,18 +81,18 @@ test("People Readiness manager login readiness uses MANAGER_CONSOLE instead of a
           employmentStatus: "ACTIVE",
         },
       ],
-      orgUnitManagerAssignments: [
+      orgUnitResponsibilities: [
         {
           id: "ou-assignment-legacy-admin",
           targetId: "ou-ready",
-          managerEmploymentProfileId: "ep-legacy-admin-manager",
-          role: "UNIT_MANAGER",
+          responsibleEmploymentProfileId: "ep-legacy-admin-manager",
+          responsibilityRole: "UNIT_MANAGER",
           status: "ACTIVE",
-          effectiveFrom: now - 1,
-          effectiveTo: null,
+          effectiveAt: now - 1,
+          expiresAt: null,
         },
       ],
-      talentGroupManagerAssignments: [],
+      talentGroupResponsibilities: [],
       talents: [],
       talentGroupMembers: [],
     },
@@ -102,7 +102,7 @@ test("People Readiness manager login readiness uses MANAGER_CONSOLE instead of a
   assert.equal(
     issues.some(
       (issue) =>
-        issue.issueCode === "ORGUNIT_MANAGER_ASSIGNMENT_MANAGER_NOT_LOGIN_READY",
+        issue.issueCode === "ORGUNIT_RESPONSIBILITY_MANAGER_NOT_LOGIN_READY",
     ),
     true,
   );
@@ -544,13 +544,13 @@ function snapshot(): PeopleReadinessSnapshot {
       { id: "member-profile", groupId: "tg-broken", talentId: "talent-inactive-profile", membershipStatus: "ACTIVE" },
       { id: "member-talent", groupId: "tg-broken", talentId: "talent-inactive", membershipStatus: "ACTIVE" },
     ],
-    orgUnitManagerAssignments: [
-      { id: "ou-assignment", targetId: "ou-ready", managerEmploymentProfileId: "ep-manager-no-login", role: "UNIT_MANAGER", status: "ACTIVE", effectiveFrom: now - 1, effectiveTo: null },
-      { id: "ou-assignment-inactive", targetId: "ou-ready", managerEmploymentProfileId: "ep-inactive", role: "UNIT_MANAGER", status: "ACTIVE", effectiveFrom: now - 1, effectiveTo: null },
+    orgUnitResponsibilities: [
+      { id: "ou-assignment", targetId: "ou-ready", responsibleEmploymentProfileId: "ep-manager-no-login", responsibilityRole: "UNIT_MANAGER", status: "ACTIVE", effectiveAt: now - 1, expiresAt: null },
+      { id: "ou-assignment-inactive", targetId: "ou-ready", responsibleEmploymentProfileId: "ep-inactive", responsibilityRole: "UNIT_MANAGER", status: "ACTIVE", effectiveAt: now - 1, expiresAt: null },
     ],
-    talentGroupManagerAssignments: [
-      { id: "tg-assignment", targetId: "tg-broken", managerEmploymentProfileId: "ep-manager-no-login", role: "MANAGER", status: "ACTIVE", effectiveFrom: now - 1, effectiveTo: null },
-      { id: "tg-assignment-inactive", targetId: "tg-broken", managerEmploymentProfileId: "ep-inactive", role: "MANAGER", status: "ACTIVE", effectiveFrom: now - 1, effectiveTo: null },
+    talentGroupResponsibilities: [
+      { id: "tg-assignment", targetId: "tg-broken", responsibleEmploymentProfileId: "ep-manager-no-login", responsibilityRole: "MANAGER", status: "ACTIVE", effectiveAt: now - 1, expiresAt: null },
+      { id: "tg-assignment-inactive", targetId: "tg-broken", responsibleEmploymentProfileId: "ep-inactive", responsibilityRole: "MANAGER", status: "ACTIVE", effectiveAt: now - 1, expiresAt: null },
     ],
   };
 }
@@ -593,8 +593,8 @@ function hretSnapshot(
     }],
     talentGroups: [],
     talentGroupMembers: [],
-    orgUnitManagerAssignments: [],
-    talentGroupManagerAssignments: [],
+    orgUnitResponsibilities: [],
+    talentGroupResponsibilities: [],
   };
 }
 

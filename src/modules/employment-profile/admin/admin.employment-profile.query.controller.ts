@@ -29,7 +29,6 @@ const LIST_EMPLOYMENT_PROFILES_ALLOWED_QUERY_KEYS =
     "contractStatus",
     "employmentKind",
     "orgUnitId",
-    "managerEmploymentProfileId",
     "hasLinkedUser",
     "limit",
     "cursor",
@@ -167,10 +166,6 @@ function parseListEmploymentProfilesQuery(
     orgUnitId: query.orgUnitId as
       | string
       | undefined,
-    managerEmploymentProfileId:
-      query.managerEmploymentProfileId as
-        | string
-        | undefined,
     hasLinkedUser: query.hasLinkedUser as
         | string
         | undefined,

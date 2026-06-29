@@ -158,12 +158,6 @@ export class NativeMongoTalentReadRepository
       });
     }
 
-    if (input.managerEmploymentProfileId) {
-      queryFilters.push({
-        managerEmploymentProfileId: input.managerEmploymentProfileId,
-      });
-    }
-
     if (input.hasLinkedEmploymentProfile === true) {
       queryFilters.push({
         linkedEmploymentProfileId: {
@@ -289,7 +283,6 @@ async function enrichTalentEmploymentProfileReferenceSummaries<
     readonly legalName: string;
     readonly displayShortName: string | null;
     readonly talentOrigin: TalentOrigin;
-    readonly managerEmploymentProfileId: string | null;
     readonly linkedEmploymentProfileId: string | null;
   },
 >(
@@ -297,14 +290,12 @@ async function enrichTalentEmploymentProfileReferenceSummaries<
   collection: Collection<EmploymentProfileReferenceDocument>,
 ): Promise<
   readonly (T & {
-    readonly managerEmploymentProfileRef: ReferenceSummary | null;
     readonly linkedEmploymentProfileRef: ReferenceSummary | null;
   })[]
 > {
   if (items.length === 0) {
     return items.map((item) => ({
       ...item,
-      managerEmploymentProfileRef: null,
       linkedEmploymentProfileRef: null,
     }));
   }
@@ -312,10 +303,6 @@ async function enrichTalentEmploymentProfileReferenceSummaries<
   const employmentProfileIds = new Set<string>();
 
   for (const item of items) {
-    addOptionalReferenceId(
-      employmentProfileIds,
-      item.managerEmploymentProfileId,
-    );
     addOptionalReferenceId(
       employmentProfileIds,
       item.linkedEmploymentProfileId,
@@ -328,10 +315,6 @@ async function enrichTalentEmploymentProfileReferenceSummaries<
   );
 
   return items.map((item) => {
-    const managerEmploymentProfileRef =
-      item.managerEmploymentProfileId
-        ? (employmentProfileRefMap.get(item.managerEmploymentProfileId) ?? null)
-        : null;
     const linkedEmploymentProfileRef =
       item.linkedEmploymentProfileId
         ? (employmentProfileRefMap.get(item.linkedEmploymentProfileId) ?? null)
@@ -345,7 +328,6 @@ async function enrichTalentEmploymentProfileReferenceSummaries<
       ...item,
       displayName: display.displayName,
       performanceAlias: display.performanceAlias,
-      managerEmploymentProfileRef,
       linkedEmploymentProfileRef,
     };
   });
@@ -545,7 +527,6 @@ function toTalentListItemView(
     displayShortName: document.displayShortName,
     talentOrigin: document.talentOrigin,
     operationalStatus: document.operationalStatus,
-    managerEmploymentProfileId: document.managerEmploymentProfileId,
     linkedEmploymentProfileId: document.linkedEmploymentProfileId,
     commercialParticipationStatus: document.commercialParticipationStatus,
     livestreamEligible: document.livestreamEligible,
@@ -835,7 +816,6 @@ function buildCursorQuerySignature(
       ? [...input.activeMemberOfGroupIds].sort()
       : null,
     talentOrigin: input.talentOrigin ?? null,
-    managerEmploymentProfileId: input.managerEmploymentProfileId ?? null,
     hasLinkedEmploymentProfile: input.hasLinkedEmploymentProfile ?? null,
     commercialParticipationStatus: input.commercialParticipationStatus ?? null,
     livestreamEligible: input.livestreamEligible ?? null,

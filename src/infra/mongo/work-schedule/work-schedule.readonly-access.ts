@@ -36,7 +36,6 @@ interface EmploymentProfileReferenceDocument {
   readonly displayName: string;
   readonly employmentStatus: WorkScheduleReferencedEmploymentProfile["employmentStatus"];
   readonly orgUnitId: string;
-  readonly managerEmploymentProfileId: string | null;
   readonly linkedUserId: string | null;
 }
 
@@ -133,7 +132,6 @@ export class NativeMongoWorkScheduleEmploymentProfileReadonlyAccess
           displayName: 1,
           employmentStatus: 1,
           orgUnitId: 1,
-          managerEmploymentProfileId: 1,
           linkedUserId: 1,
         },
         ...(session ? { session } : {}),
@@ -145,8 +143,6 @@ export class NativeMongoWorkScheduleEmploymentProfileReadonlyAccess
           id: doc._id,
           employmentStatus: doc.employmentStatus,
           orgUnitId: doc.orgUnitId,
-          managerEmploymentProfileId:
-            doc.managerEmploymentProfileId,
           linkedUserId: doc.linkedUserId,
           ref: toEmploymentProfileReferenceSummary(doc),
         }
@@ -172,7 +168,6 @@ export class NativeMongoWorkScheduleEmploymentProfileReadonlyAccess
           displayName: 1,
           employmentStatus: 1,
           orgUnitId: 1,
-          managerEmploymentProfileId: 1,
           linkedUserId: 1,
         },
         ...(session ? { session } : {}),
@@ -184,36 +179,10 @@ export class NativeMongoWorkScheduleEmploymentProfileReadonlyAccess
           id: doc._id,
           employmentStatus: doc.employmentStatus,
           orgUnitId: doc.orgUnitId,
-          managerEmploymentProfileId:
-            doc.managerEmploymentProfileId,
           linkedUserId: doc.linkedUserId,
           ref: toEmploymentProfileReferenceSummary(doc),
         }
       : null;
-  }
-
-  async listIdsByManagerEmploymentProfileId(
-    managerEmploymentProfileId: string,
-    session?: ClientSession,
-  ): Promise<readonly string[]> {
-    const docs = await this.collection
-      .find(
-        {
-          managerEmploymentProfileId,
-        },
-        {
-          projection: {
-            _id: 1,
-          },
-          ...(session ? { session } : {}),
-        },
-      )
-      .sort({
-        _id: 1,
-      })
-      .toArray();
-
-    return docs.map((doc) => doc._id);
   }
 
   async listIdsByActiveTalentGroupIds(
@@ -333,7 +302,6 @@ export class NativeMongoWorkScheduleEmploymentProfileReadonlyAccess
             displayName: 1,
             employmentStatus: 1,
             orgUnitId: 1,
-            managerEmploymentProfileId: 1,
             linkedUserId: 1,
           },
           ...(session ? { session } : {}),
@@ -348,8 +316,6 @@ export class NativeMongoWorkScheduleEmploymentProfileReadonlyAccess
       id: doc._id,
       employmentStatus: doc.employmentStatus,
       orgUnitId: doc.orgUnitId,
-      managerEmploymentProfileId:
-        doc.managerEmploymentProfileId,
       linkedUserId: doc.linkedUserId,
       ref: toEmploymentProfileReferenceSummary(doc),
     }));
@@ -438,7 +404,6 @@ export class NativeMongoWorkScheduleEmploymentProfileReadonlyAccess
                   displayName: 1,
                   employmentStatus: 1,
                   orgUnitId: 1,
-                  managerEmploymentProfileId: 1,
                   linkedUserId: 1,
                 },
                 ...options,
@@ -452,8 +417,6 @@ export class NativeMongoWorkScheduleEmploymentProfileReadonlyAccess
           id: profile._id,
           employmentStatus: profile.employmentStatus,
           orgUnitId: profile.orgUnitId,
-          managerEmploymentProfileId:
-            profile.managerEmploymentProfileId,
           linkedUserId: profile.linkedUserId,
           ref: toEmploymentProfileReferenceSummary(profile),
         } satisfies WorkScheduleReferencedEmploymentProfile,

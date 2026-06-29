@@ -81,6 +81,17 @@ interface UserReferenceDocument {
   readonly archivedAt: number | null;
 }
 
+interface ResponsibilityAssignmentDocument {
+  readonly _id: string;
+  readonly subjectType: string;
+  readonly subjectId: string;
+  readonly responsibleEmploymentProfileId: string;
+  readonly responsibilityType: string;
+  readonly status: string;
+  readonly effectiveAt: number;
+  readonly expiresAt: number | null;
+}
+
 type SortSpec =
   | {
       readonly kind: "default";
@@ -114,6 +125,7 @@ export class NativeMongoEmploymentProfileReadRepository
   private readonly orgUnitCollection: Collection<OrgUnitReferenceDocument>;
   private readonly employmentProfileCollection: Collection<EmploymentProfileReadDocument>;
   private readonly userCollection: Collection<UserReferenceDocument>;
+  private readonly responsibilityAssignmentCollection: Collection<ResponsibilityAssignmentDocument>;
 
   constructor(db: Db) {
     super(db, "employment_profiles");
@@ -127,6 +139,10 @@ export class NativeMongoEmploymentProfileReadRepository
       );
     this.userCollection =
       db.collection<UserReferenceDocument>("users");
+    this.responsibilityAssignmentCollection =
+      db.collection<ResponsibilityAssignmentDocument>(
+        "responsibility_assignments",
+      );
   }
 
   async listEmploymentProfiles(
@@ -173,13 +189,6 @@ export class NativeMongoEmploymentProfileReadRepository
     if (input.orgUnitId) {
       queryFilters.push({
         orgUnitId: input.orgUnitId,
-      });
-    }
-
-    if (input.managerEmploymentProfileId) {
-      queryFilters.push({
-        managerEmploymentProfileId:
-          input.managerEmploymentProfileId,
       });
     }
 
@@ -287,11 +296,18 @@ export class NativeMongoEmploymentProfileReadRepository
             sortSpec,
             cursorScope,
           );
+    const reportingSubjectIds =
+      await this.listActiveReportingSubjectIds(input);
+    if (reportingSubjectIds.length === 0) {
+      return { items: [] };
+    }
+
     const queryFilters: Array<Record<string, unknown>> =
       [
         {
-          managerEmploymentProfileId:
-            input.managerEmploymentProfileId,
+          _id: {
+            $in: reportingSubjectIds,
+          },
         },
         {
           employmentStatus: {
@@ -346,12 +362,44 @@ export class NativeMongoEmploymentProfileReadRepository
           : undefined,
     };
   }
+
+  private async listActiveReportingSubjectIds(
+    input: Pick<
+      ListDirectReportsReadInput,
+      "responsibleEmploymentProfileId" | "asOf"
+    >,
+  ): Promise<readonly string[]> {
+    const docs = await this.responsibilityAssignmentCollection
+      .find(
+        {
+          subjectType: "EMPLOYMENT_PROFILE",
+          responsibleEmploymentProfileId:
+            input.responsibleEmploymentProfileId,
+          responsibilityType:
+            "EMPLOYMENT_REPORTING_MANAGER",
+          status: "ACTIVE",
+          effectiveAt: { $lte: input.asOf },
+          $or: [
+            { expiresAt: null },
+            { expiresAt: { $gte: input.asOf } },
+          ],
+        },
+        {
+          projection: {
+            subjectId: 1,
+          },
+        },
+      )
+      .sort({ subjectId: 1, _id: 1 })
+      .toArray();
+
+    return uniqueNonEmpty(docs.map((doc) => doc.subjectId));
+  }
 }
 
 async function enrichEmploymentProfileReferenceSummaries<
   T extends {
     readonly orgUnitId: string;
-    readonly managerEmploymentProfileId: string | null;
     readonly recruiterEmploymentProfileId?: string | null;
     readonly hrOwnerEmploymentProfileId?: string | null;
     readonly onboardingOwnerEmploymentProfileId?: string | null;
@@ -368,7 +416,6 @@ async function enrichEmploymentProfileReferenceSummaries<
 ): Promise<
   readonly (T & {
     readonly orgUnitRef: ReferenceSummary | null;
-    readonly managerEmploymentProfileRef: ReferenceSummary | null;
     readonly recruiterEmploymentProfileRef?: ReferenceSummary | null;
     readonly hrOwnerEmploymentProfileRef?: ReferenceSummary | null;
     readonly onboardingOwnerEmploymentProfileRef?: ReferenceSummary | null;
@@ -380,7 +427,6 @@ async function enrichEmploymentProfileReferenceSummaries<
     return items.map((item) => ({
       ...item,
       orgUnitRef: null,
-      managerEmploymentProfileRef: null,
       recruiterEmploymentProfileRef:
         item.recruiterEmploymentProfileId === undefined
           ? undefined
@@ -408,10 +454,6 @@ async function enrichEmploymentProfileReferenceSummaries<
 
   for (const item of items) {
     addRequiredReferenceId(orgUnitIds, item.orgUnitId);
-    addOptionalReferenceId(
-      employmentProfileIds,
-      item.managerEmploymentProfileId,
-    );
     addOptionalReferenceId(
       employmentProfileIds,
       item.recruiterEmploymentProfileId ?? null,
@@ -450,9 +492,6 @@ async function enrichEmploymentProfileReferenceSummaries<
   return items.map((item) => ({
     ...item,
     orgUnitRef: orgUnitRefMap.get(item.orgUnitId) ?? null,
-    managerEmploymentProfileRef: item.managerEmploymentProfileId
-      ? employmentProfileRefMap.get(item.managerEmploymentProfileId) ?? null
-      : null,
     recruiterEmploymentProfileRef:
       item.recruiterEmploymentProfileId === undefined
         ? undefined
@@ -765,8 +804,6 @@ function toEmploymentProfileListItemView(
     employmentKind: document.employmentKind,
     jobTitle: document.jobTitle,
     orgUnitId: document.orgUnitId,
-    managerEmploymentProfileId:
-      document.managerEmploymentProfileId,
     recruiterEmploymentProfileId:
       document.recruiterEmploymentProfileId ?? null,
     hrOwnerEmploymentProfileId:
@@ -794,8 +831,6 @@ function toEmploymentProfileDirectReportListItemView(
     employmentStatus: document.employmentStatus,
     contractStatus: document.contractStatus,
     orgUnitId: document.orgUnitId,
-    managerEmploymentProfileId:
-      document.managerEmploymentProfileId,
   };
 }
 
@@ -812,8 +847,6 @@ function toEmploymentProfileDetailView(
     titleDescription: document.titleDescription,
     externalRef: document.externalRef,
     orgUnitId: document.orgUnitId,
-    managerEmploymentProfileId:
-      document.managerEmploymentProfileId,
     recruiterEmploymentProfileId:
       document.recruiterEmploymentProfileId ?? null,
     hrOwnerEmploymentProfileId:
@@ -1194,8 +1227,6 @@ function buildListCursorScope(
     contractStatus: input.contractStatus ?? null,
     employmentKind: input.employmentKind ?? null,
     orgUnitId: input.orgUnitId ?? null,
-    managerEmploymentProfileId:
-      input.managerEmploymentProfileId ?? null,
     hasLinkedUser: input.hasLinkedUser ?? null,
     search: input.search ?? null,
     sort: sortSpec,
@@ -1209,8 +1240,19 @@ function buildDirectReportsCursorScope(
   return JSON.stringify({
     query:
       "employment-profile.list-direct-reports",
-    managerEmploymentProfileId:
-      input.managerEmploymentProfileId,
+    responsibleEmploymentProfileId:
+      input.responsibleEmploymentProfileId,
+    asOf: input.asOf,
     sort: sortSpec,
   });
+}
+
+function uniqueNonEmpty(values: readonly string[]): readonly string[] {
+  return [
+    ...new Set(
+      values
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0),
+    ),
+  ];
 }

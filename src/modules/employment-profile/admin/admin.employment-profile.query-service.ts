@@ -72,10 +72,6 @@ export class EmploymentProfileAdminQueryService {
         query.orgUnitId,
         "orgUnitId",
       ),
-      managerEmploymentProfileId: parseOptionalId(
-        query.managerEmploymentProfileId,
-        "managerEmploymentProfileId",
-      ),
       hasLinkedUser: parseOptionalBoolean(
         query.hasLinkedUser,
         "hasLinkedUser",
@@ -163,8 +159,9 @@ export class EmploymentProfileAdminQueryService {
     }
 
     return this.readRepository.listDirectReports({
-      managerEmploymentProfileId:
+      responsibleEmploymentProfileId:
         employmentProfileId,
+      asOf: Date.now(),
       limit: parseLimit(query.limit),
       cursor: parseOptionalCursor(query.cursor),
       sortField: parseOptionalSortField(query.sortBy),

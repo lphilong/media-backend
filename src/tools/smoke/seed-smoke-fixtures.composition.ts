@@ -324,8 +324,6 @@ class MongoPhaseAFixtureLookup implements PhaseAFixtureLookup {
         employmentKind: doc.employmentKind,
         jobTitle: doc.jobTitle,
         orgUnitId: doc.orgUnitId,
-        managerEmploymentProfileId:
-          doc.managerEmploymentProfileId ?? null,
         linkedUserId: doc.linkedUserId ?? null,
         contractStatus: doc.contractStatus,
         employmentStartDate: doc.employmentStartDate,
@@ -352,8 +350,6 @@ class MongoPhaseAFixtureLookup implements PhaseAFixtureLookup {
         stageName: doc.stageName,
         legalName: doc.legalName,
         talentOrigin: doc.talentOrigin,
-        managerEmploymentProfileId:
-          doc.managerEmploymentProfileId ?? null,
         linkedEmploymentProfileId:
           doc.linkedEmploymentProfileId ?? null,
         commercialParticipationStatus:

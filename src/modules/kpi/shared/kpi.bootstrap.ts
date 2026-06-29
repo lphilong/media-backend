@@ -13,11 +13,6 @@ import {
   KPI_PLAN_SUBJECT_PERIOD_STATUS_INDEX_NAME,
   KPI_TARGET_METRIC_PLAN_INDEX_NAME,
   KPI_TARGET_PLAN_METRIC_UNIQ_INDEX_NAME,
-  ORG_UNIT_MANAGER_ASSIGNMENT_MANAGER_ACTIVE_INDEX_NAME,
-  ORG_UNIT_MANAGER_ASSIGNMENT_MANAGER_ROLE_ACTIVE_INDEX_NAME,
-  ORG_UNIT_MANAGER_ASSIGNMENT_ORG_UNIT_ACTIVE_INDEX_NAME,
-  TALENT_GROUP_MANAGER_ASSIGNMENT_GROUP_ACTIVE_INDEX_NAME,
-  TALENT_GROUP_MANAGER_ASSIGNMENT_MANAGER_ACTIVE_INDEX_NAME,
   initKpiIndexes,
 } from "@infra/mongo/kpi/kpi.index";
 import { registerPresenters } from "./kpi.presenter.register";
@@ -89,52 +84,6 @@ export function createKpiBootstrapRegistrar(): BootstrapRegistrar {
         "kpi_allocations",
         KPI_ALLOCATION_GROUP_MEMBER_INDEX_NAME,
         { groupId: 1, memberTalentId: 1, allocationStatus: 1 },
-      );
-      await assertRequiredIndex(
-        db,
-        "talent_group_manager_assignments",
-        TALENT_GROUP_MANAGER_ASSIGNMENT_GROUP_ACTIVE_INDEX_NAME,
-        { groupId: 1, status: 1, effectiveFrom: 1, effectiveTo: 1 },
-      );
-      await assertRequiredIndex(
-        db,
-        "talent_group_manager_assignments",
-        TALENT_GROUP_MANAGER_ASSIGNMENT_MANAGER_ACTIVE_INDEX_NAME,
-        {
-          managerEmploymentProfileId: 1,
-          status: 1,
-          effectiveFrom: 1,
-          effectiveTo: 1,
-        },
-      );
-      await assertRequiredIndex(
-        db,
-        "org_unit_manager_assignments",
-        ORG_UNIT_MANAGER_ASSIGNMENT_MANAGER_ACTIVE_INDEX_NAME,
-        {
-          managerEmploymentProfileId: 1,
-          status: 1,
-          effectiveFrom: 1,
-          effectiveTo: 1,
-        },
-      );
-      await assertRequiredIndex(
-        db,
-        "org_unit_manager_assignments",
-        ORG_UNIT_MANAGER_ASSIGNMENT_ORG_UNIT_ACTIVE_INDEX_NAME,
-        { orgUnitId: 1, status: 1, effectiveFrom: 1, effectiveTo: 1 },
-      );
-      await assertRequiredIndex(
-        db,
-        "org_unit_manager_assignments",
-        ORG_UNIT_MANAGER_ASSIGNMENT_MANAGER_ROLE_ACTIVE_INDEX_NAME,
-        {
-          managerEmploymentProfileId: 1,
-          role: 1,
-          status: 1,
-          effectiveFrom: 1,
-          effectiveTo: 1,
-        },
       );
       await assertRequiredUniqueIndex(
         db,

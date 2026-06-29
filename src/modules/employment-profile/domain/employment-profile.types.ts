@@ -94,8 +94,6 @@ export interface EmploymentProfileListItemView {
   readonly jobTitle: string;
   readonly orgUnitId: string;
   readonly orgUnitRef?: ReferenceSummary | null;
-  readonly managerEmploymentProfileId: string | null;
-  readonly managerEmploymentProfileRef?: ReferenceSummary | null;
   readonly recruiterEmploymentProfileId: string | null;
   readonly recruiterEmploymentProfileRef?: ReferenceSummary | null;
   readonly hrOwnerEmploymentProfileId: string | null;
@@ -121,8 +119,6 @@ export interface EmploymentProfileDirectReportListItemView {
   readonly contractStatus: EmploymentContractStatus;
   readonly orgUnitId: string;
   readonly orgUnitRef?: ReferenceSummary | null;
-  readonly managerEmploymentProfileId: string | null;
-  readonly managerEmploymentProfileRef?: ReferenceSummary | null;
 }
 
 export interface EmploymentProfileOrgUnitListItemView {
@@ -133,8 +129,6 @@ export interface EmploymentProfileOrgUnitListItemView {
   readonly contractStatus: EmploymentContractStatus;
   readonly orgUnitId: string;
   readonly orgUnitRef?: ReferenceSummary | null;
-  readonly managerEmploymentProfileId: string | null;
-  readonly managerEmploymentProfileRef?: ReferenceSummary | null;
 }
 
 export interface EmploymentProfileDetailView {
@@ -148,8 +142,6 @@ export interface EmploymentProfileDetailView {
   readonly externalRef: string | null;
   readonly orgUnitId: string;
   readonly orgUnitRef?: ReferenceSummary | null;
-  readonly managerEmploymentProfileId: string | null;
-  readonly managerEmploymentProfileRef?: ReferenceSummary | null;
   readonly recruiterEmploymentProfileId: string | null;
   readonly recruiterEmploymentProfileRef?: ReferenceSummary | null;
   readonly hrOwnerEmploymentProfileId: string | null;

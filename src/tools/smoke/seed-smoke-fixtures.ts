@@ -653,7 +653,6 @@ function employmentProfileFixtures(
                 : "INTERN",
         jobTitle: titles[index] ?? "Catalog Specialist",
         orgUnitId: ref(orgKey),
-        managerEmploymentProfileId: null,
         linkedUserId: null,
         contractStatus:
           index % 3 === 0
@@ -684,7 +683,6 @@ function talentFixtures(
         stageName: `Smoke Talent ${item}`,
         legalName: `Smoke Talent Legal ${item}`,
         talentOrigin: isInternal ? "INTERNAL" : "EXTERNAL",
-        managerEmploymentProfileId: null,
         linkedEmploymentProfileId: isInternal
           ? ref(`employment-${item}`)
           : null,

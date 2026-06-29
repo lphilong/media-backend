@@ -3,8 +3,8 @@ import { PeopleReadinessReadRepository } from "@modules/people-readiness/read/pe
 import { normalizeAccountContexts } from "@modules/account-context/domain/account-context.types";
 import {
   PeopleReadinessEmploymentProfile,
-  PeopleReadinessManagerAssignment,
   PeopleReadinessOrgUnit,
+  PeopleReadinessResponsibilityAssignment,
   PeopleReadinessSnapshot,
   PeopleReadinessTalent,
   PeopleReadinessTalentGroup,
@@ -25,8 +25,8 @@ export class NativeMongoPeopleReadinessReadRepository
       orgUnitDocs,
       talentGroupDocs,
       talentGroupMemberDocs,
-      orgUnitManagerAssignmentDocs,
-      talentGroupManagerAssignmentDocs,
+      orgUnitResponsibilityDocs,
+      talentGroupResponsibilityDocs,
     ] = await Promise.all([
       this.db.collection("users").find({}, {
         projection: { _id: 1, accountStatus: 1, actorKind: 1, accountContexts: 1, "profile.displayName": 1 },
@@ -52,16 +52,22 @@ export class NativeMongoPeopleReadinessReadRepository
       this.db.collection("talent_group_members").find({}, {
         projection: { _id: 1, groupId: 1, talentId: 1, membershipStatus: 1 },
       }).sort({ _id: 1 }).toArray(),
-      this.db.collection("org_unit_manager_assignments").find({}, {
+      this.db.collection("responsibility_assignments").find({
+        subjectType: "ORG_UNIT",
+        responsibilityType: "ORG_UNIT_MANAGER",
+      }, {
         projection: {
-          _id: 1, orgUnitId: 1, managerEmploymentProfileId: 1, role: 1,
-          status: 1, effectiveFrom: 1, effectiveTo: 1,
+          _id: 1, subjectId: 1, responsibleEmploymentProfileId: 1,
+          responsibilityRole: 1, status: 1, effectiveAt: 1, expiresAt: 1,
         },
       }).sort({ _id: 1 }).toArray(),
-      this.db.collection("talent_group_manager_assignments").find({}, {
+      this.db.collection("responsibility_assignments").find({
+        subjectType: "TALENT_GROUP",
+        responsibilityType: "TALENT_GROUP_MANAGER",
+      }, {
         projection: {
-          _id: 1, groupId: 1, managerEmploymentProfileId: 1, role: 1,
-          status: 1, effectiveFrom: 1, effectiveTo: 1,
+          _id: 1, subjectId: 1, responsibleEmploymentProfileId: 1,
+          responsibilityRole: 1, status: 1, effectiveAt: 1, expiresAt: 1,
         },
       }).sort({ _id: 1 }).toArray(),
     ]);
@@ -109,11 +115,11 @@ export class NativeMongoPeopleReadinessReadRepository
         talentId: String(doc.talentId ?? ""),
         membershipStatus: String(doc.membershipStatus ?? "UNKNOWN"),
       } satisfies PeopleReadinessTalentGroupMember)),
-      orgUnitManagerAssignments: orgUnitManagerAssignmentDocs.map((doc) =>
-        toManagerAssignment(doc, "orgUnitId"),
+      orgUnitResponsibilities: orgUnitResponsibilityDocs.map((doc) =>
+        toResponsibilityAssignment(doc),
       ),
-      talentGroupManagerAssignments: talentGroupManagerAssignmentDocs.map((doc) =>
-        toManagerAssignment(doc, "groupId"),
+      talentGroupResponsibilities: talentGroupResponsibilityDocs.map((doc) =>
+        toResponsibilityAssignment(doc),
       ),
     };
   }
@@ -129,17 +135,17 @@ function readText(value: unknown, key: string): string | undefined {
   return typeof text === "string" && text.length > 0 ? text : undefined;
 }
 
-function toManagerAssignment(
+function toResponsibilityAssignment(
   doc: Record<string, unknown>,
-  targetKey: "orgUnitId" | "groupId",
-): PeopleReadinessManagerAssignment {
+): PeopleReadinessResponsibilityAssignment {
   return {
     id: String(doc._id),
-    targetId: String(doc[targetKey] ?? ""),
-    managerEmploymentProfileId: String(doc.managerEmploymentProfileId ?? ""),
-    role: String(doc.role ?? "UNKNOWN"),
+    targetId: String(doc.subjectId ?? ""),
+    responsibleEmploymentProfileId:
+      String(doc.responsibleEmploymentProfileId ?? ""),
+    responsibilityRole: String(doc.responsibilityRole ?? "MANAGER"),
     status: String(doc.status ?? "UNKNOWN"),
-    effectiveFrom: Number(doc.effectiveFrom ?? 0),
-    effectiveTo: typeof doc.effectiveTo === "number" ? doc.effectiveTo : null,
+    effectiveAt: Number(doc.effectiveAt ?? 0),
+    expiresAt: typeof doc.expiresAt === "number" ? doc.expiresAt : null,
   };
 }

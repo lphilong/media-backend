@@ -2,15 +2,12 @@ import { Actor } from "@core/actor/actor";
 import { Permission } from "@core/permission/permission.enum";
 import { EmploymentProfileRepository } from "@modules/employment-profile/domain/employment-profile.repository";
 import { EmploymentProfileRecord } from "@modules/employment-profile/domain/employment-profile.types";
-import {
-  OrgUnitManagerAssignment,
-  OrgUnitManagerRole,
-  TalentGroupManagerAssignment,
-} from "@modules/kpi/domain/kpi.types";
 import { KpiSubjectReadonlyAccess } from "@modules/kpi/domain/kpi-subject-readonly-access";
-import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
-import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import { ReferenceSummary } from "@modules/reference-summary";
+import {
+  ResponsibilityManagedOrgUnitScope,
+  ResponsibilityManagedScopeReader,
+} from "@modules/responsibility/domain/responsibility-managed-scope";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 type ManagerWorkspaceKpiCapabilities = {
@@ -26,7 +23,7 @@ export interface ManagerWorkspaceOrgUnitScope {
   readonly code?: string;
   readonly name: string;
   readonly displayName?: string;
-  readonly role: OrgUnitManagerRole;
+  readonly role: string | null;
   readonly includeDescendants: boolean;
   readonly isPrimary?: boolean;
   readonly capabilities: {
@@ -103,14 +100,7 @@ export class ManagerWorkspaceAdminService {
       KpiSubjectReadonlyAccess,
       "listSubjectRefs"
     >,
-    private readonly talentGroupManagerAssignmentRepository: Pick<
-      TalentGroupManagerAssignmentRepository,
-      "listActiveAssignmentsByManagerEmploymentProfile"
-    >,
-    private readonly orgUnitManagerAssignmentRepository: Pick<
-      OrgUnitManagerAssignmentRepository,
-      "listActiveByManagerEmploymentProfileId"
-    >,
+    private readonly managedScopeReader: ResponsibilityManagedScopeReader,
     private readonly structuredAuthority: StructuredScopeAuthorityService,
     private readonly clock: () => number = Date.now,
   ) {}
@@ -142,21 +132,17 @@ export class ManagerWorkspaceAdminService {
       ]);
     }
 
-    const asOf = this.clock();
-    const [orgUnitAssignments, talentGroupAssignments] = await Promise.all([
-      this.orgUnitManagerAssignmentRepository.listActiveByManagerEmploymentProfileId(
-        profile.id,
-        asOf,
-      ),
-      this.talentGroupManagerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-        profile.id,
-        asOf,
-      ),
-    ]);
+    const managedScope =
+      await this.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
+        {
+          responsibleEmploymentProfileId: profile.id,
+          asOf: this.clock(),
+        },
+      );
     const [authorizedOrgUnitAssignments, authorizedTalentGroupAssignments] =
       await Promise.all([
-        this.filterOrgUnitAssignments(actor, orgUnitAssignments),
-        this.filterTalentGroupAssignments(actor, talentGroupAssignments),
+        this.filterOrgUnitAssignments(actor, managedScope.orgUnitScopes),
+        this.filterTalentGroupIds(actor, managedScope.talentGroupIds),
       ]);
     const refs = await this.loadScopeRefs(
       authorizedOrgUnitAssignments,
@@ -259,25 +245,25 @@ export class ManagerWorkspaceAdminService {
   }
 
   private async loadScopeRefs(
-    orgUnitAssignments: readonly OrgUnitManagerAssignment[],
-    talentGroupAssignments: readonly TalentGroupManagerAssignment[],
+    orgUnitAssignments: readonly ResponsibilityManagedOrgUnitScope[],
+    talentGroupIds: readonly string[],
   ): Promise<ReadonlyMap<string, ReferenceSummary>> {
     return this.subjectReadonlyAccess.listSubjectRefs([
       ...orgUnitAssignments.map((assignment) => ({
         subjectType: "ORG_UNIT" as const,
         subjectId: assignment.orgUnitId,
       })),
-      ...talentGroupAssignments.map((assignment) => ({
+      ...talentGroupIds.map((groupId) => ({
         subjectType: "TALENT_GROUP" as const,
-        subjectId: assignment.groupId,
+        subjectId: groupId,
       })),
     ]);
   }
 
   private async filterOrgUnitAssignments(
     actor: Actor,
-    assignments: readonly OrgUnitManagerAssignment[],
-  ): Promise<readonly OrgUnitManagerAssignment[]> {
+    assignments: readonly ResponsibilityManagedOrgUnitScope[],
+  ): Promise<readonly ResponsibilityManagedOrgUnitScope[]> {
     const authorized = await Promise.all(
       assignments.map(async (assignment) =>
         (await hasAnyManagedOrgUnitAuthority(
@@ -290,33 +276,31 @@ export class ManagerWorkspaceAdminService {
       ),
     );
     return authorized.filter(
-      (assignment): assignment is OrgUnitManagerAssignment => assignment !== null,
-    );
-  }
-
-  private async filterTalentGroupAssignments(
-    actor: Actor,
-    assignments: readonly TalentGroupManagerAssignment[],
-  ): Promise<readonly TalentGroupManagerAssignment[]> {
-    const authorized = await Promise.all(
-      assignments.map(async (assignment) =>
-        (await hasAnyManagedTalentGroupAuthority(
-          this.structuredAuthority,
-          actor,
-          assignment.groupId,
-        ))
-          ? assignment
-          : null,
-      ),
-    );
-    return authorized.filter(
-      (assignment): assignment is TalentGroupManagerAssignment =>
+      (assignment): assignment is ResponsibilityManagedOrgUnitScope =>
         assignment !== null,
     );
   }
 
+  private async filterTalentGroupIds(
+    actor: Actor,
+    talentGroupIds: readonly string[],
+  ): Promise<readonly string[]> {
+    const authorized = await Promise.all(
+      uniqueTextValues(talentGroupIds).map(async (talentGroupId) =>
+        (await hasAnyManagedTalentGroupAuthority(
+          this.structuredAuthority,
+          actor,
+          talentGroupId,
+        ))
+          ? talentGroupId
+          : null,
+      ),
+    );
+    return authorized.filter((id): id is string => id !== null);
+  }
+
   private async toOrgUnitScope(
-    assignment: OrgUnitManagerAssignment,
+    assignment: ResponsibilityManagedOrgUnitScope,
     refs: ReadonlyMap<string, ReferenceSummary>,
     actor: Actor,
   ): Promise<ManagerWorkspaceOrgUnitScope> {
@@ -367,34 +351,34 @@ export class ManagerWorkspaceAdminService {
   }
 
   private async toTalentGroupScope(
-    assignment: TalentGroupManagerAssignment,
+    groupId: string,
     refs: ReadonlyMap<string, ReferenceSummary>,
     actor: Actor,
   ): Promise<ManagerWorkspaceTalentGroupScope> {
-    const ref = refs.get(`TALENT_GROUP:${assignment.groupId}`);
+    const ref = refs.get(`TALENT_GROUP:${groupId}`);
     const canRead = await hasAnyManagedTalentGroupAuthority(
       this.structuredAuthority,
       actor,
-      assignment.groupId,
+      groupId,
       [Permission.KPI_READ, Permission.KPI_READ_PROGRESS],
     );
     const canEnterActual = await hasManagedTalentGroupAuthority(
       this.structuredAuthority,
       actor,
       Permission.KPI_ENTER_ACTUAL,
-      assignment.groupId,
+      groupId,
     );
     const canCorrectActual = await hasManagedTalentGroupAuthority(
       this.structuredAuthority,
       actor,
       Permission.KPI_CORRECT_ACTUAL,
-      assignment.groupId,
+      groupId,
     );
 
     return {
-      talentGroupId: assignment.groupId,
+      talentGroupId: groupId,
       ...(ref?.code ? { code: ref.code } : {}),
-      name: ref?.name ?? ref?.displayName ?? assignment.groupId,
+      name: ref?.name ?? ref?.displayName ?? groupId,
       ...(ref?.displayName ? { displayName: ref.displayName } : {}),
       capabilities: {
         kpi: {
@@ -481,6 +465,14 @@ function isManagerReadyEmploymentProfile(
     profile.employmentStatus === "ACTIVE" ||
     profile.employmentStatus === "ON_LEAVE"
   );
+}
+
+function uniqueTextValues(values: readonly string[]): readonly string[] {
+  return [
+    ...new Set(
+      values.map((value) => value.trim()).filter((value) => value.length > 0),
+    ),
+  ];
 }
 
 async function hasAnyManagedOrgUnitAuthority(

@@ -57,6 +57,7 @@ import { ReferenceSummary } from "@modules/reference-summary";
 import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
 import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import { resolveManagedUnitAuthority } from "@modules/kpi/domain/managed-unit-authority";
+import { ResponsibilityManagedScopeReader } from "@modules/responsibility/domain/responsibility-managed-scope";
 import {
   StructuredScopeAuthorityAssignment,
   StructuredScopeAuthorityReader,
@@ -321,6 +322,7 @@ function createHarness(
   readonly subjectAccess: InMemoryKpiSubjectReadonlyAccess;
   readonly managerRepository: InMemoryManagerAssignmentRepository;
   readonly orgUnitManagerRepository: InMemoryOrgUnitManagerAssignmentRepository;
+  readonly managedScopeReader: InMemoryResponsibilityManagedScopeReader;
   readonly audit: RecordingAuditGuard;
 } {
   const repository = new InMemoryKpiPlanRepository();
@@ -329,14 +331,17 @@ function createHarness(
   const subjectAccess = new InMemoryKpiSubjectReadonlyAccess();
   const managerRepository = new InMemoryManagerAssignmentRepository();
   const orgUnitManagerRepository = new InMemoryOrgUnitManagerAssignmentRepository();
+  const managedScopeReader = new InMemoryResponsibilityManagedScopeReader(
+    managerRepository,
+    orgUnitManagerRepository,
+  );
   const audit = new RecordingAuditGuard();
   const service = new KpiAdminService(
     repository,
     actualRepository,
     new InMemoryBusinessCodeSequenceRepository(),
     subjectAccess,
-    managerRepository,
-    orgUnitManagerRepository,
+    managedScopeReader,
     audit as unknown as AuditGuard,
     new ImmediateMutationBridge(),
     structuredAuthority,
@@ -349,6 +354,7 @@ function createHarness(
     subjectAccess,
     managerRepository,
     orgUnitManagerRepository,
+    managedScopeReader,
     audit,
   };
 }
@@ -968,11 +974,11 @@ async function withEphemeralManagerAssignment<T>(
   groupId: string,
   action: () => Promise<T>,
 ): Promise<T> {
-  const managerRepository = (
+  const managedScopeReader = (
     service as unknown as {
-      readonly managerAssignmentRepository: InMemoryManagerAssignmentRepository;
+      readonly managedScopeReader: InMemoryResponsibilityManagedScopeReader;
     }
-  ).managerAssignmentRepository;
+  ).managedScopeReader;
   const assignment: TalentGroupManagerAssignment = {
     id: `helper-assignment-${groupId}`,
     groupId,
@@ -987,15 +993,15 @@ async function withEphemeralManagerAssignment<T>(
     updatedAt: 0,
     updatedByActorId: "seed",
   };
-  managerRepository.assignments.push(assignment);
+  managedScopeReader.talentGroupAssignments.push(assignment);
   try {
     return await action();
   } finally {
-    const index = managerRepository.assignments.findIndex(
+    const index = managedScopeReader.talentGroupAssignments.findIndex(
       (item) => item.id === assignment.id,
     );
     if (index >= 0) {
-      managerRepository.assignments.splice(index, 1);
+      managedScopeReader.talentGroupAssignments.splice(index, 1);
     }
   }
 }
@@ -1073,8 +1079,12 @@ function orgUnitManagerAssignmentDocument(
 }
 
 test("KPI managed unit authority adapter resolves active TalentGroup and OrgUnit assignments", async () => {
-  const { subjectAccess, managerRepository, orgUnitManagerRepository } =
-    createHarness(() => MAY_5_2026_NOON_HCM);
+  const {
+    subjectAccess,
+    managerRepository,
+    orgUnitManagerRepository,
+    managedScopeReader,
+  } = createHarness(() => MAY_5_2026_NOON_HCM);
   seedManagerAssignment(managerRepository, "group-1");
   seedManagerAssignment(managerRepository, "group-2");
   seedManagerAssignment(managerRepository, "group-2");
@@ -1103,8 +1113,7 @@ test("KPI managed unit authority adapter resolves active TalentGroup and OrgUnit
     createManagerActor(),
     {
       subjectReadonlyAccess: subjectAccess,
-      managerAssignmentRepository: managerRepository,
-      orgUnitManagerAssignmentRepository: orgUnitManagerRepository,
+      managedScopeReader,
     },
     { asOf: MAY_5_2026_NOON_HCM },
   );
@@ -1112,8 +1121,7 @@ test("KPI managed unit authority adapter resolves active TalentGroup and OrgUnit
     createManagerActorWithoutKpiScope(),
     {
       subjectReadonlyAccess: subjectAccess,
-      managerAssignmentRepository: managerRepository,
-      orgUnitManagerAssignmentRepository: orgUnitManagerRepository,
+      managedScopeReader,
     },
     { asOf: MAY_5_2026_NOON_HCM },
   );
@@ -1132,18 +1140,21 @@ test("KPI managed unit authority adapter resolves active TalentGroup and OrgUnit
       role: "DEPARTMENT_OWNER",
       includeDescendants: true,
       actionMask: ["READ_PROGRESS"],
+      isPrimary: true,
     },
     {
       orgUnitId: "org-unit-2",
       role: "UNIT_MANAGER",
       includeDescendants: false,
       actionMask: [],
+      isPrimary: true,
     },
     {
       orgUnitId: "org-unit-2",
       role: "UNIT_OPERATOR",
       includeDescendants: false,
       actionMask: ["ENTER_ACTUAL"],
+      isPrimary: true,
     },
   ]);
   assert.equal(authority?.actorEmploymentProfileId, "manager-profile-1");
@@ -1184,12 +1195,15 @@ test("KPI managed unit authority adapter ignores inactive, expired, future, and 
     }),
   );
 
+  const managedScopeReader = new InMemoryResponsibilityManagedScopeReader(
+    managerRepository,
+    orgUnitManagerRepository,
+  );
   const authority = await resolveManagedUnitAuthority(
     createManagerActor(),
     {
       subjectReadonlyAccess: subjectAccess,
-      managerAssignmentRepository: managerRepository,
-      orgUnitManagerAssignmentRepository: orgUnitManagerRepository,
+      managedScopeReader,
     },
     { asOf: MAY_5_2026_NOON_HCM },
   );
@@ -1368,8 +1382,8 @@ test("NativeMongo OrgUnit manager assignment repository filters active manager-r
   assert.equal(departmentOwners[1]?.isPrimary, false);
 });
 
-test("KPI managed unit authority adapter preserves active TalentGroup assignments when OrgUnit repository is absent", async () => {
-  const { subjectAccess, managerRepository } = createHarness(
+test("KPI managed unit authority adapter preserves active central TalentGroup responsibility scope", async () => {
+  const { subjectAccess, managerRepository, managedScopeReader } = createHarness(
     () => MAY_5_2026_NOON_HCM,
   );
   seedManagerAssignment(managerRepository, "group-1");
@@ -1380,7 +1394,7 @@ test("KPI managed unit authority adapter preserves active TalentGroup assignment
     createManagerActor(),
     {
       subjectReadonlyAccess: subjectAccess,
-      managerAssignmentRepository: managerRepository,
+      managedScopeReader,
     },
     { asOf: MAY_5_2026_NOON_HCM },
   );
@@ -1388,7 +1402,7 @@ test("KPI managed unit authority adapter preserves active TalentGroup assignment
     createManagerActorWithoutKpiScope(),
     {
       subjectReadonlyAccess: subjectAccess,
-      managerAssignmentRepository: managerRepository,
+      managedScopeReader,
     },
     { asOf: MAY_5_2026_NOON_HCM },
   );
@@ -10767,6 +10781,54 @@ class InMemoryManagerAssignmentRepository implements TalentGroupManagerAssignmen
       linkedUserAccountStatus: null,
     };
   }
+}
+
+class InMemoryResponsibilityManagedScopeReader
+  implements ResponsibilityManagedScopeReader
+{
+  constructor(
+    private readonly talentGroups: InMemoryManagerAssignmentRepository,
+    private readonly orgUnits: InMemoryOrgUnitManagerAssignmentRepository,
+  ) {}
+
+  get talentGroupAssignments(): TalentGroupManagerAssignment[] {
+    return this.talentGroups.assignments;
+  }
+
+  async resolveManagedScopeByResponsibleEmploymentProfile(input: {
+    readonly responsibleEmploymentProfileId: string;
+    readonly asOf: number;
+  }) {
+    const talentGroupAssignments =
+      await this.talentGroups.listActiveAssignmentsByManagerEmploymentProfile(
+        input.responsibleEmploymentProfileId,
+        input.asOf,
+      );
+    const orgUnitAssignments =
+      await this.orgUnits.listActiveByManagerEmploymentProfileId(
+        input.responsibleEmploymentProfileId,
+        input.asOf,
+      );
+    return {
+      talentGroupIds: uniqueTextValues(
+        talentGroupAssignments.map((assignment) => assignment.groupId),
+      ),
+      orgUnitIds: uniqueTextValues(
+        orgUnitAssignments.map((assignment) => assignment.orgUnitId),
+      ),
+      orgUnitScopes: orgUnitAssignments.map((assignment) => ({
+        orgUnitId: assignment.orgUnitId,
+        role: assignment.role,
+        includeDescendants: assignment.includeDescendants,
+        actionMask: assignment.actionMask,
+        isPrimary: assignment.isPrimary,
+      })),
+    };
+  }
+}
+
+function uniqueTextValues(values: readonly string[]): readonly string[] {
+  return [...new Set(values.filter((value) => value.trim().length > 0))].sort();
 }
 
 class InMemoryOrgUnitManagerAssignmentRepository

@@ -12,7 +12,6 @@ export interface ListTalentReadInput {
   readonly activeMemberOfGroupIds?: readonly string[];
   readonly operationalStatus?: TalentOperationalStatus;
   readonly talentOrigin?: TalentOrigin;
-  readonly managerEmploymentProfileId?: string;
   readonly hasLinkedEmploymentProfile?: boolean;
   readonly commercialParticipationStatus?: TalentCommercialParticipationStatus;
   readonly livestreamEligible?: boolean;

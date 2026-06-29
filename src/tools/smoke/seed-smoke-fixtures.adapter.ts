@@ -430,10 +430,6 @@ function toCreateEmploymentProfileCommand(
     ) as CreateEmploymentProfileCommand["employmentKind"],
     jobTitle: readRequiredString(payload, "jobTitle"),
     orgUnitId: readRequiredString(payload, "orgUnitId"),
-    managerEmploymentProfileId: readNullableString(
-      payload,
-      "managerEmploymentProfileId",
-    ),
     linkedUserId: readNullableString(payload, "linkedUserId"),
     contractStatus: readRequiredString(
       payload,
@@ -461,10 +457,6 @@ function toCreateTalentCommand(
       payload,
       "talentOrigin",
     ) as CreateTalentCommand["talentOrigin"],
-    managerEmploymentProfileId: readNullableString(
-      payload,
-      "managerEmploymentProfileId",
-    ),
     linkedEmploymentProfileId: readNullableString(
       payload,
       "linkedEmploymentProfileId",

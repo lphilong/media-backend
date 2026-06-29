@@ -331,7 +331,6 @@ test("Employment Profile attribution persists, validates EmploymentProfile refs,
             employmentKind: "EMPLOYEE",
             jobTitle: "Producer",
             orgUnitId: "org-1",
-            managerEmploymentProfileId: null,
             linkedUserId: null,
             recruiterEmploymentProfileId:
               " ep-recruiter ",
@@ -515,6 +514,43 @@ test("Employment Profile attribution persists, validates EmploymentProfile refs,
   );
 });
 
+test("Employment Profile create rejects legacy reporting manager field", async () => {
+  const repository =
+    new MemoryEmploymentProfileRepository();
+  const service =
+    createEmploymentProfileAttributionService(
+      repository,
+    );
+
+  await assert.rejects(
+    bindTraceId(
+      "trace-employment-profile-legacy-manager-create-blocked",
+      () =>
+        service.createEmploymentProfile(
+          createActor([
+            Permission.EMPLOYMENT_PROFILE_CREATE,
+          ]),
+          {
+            employeeCode: "EP-LEGACY",
+            legalName: "Legacy Manager Legal",
+            displayName: "Legacy Manager Display",
+            employmentKind: "EMPLOYEE",
+            jobTitle: "Producer",
+            orgUnitId: "org-1",
+            managerEmploymentProfileId: "ep-manager",
+            contractStatus: "ACTIVE",
+            employmentStartDate: "2026-01-01",
+          } as Parameters<EmploymentProfileAdminService["createEmploymentProfile"]>[1] & {
+            readonly managerEmploymentProfileId: string;
+          },
+        ),
+    ),
+    EmploymentProfileValidationError,
+  );
+
+  assert.equal(repository.records.length, 0);
+});
+
 function createEmploymentProfileAttributionService(
   repository: MemoryEmploymentProfileRepository,
 ): EmploymentProfileAdminService {
@@ -593,6 +629,7 @@ function createActor(
     roles: [],
     permissions,
     scopeGrants: {},
+    accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
   });
 }

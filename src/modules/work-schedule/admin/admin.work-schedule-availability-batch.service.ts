@@ -11,11 +11,10 @@ import { Permission } from "@core/permission/permission.enum";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import { getTraceIdOrThrow } from "@core/trace/trace.context";
-import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
-import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import { ReferenceSummary } from "@modules/reference-summary";
+import { ResponsibilityManagedScopeReader } from "@modules/responsibility/domain/responsibility-managed-scope";
 import {
   WorkScheduleAvailabilityBatchNotFoundError,
   WorkScheduleConflictError,
@@ -118,14 +117,7 @@ export class WorkScheduleAvailabilityBatchAdminService {
     private readonly employmentProfileReadonlyAccess: WorkScheduleEmploymentProfileReadonlyAccess,
     private readonly orgUnitReadonlyAccess: WorkScheduleOrgUnitReadonlyAccess,
     private readonly talentGroupReadonlyAccess: WorkScheduleTalentGroupReadonlyAccess,
-    private readonly talentGroupManagerAssignmentRepository: Pick<
-      TalentGroupManagerAssignmentRepository,
-      "listActiveAssignmentsByManagerEmploymentProfile"
-    >,
-    private readonly orgUnitManagerAssignmentRepository: Pick<
-      OrgUnitManagerAssignmentRepository,
-      "listActiveByManagerEmploymentProfileId"
-    >,
+    private readonly managedScopeReader: ResponsibilityManagedScopeReader,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
     private readonly structuredAuthority: StructuredScopeAuthorityService,
@@ -605,18 +597,17 @@ export class WorkScheduleAvailabilityBatchAdminService {
     >,
     session?: ClientSession,
   ): Promise<TargetResolution> {
-    const asOf = this.clock();
+    const managedScope =
+      await this.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
+        {
+          responsibleEmploymentProfileId: managerEmploymentProfileId,
+          asOf: this.clock(),
+        },
+        session,
+      );
     if (input.targetType === "ORG_UNIT") {
-      const assignments =
-        await this.orgUnitManagerAssignmentRepository.listActiveByManagerEmploymentProfileId(
-          managerEmploymentProfileId,
-          asOf,
-          session,
-        );
       if (
-        !assignments.some(
-          (assignment) => assignment.orgUnitId === input.targetOrgUnitId,
-        )
+        !managedScope.orgUnitIds.includes(input.targetOrgUnitId as string)
       ) {
         throw new WorkSchedulePermissionScopeError(
           "Selected OrgUnit is not an active assigned manager target",
@@ -645,16 +636,8 @@ export class WorkScheduleAvailabilityBatchAdminService {
       };
     }
 
-    const assignments =
-      await this.talentGroupManagerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-        managerEmploymentProfileId,
-        asOf,
-        session,
-      );
     if (
-      !assignments.some(
-        (assignment) => assignment.groupId === input.targetTalentGroupId,
-      )
+      !managedScope.talentGroupIds.includes(input.targetTalentGroupId as string)
     ) {
       throw new WorkSchedulePermissionScopeError(
         "Selected TalentGroup is not an active assigned manager target",

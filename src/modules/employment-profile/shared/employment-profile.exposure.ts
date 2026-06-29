@@ -19,8 +19,6 @@ const EMPLOYMENT_PROFILE_ADMIN_LIST_FIELDS = [
   "jobTitle",
   "orgUnitId",
   "orgUnitRef",
-  "managerEmploymentProfileId",
-  "managerEmploymentProfileRef",
   "recruiterEmploymentProfileId",
   "recruiterEmploymentProfileRef",
   "hrOwnerEmploymentProfileId",
@@ -46,8 +44,6 @@ const EMPLOYMENT_PROFILE_ADMIN_DIRECT_REPORT_FIELDS = [
   "contractStatus",
   "orgUnitId",
   "orgUnitRef",
-  "managerEmploymentProfileId",
-  "managerEmploymentProfileRef",
 ] as const;
 
 const EMPLOYMENT_PROFILE_ADMIN_DETAIL_FIELDS = [
@@ -61,8 +57,6 @@ const EMPLOYMENT_PROFILE_ADMIN_DETAIL_FIELDS = [
   "externalRef",
   "orgUnitId",
   "orgUnitRef",
-  "managerEmploymentProfileId",
-  "managerEmploymentProfileRef",
   "recruiterEmploymentProfileId",
   "recruiterEmploymentProfileRef",
   "hrOwnerEmploymentProfileId",
@@ -102,10 +96,6 @@ export const EmploymentProfileAdminListExposure =
               jobTitle: input.jobTitle,
               orgUnitId: input.orgUnitId,
               orgUnitRef: input.orgUnitRef,
-              managerEmploymentProfileId:
-                input.managerEmploymentProfileId,
-              managerEmploymentProfileRef:
-                input.managerEmploymentProfileRef,
               recruiterEmploymentProfileId:
                 input.recruiterEmploymentProfileId,
               recruiterEmploymentProfileRef:
@@ -145,10 +135,6 @@ export const EmploymentProfileAdminListExposure =
             displayName: input.displayName,
             orgUnitId: input.orgUnitId,
             orgUnitRef: input.orgUnitRef,
-            managerEmploymentProfileId:
-              input.managerEmploymentProfileId,
-            managerEmploymentProfileRef:
-              input.managerEmploymentProfileRef,
             employmentStatus: input.employmentStatus,
             contractStatus: input.contractStatus,
           },
@@ -187,10 +173,6 @@ export const EmploymentProfileAdminDetailExposure =
             externalRef: input.externalRef,
             orgUnitId: input.orgUnitId,
             orgUnitRef: input.orgUnitRef,
-            managerEmploymentProfileId:
-              input.managerEmploymentProfileId,
-            managerEmploymentProfileRef:
-              input.managerEmploymentProfileRef,
             recruiterEmploymentProfileId:
               input.recruiterEmploymentProfileId,
             recruiterEmploymentProfileRef:

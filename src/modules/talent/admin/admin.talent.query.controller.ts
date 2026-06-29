@@ -25,7 +25,6 @@ const LIST_TALENTS_QUERY_FIELDS: readonly string[] =
   Object.freeze([
     "operationalStatus",
     "talentOrigin",
-    "managerEmploymentProfileId",
     "hasLinkedEmploymentProfile",
     "commercialParticipationStatus",
     "livestreamEligible",
@@ -139,10 +138,6 @@ function parseListTalentsQuery(
         | undefined,
     talentOrigin:
       req.query.talentOrigin as string | undefined,
-    managerEmploymentProfileId:
-      req.query.managerEmploymentProfileId as
-        | string
-        | undefined,
     hasLinkedEmploymentProfile:
       req.query.hasLinkedEmploymentProfile as
         | string

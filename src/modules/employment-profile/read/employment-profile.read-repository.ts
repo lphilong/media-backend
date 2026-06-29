@@ -14,7 +14,6 @@ export interface ListEmploymentProfileReadInput {
   readonly contractStatus?: EmploymentContractStatus;
   readonly employmentKind?: EmploymentKind;
   readonly orgUnitId?: string;
-  readonly managerEmploymentProfileId?: string;
   readonly hasLinkedUser?: boolean;
   readonly limit: number;
   readonly cursor?: string;
@@ -29,7 +28,8 @@ export interface ListEmploymentProfileReadResult {
 }
 
 export interface ListDirectReportsReadInput {
-  readonly managerEmploymentProfileId: string;
+  readonly responsibleEmploymentProfileId: string;
+  readonly asOf: number;
   readonly limit: number;
   readonly cursor?: string;
   readonly sortField?: EmploymentProfileSortField;

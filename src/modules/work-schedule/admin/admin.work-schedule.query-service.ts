@@ -3,8 +3,7 @@ import { SystemInvariantError } from "@core/error/system-error";
 import { Permission } from "@core/permission/permission.enum";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
-import type { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
-import type { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
+import { ResponsibilityManagedScopeReader } from "@modules/responsibility/domain/responsibility-managed-scope";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import {
   WorkScheduleNotFoundError,
@@ -69,14 +68,7 @@ export class WorkScheduleAdminQueryService {
   constructor(
     private readonly readRepository: WorkShiftReadRepository,
     private readonly employmentProfileReadonlyAccess: WorkScheduleEmploymentProfileReadonlyAccess,
-    private readonly managerAssignmentRepository?: Pick<
-      TalentGroupManagerAssignmentRepository,
-      "listActiveAssignmentsByManagerEmploymentProfile"
-    >,
-    private readonly orgUnitManagerAssignmentRepository?: Pick<
-      OrgUnitManagerAssignmentRepository,
-      "listActiveByManagerEmploymentProfileId"
-    >,
+    private readonly managedScopeReader?: ResponsibilityManagedScopeReader,
     private readonly structuredAuthority?: StructuredScopeAuthorityService,
   ) {}
 
@@ -434,25 +426,23 @@ export class WorkScheduleAdminQueryService {
     target: { readonly kind: "ORG_UNIT" | "TALENT_GROUP"; readonly id: string },
   ): Promise<boolean> {
     if (!this.structuredAuthority) return false;
+    if (!this.managedScopeReader) return false;
+    const managedScope =
+      await this.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
+        {
+          responsibleEmploymentProfileId: managerEmploymentProfileId,
+          asOf: Date.now(),
+        },
+      );
     if (target.kind === "TALENT_GROUP") {
-      const assignments =
-        await this.managerAssignmentRepository?.listActiveAssignmentsByManagerEmploymentProfile(
-          managerEmploymentProfileId,
-          Date.now(),
-        ) ?? [];
-      return assignments.some((assignment) => assignment.groupId === target.id) &&
+      return managedScope.talentGroupIds.includes(target.id) &&
         this.structuredAuthority.hasAuthority({
           userId: actor.id,
           permission: Permission.WORK_SCHEDULE_READ,
           scope: { scopeType: "managedTalentGroup", targetId: target.id },
         });
     }
-    const assignments =
-      await this.orgUnitManagerAssignmentRepository?.listActiveByManagerEmploymentProfileId(
-        managerEmploymentProfileId,
-        Date.now(),
-      ) ?? [];
-    return assignments.some((assignment) => assignment.orgUnitId === target.id) &&
+    return managedScope.orgUnitIds.includes(target.id) &&
       this.structuredAuthority.hasAuthority({
         userId: actor.id,
         permission: Permission.WORK_SCHEDULE_READ,
@@ -576,8 +566,8 @@ export class WorkScheduleAdminQueryService {
           actorProfile.orgUnitId,
         employmentProfileReadonlyAccess:
           this.employmentProfileReadonlyAccess,
-        managerAssignmentRepository:
-          this.managerAssignmentRepository,
+        managedScopeReader:
+          this.managedScopeReader,
       });
     }
 
@@ -635,8 +625,8 @@ export class WorkScheduleAdminQueryService {
             actorProfile.orgUnitId,
           employmentProfileReadonlyAccess:
             this.employmentProfileReadonlyAccess,
-          managerAssignmentRepository:
-            this.managerAssignmentRepository,
+          managedScopeReader:
+            this.managedScopeReader,
         });
 
       for (const id of scopedIds) {
@@ -686,8 +676,8 @@ export class WorkScheduleAdminQueryService {
           actorProfile.orgUnitId,
         employmentProfileReadonlyAccess:
           this.employmentProfileReadonlyAccess,
-        managerAssignmentRepository:
-          this.managerAssignmentRepository,
+        managedScopeReader:
+          this.managedScopeReader,
       });
     }
 
@@ -739,8 +729,8 @@ export class WorkScheduleAdminQueryService {
             actorProfile.orgUnitId,
           employmentProfileReadonlyAccess:
             this.employmentProfileReadonlyAccess,
-          managerAssignmentRepository:
-            this.managerAssignmentRepository,
+          managedScopeReader:
+            this.managedScopeReader,
         });
 
       for (const id of scopedIds) {
@@ -824,8 +814,8 @@ export class WorkScheduleAdminQueryService {
                 actorProfile.orgUnitId,
               employmentProfileReadonlyAccess:
                 this.employmentProfileReadonlyAccess,
-              managerAssignmentRepository:
-                this.managerAssignmentRepository,
+              managedScopeReader:
+                this.managedScopeReader,
             })
           ).includes(targetProfile.id)
         ) {
@@ -874,31 +864,28 @@ async function resolveScopedEmploymentProfileIds(params: {
   readonly actorEmploymentProfileId: string;
   readonly actorOrgUnitId: string;
   readonly employmentProfileReadonlyAccess: WorkScheduleEmploymentProfileReadonlyAccess;
-  readonly managerAssignmentRepository?: Pick<
-    TalentGroupManagerAssignmentRepository,
-    "listActiveAssignmentsByManagerEmploymentProfile"
-  >;
+  readonly managedScopeReader?: ResponsibilityManagedScopeReader;
 }): Promise<readonly string[]> {
   if (params.scope === "self") {
     return [params.actorEmploymentProfileId];
   }
 
   if (params.scope === "team") {
-    if (!params.managerAssignmentRepository) {
+    if (!params.managedScopeReader) {
       throw new SystemInvariantError(
         "SYSTEM_INVARIANT_VIOLATION",
-        "WorkSchedule team scope requires manager assignment repository",
+        "WorkSchedule team scope requires central responsibility managed-scope reader",
       );
     }
 
-    const assignments =
-      await params.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-        params.actorEmploymentProfileId,
-        Date.now(),
+    const managedScope =
+      await params.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
+        {
+          responsibleEmploymentProfileId: params.actorEmploymentProfileId,
+          asOf: Date.now(),
+        },
       );
-    const groupIds = [
-      ...new Set(assignments.map((assignment) => assignment.groupId)),
-    ].sort();
+    const groupIds = [...new Set(managedScope.talentGroupIds)].sort();
 
     return params.employmentProfileReadonlyAccess.listIdsByActiveTalentGroupIds(
       groupIds,

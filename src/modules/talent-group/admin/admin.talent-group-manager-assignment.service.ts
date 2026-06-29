@@ -1,4 +1,3 @@
-import crypto from "crypto";
 import { ClientSession } from "mongodb";
 import { Actor } from "@core/actor/actor";
 import {
@@ -13,20 +12,13 @@ import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import { getTraceIdOrThrow } from "@core/trace/trace.context";
 import {
-  TalentGroupConflictError,
-  TalentGroupInvalidTalentReferenceError,
   TalentGroupNotFoundError,
   TalentGroupPermissionScopeError,
-  TalentGroupStateError,
   TalentGroupValidationError,
 } from "@modules/talent-group/domain/talent-group.errors";
 import { TalentGroupRepository } from "@modules/talent-group/domain/talent-group.repository";
 import { TalentGroupRecord } from "@modules/talent-group/domain/talent-group.types";
-import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
-import {
-  TalentGroupManagerAssignment,
-  TalentGroupManagerAssignmentView,
-} from "@modules/kpi/domain/kpi.types";
+import { TalentGroupManagerAssignmentView } from "@modules/kpi/domain/kpi.types";
 import {
   CreateTalentGroupManagerAssignmentCommand,
   ListTalentGroupManagerAssignmentsQuery,
@@ -35,22 +27,29 @@ import {
 } from "@modules/talent-group/shared/talent-group.contracts";
 import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
+import { ResponsibilityAdminService } from "@modules/responsibility/admin/admin.responsibility.service";
+import { ResponsibilityAssignmentView } from "@modules/responsibility/domain/responsibility.types";
 
-const MANAGER_ASSIGNMENT_ROLE = "MANAGER";
 const MANAGER_ASSIGNMENT_OPERATION: AuthoritativeAdminMutationIdentity =
   "talent-group.assign-manager";
-const MANAGER_REVOCATION_OPERATION: AuthoritativeAdminMutationIdentity =
-  "talent-group.revoke-manager";
 
 export class TalentGroupManagerAssignmentAdminService {
+  private readonly responsibilityService: ResponsibilityAdminService | undefined;
+
   constructor(
     private readonly talentGroupRepository: TalentGroupRepository,
-    private readonly managerAssignmentRepository: TalentGroupManagerAssignmentRepository,
+    _legacyManagerAssignmentRepository: unknown,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
     private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
-    private readonly clock: () => number = Date.now,
-  ) {}
+    responsibilityServiceOrClock?: ResponsibilityAdminService | (() => number),
+    _clock: () => number = Date.now,
+  ) {
+    this.responsibilityService =
+      typeof responsibilityServiceOrClock === "function"
+        ? undefined
+        : responsibilityServiceOrClock;
+  }
 
   async listManagerAssignments(
     actor: Actor,
@@ -64,14 +63,15 @@ export class TalentGroupManagerAssignmentAdminService {
       Permission.TALENT_GROUP_READ,
       group.id,
     );
-    const assignments =
-      await this.managerAssignmentRepository.listActiveAssignmentsByGroup(
-        groupId,
-        this.clock(),
-      );
-
+    const assignments = await this.requireResponsibilityService().getSummaryForSubject(
+      actor,
+      "TALENT_GROUP",
+      groupId,
+    );
     return {
-      items: await this.toViews(group, assignments),
+      items: assignments.items
+        .filter((item) => item.responsibilityType === "TALENT_GROUP_MANAGER")
+        .map(toTalentGroupManagerAssignmentView),
     };
   }
 
@@ -90,79 +90,28 @@ export class TalentGroupManagerAssignmentAdminService {
     );
     const reason = normalizeNullableReason(command.reason);
 
+    const group = await this.requireGroup(groupId);
+    await this.requireManagedTalentGroupAuthority(
+      actor,
+      Permission.TALENT_GROUP_UPDATE,
+      group.id,
+    );
+
     return this.executeMutation(
       actor,
       permission,
       MANAGER_ASSIGNMENT_OPERATION,
       `talent-group-manager-assignment:create:${groupId}:${managerEmploymentProfileId}`,
       async (session) => {
-        const group = await this.requireGroup(groupId, session);
-        await this.requireManagedTalentGroupAuthority(
-          actor,
-          Permission.TALENT_GROUP_UPDATE,
-          group.id,
-        );
-        if (group.status !== "ACTIVE") {
-          throw new TalentGroupStateError(
-            `Talent group manager assignment requires ACTIVE group: ${groupId}`,
-          );
-        }
-
-        const candidate =
-          await this.managerAssignmentRepository.findManagerEmploymentProfileCandidate(
-            managerEmploymentProfileId,
-            session,
-          );
-        if (!candidate) {
-          throw new TalentGroupInvalidTalentReferenceError(
-            `Manager employment profile does not exist: ${managerEmploymentProfileId}`,
-          );
-        }
-        if (candidate.employmentStatus !== "ACTIVE") {
-          throw new TalentGroupInvalidTalentReferenceError(
-            `Manager employment profile must be ACTIVE: ${managerEmploymentProfileId}`,
-          );
-        }
-
-        const now = this.clock();
-        const activeAssignments =
-          await this.managerAssignmentRepository.listActiveAssignmentsByGroup(
-            groupId,
-            now,
-            session,
-          );
-        if (
-          activeAssignments.some(
-            (assignment) =>
-              assignment.managerEmploymentProfileId ===
+        const created =
+          await this.requireResponsibilityService().createTalentGroupManagerAssignment(
+            actor,
+            {
+              groupId,
               managerEmploymentProfileId,
-          )
-        ) {
-          throw new TalentGroupConflictError(
-            `Active talent group manager assignment already exists for ${groupId} and ${managerEmploymentProfileId}`,
+              reason,
+            },
           );
-        }
-
-        const assignment: TalentGroupManagerAssignment = {
-          id: crypto.randomUUID(),
-          groupId,
-          managerEmploymentProfileId,
-          role: MANAGER_ASSIGNMENT_ROLE,
-          effectiveFrom: now,
-          effectiveTo: null,
-          status: "ACTIVE",
-          isPrimary: activeAssignments.length === 0,
-          createdAt: now,
-          createdByActorId: actor.id,
-          updatedAt: now,
-          updatedByActorId: actor.id,
-        };
-
-        const created = await this.managerAssignmentRepository.insertAssignment(
-          assignment,
-          session,
-        );
-
         await this.audit.record(
           actor,
           permission,
@@ -173,15 +122,12 @@ export class TalentGroupManagerAssignmentAdminService {
             targetType: "talent-group-manager-assignment",
             groupId,
             managerEmploymentProfileId,
-            managerHasLinkedAdminUser:
-              candidate.linkedUserActorKind === "ADMIN" &&
-              candidate.linkedUserAccountStatus === "ACTIVE",
             ...(reason ? { reason } : {}),
           },
           session,
         );
 
-        return this.toView(group, created);
+        return toTalentGroupManagerAssignmentView(created);
       },
     );
   }
@@ -201,67 +147,29 @@ export class TalentGroupManagerAssignmentAdminService {
     );
     const reason = normalizeNullableReason(command.reason);
 
-    return this.executeMutation(
+    const group = await this.requireGroup(groupId);
+    await this.requireManagedTalentGroupAuthority(
       actor,
-      permission,
-      MANAGER_REVOCATION_OPERATION,
-      `talent-group-manager-assignment:revoke:${groupId}:${assignmentId}`,
-      async (session) => {
-        const group = await this.requireGroup(groupId, session);
-        await this.requireManagedTalentGroupAuthority(
-          actor,
-          Permission.TALENT_GROUP_UPDATE,
-          group.id,
-        );
-        const current =
-          await this.managerAssignmentRepository.findAssignmentById(
-            assignmentId,
-            session,
-          );
-        if (!current || current.groupId !== groupId) {
-          throw new TalentGroupNotFoundError(assignmentId);
-        }
-        if (current.status !== "ACTIVE") {
-          throw new TalentGroupStateError(
-            `Talent group manager assignment is not ACTIVE: ${assignmentId}`,
-          );
-        }
+      Permission.TALENT_GROUP_UPDATE,
+      group.id,
+    );
+    const current = await this.requireResponsibilityService().getAssignment(
+      actor,
+      assignmentId,
+    );
+    if (
+      current.subjectType !== "TALENT_GROUP" ||
+      current.subjectId !== groupId ||
+      current.responsibilityType !== "TALENT_GROUP_MANAGER"
+    ) {
+      throw new TalentGroupNotFoundError(assignmentId);
+    }
 
-        const now = this.clock();
-        const revoked = await this.managerAssignmentRepository.revokeAssignment(
-          {
-            assignmentId,
-            effectiveTo: now,
-            updatedAt: now,
-            updatedByActorId: actor.id,
-          },
-          session,
-        );
-        if (!revoked) {
-          throw new TalentGroupConflictError(
-            `Talent group manager assignment revoke conflict: ${assignmentId}`,
-          );
-        }
-
-        await this.audit.record(
-          actor,
-          permission,
-          revoked.id,
-          {
-            mutationType: MANAGER_REVOCATION_OPERATION,
-            targetId: revoked.id,
-            targetType: "talent-group-manager-assignment",
-            groupId,
-            managerEmploymentProfileId: revoked.managerEmploymentProfileId,
-            previousStatus: current.status,
-            nextStatus: revoked.status,
-            ...(reason ? { reason } : {}),
-          },
-          session,
-        );
-
-        return this.toView(group, revoked);
-      },
+    return toTalentGroupManagerAssignmentView(
+      await this.requireResponsibilityService().revokeAssignment(actor, {
+        assignmentId,
+        reason,
+      }),
     );
   }
 
@@ -305,47 +213,6 @@ export class TalentGroupManagerAssignmentAdminService {
     });
   }
 
-  private async toViews(
-    group: TalentGroupRecord,
-    assignments: readonly TalentGroupManagerAssignment[],
-  ): Promise<readonly TalentGroupManagerAssignmentView[]> {
-    const views: TalentGroupManagerAssignmentView[] = [];
-    for (const assignment of assignments) {
-      views.push(await this.toView(group, assignment));
-    }
-    return views;
-  }
-
-  private async toView(
-    group: TalentGroupRecord,
-    assignment: TalentGroupManagerAssignment,
-  ): Promise<TalentGroupManagerAssignmentView> {
-    const manager =
-      await this.managerAssignmentRepository.findManagerEmploymentProfileCandidate(
-        assignment.managerEmploymentProfileId,
-      );
-
-    return {
-      ...assignment,
-      groupRef: {
-        id: group.id,
-        code: group.groupCode,
-        name: group.name,
-        status: group.status,
-      },
-      managerRef: {
-        id: assignment.managerEmploymentProfileId,
-        code: manager?.employeeCode,
-        displayName: manager?.displayName,
-        name: manager?.legalName,
-        status: manager?.employmentStatus,
-      },
-      managerHasLinkedAdminUser:
-        manager?.linkedUserActorKind === "ADMIN" &&
-        manager?.linkedUserAccountStatus === "ACTIVE",
-    };
-  }
-
   private async executeMutation<T>(
     actor: Actor,
     permission: PermissionContract,
@@ -366,6 +233,15 @@ export class TalentGroupManagerAssignmentAdminService {
       },
       fn,
     );
+  }
+
+  private requireResponsibilityService(): ResponsibilityAdminService {
+    if (!this.responsibilityService) {
+      throw new TalentGroupValidationError(
+        "TalentGroup manager assignments must use central responsibility assignments",
+      );
+    }
+    return this.responsibilityService;
   }
 }
 
@@ -395,4 +271,30 @@ function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
       );
     },
   });
+}
+
+function toTalentGroupManagerAssignmentView(
+  assignment: ResponsibilityAssignmentView,
+): TalentGroupManagerAssignmentView {
+  return {
+    id: assignment.id,
+    groupId: assignment.subjectId,
+    managerEmploymentProfileId: assignment.responsibleEmploymentProfileId,
+    role: "MANAGER",
+    effectiveFrom: assignment.effectiveAt,
+    effectiveTo: assignment.expiresAt,
+    status: assignment.status === "ACTIVE" ? "ACTIVE" : "INACTIVE",
+    isPrimary: assignment.isPrimary,
+    createdAt: assignment.createdAt,
+    createdByActorId: assignment.createdBy,
+    updatedAt: assignment.updatedAt,
+    updatedByActorId: assignment.updatedBy,
+    groupRef: assignment.subjectRef ?? {
+      id: assignment.subjectId,
+    },
+    managerRef: assignment.responsibleEmploymentProfileRef ?? {
+      id: assignment.responsibleEmploymentProfileId,
+    },
+    managerHasLinkedAdminUser: false,
+  };
 }

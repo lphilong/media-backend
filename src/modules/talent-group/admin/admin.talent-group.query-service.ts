@@ -163,13 +163,15 @@ export class TalentGroupAdminQueryService {
       await dependencies.subjectReadonlyAccess.findActiveEmploymentProfileByLinkedUserId(
         actor.id,
       );
-    const assignments = profile
-      ? await dependencies.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-          profile.employmentProfileId,
-          Date.now(),
+    const managedScope: { readonly talentGroupIds: readonly string[] } = profile
+      ? await dependencies.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
+          {
+            responsibleEmploymentProfileId: profile.employmentProfileId,
+            asOf: Date.now(),
+          },
         )
-      : [];
-    if (!assignments.some((assignment) => assignment.groupId === groupId)) {
+      : { talentGroupIds: [] };
+    if (!managedScope.talentGroupIds.includes(groupId)) {
       throw new TalentGroupPermissionScopeError(
         `Active TalentGroup manager responsibility is required: ${groupId}`,
       );
@@ -208,18 +210,16 @@ export class TalentGroupAdminQueryService {
     if (!profile) {
       return [];
     }
-    const assignments =
-      await dependencies.managerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-        profile.employmentProfileId,
-        Date.now(),
+    const managedScope =
+      await dependencies.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
+        {
+          responsibleEmploymentProfileId: profile.employmentProfileId,
+          asOf: Date.now(),
+        },
       );
-    return [
-      ...new Set(
-        assignments
-          .map((assignment) => assignment.groupId)
-          .filter((groupId) => grantedIds.has(groupId)),
-      ),
-    ].sort();
+    return [...new Set(managedScope.talentGroupIds)]
+      .filter((groupId) => grantedIds.has(groupId))
+      .sort();
   }
 }
 

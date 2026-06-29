@@ -40,7 +40,6 @@ const CREATE_TALENT_BODY_FIELDS: readonly string[] =
     "stageName",
     "legalName",
     "talentOrigin",
-    "managerEmploymentProfileId",
     "linkedEmploymentProfileId",
     "commercialParticipationStatus",
     "livestreamEligible",
@@ -197,11 +196,6 @@ function parseCreateTalentCommand(
       | undefined,
     talentOrigin:
       body.talentOrigin as CreateTalentCommand["talentOrigin"],
-    managerEmploymentProfileId:
-      body.managerEmploymentProfileId as
-        | string
-        | null
-        | undefined,
     linkedEmploymentProfileId:
       body.linkedEmploymentProfileId as
         | string

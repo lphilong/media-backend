@@ -27,16 +27,10 @@ test("manager Events use active OrgUnit and TalentGroup assignments only", async
         return activeProfile();
       },
     },
-    {
-      async listActiveAssignmentsByManagerEmploymentProfile() {
-        return [talentGroupAssignment("tg-managed")];
-      },
-    },
-    {
-      async listActiveByManagerEmploymentProfileId() {
-        return [orgUnitAssignment("ou-managed", "UNIT_MANAGER")];
-      },
-    },
+    managedScopeReader({
+      talentGroupAssignments: [talentGroupAssignment("tg-managed")],
+      orgUnitAssignments: [orgUnitAssignment("ou-managed", "UNIT_MANAGER")],
+    }),
     {
       async listManagerEventSummaries(scope) {
         capturedScope = scope;
@@ -68,16 +62,10 @@ test("manager Event detail returns completion evidence as read-only summary", as
         return activeProfile();
       },
     },
-    {
-      async listActiveAssignmentsByManagerEmploymentProfile() {
-        return [talentGroupAssignment("tg-managed")];
-      },
-    },
-    {
-      async listActiveByManagerEmploymentProfileId() {
-        return [orgUnitAssignment("ou-managed", "UNIT_MANAGER")];
-      },
-    },
+    managedScopeReader({
+      talentGroupAssignments: [talentGroupAssignment("tg-managed")],
+      orgUnitAssignments: [orgUnitAssignment("ou-managed", "UNIT_MANAGER")],
+    }),
     {
       async listManagerEventSummaries() {
         return [];
@@ -130,16 +118,7 @@ test("manager Events fail closed without assignment scope and expose no mutation
         return activeProfile();
       },
     },
-    {
-      async listActiveAssignmentsByManagerEmploymentProfile() {
-        return [];
-      },
-    },
-    {
-      async listActiveByManagerEmploymentProfileId() {
-        return [];
-      },
-    },
+    managedScopeReader({}),
     {
       async listManagerEventSummaries() {
         return [];
@@ -173,16 +152,10 @@ test("manager Events require matching structured OrgUnit and TalentGroup scopes"
         return activeProfile();
       },
     },
-    {
-      async listActiveAssignmentsByManagerEmploymentProfile() {
-        return [talentGroupAssignment("tg-managed")];
-      },
-    },
-    {
-      async listActiveByManagerEmploymentProfileId() {
-        return [orgUnitAssignment("ou-managed", "UNIT_MANAGER")];
-      },
-    },
+    managedScopeReader({
+      talentGroupAssignments: [talentGroupAssignment("tg-managed")],
+      orgUnitAssignments: [orgUnitAssignment("ou-managed", "UNIT_MANAGER")],
+    }),
     {
       async listManagerEventSummaries(scope) {
         capturedScope = scope;
@@ -570,16 +543,7 @@ function createService(input: {
         );
       },
     },
-    {
-      async listActiveAssignmentsByManagerEmploymentProfile() {
-        return input.talentGroupAssignments ?? [];
-      },
-    },
-    {
-      async listActiveByManagerEmploymentProfileId() {
-        return input.orgUnitAssignments ?? [];
-      },
-    },
+    managedScopeReader(input),
     input.structuredAuthority ?? structuredAuthority(),
     () => now,
   );
@@ -686,6 +650,39 @@ function talentGroupAssignment(
   };
 }
 
+function managedScopeReader(input: {
+  readonly orgUnitAssignments?: readonly OrgUnitManagerAssignment[];
+  readonly talentGroupAssignments?: readonly TalentGroupManagerAssignment[];
+}) {
+  return {
+    async resolveManagedScopeByResponsibleEmploymentProfile() {
+      return {
+        talentGroupIds: [
+          ...new Set(
+            (input.talentGroupAssignments ?? []).map(
+              (assignment) => assignment.groupId,
+            ),
+          ),
+        ],
+        orgUnitIds: [
+          ...new Set(
+            (input.orgUnitAssignments ?? []).map(
+              (assignment) => assignment.orgUnitId,
+            ),
+          ),
+        ],
+        orgUnitScopes: (input.orgUnitAssignments ?? []).map((assignment) => ({
+          orgUnitId: assignment.orgUnitId,
+          role: assignment.role,
+          includeDescendants: assignment.includeDescendants,
+          actionMask: assignment.actionMask,
+          isPrimary: assignment.isPrimary,
+        })),
+      };
+    },
+  };
+}
+
 function createWorkScheduleService(input: {
   readonly orgUnitAssignments?: readonly OrgUnitManagerAssignment[];
   readonly talentGroupAssignments?: readonly TalentGroupManagerAssignment[];
@@ -708,16 +705,7 @@ function createWorkScheduleService(input: {
         return input.talentGroupProfiles ?? [];
       },
     },
-    {
-      async listActiveAssignmentsByManagerEmploymentProfile() {
-        return input.talentGroupAssignments ?? [];
-      },
-    },
-    {
-      async listActiveByManagerEmploymentProfileId() {
-        return input.orgUnitAssignments ?? [];
-      },
-    },
+    managedScopeReader(input),
     {
       async listWorkShifts(readInput) {
         return { items: input.onList?.(readInput) ?? [] };
@@ -854,7 +842,6 @@ function managedProfile(
     id,
     employmentStatus,
     orgUnitId: "ou-direct",
-    managerEmploymentProfileId: id === "ep-reporting-only" ? "ep-manager" : null,
     linkedUserId: null,
     ref: {
       id,

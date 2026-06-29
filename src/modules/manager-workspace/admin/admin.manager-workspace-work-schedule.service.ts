@@ -3,8 +3,7 @@ import { Permission } from "@core/permission/permission.enum";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import { EmploymentProfileRepository } from "@modules/employment-profile/domain/employment-profile.repository";
-import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
-import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
+import { ResponsibilityManagedScopeReader } from "@modules/responsibility/domain/responsibility-managed-scope";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import { WorkSchedulePermissionScopeError, WorkScheduleValidationError } from "@modules/work-schedule/domain/work-schedule.errors";
 import {
@@ -62,14 +61,7 @@ export class ManagerWorkspaceWorkScheduleAdminService {
       WorkScheduleEmploymentProfileReadonlyAccess,
       "listByOrgUnitId" | "listTalentGroupMemberEmploymentProfileResolutions"
     >,
-    private readonly talentGroupManagerAssignmentRepository: Pick<
-      TalentGroupManagerAssignmentRepository,
-      "listActiveAssignmentsByManagerEmploymentProfile"
-    >,
-    private readonly orgUnitManagerAssignmentRepository: Pick<
-      OrgUnitManagerAssignmentRepository,
-      "listActiveByManagerEmploymentProfileId"
-    >,
+    private readonly managedScopeReader: ResponsibilityManagedScopeReader,
     private readonly readRepository: Pick<WorkShiftReadRepository, "listWorkShifts">,
     private readonly structuredAuthority: StructuredScopeAuthorityService,
     private readonly clock: () => number = Date.now,
@@ -90,22 +82,23 @@ export class ManagerWorkspaceWorkScheduleAdminService {
     }
 
     const asOf = this.clock();
-    const [orgUnitAssignments, talentGroupAssignments] = await Promise.all([
-      this.orgUnitManagerAssignmentRepository.listActiveByManagerEmploymentProfileId(
-        managerProfile.id,
-        asOf,
-      ),
-      this.talentGroupManagerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-        managerProfile.id,
-        asOf,
-      ),
-    ]);
+    const managedScope =
+      await this.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
+        {
+          responsibleEmploymentProfileId: managerProfile.id,
+          asOf,
+        },
+      );
     const [orgUnitIds, talentGroupIds] = await Promise.all([
-      filterManagedOrgUnitIds(this.structuredAuthority, actor, orgUnitAssignments),
+      filterManagedOrgUnitIds(
+        this.structuredAuthority,
+        actor,
+        managedScope.orgUnitIds,
+      ),
       filterManagedTalentGroupIds(
         this.structuredAuthority,
         actor,
-        talentGroupAssignments.map((assignment) => assignment.groupId),
+        managedScope.talentGroupIds,
       ),
     ]);
     const managedProfiles = await this.resolveManagedProfiles(
@@ -240,18 +233,17 @@ export class ManagerWorkspaceWorkScheduleAdminService {
 async function filterManagedOrgUnitIds(
   service: StructuredScopeAuthorityService,
   actor: Actor,
-  assignments: readonly { readonly orgUnitId: string }[],
+  orgUnitIds: readonly string[],
 ): Promise<readonly string[]> {
   const authorized = await Promise.all(
-    [...new Set(assignments.map((assignment) => assignment.orgUnitId))].map(
-      async (orgUnitId) =>
-        (await service.hasAuthority({
-          userId: actor.id,
-          permission: Permission.WORK_SCHEDULE_READ,
-          scope: { scopeType: "managedOrgUnit", targetId: orgUnitId },
-        }))
-          ? orgUnitId
-          : null,
+    [...new Set(orgUnitIds)].map(async (orgUnitId) =>
+      (await service.hasAuthority({
+        userId: actor.id,
+        permission: Permission.WORK_SCHEDULE_READ,
+        scope: { scopeType: "managedOrgUnit", targetId: orgUnitId },
+      }))
+        ? orgUnitId
+        : null,
     ),
   );
   return authorized.filter((id): id is string => id !== null).sort();

@@ -10,8 +10,6 @@ import type { AuditGuard } from "@core/audit/audit.guard";
 import { Permission } from "@core/permission/permission.enum";
 import { bindTraceId } from "@core/trace/trace.context";
 import { WorkScheduleRequestBatchAdminService } from "@modules/work-schedule/admin/admin.work-schedule-request-batch.service";
-import type { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
-import type { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import {
   WorkScheduleConflictError,
   WorkSchedulePermissionScopeError,
@@ -369,8 +367,7 @@ function createService(params?: {
     new MemoryCodeSequenceRepository(),
     employmentProfileReadonlyAccess,
     studioResourceReadonlyAccess,
-    talentGroupManagerAssignmentRepository,
-    orgUnitManagerAssignmentRepository,
+    managedScopeReader,
     (params?.audit ?? new AuditCapture()) as unknown as AuditGuard,
     mutationBridge,
     () => NOW,
@@ -396,8 +393,6 @@ const employmentProfileReadonlyAccess: WorkScheduleEmploymentProfileReadonlyAcce
         id,
         employmentStatus: id === "ep-inactive" ? "SUSPENDED" : "ACTIVE",
         orgUnitId: id === "ep-descendant" ? "org-child" : "org-managed",
-        managerEmploymentProfileId:
-          id === "ep-reporting" ? "ep-manager" : null,
         linkedUserId:
           id === "ep-manager"
             ? "manager-user"
@@ -419,9 +414,6 @@ const employmentProfileReadonlyAccess: WorkScheduleEmploymentProfileReadonlyAcce
         return this.findById("ep-other-manager");
       }
       return null;
-    },
-    async listIdsByManagerEmploymentProfileId() {
-      return ["ep-reporting"];
     },
     async listIdsByActiveTalentGroupIds() {
       return ["ep-tg"];
@@ -468,57 +460,25 @@ const studioResourceReadonlyAccess: WorkScheduleStudioResourceReadonlyAccess =
     },
   };
 
-const orgUnitManagerAssignmentRepository: Pick<
-  OrgUnitManagerAssignmentRepository,
-  "listActiveByManagerEmploymentProfileId"
-> = {
-  async listActiveByManagerEmploymentProfileId(managerId: string) {
-    return managerId === "ep-manager"
-      ? [
-          {
-            id: "org-assignment",
-            orgUnitId: "org-managed",
-            managerEmploymentProfileId: managerId,
-            role: "UNIT_MANAGER",
-            includeDescendants: false,
-            actionMask: [],
-            effectiveFrom: 1,
-            effectiveTo: null,
-            status: "ACTIVE",
-            isPrimary: true,
-            createdAt: 1,
-            createdByActorId: "seed",
-            updatedAt: 1,
-            updatedByActorId: "seed",
-          },
-        ]
-      : [];
-  },
-};
-
-const talentGroupManagerAssignmentRepository: Pick<
-  TalentGroupManagerAssignmentRepository,
-  "listActiveAssignmentsByManagerEmploymentProfile"
-> = {
-  async listActiveAssignmentsByManagerEmploymentProfile(managerId: string) {
-    return managerId === "ep-manager"
-      ? [
-          {
-            id: "tg-assignment",
-            groupId: "group-managed",
-            managerEmploymentProfileId: managerId,
-            role: "MANAGER",
-            effectiveFrom: 1,
-            effectiveTo: null,
-            status: "ACTIVE",
-            isPrimary: true,
-            createdAt: 1,
-            createdByActorId: "seed",
-            updatedAt: 1,
-            updatedByActorId: "seed",
-          },
-        ]
-      : [];
+const managedScopeReader = {
+  async resolveManagedScopeByResponsibleEmploymentProfile(input: {
+    readonly responsibleEmploymentProfileId: string;
+  }) {
+    return input.responsibleEmploymentProfileId === "ep-manager"
+      ? {
+          talentGroupIds: ["group-managed"],
+          orgUnitIds: ["org-managed"],
+          orgUnitScopes: [
+            {
+              orgUnitId: "org-managed",
+              role: "UNIT_MANAGER",
+              includeDescendants: false,
+              actionMask: [],
+              isPrimary: true,
+            },
+          ],
+        }
+      : { talentGroupIds: [], orgUnitIds: [], orgUnitScopes: [] };
   },
 };
 

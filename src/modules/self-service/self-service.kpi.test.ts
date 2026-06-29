@@ -633,7 +633,7 @@ test("self-service KPI endpoint is GET/read-only and does not change role templa
     assert.deepEqual(harness.snapshot(), before);
 
     const template = ROLE_TEMPLATE_CATALOG.find(
-      (candidate) => candidate.code === "TALENT_STAFF_SELF",
+      (candidate) => candidate.code === "STAFF_CONSOLE_USER",
     );
     assert.ok(template);
     assert.deepEqual(template.permissions, [

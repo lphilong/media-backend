@@ -10,9 +10,8 @@ import { PermissionContract } from "@core/permission/permission.contract";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import { getTraceIdOrThrow } from "@core/trace/trace.context";
-import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
-import { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import { ReferenceSummary } from "@modules/reference-summary";
+import { ResponsibilityManagedScopeReader } from "@modules/responsibility/domain/responsibility-managed-scope";
 import {
   WorkScheduleConflictError,
   WorkScheduleInvalidResourceReferenceError,
@@ -101,14 +100,7 @@ export class WorkScheduleRequestBatchAdminService {
     private readonly codeSequenceRepository: WorkScheduleCodeSequenceRepository,
     private readonly employmentProfileReadonlyAccess: WorkScheduleEmploymentProfileReadonlyAccess,
     private readonly studioResourceReadonlyAccess: WorkScheduleStudioResourceReadonlyAccess,
-    private readonly talentGroupManagerAssignmentRepository: Pick<
-      TalentGroupManagerAssignmentRepository,
-      "listActiveAssignmentsByManagerEmploymentProfile"
-    >,
-    private readonly orgUnitManagerAssignmentRepository: Pick<
-      OrgUnitManagerAssignmentRepository,
-      "listActiveByManagerEmploymentProfileId"
-    >,
+    private readonly managedScopeReader: ResponsibilityManagedScopeReader,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
     private readonly clock: () => number = Date.now,
@@ -924,26 +916,19 @@ export class WorkScheduleRequestBatchAdminService {
     managerEmploymentProfileId: string,
     session?: ClientSession,
   ): Promise<ManagedScopeResolution> {
-    const asOf = this.clock();
-    const [orgUnitAssignments, talentGroupAssignments] = await Promise.all([
-      this.orgUnitManagerAssignmentRepository.listActiveByManagerEmploymentProfileId(
-        managerEmploymentProfileId,
-        asOf,
+    const managedScope =
+      await this.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
+        {
+          responsibleEmploymentProfileId: managerEmploymentProfileId,
+          asOf: this.clock(),
+        },
         session,
-      ),
-      this.talentGroupManagerAssignmentRepository.listActiveAssignmentsByManagerEmploymentProfile(
-        managerEmploymentProfileId,
-        asOf,
-        session,
-      ),
-    ]);
+      );
     const profiles = new Map<string, WorkScheduleReferencedEmploymentProfile>();
     const orgUnitProfileIds = new Set<string>();
     const talentGroupProfileIds = new Set<string>();
 
-    for (const orgUnitId of [
-      ...new Set(orgUnitAssignments.map((assignment) => assignment.orgUnitId)),
-    ]) {
+    for (const orgUnitId of [...new Set(managedScope.orgUnitIds)]) {
       const orgProfiles =
         await this.employmentProfileReadonlyAccess.listByOrgUnitId(
           orgUnitId,
@@ -957,9 +942,7 @@ export class WorkScheduleRequestBatchAdminService {
       }
     }
 
-    for (const talentGroupId of [
-      ...new Set(talentGroupAssignments.map((assignment) => assignment.groupId)),
-    ]) {
+    for (const talentGroupId of [...new Set(managedScope.talentGroupIds)]) {
       const resolutions =
         await this.employmentProfileReadonlyAccess.listTalentGroupMemberEmploymentProfileResolutions(
           talentGroupId,

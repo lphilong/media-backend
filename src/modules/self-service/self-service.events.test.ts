@@ -466,7 +466,7 @@ test("self-service events endpoint is GET/read-only and does not expose mutation
 
 test("self-service events foundation does not add eventAssignment.self or role changes", () => {
   const template = ROLE_TEMPLATE_CATALOG.find(
-    (candidate) => candidate.code === "TALENT_STAFF_SELF",
+    (candidate) => candidate.code === "STAFF_CONSOLE_USER",
   );
   const serialized = JSON.stringify(template);
 

@@ -14,7 +14,6 @@ import { Permission } from "@core/permission/permission.enum";
 import { bindTraceId } from "@core/trace/trace.context";
 import { WorkScheduleRequestAdminService } from "@modules/work-schedule/admin/admin.work-schedule-request.service";
 import { WorkScheduleRequestAdminController } from "@modules/work-schedule/admin/admin.work-schedule-request.controller";
-import type { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import {
   WorkScheduleValidationError,
   WorkSchedulePermissionScopeError,
@@ -365,7 +364,7 @@ function createService(params?: {
     new MemoryCodeSequenceRepository(),
     employmentProfileReadonlyAccess,
     studioResourceReadonlyAccess,
-    managerAssignmentRepository,
+    managedScopeReader,
     (params?.audit ?? new AuditCapture()) as unknown as AuditGuard,
     mutationBridge,
   );
@@ -386,7 +385,6 @@ const employmentProfileReadonlyAccess: WorkScheduleEmploymentProfileReadonlyAcce
         id: employmentProfileId,
         employmentStatus: "ACTIVE",
         orgUnitId: "org-1",
-        managerEmploymentProfileId: null,
         linkedUserId:
           employmentProfileId === "ep-manager"
             ? "manager-user"
@@ -405,16 +403,12 @@ const employmentProfileReadonlyAccess: WorkScheduleEmploymentProfileReadonlyAcce
         id: "ep-manager",
         employmentStatus: "ACTIVE",
         orgUnitId: "org-1",
-        managerEmploymentProfileId: null,
         linkedUserId,
         ref: {
           id: "ep-manager",
           displayName: "Manager",
         },
       };
-    },
-    async listIdsByManagerEmploymentProfileId() {
-      return [];
     },
     async listIdsByActiveTalentGroupIds(
       groupIds: readonly string[],
@@ -444,32 +438,17 @@ const studioResourceReadonlyAccess: WorkScheduleStudioResourceReadonlyAccess =
     },
   };
 
-const managerAssignmentRepository: Pick<
-  TalentGroupManagerAssignmentRepository,
-  "listActiveAssignmentsByManagerEmploymentProfile"
-> = {
-  async listActiveAssignmentsByManagerEmploymentProfile(
-    managerEmploymentProfileId: string,
-  ) {
-    if (managerEmploymentProfileId !== "ep-manager") {
-      return [];
-    }
-    return [
-      {
-        id: "assignment-1",
-        groupId: "group-managed",
-        managerEmploymentProfileId,
-        role: "MANAGER",
-        effectiveFrom: 1,
-        effectiveTo: null,
-        status: "ACTIVE",
-        isPrimary: true,
-        createdAt: 1,
-        createdByActorId: "seed",
-        updatedAt: 1,
-        updatedByActorId: "seed",
-      },
-    ];
+const managedScopeReader = {
+  async resolveManagedScopeByResponsibleEmploymentProfile(input: {
+    readonly responsibleEmploymentProfileId: string;
+  }) {
+    return input.responsibleEmploymentProfileId === "ep-manager"
+      ? {
+          talentGroupIds: ["group-managed"],
+          orgUnitIds: [],
+          orgUnitScopes: [],
+        }
+      : { talentGroupIds: [], orgUnitIds: [], orgUnitScopes: [] };
   },
 };
 

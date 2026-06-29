@@ -5,7 +5,7 @@ export const PEOPLE_READINESS_CATEGORIES = [
   "EMPLOYMENT_PROFILE_LIFECYCLE",
   "ORGUNIT_PARTICIPATION",
   "TALENTGROUP_MEMBER_LINKAGE",
-  "MANAGER_ASSIGNMENT_READY",
+  "RESPONSIBILITY_READY",
   "SELF_SERVICE_READY",
   "WORKSCHEDULE_READY",
   "KPI_READY",
@@ -39,10 +39,10 @@ export const PEOPLE_READINESS_ISSUE_CODES = [
   "TALENTGROUP_ACTIVE_MEMBER_TALENT_NOT_ACTIVE",
   "TALENTGROUP_HAS_NO_OPERATIONAL_MEMBERS",
   "ORGUNIT_HAS_NO_ACTIVE_EMPLOYMENT_PROFILES",
-  "ORGUNIT_MANAGER_ASSIGNMENT_MANAGER_NOT_PROFILE_READY",
-  "ORGUNIT_MANAGER_ASSIGNMENT_MANAGER_NOT_LOGIN_READY",
-  "TALENTGROUP_MANAGER_ASSIGNMENT_MANAGER_NOT_PROFILE_READY",
-  "TALENTGROUP_MANAGER_ASSIGNMENT_MANAGER_NOT_LOGIN_READY",
+  "ORGUNIT_RESPONSIBILITY_MANAGER_NOT_PROFILE_READY",
+  "ORGUNIT_RESPONSIBILITY_MANAGER_NOT_LOGIN_READY",
+  "TALENTGROUP_RESPONSIBILITY_MANAGER_NOT_PROFILE_READY",
+  "TALENTGROUP_RESPONSIBILITY_MANAGER_NOT_LOGIN_READY",
   "SELF_SERVICE_PROFILE_NOT_ACTIVE",
   "ACTIVE_PROFILE_MISSING_EMPLOYMENT_TERMS",
   "EMPLOYMENT_TERMS_PENDING_APPROVAL",
@@ -61,8 +61,8 @@ export type PeopleReadinessEntityType =
   | "ORG_UNIT"
   | "TALENT_GROUP"
   | "TALENT_GROUP_MEMBER"
-  | "ORG_UNIT_MANAGER_ASSIGNMENT"
-  | "TALENT_GROUP_MANAGER_ASSIGNMENT";
+  | "ORG_UNIT_RESPONSIBILITY"
+  | "TALENT_GROUP_RESPONSIBILITY";
 
 export interface PeopleReadinessSafeEntitySummary {
   readonly entityType: PeopleReadinessEntityType;
@@ -144,14 +144,14 @@ export interface PeopleReadinessTalentGroupMember {
   readonly membershipStatus: string;
 }
 
-export interface PeopleReadinessManagerAssignment {
+export interface PeopleReadinessResponsibilityAssignment {
   readonly id: string;
   readonly targetId: string;
-  readonly managerEmploymentProfileId: string;
-  readonly role: string;
+  readonly responsibleEmploymentProfileId: string;
+  readonly responsibilityRole: string;
   readonly status: string;
-  readonly effectiveFrom: number;
-  readonly effectiveTo: number | null;
+  readonly effectiveAt: number;
+  readonly expiresAt: number | null;
 }
 
 export interface PeopleReadinessSnapshot {
@@ -161,6 +161,6 @@ export interface PeopleReadinessSnapshot {
   readonly orgUnits: readonly PeopleReadinessOrgUnit[];
   readonly talentGroups: readonly PeopleReadinessTalentGroup[];
   readonly talentGroupMembers: readonly PeopleReadinessTalentGroupMember[];
-  readonly orgUnitManagerAssignments: readonly PeopleReadinessManagerAssignment[];
-  readonly talentGroupManagerAssignments: readonly PeopleReadinessManagerAssignment[];
+  readonly orgUnitResponsibilities: readonly PeopleReadinessResponsibilityAssignment[];
+  readonly talentGroupResponsibilities: readonly PeopleReadinessResponsibilityAssignment[];
 }

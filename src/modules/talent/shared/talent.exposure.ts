@@ -19,8 +19,6 @@ const TALENT_ADMIN_LIST_FIELDS = [
   "displayShortName",
   "talentOrigin",
   "operationalStatus",
-  "managerEmploymentProfileId",
-  "managerEmploymentProfileRef",
   "linkedEmploymentProfileId",
   "linkedEmploymentProfileRef",
   "commercialParticipationStatus",
@@ -40,8 +38,6 @@ const TALENT_ADMIN_DETAIL_FIELDS = [
   "displayShortName",
   "talentOrigin",
   "operationalStatus",
-  "managerEmploymentProfileId",
-  "managerEmploymentProfileRef",
   "linkedEmploymentProfileId",
   "linkedEmploymentProfileRef",
   "commercialParticipationStatus",
@@ -70,10 +66,6 @@ export const TalentAdminListExposure = Object.freeze({
           talentOrigin: input.talentOrigin,
           operationalStatus:
             input.operationalStatus,
-          managerEmploymentProfileId:
-            input.managerEmploymentProfileId,
-          managerEmploymentProfileRef:
-            input.managerEmploymentProfileRef,
           linkedEmploymentProfileId:
             input.linkedEmploymentProfileId,
           linkedEmploymentProfileRef:
@@ -117,10 +109,6 @@ export const TalentAdminDetailExposure =
             talentOrigin: input.talentOrigin,
             operationalStatus:
               input.operationalStatus,
-            managerEmploymentProfileId:
-              input.managerEmploymentProfileId,
-            managerEmploymentProfileRef:
-              input.managerEmploymentProfileRef,
             linkedEmploymentProfileId:
               input.linkedEmploymentProfileId,
             linkedEmploymentProfileRef:

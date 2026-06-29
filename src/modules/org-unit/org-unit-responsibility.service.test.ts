@@ -19,6 +19,10 @@ import { BusinessCodePolicy } from "@core/business-code/business-code-sequence.r
 import { Permission } from "@core/permission/permission.enum";
 import { bindTraceId } from "@core/trace/trace.context";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
+import { ResponsibilityAdminService } from "@modules/responsibility/admin/admin.responsibility.service";
+import {
+  ResponsibilityAssignmentView,
+} from "@modules/responsibility/domain/responsibility.types";
 import { OrgUnitResponsibilityAdminService } from "@modules/org-unit/admin/admin.org-unit-responsibility.service";
 import { NativeMongoOrgUnitManagerAssignmentRepository } from "@infra/mongo/kpi/org-unit-manager-assignment.repository";
 import {
@@ -223,6 +227,7 @@ test("Org Unit responsibility is visible to managed unit authority, while role t
     roles: ["TEAM_MANAGER"],
     permissions: [Permission.KPI_READ_PROGRESS],
     scopeGrants: { kpi: ["managedGroup"] },
+    accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
   });
 
@@ -232,8 +237,7 @@ test("Org Unit responsibility is visible to managed unit authority, while role t
         employmentProfileId: "ep-1",
       }),
     },
-    managerAssignmentRepository: new EmptyTalentGroupManagerRepository(),
-    orgUnitManagerAssignmentRepository: harness.assignmentRepository,
+    managedScopeReader: harness.assignmentRepository,
   }, { asOf: NOW });
 
   assert.deepEqual(emptyAuthority?.scope.orgUnitIds, []);
@@ -252,8 +256,7 @@ test("Org Unit responsibility is visible to managed unit authority, while role t
         employmentProfileId: "ep-1",
       }),
     },
-    managerAssignmentRepository: new EmptyTalentGroupManagerRepository(),
-    orgUnitManagerAssignmentRepository: harness.assignmentRepository,
+    managedScopeReader: harness.assignmentRepository,
   }, { asOf: NOW });
 
   assert.deepEqual(authority?.scope.orgUnitIds, ["org-1"]);
@@ -506,6 +509,9 @@ function createHarness(): {
     audit as unknown as AuditGuard,
     new ImmediateMutationBridge(),
     createOrgUnitStructuredAuthority(),
+    new FakeResponsibilityService(
+      assignmentRepository,
+    ) as unknown as ResponsibilityAdminService,
     () => NOW,
   );
   return { service, assignmentRepository, audit };
@@ -557,6 +563,7 @@ function createActor(): Actor {
     roles: [],
     permissions: [Permission.ORG_UNIT_READ, Permission.ORG_UNIT_UPDATE],
     scopeGrants: {},
+    accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
   });
 }
@@ -818,6 +825,218 @@ class InMemoryOrgUnitManagerAssignmentRepository
     employmentProfileId: string,
   ): Promise<OrgUnitManagerEmploymentProfileCandidate | null> {
     return this.candidates.get(employmentProfileId) ?? null;
+  }
+
+  readCandidate(
+    employmentProfileId: string,
+  ): OrgUnitManagerEmploymentProfileCandidate | null {
+    return this.candidates.get(employmentProfileId) ?? null;
+  }
+
+  async resolveManagedScopeByResponsibleEmploymentProfile(input: {
+    readonly responsibleEmploymentProfileId: string;
+    readonly asOf: number;
+  }): Promise<{
+    readonly talentGroupIds: readonly string[];
+    readonly orgUnitIds: readonly string[];
+    readonly orgUnitScopes: readonly {
+      readonly orgUnitId: string;
+      readonly role: string | null;
+      readonly includeDescendants: boolean;
+      readonly actionMask: readonly string[];
+      readonly isPrimary: boolean;
+    }[];
+  }> {
+    const assignments = await this.listActiveByManagerEmploymentProfileId(
+      input.responsibleEmploymentProfileId,
+      input.asOf,
+    );
+    const orgUnitScopes = assignments.map((assignment) => ({
+      orgUnitId: assignment.orgUnitId,
+      role: assignment.role,
+      includeDescendants: assignment.includeDescendants,
+      actionMask: assignment.actionMask,
+      isPrimary: assignment.isPrimary,
+    }));
+    return {
+      talentGroupIds: [],
+      orgUnitIds: [...new Set(orgUnitScopes.map((scope) => scope.orgUnitId))],
+      orgUnitScopes,
+    };
+  }
+}
+
+class FakeResponsibilityService {
+  constructor(private readonly repository: InMemoryOrgUnitManagerAssignmentRepository) {}
+
+  async getSummaryForSubject(
+    _actor: Actor,
+    subjectType: string,
+    subjectId: string,
+  ): Promise<{ readonly items: readonly ResponsibilityAssignmentView[] }> {
+    if (subjectType !== "ORG_UNIT") {
+      return { items: [] };
+    }
+    const assignments = await this.repository.listActiveByOrgUnitId(
+      subjectId,
+      NOW,
+    );
+    return { items: assignments.map((assignment) => this.toView(assignment)) };
+  }
+
+  async createOrgUnitResponsibility(
+    _actor: Actor,
+    command: {
+      readonly orgUnitId: string;
+      readonly managerEmploymentProfileId: string;
+      readonly role?: string;
+      readonly includeDescendants?: boolean;
+      readonly effectiveFrom?: number | string | null;
+      readonly effectiveTo?: number | string | null;
+      readonly isPrimary?: boolean;
+    },
+  ): Promise<ResponsibilityAssignmentView> {
+    if (command.orgUnitId === "org-inactive") {
+      throw new OrgUnitStateError("Managed subject must be active");
+    }
+    const candidate =
+      await this.repository.findManagerEmploymentProfileCandidate(
+        command.managerEmploymentProfileId,
+      );
+    if (!candidate || !["ACTIVE", "ON_LEAVE"].includes(candidate.employmentStatus)) {
+      throw new OrgUnitValidationError("Responsible employment profile is invalid");
+    }
+    const effectiveFrom =
+      typeof command.effectiveFrom === "number" ? command.effectiveFrom : NOW;
+    const effectiveTo =
+      typeof command.effectiveTo === "number" ? command.effectiveTo : null;
+    const existing =
+      await this.repository.listActiveByManagerEmploymentProfileId(
+        command.managerEmploymentProfileId,
+        NOW,
+      );
+    if (existing.some((assignment) => assignment.orgUnitId === command.orgUnitId)) {
+      throw new OrgUnitConflictError("Duplicate active responsibility");
+    }
+    const assignment = await this.repository.insertAssignment({
+      id: `assignment-${this.repository.assignments.length + 1}`,
+      orgUnitId: command.orgUnitId,
+      managerEmploymentProfileId: command.managerEmploymentProfileId,
+      role: (command.role ?? "UNIT_MANAGER") as OrgUnitManagerRole,
+      includeDescendants: command.includeDescendants ?? false,
+      actionMask: [],
+      effectiveFrom,
+      effectiveTo,
+      status: "ACTIVE",
+      isPrimary: command.isPrimary ?? false,
+      createdAt: NOW,
+      createdByActorId: "admin-user",
+      updatedAt: NOW,
+      updatedByActorId: "admin-user",
+    });
+    return this.toView(assignment);
+  }
+
+  async getAssignment(
+    _actor: Actor,
+    assignmentId: string,
+  ): Promise<ResponsibilityAssignmentView> {
+    const assignment = await this.repository.findAssignmentById(assignmentId);
+    if (!assignment) {
+      throw new OrgUnitNotFoundError(assignmentId);
+    }
+    return this.toView(assignment);
+  }
+
+  async updateAssignment(
+    _actor: Actor,
+    command: {
+      readonly assignmentId: string;
+      readonly responsibilityRole?: string | null;
+      readonly includeDescendants?: boolean | null;
+      readonly effectiveAt?: number;
+      readonly expiresAt?: number | null;
+      readonly isPrimary?: boolean;
+    },
+  ): Promise<ResponsibilityAssignmentView> {
+    const updated = await this.repository.updateAssignment({
+      assignmentId: command.assignmentId,
+      role: command.responsibilityRole as OrgUnitManagerRole | undefined,
+      includeDescendants: command.includeDescendants ?? undefined,
+      effectiveFrom: command.effectiveAt,
+      effectiveTo: command.expiresAt,
+      isPrimary: command.isPrimary,
+      updatedAt: NOW,
+      updatedByActorId: "admin-user",
+    });
+    if (!updated) {
+      throw new OrgUnitNotFoundError(command.assignmentId);
+    }
+    return this.toView(updated);
+  }
+
+  async revokeAssignment(
+    _actor: Actor,
+    command: { readonly assignmentId: string },
+  ): Promise<ResponsibilityAssignmentView> {
+    const revoked = await this.repository.revokeAssignment({
+      assignmentId: command.assignmentId,
+      effectiveTo: NOW,
+      updatedAt: NOW,
+      updatedByActorId: "admin-user",
+    });
+    if (!revoked) {
+      throw new OrgUnitNotFoundError(command.assignmentId);
+    }
+    return this.toView(revoked);
+  }
+
+  private toView(
+    assignment: OrgUnitManagerAssignment,
+  ): ResponsibilityAssignmentView {
+    const candidate = this.repository.readCandidate(
+      assignment.managerEmploymentProfileId,
+    );
+    return {
+      id: assignment.id,
+      subjectType: "ORG_UNIT",
+      subjectId: assignment.orgUnitId,
+      responsibleEmploymentProfileId: assignment.managerEmploymentProfileId,
+      responsibilityType: "ORG_UNIT_MANAGER",
+      responsibilityRole: assignment.role,
+      includeDescendants: assignment.includeDescendants,
+      actionMask: assignment.actionMask,
+      isPrimary: assignment.isPrimary,
+      status: assignment.status === "ACTIVE" ? "ACTIVE" : "REVOKED",
+      effectiveAt: assignment.effectiveFrom,
+      expiresAt: assignment.effectiveTo,
+      revokedAt: assignment.status === "ACTIVE" ? null : assignment.effectiveTo,
+      reason: null,
+      createdBy: assignment.createdByActorId,
+      createdAt: assignment.createdAt,
+      updatedBy: assignment.updatedByActorId,
+      updatedAt: assignment.updatedAt,
+      revokedBy: assignment.status === "ACTIVE" ? null : assignment.updatedByActorId,
+      revokedReason: null,
+      reviewNeeded: false,
+      reviewReason: null,
+      subjectRef: {
+        id: assignment.orgUnitId,
+        code: "OU-000001",
+        name: "Operations",
+        status: "ACTIVE",
+      },
+      responsibleEmploymentProfileRef: candidate
+        ? {
+            id: candidate.id,
+            code: candidate.employeeCode,
+            displayName: candidate.displayName,
+            name: candidate.legalName,
+            title: candidate.jobTitle,
+            status: candidate.employmentStatus,
+          }
+        : { id: assignment.managerEmploymentProfileId },
+    };
   }
 }
 

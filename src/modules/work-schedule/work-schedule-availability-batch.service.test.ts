@@ -10,8 +10,6 @@ import type {
 import type { AuditGuard } from "@core/audit/audit.guard";
 import { Permission } from "@core/permission/permission.enum";
 import { bindTraceId } from "@core/trace/trace.context";
-import type { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
-import type { TalentGroupManagerAssignmentRepository } from "@modules/kpi/domain/talent-group-manager-assignment.repository";
 import type { UserRoleAssignmentRecord } from "@modules/role/domain/role.types";
 import {
   StructuredScopeAuthorityAssignment,
@@ -287,7 +285,6 @@ const profiles: Record<
   {
     readonly employmentStatus: "ACTIVE" | "SUSPENDED";
     readonly orgUnitId: string;
-    readonly managerEmploymentProfileId: string | null;
     readonly linkedUserId: string | null;
     readonly displayName: string;
   }
@@ -295,49 +292,42 @@ const profiles: Record<
   "ep-manager": {
     employmentStatus: "ACTIVE",
     orgUnitId: "org-manager",
-    managerEmploymentProfileId: null,
     linkedUserId: "manager-user",
     displayName: "Manager",
   },
   "ep-other-manager": {
     employmentStatus: "ACTIVE",
     orgUnitId: "org-manager",
-    managerEmploymentProfileId: null,
     linkedUserId: "other-manager-user",
     displayName: "Other Manager",
   },
   "ep-org": {
     employmentStatus: "ACTIVE",
     orgUnitId: "org-managed",
-    managerEmploymentProfileId: null,
     linkedUserId: null,
     displayName: "Org Member",
   },
   "ep-descendant": {
     employmentStatus: "ACTIVE",
     orgUnitId: "org-child",
-    managerEmploymentProfileId: null,
     linkedUserId: null,
     displayName: "Descendant Member",
   },
   "ep-reporting": {
     employmentStatus: "ACTIVE",
     orgUnitId: "org-other",
-    managerEmploymentProfileId: "ep-manager",
     linkedUserId: null,
     displayName: "Reporting Member",
   },
   "ep-tg": {
     employmentStatus: "ACTIVE",
     orgUnitId: "org-other",
-    managerEmploymentProfileId: null,
     linkedUserId: null,
     displayName: "TalentGroup Member",
   },
   "ep-inactive": {
     employmentStatus: "SUSPENDED",
     orgUnitId: "org-managed",
-    managerEmploymentProfileId: null,
     linkedUserId: null,
     displayName: "Inactive Member",
   },
@@ -364,9 +354,6 @@ const employmentAccess: WorkScheduleEmploymentProfileReadonlyAccess = {
       ([, profile]) => profile.linkedUserId === linkedUserId,
     );
     return match ? this.findById(match[0]) : null;
-  },
-  async listIdsByManagerEmploymentProfileId() {
-    return ["ep-reporting"];
   },
   async listIdsByActiveTalentGroupIds() {
     return ["ep-tg"];
@@ -477,73 +464,32 @@ const talentGroupAccess: WorkScheduleTalentGroupReadonlyAccess = {
   },
 };
 
-const orgAssignments: Pick<
-  OrgUnitManagerAssignmentRepository,
-  "listActiveByManagerEmploymentProfileId"
-> = {
-  async listActiveByManagerEmploymentProfileId(managerId: string) {
-    return managerId === "ep-manager"
-      ? [
-          {
-            id: "org-assignment",
-            orgUnitId: "org-managed",
-            managerEmploymentProfileId: managerId,
-            role: "UNIT_MANAGER",
-            includeDescendants: false,
-            actionMask: [],
-            effectiveFrom: 1,
-            effectiveTo: null,
-            status: "ACTIVE",
-            isPrimary: true,
-            createdAt: 1,
-            createdByActorId: "seed",
-            updatedAt: 1,
-            updatedByActorId: "seed",
-          },
-          {
-            id: "org-empty-assignment",
-            orgUnitId: "org-empty",
-            managerEmploymentProfileId: managerId,
-            role: "UNIT_MANAGER",
-            includeDescendants: false,
-            actionMask: [],
-            effectiveFrom: 1,
-            effectiveTo: null,
-            status: "ACTIVE",
-            isPrimary: false,
-            createdAt: 1,
-            createdByActorId: "seed",
-            updatedAt: 1,
-            updatedByActorId: "seed",
-          },
-        ]
-      : [];
-  },
-};
-
-const groupAssignments: Pick<
-  TalentGroupManagerAssignmentRepository,
-  "listActiveAssignmentsByManagerEmploymentProfile"
-> = {
-  async listActiveAssignmentsByManagerEmploymentProfile(managerId: string) {
-    return managerId === "ep-manager"
-      ? [
-          {
-            id: "group-assignment",
-            groupId: "group-managed",
-            managerEmploymentProfileId: managerId,
-            role: "MANAGER",
-            effectiveFrom: 1,
-            effectiveTo: null,
-            status: "ACTIVE",
-            isPrimary: true,
-            createdAt: 1,
-            createdByActorId: "seed",
-            updatedAt: 1,
-            updatedByActorId: "seed",
-          },
-        ]
-      : [];
+const managedScopeReader = {
+  async resolveManagedScopeByResponsibleEmploymentProfile(input: {
+    readonly responsibleEmploymentProfileId: string;
+  }) {
+    return input.responsibleEmploymentProfileId === "ep-manager"
+      ? {
+          talentGroupIds: ["group-managed"],
+          orgUnitIds: ["org-managed", "org-empty"],
+          orgUnitScopes: [
+            {
+              orgUnitId: "org-managed",
+              role: "UNIT_MANAGER",
+              includeDescendants: false,
+              actionMask: [],
+              isPrimary: true,
+            },
+            {
+              orgUnitId: "org-empty",
+              role: "UNIT_MANAGER",
+              includeDescendants: false,
+              actionMask: [],
+              isPrimary: false,
+            },
+          ],
+        }
+      : { talentGroupIds: [], orgUnitIds: [], orgUnitScopes: [] };
   },
 };
 
@@ -571,8 +517,7 @@ function createService(
       employmentAccess,
       orgUnitAccess,
       talentGroupAccess,
-      groupAssignments,
-      orgAssignments,
+      managedScopeReader,
       audit,
       mutationBridge,
       structuredAuthority,

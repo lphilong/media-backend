@@ -1,4 +1,3 @@
-import crypto from "crypto";
 import { ClientSession } from "mongodb";
 import { Actor } from "@core/actor/actor";
 import {
@@ -12,18 +11,14 @@ import { PermissionContract } from "@core/permission/permission.contract";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import { getTraceIdOrThrow } from "@core/trace/trace.context";
-import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
 import {
   ORG_UNIT_MANAGER_ROLES,
-  OrgUnitManagerAssignment,
   OrgUnitManagerAssignmentView,
   OrgUnitManagerRole,
 } from "@modules/kpi/domain/kpi.types";
 import {
-  OrgUnitConflictError,
   OrgUnitNotFoundError,
   OrgUnitPermissionScopeError,
-  OrgUnitStateError,
   OrgUnitValidationError,
 } from "@modules/org-unit/domain/org-unit.errors";
 import { OrgUnitRepository } from "@modules/org-unit/domain/org-unit.repository";
@@ -37,6 +32,8 @@ import {
 } from "@modules/org-unit/shared/org-unit.contracts";
 import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
+import { ResponsibilityAdminService } from "@modules/responsibility/admin/admin.responsibility.service";
+import { ResponsibilityAssignmentView } from "@modules/responsibility/domain/responsibility.types";
 
 const ASSIGN_RESPONSIBILITY_OPERATION: AuthoritativeAdminMutationIdentity =
   "org-unit.assign-responsibility";
@@ -44,8 +41,6 @@ const UPDATE_RESPONSIBILITY_OPERATION: AuthoritativeAdminMutationIdentity =
   "org-unit.update-responsibility";
 const REVOKE_RESPONSIBILITY_OPERATION: AuthoritativeAdminMutationIdentity =
   "org-unit.revoke-responsibility";
-
-const MANAGER_ACTIVE_STATUSES = ["ACTIVE", "ON_LEAVE"] as const;
 
 interface NormalizedResponsibilityInput {
   readonly role: OrgUnitManagerRole;
@@ -64,14 +59,27 @@ interface NormalizedResponsibilityPatch {
 }
 
 export class OrgUnitResponsibilityAdminService {
+  private readonly responsibilityService: ResponsibilityAdminService | undefined;
+  private readonly clock: () => number;
+
   constructor(
     private readonly orgUnitRepository: OrgUnitRepository,
-    private readonly assignmentRepository: OrgUnitManagerAssignmentRepository,
+    _legacyAssignmentRepository: unknown,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
     private readonly structuredAuthority: StructuredScopeAuthorityService = createMissingStructuredAuthority(),
-    private readonly clock: () => number = Date.now,
-  ) {}
+    responsibilityServiceOrClock?: ResponsibilityAdminService | (() => number),
+    clock: () => number = Date.now,
+  ) {
+    this.responsibilityService =
+      typeof responsibilityServiceOrClock === "function"
+        ? undefined
+        : responsibilityServiceOrClock;
+    this.clock =
+      typeof responsibilityServiceOrClock === "function"
+        ? responsibilityServiceOrClock
+        : clock;
+  }
 
   async listResponsibilities(
     actor: Actor,
@@ -85,11 +93,15 @@ export class OrgUnitResponsibilityAdminService {
       Permission.ORG_UNIT_READ,
       orgUnit.id,
     );
-    const assignments =
-      await this.assignmentRepository.listAssignmentsByOrgUnitId(orgUnitId);
-
+    const summary = await this.requireResponsibilityService().getSummaryForSubject(
+      actor,
+      "ORG_UNIT",
+      orgUnitId,
+    );
     return {
-      items: await this.toViews(orgUnit, assignments),
+      items: summary.items
+        .filter((item) => item.responsibilityType === "ORG_UNIT_MANAGER")
+        .map(toOrgUnitManagerAssignmentView),
     };
   }
 
@@ -117,44 +129,19 @@ export class OrgUnitResponsibilityAdminService {
           Permission.ORG_UNIT_UPDATE,
           orgUnit.id,
         );
-        assertAssignableOrgUnit(orgUnit, orgUnitId);
-        await this.assertManagerCandidate(managerEmploymentProfileId, session);
-
-        const existing =
-          await this.assignmentRepository.listAssignmentsByOrgUnitId(
-            orgUnitId,
-            session,
+        const created =
+          await this.requireResponsibilityService().createOrgUnitResponsibility(
+            actor,
+            {
+              orgUnitId,
+              managerEmploymentProfileId,
+              role: normalized.role,
+              includeDescendants: normalized.includeDescendants,
+              effectiveFrom: normalized.effectiveFrom,
+              effectiveTo: normalized.effectiveTo,
+              isPrimary: normalized.isPrimary,
+            },
           );
-        assertNoDuplicateOverlap(existing, {
-          orgUnitId,
-          managerEmploymentProfileId,
-          role: normalized.role,
-          effectiveFrom: normalized.effectiveFrom,
-          effectiveTo: normalized.effectiveTo,
-        });
-
-        const now = this.clock();
-        const assignment: OrgUnitManagerAssignment = {
-          id: crypto.randomUUID(),
-          orgUnitId,
-          managerEmploymentProfileId,
-          role: normalized.role,
-          includeDescendants: normalized.includeDescendants,
-          actionMask: [],
-          effectiveFrom: normalized.effectiveFrom,
-          effectiveTo: normalized.effectiveTo,
-          status: "ACTIVE",
-          isPrimary: normalized.isPrimary,
-          createdAt: now,
-          createdByActorId: actor.id,
-          updatedAt: now,
-          updatedByActorId: actor.id,
-        };
-
-        const created = await this.assignmentRepository.insertAssignment(
-          assignment,
-          session,
-        );
 
         await this.audit.record(
           actor,
@@ -166,12 +153,12 @@ export class OrgUnitResponsibilityAdminService {
             targetType: "org-unit-manager-assignment",
             orgUnitId,
             managerEmploymentProfileId,
-            role: created.role,
+            role: normalized.role,
           },
           session,
         );
 
-        return this.toView(orgUnit, created);
+        return toOrgUnitManagerAssignmentView(created);
       },
     );
   }
@@ -206,57 +193,18 @@ export class OrgUnitResponsibilityAdminService {
           Permission.ORG_UNIT_UPDATE,
           orgUnit.id,
         );
-        const current =
-          await this.assignmentRepository.findAssignmentById(
-            assignmentId,
-            session,
-          );
-        if (!current || current.orgUnitId !== orgUnitId) {
-          throw new OrgUnitNotFoundError(assignmentId);
-        }
-        if (current.status !== "ACTIVE") {
-          throw new OrgUnitStateError(
-            `Org unit responsibility is not ACTIVE: ${assignmentId}`,
-          );
-        }
-
-        const nextEffectiveFrom =
-          patch.effectiveFrom ?? current.effectiveFrom;
-        const nextEffectiveTo =
-          patch.effectiveTo !== undefined
-            ? patch.effectiveTo
-            : current.effectiveTo;
-        assertEffectiveRange(nextEffectiveFrom, nextEffectiveTo);
-
-        const nextRole = patch.role ?? current.role;
-        const existing =
-          await this.assignmentRepository.listAssignmentsByOrgUnitId(
-            orgUnitId,
-            session,
-          );
-        assertNoDuplicateOverlap(existing, {
-          orgUnitId,
-          managerEmploymentProfileId: current.managerEmploymentProfileId,
-          role: nextRole,
-          effectiveFrom: nextEffectiveFrom,
-          effectiveTo: nextEffectiveTo,
-          excludeAssignmentId: current.id,
-        });
-
-        const updated = await this.assignmentRepository.updateAssignment(
+        await this.assertCentralOrgUnitAssignment(actor, assignmentId, orgUnitId);
+        const updated = await this.requireResponsibilityService().updateAssignment(
+          actor,
           {
             assignmentId,
-            ...patch,
-            updatedAt: this.clock(),
-            updatedByActorId: actor.id,
+            responsibilityRole: patch.role,
+            includeDescendants: patch.includeDescendants,
+            effectiveAt: patch.effectiveFrom,
+            expiresAt: patch.effectiveTo,
+            isPrimary: patch.isPrimary,
           },
-          session,
         );
-        if (!updated) {
-          throw new OrgUnitConflictError(
-            `Org unit responsibility update conflict: ${assignmentId}`,
-          );
-        }
 
         await this.audit.record(
           actor,
@@ -267,13 +215,13 @@ export class OrgUnitResponsibilityAdminService {
             targetId: updated.id,
             targetType: "org-unit-manager-assignment",
             orgUnitId,
-            managerEmploymentProfileId: updated.managerEmploymentProfileId,
-            role: updated.role,
+            managerEmploymentProfileId: updated.responsibleEmploymentProfileId,
+            role: patch.role,
           },
           session,
         );
 
-        return this.toView(orgUnit, updated);
+        return toOrgUnitManagerAssignmentView(updated);
       },
     );
   }
@@ -301,35 +249,17 @@ export class OrgUnitResponsibilityAdminService {
           Permission.ORG_UNIT_UPDATE,
           orgUnit.id,
         );
-        const current =
-          await this.assignmentRepository.findAssignmentById(
-            assignmentId,
-            session,
-          );
-        if (!current || current.orgUnitId !== orgUnitId) {
-          throw new OrgUnitNotFoundError(assignmentId);
-        }
-        if (current.status !== "ACTIVE") {
-          throw new OrgUnitStateError(
-            `Org unit responsibility is not ACTIVE: ${assignmentId}`,
-          );
-        }
-
-        const now = this.clock();
-        const revoked = await this.assignmentRepository.revokeAssignment(
+        const current = await this.assertCentralOrgUnitAssignment(
+          actor,
+          assignmentId,
+          orgUnitId,
+        );
+        const revoked = await this.requireResponsibilityService().revokeAssignment(
+          actor,
           {
             assignmentId,
-            effectiveTo: now,
-            updatedAt: now,
-            updatedByActorId: actor.id,
           },
-          session,
         );
-        if (!revoked) {
-          throw new OrgUnitConflictError(
-            `Org unit responsibility revoke conflict: ${assignmentId}`,
-          );
-        }
 
         await this.audit.record(
           actor,
@@ -340,14 +270,14 @@ export class OrgUnitResponsibilityAdminService {
             targetId: revoked.id,
             targetType: "org-unit-manager-assignment",
             orgUnitId,
-            managerEmploymentProfileId: revoked.managerEmploymentProfileId,
+            managerEmploymentProfileId: revoked.responsibleEmploymentProfileId,
             previousStatus: current.status,
             nextStatus: revoked.status,
           },
           session,
         );
 
-        return this.toView(orgUnit, revoked);
+        return toOrgUnitManagerAssignmentView(revoked);
       },
     );
   }
@@ -389,68 +319,32 @@ export class OrgUnitResponsibilityAdminService {
     });
   }
 
-  private async assertManagerCandidate(
-    managerEmploymentProfileId: string,
-    session?: ClientSession,
-  ): Promise<void> {
-    const candidate =
-      await this.assignmentRepository.findManagerEmploymentProfileCandidate(
-        managerEmploymentProfileId,
-        session,
-      );
-    if (!candidate) {
+  private requireResponsibilityService(): ResponsibilityAdminService {
+    if (!this.responsibilityService) {
       throw new OrgUnitValidationError(
-        `Manager employment profile does not exist: ${managerEmploymentProfileId}`,
+        "OrgUnit responsibilities must use central responsibility assignments",
       );
     }
+    return this.responsibilityService;
+  }
+
+  private async assertCentralOrgUnitAssignment(
+    actor: Actor,
+    assignmentId: string,
+    orgUnitId: string,
+  ): Promise<ResponsibilityAssignmentView> {
+    const current = await this.requireResponsibilityService().getAssignment(
+      actor,
+      assignmentId,
+    );
     if (
-      !MANAGER_ACTIVE_STATUSES.includes(
-        candidate.employmentStatus as (typeof MANAGER_ACTIVE_STATUSES)[number],
-      )
+      current.subjectType !== "ORG_UNIT" ||
+      current.subjectId !== orgUnitId ||
+      current.responsibilityType !== "ORG_UNIT_MANAGER"
     ) {
-      throw new OrgUnitValidationError(
-        `Manager employment profile must be ACTIVE or ON_LEAVE: ${managerEmploymentProfileId}`,
-      );
+      throw new OrgUnitNotFoundError(assignmentId);
     }
-  }
-
-  private async toViews(
-    orgUnit: OrgUnitRecord,
-    assignments: readonly OrgUnitManagerAssignment[],
-  ): Promise<readonly OrgUnitManagerAssignmentView[]> {
-    const views: OrgUnitManagerAssignmentView[] = [];
-    for (const assignment of assignments) {
-      views.push(await this.toView(orgUnit, assignment));
-    }
-    return views;
-  }
-
-  private async toView(
-    orgUnit: OrgUnitRecord,
-    assignment: OrgUnitManagerAssignment,
-  ): Promise<OrgUnitManagerAssignmentView> {
-    const manager =
-      await this.assignmentRepository.findManagerEmploymentProfileCandidate(
-        assignment.managerEmploymentProfileId,
-      );
-
-    return {
-      ...assignment,
-      orgUnitRef: {
-        id: orgUnit.id,
-        code: orgUnit.code,
-        name: orgUnit.name,
-        status: orgUnit.status,
-      },
-      managerRef: {
-        id: assignment.managerEmploymentProfileId,
-        code: manager?.employeeCode,
-        displayName: manager?.displayName,
-        name: manager?.legalName,
-        title: manager?.jobTitle,
-        status: manager?.employmentStatus,
-      },
-    };
+    return current;
   }
 
   private async executeMutation<T>(
@@ -636,59 +530,6 @@ function assertEffectiveRange(
   }
 }
 
-function assertAssignableOrgUnit(orgUnit: OrgUnitRecord, orgUnitId: string): void {
-  if (orgUnit.status !== "ACTIVE") {
-    throw new OrgUnitStateError(
-      `Org unit responsibility requires ACTIVE org unit: ${orgUnitId}`,
-    );
-  }
-}
-
-function assertNoDuplicateOverlap(
-  existing: readonly OrgUnitManagerAssignment[],
-  candidate: {
-    readonly orgUnitId: string;
-    readonly managerEmploymentProfileId: string;
-    readonly role: OrgUnitManagerRole;
-    readonly effectiveFrom: number;
-    readonly effectiveTo: number | null;
-    readonly excludeAssignmentId?: string;
-  },
-): void {
-  const duplicate = existing.find(
-    (assignment) =>
-      assignment.id !== candidate.excludeAssignmentId &&
-      assignment.status === "ACTIVE" &&
-      assignment.orgUnitId === candidate.orgUnitId &&
-      assignment.managerEmploymentProfileId ===
-        candidate.managerEmploymentProfileId &&
-      assignment.role === candidate.role &&
-      rangesOverlap(
-        assignment.effectiveFrom,
-        assignment.effectiveTo,
-        candidate.effectiveFrom,
-        candidate.effectiveTo,
-      ),
-  );
-
-  if (duplicate) {
-    throw new OrgUnitConflictError(
-      `Active org unit responsibility already exists for ${candidate.orgUnitId}, ${candidate.managerEmploymentProfileId}, and ${candidate.role}`,
-    );
-  }
-}
-
-function rangesOverlap(
-  leftFrom: number,
-  leftTo: number | null,
-  rightFrom: number,
-  rightTo: number | null,
-): boolean {
-  const normalizedLeftTo = leftTo ?? Number.MAX_SAFE_INTEGER;
-  const normalizedRightTo = rightTo ?? Number.MAX_SAFE_INTEGER;
-  return leftFrom <= normalizedRightTo && rightFrom <= normalizedLeftTo;
-}
-
 function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
   return new StructuredScopeAuthorityService({
     async listByUserId(): Promise<never> {
@@ -697,4 +538,35 @@ function createMissingStructuredAuthority(): StructuredScopeAuthorityService {
       );
     },
   });
+}
+
+function toOrgUnitManagerAssignmentView(
+  assignment: ResponsibilityAssignmentView,
+): OrgUnitManagerAssignmentView {
+  return {
+    id: assignment.id,
+    orgUnitId: assignment.subjectId,
+    managerEmploymentProfileId: assignment.responsibleEmploymentProfileId,
+    role:
+      assignment.responsibilityRole === "DEPARTMENT_OWNER" ||
+      assignment.responsibilityRole === "UNIT_OPERATOR"
+        ? assignment.responsibilityRole
+        : "UNIT_MANAGER",
+    includeDescendants: assignment.includeDescendants ?? false,
+    actionMask: assignment.actionMask,
+    effectiveFrom: assignment.effectiveAt,
+    effectiveTo: assignment.expiresAt,
+    status: assignment.status === "ACTIVE" ? "ACTIVE" : "INACTIVE",
+    isPrimary: assignment.isPrimary,
+    createdAt: assignment.createdAt,
+    createdByActorId: assignment.createdBy,
+    updatedAt: assignment.updatedAt,
+    updatedByActorId: assignment.updatedBy,
+    orgUnitRef: assignment.subjectRef ?? {
+      id: assignment.subjectId,
+    },
+    managerRef: assignment.responsibleEmploymentProfileRef ?? {
+      id: assignment.responsibleEmploymentProfileId,
+    },
+  };
 }

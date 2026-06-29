@@ -69,6 +69,7 @@ import {
   UpdateTalentCommercialParticipationStatusCommand,
   UpdateTalentCoreCommand,
 } from "@modules/talent/shared/talent.contracts";
+import { ResponsibilityAdminService } from "@modules/responsibility/admin/admin.responsibility.service";
 
 type TalentFailureClassification =
   | "validation"
@@ -81,6 +82,8 @@ type TalentFailureClassification =
   | "unknown";
 
 export class TalentAdminService {
+  private responsibilityService: ResponsibilityAdminService | null = null;
+
   constructor(
     private readonly repository: TalentRepository,
     private readonly codeSequenceRepository: BusinessCodeSequenceRepository,
@@ -93,6 +96,10 @@ export class TalentAdminService {
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
     private readonly logger: StructuredLogger = createStructuredLogger(),
   ) {}
+
+  attachResponsibilityService(service: ResponsibilityAdminService): void {
+    this.responsibilityService = service;
+  }
 
   async createTalent(
     actor: Actor,
@@ -116,10 +123,6 @@ export class TalentAdminService {
         talentOrigin: readOptionalLogString(
           command.talentOrigin,
         ),
-        managerEmploymentProfileId:
-          readOptionalLogString(
-            command.managerEmploymentProfileId,
-          ) ?? undefined,
         linkedEmploymentProfileId:
           readOptionalLogString(
             command.linkedEmploymentProfileId,
@@ -146,16 +149,10 @@ export class TalentAdminService {
             talentOrigin: input.talentOrigin,
             linkedEmploymentProfileId:
               input.linkedEmploymentProfileId,
-            managerEmploymentProfileId:
-              input.managerEmploymentProfileId,
+            managerEmploymentProfileId: null,
             currentTalentId: null,
             allowHistoricalResolution: false,
           },
-          session,
-        );
-        await this.assertManagerLinkageAllowed(
-          input.managerEmploymentProfileId,
-          input.linkedEmploymentProfileId,
           session,
         );
         assertCommercialParticipationConsistency(
@@ -197,8 +194,7 @@ export class TalentAdminService {
               input.normalizedDisplayShortName,
             talentOrigin: input.talentOrigin,
             operationalStatus: "ACTIVE",
-            managerEmploymentProfileId:
-              input.managerEmploymentProfileId,
+            managerEmploymentProfileId: null,
             linkedEmploymentProfileId:
               input.linkedEmploymentProfileId,
             commercialParticipationStatus:
@@ -247,8 +243,7 @@ export class TalentAdminService {
           metadata: {
             talentCode: created.talentCode,
             talentOrigin: created.talentOrigin,
-            managerEmploymentProfileId:
-              created.managerEmploymentProfileId,
+            managerEmploymentProfileId: null,
             linkedEmploymentProfileId:
               created.linkedEmploymentProfileId,
           },
@@ -282,6 +277,7 @@ export class TalentAdminService {
       command.talentId,
       "talentId",
     );
+    rejectLegacyManagerField(command, "Talent update");
 
     const hasStageName =
       command.stageName !== undefined;
@@ -451,109 +447,14 @@ export class TalentAdminService {
     actor: Actor,
     command: AssignTalentManagerCommand,
   ): Promise<TalentMutationResult> {
-    const operation = "talent.assign-manager";
-    const permission = this.assertPermission(
-      actor,
-      Permission.TALENT_MANAGE_MANAGER,
+    this.assertPermission(actor, Permission.TALENT_MANAGE_MANAGER);
+    normalizeRequiredText(command.talentId, "talentId");
+    normalizeRequiredNullableId(
+      command.newManagerEmploymentProfileId,
+      "newManagerEmploymentProfileId",
     );
-    const talentId = normalizeRequiredText(
-      command.talentId,
-      "talentId",
-    );
-    const newManagerEmploymentProfileId =
-      normalizeRequiredNullableId(
-        command.newManagerEmploymentProfileId,
-        "newManagerEmploymentProfileId",
-      );
-
-    return this.executeMutation(
-      actor,
-      permission,
-      operation,
-      {
-        talentId: readOptionalLogString(
-          command.talentId,
-        ),
-        newManagerEmploymentProfileId:
-          readOptionalLogString(
-            command.newManagerEmploymentProfileId,
-          ) ?? undefined,
-      },
-      async (session, controls) => {
-        const current = await this.requireTalent(
-          talentId,
-          session,
-        );
-
-        if (
-          current.operationalStatus === "ARCHIVED"
-        ) {
-          throw new TalentStateError(
-            `Archived talent cannot change manager: ${talentId}`,
-          );
-        }
-
-        await this.assertNonArchivedTalentLinkageInvariant(
-          current,
-          session,
-        );
-        await this.assertManagerLinkageAllowed(
-          newManagerEmploymentProfileId,
-          current.linkedEmploymentProfileId,
-          session,
-        );
-
-        if (
-          current.managerEmploymentProfileId ===
-          newManagerEmploymentProfileId
-        ) {
-          controls.markExplicitNoOpSuccess();
-          return this.toTalentMutationView(
-            current,
-            session,
-          );
-        }
-
-        const updated =
-          await this.repository.assignManager(
-            {
-              talentId,
-              managerEmploymentProfileId:
-                newManagerEmploymentProfileId,
-              updatedAt: Date.now(),
-            },
-            session,
-          );
-
-        if (!updated) {
-          throw new TalentConflictError(
-            `Failed to assign manager: ${talentId}`,
-          );
-        }
-
-        await this.recordAudit({
-          actor,
-          permission,
-          talentId,
-          mutationType: operation,
-          metadata: {
-            previousManagerEmploymentProfileId:
-              current.managerEmploymentProfileId,
-            newManagerEmploymentProfileId,
-          },
-          session,
-        });
-
-        return this.toTalentMutationView(
-          updated,
-          session,
-        );
-      },
-      (result) => ({
-        talentId: result.id,
-        managerEmploymentProfileId:
-          result.managerEmploymentProfileId,
-      }),
+    throw new TalentValidationError(
+      "Talent direct manager writes must use central responsibility assignments",
     );
   }
 
@@ -1743,7 +1644,6 @@ interface NormalizedCreateCommand {
   readonly displayShortName: string | null;
   readonly normalizedDisplayShortName: string | null;
   readonly talentOrigin: TalentOrigin;
-  readonly managerEmploymentProfileId: string | null;
   readonly linkedEmploymentProfileId: string | null;
   readonly commercialParticipationStatus: TalentCommercialParticipationStatus;
   readonly livestreamEligible: boolean;
@@ -1755,6 +1655,7 @@ interface NormalizedCreateCommand {
 function normalizeCreateCommand(
   command: CreateTalentCommand,
 ): NormalizedCreateCommand {
+  rejectLegacyManagerField(command, "Talent create");
   const talentOrigin = normalizeTalentOrigin(
     command.talentOrigin,
   );
@@ -1798,11 +1699,6 @@ function normalizeCreateCommand(
             displayShortName,
           ),
     talentOrigin,
-    managerEmploymentProfileId:
-      normalizeOptionalNullableId(
-        command.managerEmploymentProfileId,
-        "managerEmploymentProfileId",
-      ),
     linkedEmploymentProfileId:
       normalizeOptionalNullableId(
         command.linkedEmploymentProfileId,
@@ -1829,6 +1725,22 @@ function normalizeCreateCommand(
       "profileSummary",
     ),
   };
+}
+
+function rejectLegacyManagerField(
+  command: object,
+  operation: string,
+): void {
+  if (
+    Object.prototype.hasOwnProperty.call(
+      command as unknown as Readonly<Record<string, unknown>>,
+      "managerEmploymentProfileId",
+    )
+  ) {
+    throw new TalentValidationError(
+      `managerEmploymentProfileId is not accepted on ${operation}. Use central responsibility assignments for direct manager responsibility.`,
+    );
+  }
 }
 
 function resolveCreatePersistenceNames(
@@ -2010,8 +1922,6 @@ function toTalentMutationView(
     talentOrigin: talent.talentOrigin,
     operationalStatus:
       talent.operationalStatus,
-    managerEmploymentProfileId:
-      talent.managerEmploymentProfileId,
     linkedEmploymentProfileId:
       talent.linkedEmploymentProfileId,
     commercialParticipationStatus:

@@ -31,7 +31,7 @@ import {
 import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import { KpiSubjectReadonlyAccess } from "@modules/kpi/domain/kpi-subject-readonly-access";
-import { OrgUnitManagerAssignmentRepository } from "@modules/kpi/domain/org-unit-manager-assignment.repository";
+import { ResponsibilityManagedScopeReader } from "@modules/responsibility/domain/responsibility-managed-scope";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -41,10 +41,7 @@ interface OrgUnitScopedReadDependencies {
     KpiSubjectReadonlyAccess,
     "findActiveEmploymentProfileByLinkedUserId"
   >;
-  readonly managerAssignmentRepository: Pick<
-    OrgUnitManagerAssignmentRepository,
-    "listActiveByManagerEmploymentProfileId"
-  >;
+  readonly managedScopeReader: ResponsibilityManagedScopeReader;
 }
 
 export class OrgUnitAdminQueryService {
@@ -220,13 +217,15 @@ export class OrgUnitAdminQueryService {
       await dependencies.subjectReadonlyAccess.findActiveEmploymentProfileByLinkedUserId(
         actor.id,
       );
-    const assignments = profile
-      ? await dependencies.managerAssignmentRepository.listActiveByManagerEmploymentProfileId(
-          profile.employmentProfileId,
-          Date.now(),
+    const scope = profile
+      ? await dependencies.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
+          {
+            responsibleEmploymentProfileId: profile.employmentProfileId,
+            asOf: Date.now(),
+          },
         )
-      : [];
-    if (!assignments.some((assignment) => assignment.orgUnitId === orgUnitId)) {
+      : { orgUnitIds: [], orgUnitScopes: [], talentGroupIds: [] };
+    if (!scope.orgUnitIds.includes(orgUnitId)) {
       throw new OrgUnitPermissionScopeError(
         `Active OrgUnit manager responsibility is required: ${orgUnitId}`,
       );
@@ -267,15 +266,16 @@ export class OrgUnitAdminQueryService {
     if (!profile) {
       return [];
     }
-    const assignments =
-      await dependencies.managerAssignmentRepository.listActiveByManagerEmploymentProfileId(
-        profile.employmentProfileId,
-        Date.now(),
+    const scope =
+      await dependencies.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
+        {
+          responsibleEmploymentProfileId: profile.employmentProfileId,
+          asOf: Date.now(),
+        },
       );
     return [
       ...new Set(
-        assignments
-          .map((assignment) => assignment.orgUnitId)
+        scope.orgUnitIds
           .filter((orgUnitId) => grantedIds.has(orgUnitId)),
       ),
     ].sort();

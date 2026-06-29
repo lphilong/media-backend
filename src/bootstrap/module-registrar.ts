@@ -22,6 +22,7 @@ import { createKpiBootstrapRegistrar } from "@modules/kpi/shared/kpi.bootstrap";
 import { createCommissionBootstrapRegistrar } from "@modules/commission/shared/commission.bootstrap";
 import { createRevenueLedgerBootstrapRegistrar } from "@modules/revenue-ledger/shared/revenue-ledger.bootstrap";
 import { createDashboardLiteBootstrapRegistrar } from "@modules/dashboard-lite/shared/dashboard-lite.bootstrap";
+import { createResponsibilityBootstrapRegistrar } from "@modules/responsibility/shared/responsibility.bootstrap";
 
 export interface BootstrapRegistrar {
   readonly name: string;
@@ -66,6 +67,7 @@ const BOOTSTRAP_REGISTRARS: readonly BootstrapRegistrar[] =
     createContractRegistryBootstrapRegistrar(),
     createTalentKpiBootstrapRegistrar(),
     createKpiBootstrapRegistrar(),
+    createResponsibilityBootstrapRegistrar(),
     createCommissionBootstrapRegistrar(),
     createRevenueLedgerBootstrapRegistrar(),
     createDashboardLiteBootstrapRegistrar(),

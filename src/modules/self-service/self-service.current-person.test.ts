@@ -690,9 +690,9 @@ test("self-service work shifts endpoint is read-only and does not expose mutatio
   }
 });
 
-test("self-service foundation does not change TALENT_STAFF_SELF role template permissions or scopes", () => {
+test("self-service foundation does not change STAFF_CONSOLE_USER role template permissions or scopes", () => {
   const template = ROLE_TEMPLATE_CATALOG.find(
-    (candidate) => candidate.code === "TALENT_STAFF_SELF",
+    (candidate) => candidate.code === "STAFF_CONSOLE_USER",
   );
 
   assert.ok(template);

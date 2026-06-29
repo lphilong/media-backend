@@ -43,14 +43,16 @@ interface EmploymentProfileDocument {
   readonly employmentStatus: string;
 }
 
-interface TalentGroupManagerAssignmentDocument {
+interface TalentGroupResponsibilityAssignmentDocument {
   readonly _id: string;
-  readonly groupId: string;
-  readonly managerEmploymentProfileId: string;
-  readonly effectiveFrom: number;
-  readonly effectiveTo: number | null;
+  readonly subjectId: string;
+  readonly responsibleEmploymentProfileId: string;
+  readonly effectiveAt: number;
+  readonly expiresAt: number | null;
   readonly status: string;
   readonly isPrimary: boolean;
+  readonly subjectType: string;
+  readonly responsibilityType: string;
 }
 
 export class NativeMongoSelfServiceTalentGroupsReadRepository
@@ -60,7 +62,7 @@ export class NativeMongoSelfServiceTalentGroupsReadRepository
   private readonly memberCollection: Collection<TalentGroupMemberDocument>;
   private readonly talentCollection: Collection<TalentDocument>;
   private readonly employmentProfileCollection: Collection<EmploymentProfileDocument>;
-  private readonly managerAssignmentCollection: Collection<TalentGroupManagerAssignmentDocument>;
+  private readonly responsibilityAssignmentCollection: Collection<TalentGroupResponsibilityAssignmentDocument>;
 
   constructor(db: Db) {
     this.groupCollection = db.collection<TalentGroupDocument>("talent_groups");
@@ -70,9 +72,9 @@ export class NativeMongoSelfServiceTalentGroupsReadRepository
     this.talentCollection = db.collection<TalentDocument>("talents");
     this.employmentProfileCollection =
       db.collection<EmploymentProfileDocument>("employment_profiles");
-    this.managerAssignmentCollection =
-      db.collection<TalentGroupManagerAssignmentDocument>(
-        "talent_group_manager_assignments",
+    this.responsibilityAssignmentCollection =
+      db.collection<TalentGroupResponsibilityAssignmentDocument>(
+        "responsibility_assignments",
       );
   }
 
@@ -149,40 +151,42 @@ export class NativeMongoSelfServiceTalentGroupsReadRepository
       return [];
     }
 
-    const assignments = await this.managerAssignmentCollection
+    const assignments = await this.responsibilityAssignmentCollection
       .find(
         {
-          groupId: { $in: uniqueIds },
+          subjectType: "TALENT_GROUP",
+          subjectId: { $in: uniqueIds },
+          responsibilityType: "TALENT_GROUP_MANAGER",
           status: "ACTIVE",
-          effectiveFrom: { $lte: asOf },
-          $or: [{ effectiveTo: null }, { effectiveTo: { $gte: asOf } }],
+          effectiveAt: { $lte: asOf },
+          $or: [{ expiresAt: null }, { expiresAt: { $gte: asOf } }],
         },
         {
           projection: {
-            groupId: 1,
-            managerEmploymentProfileId: 1,
+            subjectId: 1,
+            responsibleEmploymentProfileId: 1,
             isPrimary: 1,
           },
         },
       )
-      .sort({ groupId: 1, isPrimary: -1, effectiveFrom: 1, _id: 1 })
+      .sort({ subjectId: 1, isPrimary: -1, effectiveAt: 1, _id: 1 })
       .toArray();
 
     const profiles = await this.loadEmploymentProfiles(
-      assignments.map((assignment) => assignment.managerEmploymentProfileId),
+      assignments.map((assignment) => assignment.responsibleEmploymentProfileId),
       true,
     );
 
     return assignments
       .map((assignment): SelfServiceTalentGroupManagerReadModel | null => {
-        const profile = profiles.get(assignment.managerEmploymentProfileId);
+        const profile = profiles.get(assignment.responsibleEmploymentProfileId);
 
         if (!profile) {
           return null;
         }
 
         const manager: SelfServiceTalentGroupManagerReadModel = {
-          groupId: assignment.groupId,
+          groupId: assignment.subjectId,
           displayName: profile.displayName,
           isPrimary: assignment.isPrimary,
         };
