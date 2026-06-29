@@ -145,9 +145,8 @@ export class AdminRoleController extends SecureController {
         );
 
       case "ROLE_ASSIGN_TO_USER":
-        return this.service.assignRoleToUser(
-          actor,
-          parseAssignRoleToUserCommand(req),
+        throw new RoleValidationError(
+          "ROLE_ASSIGN_TO_USER is superseded by POST /admin/access-assignments/apply",
         );
 
       case "ROLE_REVOKE_FROM_USER":

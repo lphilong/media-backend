@@ -14,9 +14,11 @@ import {
   AccessAssignmentPreviewCommand,
   AccessAssignmentSourceContext,
 } from "./admin.access-assignment-preview.service";
+import { AccessAssignmentApplyAdminService } from "./admin.access-assignment-apply.service";
 
 type AccessAssignmentCommand =
   | "ACCESS_ASSIGNMENT_PREVIEW"
+  | "ACCESS_ASSIGNMENT_APPLY"
   | "ACCESS_ASSIGNMENT_TARGET_OPTIONS";
 
 const PREVIEW_FIELDS = Object.freeze([
@@ -65,7 +67,10 @@ const FORBIDDEN_FRONTEND_AUTHORITY_FIELDS = new Set([
 ]);
 
 export class AdminAccessAssignmentPreviewController extends SecureController {
-  constructor(private readonly service: AccessAssignmentPreviewAdminService) {
+  constructor(
+    private readonly service: AccessAssignmentPreviewAdminService,
+    private readonly applyService?: AccessAssignmentApplyAdminService,
+  ) {
     super();
   }
 
@@ -84,6 +89,22 @@ export class AdminAccessAssignmentPreviewController extends SecureController {
           PermissionResolver.resolve(Permission.ROLE_ASSIGN_TO_USER),
         );
         return this.service.preview({
+          ...parsePreviewCommand(req),
+          actorUserId: actor.id,
+        });
+
+      case "ACCESS_ASSIGNMENT_APPLY":
+        PermissionGuard.assert(
+          actor,
+          PermissionResolver.resolve(Permission.ROLE_ASSIGN_TO_USER),
+        );
+        if (!this.applyService) {
+          throw new SystemInvariantError(
+            "SYSTEM_INVARIANT_VIOLATION",
+            "Access assignment apply service missing",
+          );
+        }
+        return this.applyService.apply(actor, {
           ...parsePreviewCommand(req),
           actorUserId: actor.id,
         });

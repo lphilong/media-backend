@@ -13,6 +13,12 @@ export function adminAccessAssignmentPreviewRoutes(
     controller.execute,
   );
 
+  router.post(
+    "/apply",
+    withCommand("ACCESS_ASSIGNMENT_APPLY"),
+    controller.execute,
+  );
+
   router.get(
     "/targets",
     withCommand("ACCESS_ASSIGNMENT_TARGET_OPTIONS"),

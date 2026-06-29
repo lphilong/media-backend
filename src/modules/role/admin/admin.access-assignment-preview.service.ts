@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { Collection, Db } from "mongodb";
+import { ClientSession, Collection, Db } from "mongodb";
 import {
   buildWorkspaceAvailability,
 } from "@modules/account-context/account-context.workspace-availability";
@@ -251,7 +251,10 @@ export class AccessAssignmentPreviewAdminService {
     };
   }
 
-  async preview(command: AccessAssignmentPreviewCommand): Promise<Record<string, unknown>> {
+  async preview(
+    command: AccessAssignmentPreviewCommand,
+    options?: { readonly session?: ClientSession },
+  ): Promise<Record<string, unknown>> {
     const now = Date.now();
     const targetUserId = normalizeRequiredText(command.targetUserId, "targetUserId");
     const reason = normalizeNullableText(command.reason, "reason");
@@ -270,15 +273,19 @@ export class AccessAssignmentPreviewAdminService {
     const completenessGaps: Array<Record<string, unknown>> = [];
 
     const [targetUser, employmentProfile] = await Promise.all([
-      this.readAssignableUser(targetUserId),
-      this.readActiveEmploymentProfileForUser(targetUserId),
+      this.readAssignableUser(targetUserId, options?.session),
+      this.readActiveEmploymentProfileForUser(targetUserId, options?.session),
     ]);
 
     if (!targetUser) {
       blockers.push(blocker("TARGET_USER_NOT_ASSIGNABLE", "Target user is not active or assignable."));
     }
 
-    const targetResolution = await this.resolveAssignmentTarget(command, blockers);
+    const targetResolution = await this.resolveAssignmentTarget(
+      command,
+      blockers,
+      options?.session,
+    );
     const proposedAssignments = targetResolution.roles.map((role) => ({
       assignmentId: `preview:${crypto.randomUUID()}`,
       roleId: role._id,
@@ -310,7 +317,11 @@ export class AccessAssignmentPreviewAdminService {
       warnings.push(warning("ADDITIONAL_REVIEW_REQUIRED", "Additional review is required for sensitive or global access."));
     }
 
-    const duplicateConflicts = await this.findDuplicateConflicts(proposedAssignments, targetUserId);
+    const duplicateConflicts = await this.findDuplicateConflicts(
+      proposedAssignments,
+      targetUserId,
+      options?.session,
+    );
     if (duplicateConflicts.length > 0) {
       blockers.push(blocker("DUPLICATE_ACTIVE_ASSIGNMENT", "An active assignment already exists for the exact role, user, and scope."));
     }
@@ -320,6 +331,7 @@ export class AccessAssignmentPreviewAdminService {
       proposedAssignments,
       structuredScopeGrants,
       now,
+      session: options?.session,
     });
     for (const requirement of responsibilityRequirements) {
       if (requirement.status !== "SATISFIED") {
@@ -358,10 +370,14 @@ export class AccessAssignmentPreviewAdminService {
     }
 
     const currentEffectiveAccess = targetUser
-      ? await this.computeEffectiveAccess(targetUser, [])
+      ? await this.computeEffectiveAccess(targetUser, [], options?.session)
       : null;
     const proposedEffectiveAccess = targetUser
-      ? await this.computeEffectiveAccess(targetUser, proposedAssignments)
+      ? await this.computeEffectiveAccess(
+          targetUser,
+          proposedAssignments,
+          options?.session,
+        )
       : null;
 
     if (!currentEffectiveAccess || !proposedEffectiveAccess) {
@@ -475,6 +491,7 @@ export class AccessAssignmentPreviewAdminService {
   private async resolveAssignmentTarget(
     command: AccessAssignmentPreviewCommand,
     blockers: Array<Record<string, unknown>>,
+    session?: ClientSession,
   ): Promise<{
     readonly roles: readonly RoleDocument[];
     readonly assignmentTarget: Record<string, unknown>;
@@ -504,7 +521,7 @@ export class AccessAssignmentPreviewAdminService {
           blockers.push(blocker("LEGACY_ROLE_BLOCKED", `Legacy role target is blocked: ${childCode}.`));
           continue;
         }
-        const role = await this.findActiveRoleByCode(childCode);
+        const role = await this.findActiveRoleByCode(childCode, session);
         if (!role) {
           blockers.push(blocker("BUNDLE_CHILD_ROLE_NOT_ACTIVE", `Bundle child role must exist and be ACTIVE: ${childCode}.`));
           continue;
@@ -544,9 +561,14 @@ export class AccessAssignmentPreviewAdminService {
 
     const role =
       targetType === "ROLE"
-        ? await this.findRoleByIdOrCode(command.assignmentTargetId, command.assignmentTargetCode)
+        ? await this.findRoleByIdOrCode(
+            command.assignmentTargetId,
+            command.assignmentTargetCode,
+            session,
+          )
         : await this.findActiveRoleByCode(
             normalizeRequiredText(command.assignmentTargetCode, "assignmentTargetCode"),
+            session,
           );
     const requestedCode = normalizeRoleTemplateCode(
       command.assignmentTargetCode ?? role?.code ?? "",
@@ -602,42 +624,54 @@ export class AccessAssignmentPreviewAdminService {
   private async findRoleByIdOrCode(
     roleId: string | undefined,
     roleCode: string | undefined,
+    session?: ClientSession,
   ): Promise<RoleDocument | null> {
     if (roleId) {
-      return this.roles.findOne({ _id: roleId });
+      return this.roles.findOne({ _id: roleId }, mongoOptions(session));
     }
-    return this.findActiveRoleByCode(normalizeRequiredText(roleCode, "assignmentTargetCode"));
+    return this.findActiveRoleByCode(
+      normalizeRequiredText(roleCode, "assignmentTargetCode"),
+      session,
+    );
   }
 
-  private async findActiveRoleByCode(code: string): Promise<RoleDocument | null> {
+  private async findActiveRoleByCode(
+    code: string,
+    session?: ClientSession,
+  ): Promise<RoleDocument | null> {
     const normalized = normalizeRoleTemplateCode(code);
     return this.roles.findOne({
       state: "ACTIVE",
       $or: [{ code: normalized }, { templateCode: normalized }],
-    });
+    }, mongoOptions(session));
   }
 
-  private async readAssignableUser(userId: string): Promise<UserDocument | null> {
+  private async readAssignableUser(
+    userId: string,
+    session?: ClientSession,
+  ): Promise<UserDocument | null> {
     return this.users.findOne({
       _id: userId,
       accountStatus: "ACTIVE",
       disabledAt: null,
       archivedAt: null,
-    });
+    }, mongoOptions(session));
   }
 
   private async readActiveEmploymentProfileForUser(
     userId: string,
+    session?: ClientSession,
   ): Promise<EmploymentProfileDocument | null> {
     return this.employmentProfiles.findOne({
       linkedUserId: userId,
       employmentStatus: { $in: ["ACTIVE", "ON_LEAVE"] },
-    });
+    }, mongoOptions(session));
   }
 
   private async findDuplicateConflicts(
     proposedAssignments: readonly ProposedAssignment[],
     userId: string,
+    session?: ClientSession,
   ): Promise<readonly Record<string, unknown>[]> {
     const conflicts: Array<Record<string, unknown>> = [];
     for (const assignment of proposedAssignments) {
@@ -646,7 +680,7 @@ export class AccessAssignmentPreviewAdminService {
         userId,
         scopeFingerprint: assignment.scopeFingerprint,
         state: "ACTIVE",
-      });
+      }, mongoOptions(session));
       if (existing) {
         conflicts.push({
           assignmentId: existing._id,
@@ -665,6 +699,7 @@ export class AccessAssignmentPreviewAdminService {
     readonly proposedAssignments: readonly ProposedAssignment[];
     readonly structuredScopeGrants: readonly RoleAssignmentScopeGrant[];
     readonly now: number;
+    readonly session?: ClientSession;
   }): Promise<readonly Record<string, unknown>[]> {
     const requirements: Array<Record<string, unknown>> = [];
     for (const assignment of params.proposedAssignments) {
@@ -702,7 +737,7 @@ export class AccessAssignmentPreviewAdminService {
           status: "ACTIVE",
           effectiveAt: { $lte: params.now },
           $or: [{ expiresAt: null }, { expiresAt: { $gte: params.now } }],
-        });
+        }, mongoOptions(params.session));
         requirements.push({
           roleCode: assignment.roleCode,
           scopeType: scope.scopeType,
@@ -721,10 +756,11 @@ export class AccessAssignmentPreviewAdminService {
   private async computeEffectiveAccess(
     user: UserDocument,
     proposedAssignments: readonly ProposedAssignment[],
+    session?: ClientSession,
   ): Promise<Record<string, unknown>> {
     const now = Date.now();
     const currentAssignments = await this.assignments
-      .find({ userId: user._id, state: "ACTIVE" })
+      .find({ userId: user._id, state: "ACTIVE" }, mongoOptions(session))
       .sort({ createdAt: 1, _id: 1 })
       .toArray();
     const activeCurrentAssignments = currentAssignments.filter((assignment) =>
@@ -742,7 +778,7 @@ export class AccessAssignmentPreviewAdminService {
     ];
     const roles = roleIds.length
       ? await this.roles
-          .find({ _id: { $in: roleIds }, state: "ACTIVE" })
+          .find({ _id: { $in: roleIds }, state: "ACTIVE" }, mongoOptions(session))
           .sort({ code: 1, _id: 1 })
           .toArray()
       : [];
@@ -806,6 +842,12 @@ function emptyTarget(targetType: string, code: string): ReturnType<AccessAssignm
     requiredAccountContexts: [],
     legacyRoleStatus: { checked: true, blockedCodes: [] },
   };
+}
+
+function mongoOptions(
+  session: ClientSession | undefined,
+): { readonly session?: ClientSession } | undefined {
+  return session ? { session } : undefined;
 }
 
 function assignmentToEffectiveAccessItem(

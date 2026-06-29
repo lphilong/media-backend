@@ -26,7 +26,9 @@ export class AdminRoleBundleController extends SecureController {
       return this.service.listBundles();
     }
     if (command === "ROLE_BUNDLE_ASSIGN") {
-      return this.service.assignBundle(actor, parseAssignCommand(req));
+      throw new RoleValidationError(
+        "ROLE_BUNDLE_ASSIGN is superseded by POST /admin/access-assignments/apply",
+      );
     }
     throw new SystemInvariantError(
       "SYSTEM_INVARIANT_VIOLATION",
