@@ -24,7 +24,6 @@ type UserQueryCommand =
 const LIST_USERS_QUERY_FIELDS: readonly string[] =
   Object.freeze([
     "state",
-    "actorKind",
     "hasEmploymentProfile",
     "cursor",
     "limit",
@@ -129,9 +128,6 @@ function parseListUsersQuery(
 
   return {
     state: req.query.state as string | undefined,
-    actorKind: req.query.actorKind as
-      | string
-      | undefined,
     hasEmploymentProfile: req.query
       .hasEmploymentProfile as string | undefined,
     cursor: req.query.cursor as string | undefined,

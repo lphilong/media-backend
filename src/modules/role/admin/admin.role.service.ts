@@ -107,7 +107,6 @@ const GOVERNANCE_RECOVERY_PERMISSION_CODES: readonly string[] = [
   Permission.USER_PROVISION_ACCOUNT,
   Permission.USER_AUTH_LINKAGE_UNLINK,
   Permission.USER_PASSWORD_SETUP_SEND,
-  Permission.USER_ACTOR_KIND_UPDATE,
   Permission.ROLE_CREATE,
   Permission.ROLE_UPDATE,
   Permission.ROLE_ACTIVATE,

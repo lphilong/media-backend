@@ -1,13 +1,11 @@
 import {
   UserAccountStatus,
-  UserActorKind,
   UserDetailView,
   UserListItemView,
 } from "@modules/user/domain/user.types";
 
 export interface ListUserReadInput {
   readonly state?: UserAccountStatus;
-  readonly actorKind?: UserActorKind;
   readonly hasEmploymentProfile?: boolean;
   readonly limit: number;
   readonly cursor?: string;

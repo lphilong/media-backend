@@ -4,7 +4,6 @@ import {
   CreateUserInput,
   SetUserAuthLinkageInput,
   TransitionUserLifecycleInput,
-  UpdateUserActorKindInput,
   UpdateUserProfileInput,
   UpdateUserPreferencesInput,
   UserMutationRepository,
@@ -280,27 +279,6 @@ export class UserRepository
       { _id: input.userId },
       {
         $set: set,
-      },
-      {
-        ...this.withSession(session),
-        returnDocument: "after",
-      },
-    );
-
-    return updated ? UserMapper.toDomain(updated) : null;
-  }
-
-  async updateActorKind(
-    input: UpdateUserActorKindInput,
-    session: ClientSession,
-  ): Promise<UserRecord | null> {
-    const updated = await this.collection.findOneAndUpdate(
-      { _id: input.userId },
-      {
-        $set: {
-          actorKind: input.actorKind,
-          updatedAt: input.updatedAt,
-        },
       },
       {
         ...this.withSession(session),

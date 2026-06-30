@@ -62,12 +62,6 @@ export interface SetUserAuthLinkageInput {
   readonly updatedAt: number;
 }
 
-export interface UpdateUserActorKindInput {
-  readonly userId: string;
-  readonly actorKind: UserActorKind;
-  readonly updatedAt: number;
-}
-
 export interface UserMutationRepository {
   insert(input: CreateUserInput, session: ClientSession): Promise<UserRecord>;
 
@@ -100,11 +94,6 @@ export interface UserMutationRepository {
 
   setAuthLinkage(
     input: SetUserAuthLinkageInput,
-    session: ClientSession,
-  ): Promise<UserRecord | null>;
-
-  updateActorKind(
-    input: UpdateUserActorKindInput,
     session: ClientSession,
   ): Promise<UserRecord | null>;
 }

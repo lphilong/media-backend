@@ -12,7 +12,6 @@ export enum Permission {
   USER_PROVISION_ACCOUNT = "user:provision_account",
   USER_AUTH_LINKAGE_UNLINK = "user:auth_linkage:unlink",
   USER_PASSWORD_SETUP_SEND = "user:password_setup:send",
-  USER_ACTOR_KIND_UPDATE = "user:actor_kind:update",
 
   
   /* =========================

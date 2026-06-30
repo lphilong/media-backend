@@ -48,7 +48,6 @@ import {
   SendPasswordSetupCommand,
   SetAuthLinkageCommand,
   UnlinkAuthLinkageCommand,
-  UpdateUserActorKindCommand,
   UpdateUserCommand,
   PasswordSetupDeliveryMode,
   UserMutationResult,
@@ -62,7 +61,6 @@ import {
 } from "@modules/user/domain/user.errors";
 import {
   UserAccountStatus,
-  UserActorKind,
   UserRecord,
 } from "@modules/user/domain/user.types";
 import { getCurrentDomainEventCollector } from "@system/event-bridge/domain-event.types";
@@ -77,7 +75,6 @@ const GOVERNANCE_RECOVERY_PERMISSION_CODES: readonly string[] =
   Permission.USER_PROVISION_ACCOUNT,
   Permission.USER_AUTH_LINKAGE_UNLINK,
   Permission.USER_PASSWORD_SETUP_SEND,
-  Permission.USER_ACTOR_KIND_UPDATE,
   Permission.ROLE_CREATE,
   Permission.ROLE_UPDATE,
   Permission.ROLE_ACTIVATE,
@@ -90,6 +87,8 @@ const GOVERNANCE_RECOVERY_PERMISSION_CODES: readonly string[] =
 
 const GOVERNANCE_RECOVERY_MIN_DELEGATION_BAND =
   "PRIVILEGED" as const;
+
+const LEGACY_STORAGE_ACTOR_KIND = "STAFF" as const;
 
 const ALLOWED_LIFECYCLE_TRANSITIONS: Readonly<
   Record<UserAccountStatus, readonly UserAccountStatus[]>
@@ -147,11 +146,7 @@ export class UserLifecycleService {
       actor,
       permission,
       mutationType,
-      {
-        actorKind: readOptionalLogString(
-          command.actorKind,
-        ),
-      },
+      {},
       async (session) => {
         await this.assertEmailIsAvailable(
           input.email,
@@ -169,7 +164,7 @@ export class UserLifecycleService {
             {
               id: userId,
               accountStatus: "PENDING",
-              actorKind: input.actorKind,
+              actorKind: LEGACY_STORAGE_ACTOR_KIND,
               authLinkage: {
                 provider: "auth0",
                 subject: createUnlinkedSubject(userId),
@@ -424,126 +419,6 @@ export class UserLifecycleService {
     );
   }
 
-  async updateActorKind(
-    actor: Actor,
-    command: UpdateUserActorKindCommand,
-  ): Promise<UserMutationResult> {
-    const mutationType = "user.actor-kind.update";
-    const permission = this.assertPermission(
-      actor,
-      Permission.USER_ACTOR_KIND_UPDATE,
-    );
-
-    const userId = normalizeRequiredText(
-      command.userId,
-      "userId",
-    );
-    const input = normalizeUpdateActorKindCommand(command);
-
-    return this.executeMutation(
-      actor,
-      permission,
-      mutationType,
-      {
-        userId: readOptionalLogString(command.userId),
-        actorKind: readOptionalLogString(command.actorKind),
-        reasonLength: input.reason.length,
-      },
-      async (session, controls) => {
-        const current = await this.requireUser(
-          userId,
-          session,
-        );
-
-        if (current.id === actor.id) {
-          throw new UserValidationError(
-            "Cannot update your own account type",
-          );
-        }
-
-        if (current.accountStatus === "ARCHIVED") {
-          throw new UserStateError(
-            `User in state ARCHIVED cannot execute operation: updateActorKind`,
-          );
-        }
-
-        if (current.actorKind === input.actorKind) {
-          throw new UserValidationError(
-            `User already has actorKind ${input.actorKind}`,
-          );
-        }
-
-        if (
-          current.actorKind === "ADMIN" &&
-          input.actorKind === "STAFF"
-        ) {
-          const activeAdminRoleCodes =
-            await this.adminCapabilityRepository.listActiveAdminConsoleRoleCodesByUserId(
-              userId,
-              session,
-            );
-
-          if (activeAdminRoleCodes.length > 0) {
-            throw new UserValidationError(
-              `Cannot convert ADMIN account to STAFF while active admin-console role assignments exist: ${activeAdminRoleCodes.join(", ")}`,
-            );
-          }
-        }
-
-        const updated = await this.repository.updateActorKind(
-          {
-            userId,
-            actorKind: input.actorKind,
-            updatedAt: Date.now(),
-          },
-          session,
-        );
-
-        if (!updated) {
-          throw new UserConflictError(
-            `Failed to update user actorKind: ${userId}`,
-          );
-        }
-
-        await this.recordUserAudit({
-          actor,
-          permission,
-          userId,
-          mutationType,
-          metadata: {
-            fromActorKind: current.actorKind,
-            toActorKind: updated.actorKind,
-            reasonLength: input.reason.length,
-            reason: input.reason,
-          },
-          session,
-        });
-
-        getCurrentDomainEventCollector().emit(
-          createUserUpdatedEvent({
-            userId,
-            changedFields: ["actorKind"],
-            aggregateVersion: updated.updatedAt,
-            occurredAt: updated.updatedAt,
-          }),
-        );
-
-        if (current.accountStatus === "ACTIVE") {
-          controls.markAuthSecurityTruthChanged();
-        }
-
-        return { user: updated };
-      },
-      (result) => ({
-        userId: result.user.id,
-        actorKind: result.user.actorKind,
-      }),
-      {
-        invalidateActorSnapshots: true,
-      },
-    );
-  }
-
   async provisionUser(
     actor: Actor,
     command: ProvisionUserCommand,
@@ -614,7 +489,7 @@ export class UserLifecycleService {
             {
               id: crypto.randomUUID(),
               accountStatus: "PENDING",
-              actorKind: input.actorKind,
+              actorKind: LEGACY_STORAGE_ACTOR_KIND,
               authLinkage: {
                 provider: "auth0",
                 subject: auth0User.id,
@@ -1581,7 +1456,6 @@ function buildMutationTargetDescriptor(
 }
 
 interface NormalizedCreateCommand {
-  readonly actorKind: UserActorKind;
   readonly displayName: string;
   readonly email?: string;
   readonly phone?: string;
@@ -1590,7 +1464,6 @@ interface NormalizedCreateCommand {
 }
 
 interface NormalizedProvisionCommand {
-  readonly actorKind: UserActorKind;
   readonly displayName: string;
   readonly email: string;
   readonly phone?: string;
@@ -1606,18 +1479,13 @@ interface NormalizedSetAuthLinkageCommand {
   readonly subject: string;
 }
 
-interface NormalizedUpdateActorKindCommand {
-  readonly actorKind: UserActorKind;
-  readonly reason: string;
-}
-
 function normalizeCreateCommand(
   command: CreateUserCommand,
 ): NormalizedCreateCommand {
+  assertNoUserAdminAuthorityFields(command, "USER_CREATE");
   assertNoLegacyCreateAuthBinding(command);
 
   return {
-    actorKind: normalizeActorKind(command.actorKind),
     displayName: normalizeRequiredText(
       command.displayName,
       "displayName",
@@ -1661,6 +1529,7 @@ function assertNoLegacyCreateAuthBinding(
 function normalizeProvisionCommand(
   command: ProvisionUserCommand,
 ): NormalizedProvisionCommand {
+  assertNoUserAdminAuthorityFields(command, "USER_PROVISION");
   const credentialMode =
     command.credentialMode ?? "INVITE_LINK";
 
@@ -1680,7 +1549,6 @@ function normalizeProvisionCommand(
   }
 
   return {
-    actorKind: normalizeActorKind(command.actorKind),
     displayName: normalizeRequiredText(
       command.displayName,
       "displayName",
@@ -1709,6 +1577,8 @@ function normalizeUpdateFieldsFromCommand(
   UpdateUserProfileInput,
   "userId" | "updatedAt"
 > {
+  assertNoUserAdminAuthorityFields(command, "USER_UPDATE");
+
   return {
     displayName: normalizeOptionalText(
       command.displayName,
@@ -1807,24 +1677,41 @@ function normalizeOptionalText(
   return normalized;
 }
 
-function normalizeUpdateActorKindCommand(
-  command: UpdateUserActorKindCommand,
-): NormalizedUpdateActorKindCommand {
-  const reason = normalizeRequiredText(
-    command.reason,
-    "reason",
+function assertNoUserAdminAuthorityFields(
+  command: object,
+  operation: "USER_CREATE" | "USER_PROVISION" | "USER_UPDATE",
+): void {
+  const rejectedFields = [
+    "actorKind",
+    "accountContext",
+    "accountContexts",
+    "consoleCode",
+    "workspaceAvailability",
+    "primaryWorkspace",
+    "hasWorkspace",
+    "manualEntitlement",
+    "manualConsoleEntitlement",
+    "consoleEntitlement",
+    "entitlements",
+    "permissions",
+    "roles",
+    "roleIds",
+    "scope",
+    "scopes",
+    "scopeGrants",
+    "rawPermissions",
+    "rules",
+  ].filter((field) =>
+    Object.prototype.hasOwnProperty.call(command, field),
   );
 
-  if (reason.length > 500) {
-    throw new UserValidationError(
-      "reason must be at most 500 characters",
-    );
+  if (rejectedFields.length === 0) {
+    return;
   }
 
-  return {
-    actorKind: normalizeActorKind(command.actorKind),
-    reason,
-  };
+  throw new UserValidationError(
+    `${operation} payload cannot include authority field(s): ${rejectedFields.join(", ")}`,
+  );
 }
 
 function normalizeRequiredEmail(
@@ -1860,22 +1747,6 @@ function assertEmailShape(email: string, field: string): void {
 
   throw new UserValidationError(
     `${field} must be a valid email address`,
-  );
-}
-
-function normalizeActorKind(
-  input: unknown,
-): UserActorKind {
-  if (input === undefined) {
-    return "ADMIN";
-  }
-
-  if (input === "ADMIN" || input === "STAFF") {
-    return input;
-  }
-
-  throw new UserValidationError(
-    "actorKind must be ADMIN or STAFF",
   );
 }
 

@@ -13,7 +13,6 @@ const USER_ADMIN_LIST_FIELDS = [
   "id",
   "displayName",
   "email",
-  "actorKind",
   "accountStatus",
   "authLinkage",
   "updatedAt",
@@ -22,8 +21,6 @@ const USER_ADMIN_LIST_FIELDS = [
 const USER_ADMIN_DETAIL_FIELDS = [
   "id",
   "accountStatus",
-  "actorKind",
-  "accountContexts",
   "authLinkage",
   "contextAccess",
   "preferences",
@@ -39,7 +36,6 @@ function toDetailView(user: UserRecord): UserDetailView {
   return {
     id: user.id,
     accountStatus: user.accountStatus,
-    actorKind: user.actorKind,
     authLinkage: {
       provider: user.authLinkage.provider,
       subject: user.authLinkage.subject,
@@ -48,7 +44,6 @@ function toDetailView(user: UserRecord): UserDetailView {
     contextAccess: {
       contexts: user.contextAccess.contexts,
     },
-    accountContexts: user.accountContexts ?? [],
     profile: {
       displayName: user.profile.displayName,
       email: user.profile.email,
@@ -74,7 +69,6 @@ export const UserAdminListExposure = Object.freeze({
           id: input.id,
           displayName: input.displayName,
           email: input.email,
-          actorKind: input.actorKind,
           accountStatus: input.accountStatus,
           authLinkage: {
             status: input.authLinkage.status,
@@ -99,14 +93,12 @@ export const UserAdminDetailExposure = Object.freeze({
         {
           id: input.id,
           accountStatus: input.accountStatus,
-          actorKind: input.actorKind,
           authLinkage: input.authLinkage,
           contextAccess: {
             contexts: input.contextAccess.contexts.map((context) => ({
               context,
             })),
           },
-          accountContexts: input.accountContexts ?? [],
           profile: input.profile,
           preferences: input.preferences,
           createdAt: input.createdAt,

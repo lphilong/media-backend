@@ -75,11 +75,5 @@ export function userAdminRoutes(
     mutationController.execute,
   );
 
-  router.patch(
-    "/:userId/actor-kind",
-    withCommand("USER_ACTOR_KIND_UPDATE"),
-    mutationController.execute,
-  );
-
   return router;
 }

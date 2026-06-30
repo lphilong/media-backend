@@ -2,14 +2,12 @@ import { ContextType } from "@core/context/context.types";
 import {
   ResolvedActorUser,
   UserAccountStatus,
-  UserActorKind,
   UserDetailView,
   UserListItemView,
   UserRecord,
 } from "@modules/user/domain/user.types";
 
 export interface CreateUserCommand {
-  readonly actorKind?: UserActorKind;
   readonly displayName: string;
   readonly email?: string;
   readonly phone?: string;
@@ -18,7 +16,6 @@ export interface CreateUserCommand {
 }
 
 export interface ProvisionUserCommand {
-  readonly actorKind?: UserActorKind;
   readonly displayName: string;
   readonly email: string;
   readonly phone?: string;
@@ -63,12 +60,6 @@ export interface SendPasswordSetupCommand {
   readonly userId: string;
 }
 
-export interface UpdateUserActorKindCommand {
-  readonly userId: string;
-  readonly actorKind: UserActorKind;
-  readonly reason: string;
-}
-
 export type PasswordSetupDeliveryMode =
   | "auth0_email"
   | "backend_ticket";
@@ -79,7 +70,6 @@ export interface GetUserDetailQuery {
 
 export interface ListUsersQuery {
   readonly state?: UserAccountStatus | string;
-  readonly actorKind?: UserActorKind | string;
   readonly hasEmploymentProfile?: boolean | string;
   readonly cursor?: string;
   readonly limit?: number | string;

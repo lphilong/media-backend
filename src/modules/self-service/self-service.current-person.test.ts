@@ -971,7 +971,6 @@ function userDetail(params: {
 }): UserDetailView {
   return {
     id: params.id,
-    actorKind: "STAFF",
     accountStatus: "ACTIVE",
     authLinkage: {
       provider: "auth0",
@@ -1212,9 +1211,6 @@ class InMemoryUserReadRepository
     throw new Error("Not implemented");
   }
 
-  async updateActorKind(): Promise<UserRecord | null> {
-    throw new Error("Not implemented");
-  }
 }
 
 class InMemoryTalentRepository implements TalentRepository {

@@ -59,7 +59,6 @@ test("user list exposure includes auth linkage status but not subject", () => {
     id: "user-list",
     displayName: "List User",
     email: "list@example.test",
-    actorKind: "ADMIN",
     accountStatus: "ACTIVE",
     authLinkage: {
       status: "LINKED",
@@ -75,12 +74,15 @@ test("user list exposure includes auth linkage status but not subject", () => {
     Object.prototype.hasOwnProperty.call(authLinkage, "subject"),
     false,
   );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(exposed, "actorKind"),
+    false,
+  );
 });
 
 test("user detail exposure keeps existing auth linkage detail fields", () => {
   const exposed = UserAdminDetailExposure.expose({
     id: "user-detail",
-    actorKind: "ADMIN",
     accountStatus: "ACTIVE",
     authLinkage: {
       provider: "auth0",
@@ -111,6 +113,10 @@ test("user detail exposure keeps existing auth linkage detail fields", () => {
     subject: "auth0|detail",
     status: "LINKED",
   });
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(exposed, "actorKind"),
+    false,
+  );
 });
 
 test("user admin query forwards unlinked employment profile filter", async () => {
@@ -123,7 +129,6 @@ test("user admin query forwards unlinked employment profile filter", async () =>
   });
 
   assert.deepEqual(readRepository.listInputs[0], {
-    actorKind: undefined,
     cursor: undefined,
     hasEmploymentProfile: false,
     limit: 25,
@@ -163,7 +168,7 @@ test("provision user creates internal user, links Auth0, and sends Auth0 setup e
   );
 
   assert.equal(repo.records.length, 1);
-  assert.equal(result.user.actorKind, "ADMIN");
+  assert.equal(result.user.actorKind, "STAFF");
   assert.equal(result.user.profile.email, "jane.admin@example.test");
   assert.equal(result.user.authLinkage.subject, "auth0|jane.admin");
   assert.equal(result.provisioning?.auth0UserCreated, true);
@@ -489,6 +494,58 @@ test("legacy manual create rejects explicit auth binding fields", async () => {
   );
 });
 
+test("user create, provision, and update reject actorKind and authority fields", async () => {
+  const repo = new InMemoryUserRepository();
+  const service = createService(repo, new MockAuth0Management());
+  repo.records.push(
+    userRecord({
+      id: "target-user",
+      email: "target@example.test",
+      authSubject: "auth0|target",
+    }),
+  );
+
+  await assert.rejects(
+    () =>
+      runService(() =>
+        service.createUser(createActor(ALL_PERMISSIONS), {
+          displayName: "Actor Kind User",
+          email: "actor-kind@example.test",
+          actorKind: "ADMIN",
+        } as Parameters<UserLifecycleService["createUser"]>[1]),
+      ),
+    /USER_CREATE payload cannot include authority field\(s\): actorKind/u,
+  );
+
+  await assert.rejects(
+    () =>
+      runService(() =>
+        service.provisionUser(createActor(ALL_PERMISSIONS), {
+          displayName: "Console User",
+          email: "console@example.test",
+          accountContexts: ["ADMIN_CONSOLE"],
+          workspaceAvailability: {
+            primaryWorkspace: "ADMIN_CONSOLE",
+          },
+        } as Parameters<UserLifecycleService["provisionUser"]>[1]),
+      ),
+    /USER_PROVISION payload cannot include authority field\(s\): accountContexts, workspaceAvailability/u,
+  );
+
+  await assert.rejects(
+    () =>
+      runService(() =>
+        service.updateUser(createActor(ALL_PERMISSIONS), {
+          userId: "target-user",
+          displayName: "Target User Updated",
+          consoleCode: "ADMIN_CONSOLE",
+          scopeGrants: { kpi: ["global"] },
+        } as Parameters<UserLifecycleService["updateUser"]>[1]),
+      ),
+    /USER_UPDATE payload cannot include authority field\(s\): consoleCode, scopeGrants/u,
+  );
+});
+
 test("legacy manual create creates pending unlinked internal user", async () => {
   const repo = new InMemoryUserRepository();
   const service = createService(repo, new MockAuth0Management());
@@ -663,155 +720,6 @@ test("new account provisioning mutations resolve to dedicated permissions", () =
     ).code,
     Permission.USER_PASSWORD_SETUP_SEND,
   );
-  assert.equal(
-    resolveAuthoritativePermissionForMutationIdentity("user.actor-kind.update")
-      .code,
-    Permission.USER_ACTOR_KIND_UPDATE,
-  );
-});
-
-test("actorKind conversion requires reason and rejects self-update", async () => {
-  const repo = new InMemoryUserRepository();
-  const service = createService(repo, new MockAuth0Management());
-  const now = Date.now();
-  await repo.insert({
-    id: "target-user",
-    accountStatus: "ACTIVE",
-    actorKind: "STAFF",
-    authLinkage: {
-      provider: "auth0",
-      subject: "auth0|target",
-      status: "LINKED",
-    },
-    profile: {
-      displayName: "Target User",
-      email: "target@example.test",
-    },
-    contextAccess: { contexts: ["ADMIN"] },
-    preferences: {},
-    createdAt: now,
-    updatedAt: now,
-    activatedAt: now,
-    disabledAt: null,
-    archivedAt: null,
-  });
-
-  await assert.rejects(
-    () =>
-      runService(() =>
-        service.updateActorKind(createActor(ALL_PERMISSIONS), {
-          userId: "target-user",
-          actorKind: "ADMIN",
-          reason: " ",
-        }),
-      ),
-    /reason is required/u,
-  );
-
-  await assert.rejects(
-    () =>
-      runService(() =>
-        service.updateActorKind(createActor(ALL_PERMISSIONS, "target-user"), {
-          userId: "target-user",
-          actorKind: "ADMIN",
-          reason: "Promote for HR console access",
-        }),
-      ),
-    /Cannot update your own account type/u,
-  );
-});
-
-test("actorKind conversion STAFF to ADMIN audits and invalidates auth security", async () => {
-  const repo = new InMemoryUserRepository();
-  const audit = new RecordingAuditGuard();
-  const bridge = new InlineMutationBridge();
-  const service = createService(repo, new MockAuth0Management(), audit, bridge);
-  const now = Date.now();
-  await repo.insert({
-    id: "target-user",
-    accountStatus: "ACTIVE",
-    actorKind: "STAFF",
-    authLinkage: {
-      provider: "auth0",
-      subject: "auth0|target",
-      status: "LINKED",
-    },
-    profile: {
-      displayName: "Target User",
-      email: "target@example.test",
-    },
-    contextAccess: { contexts: ["ADMIN"] },
-    preferences: {},
-    createdAt: now,
-    updatedAt: now,
-    activatedAt: now,
-    disabledAt: null,
-    archivedAt: null,
-  });
-
-  const result = await runService(() =>
-    service.updateActorKind(createActor(ALL_PERMISSIONS), {
-      userId: "target-user",
-      actorKind: "ADMIN",
-      reason: "Promote for HR console access",
-    }),
-  );
-
-  assert.equal(result.user.actorKind, "ADMIN");
-  assert.equal(bridge.authSecurityChanged, 1);
-  const latestAuditRecord = audit.records[audit.records.length - 1];
-  assert.equal(latestAuditRecord?.metadata.fromActorKind, "STAFF");
-  assert.equal(latestAuditRecord?.metadata.toActorKind, "ADMIN");
-  assert.equal(
-    latestAuditRecord?.metadata.reason,
-    "Promote for HR console access",
-  );
-});
-
-test("actorKind conversion ADMIN to STAFF is blocked by active admin-console roles", async () => {
-  const repo = new InMemoryUserRepository();
-  const service = createService(
-    repo,
-    new MockAuth0Management(),
-    new RecordingAuditGuard(),
-    new InlineMutationBridge(),
-    {},
-    new AdminRoleCapabilityRepository(["HR_OPERATIONS"]),
-  );
-  const now = Date.now();
-  await repo.insert({
-    id: "target-user",
-    accountStatus: "ACTIVE",
-    actorKind: "ADMIN",
-    authLinkage: {
-      provider: "auth0",
-      subject: "auth0|target",
-      status: "LINKED",
-    },
-    profile: {
-      displayName: "Target User",
-      email: "target@example.test",
-    },
-    contextAccess: { contexts: ["ADMIN"] },
-    preferences: {},
-    createdAt: now,
-    updatedAt: now,
-    activatedAt: now,
-    disabledAt: null,
-    archivedAt: null,
-  });
-
-  await assert.rejects(
-    () =>
-      runService(() =>
-        service.updateActorKind(createActor(ALL_PERMISSIONS), {
-          userId: "target-user",
-          actorKind: "STAFF",
-          reason: "Move to self-service only",
-        }),
-      ),
-    /active admin-console role assignments exist: HR_OPERATIONS/u,
-  );
 });
 
 function createService(
@@ -859,6 +767,7 @@ function createActor(permissions: readonly string[], id = "admin-user"): Actor {
     id,
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions,
     scopeGrants: {},
@@ -1099,25 +1008,6 @@ class InMemoryUserRepository implements UserMutationRepository {
         subject: input.subject,
         status: input.status ?? "LINKED",
       },
-      updatedAt: input.updatedAt,
-    };
-    this.replace(updated);
-    return updated;
-  }
-
-  async updateActorKind(input: {
-    readonly userId: string;
-    readonly actorKind: "ADMIN" | "STAFF";
-    readonly updatedAt: number;
-  }): Promise<UserRecord | null> {
-    const current = await this.findById(input.userId);
-    if (!current) {
-      return null;
-    }
-
-    const updated = {
-      ...current,
-      actorKind: input.actorKind,
       updatedAt: input.updatedAt,
     };
     this.replace(updated);

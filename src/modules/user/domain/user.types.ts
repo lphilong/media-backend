@@ -81,7 +81,6 @@ export interface UserListItemView {
   readonly id: string;
   readonly displayName: string;
   readonly email?: string;
-  readonly actorKind: UserActorKind;
   readonly accountStatus: UserAccountStatus;
   readonly authLinkage: UserListAuthLinkageView;
   readonly updatedAt: number;
@@ -89,12 +88,10 @@ export interface UserListItemView {
 
 export interface UserDetailView {
   readonly id: string;
-  readonly actorKind: UserActorKind;
   readonly accountStatus: UserAccountStatus;
   readonly authLinkage: UserDetailAuthLinkageView;
   readonly profile: UserDetailProfileView;
   readonly contextAccess: UserDetailContextAccessView;
-  readonly accountContexts?: readonly AccountContext[];
   readonly preferences: UserDetailPreferencesView;
   readonly createdAt: number;
   readonly updatedAt: number;

@@ -16,60 +16,62 @@ import {
 } from "./runtime-role-sync";
 
 const NOW = 1_779_552_000_000;
+const REMOVED_ACTOR_KIND_UPDATE_PERMISSION = "user:actor_kind:update";
 
-test("source ADMIN_FULL template includes actorKind conversion permission only through full admin", () => {
-  const admin = getRoleTemplate("ADMIN_FULL");
-  assert.ok(admin);
+test("source role templates do not expose removed actorKind conversion permission", () => {
   assert.equal(
-    admin.permissions.includes(Permission.USER_ACTOR_KIND_UPDATE),
-    true,
+    hasString(Object.values(Permission), REMOVED_ACTOR_KIND_UPDATE_PERMISSION),
+    false,
   );
+  assert.equal(hasString(ROLE_TEMPLATE_CODES, "COMMERCIAL_FINANCE"), false);
 
-  const nonAdminTemplateCodes = ROLE_TEMPLATE_CODES.filter(
-    (code) => code !== "ADMIN_FULL",
-  );
-  for (const code of nonAdminTemplateCodes) {
+  for (const code of ROLE_TEMPLATE_CODES) {
+    const template = getRoleTemplate(code);
+    assert.ok(template);
     assert.equal(
-      getRoleTemplate(code)?.permissions.includes(
-        Permission.USER_ACTOR_KIND_UPDATE,
-      ),
+      hasString(template.permissions, REMOVED_ACTOR_KIND_UPDATE_PERMISSION),
       false,
       `${code} must not receive actorKind conversion permission`,
     );
   }
 });
 
-test("dry-run reports missing actorKind conversion permission without writing", async () => {
+test("dry-run reports missing user provisioning permission without writing", async () => {
   const fixture = createRuntimeRoleSyncFixture({
-    roles: [makeAdminFullRoleWithoutActorKindPermission()],
+    roles: [
+      makeTemplateRoleWithoutPermissions({
+        code: "ACCESS_ADMIN",
+        missingPermissions: [Permission.USER_PROVISION_ACCOUNT],
+      }),
+    ],
   });
 
   const summary = await fixture.service.run({
-    roleCode: "ADMIN_FULL",
+    roleCode: "ACCESS_ADMIN",
     mode: "dry-run",
     mongoDbName: "media-dev",
   });
 
   assert.deepEqual(summary.missingPermissions, [
-    Permission.USER_ACTOR_KIND_UPDATE,
+    Permission.USER_PROVISION_ACCOUNT,
   ]);
   assert.equal(summary.updateNeeded, true);
   assert.equal(summary.updated, false);
   assert.equal(fixture.roles.replacePermissionsCalls, 0);
 });
 
-test("dry-run reports missing lookup permission for COMMERCIAL_FINANCE", async () => {
+test("dry-run reports missing lookup permission for REVENUE_FINANCE_OPS", async () => {
   const fixture = createRuntimeRoleSyncFixture({
     roles: [
       makeTemplateRoleWithoutPermissions({
-        code: "COMMERCIAL_FINANCE",
+        code: "REVENUE_FINANCE_OPS",
         missingPermissions: [Permission.REVENUE_LEDGER_LOOKUP],
       }),
     ],
   });
 
   const summary = await fixture.service.run({
-    roleCode: "COMMERCIAL_FINANCE",
+    roleCode: "REVENUE_FINANCE_OPS",
     mode: "dry-run",
     mongoDbName: "media-dev",
   });
@@ -109,7 +111,7 @@ test("dry-run reports missing lookup permission for HR_OPERATIONS", async () => 
     roles: [
       makeTemplateRoleWithoutPermissions({
         code: "HR_OPERATIONS",
-        missingPermissions: [Permission.STUDIO_RESOURCE_LOOKUP],
+        missingPermissions: [Permission.TALENT_LOOKUP],
       }),
     ],
   });
@@ -120,41 +122,41 @@ test("dry-run reports missing lookup permission for HR_OPERATIONS", async () => 
     mongoDbName: "media-dev",
   });
 
-  assert.deepEqual(summary.missingPermissions, [
-    Permission.STUDIO_RESOURCE_LOOKUP,
-  ]);
+  assert.deepEqual(summary.missingPermissions, [Permission.TALENT_LOOKUP]);
   assert.equal(summary.updateNeeded, true);
   assert.equal(summary.updated, false);
   assert.equal(fixture.roles.replacePermissionsCalls, 0);
 });
 
-test("source TEAM_MANAGER template does not include official WorkSchedule mutation permissions", () => {
-  const manager = getRoleTemplate("TEAM_MANAGER");
-  assert.ok(manager);
-  assert.equal(
-    manager.permissions.includes(Permission.WORK_SCHEDULE_READ),
-    true,
-  );
-  assert.equal(
-    manager.permissions.includes(Permission.WORK_SCHEDULE_CREATE),
-    false,
-  );
-  assert.equal(
-    manager.permissions.includes(Permission.WORK_SCHEDULE_UPDATE),
-    false,
-  );
-  assert.equal(
-    manager.permissions.includes(Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE),
-    false,
-  );
+test("source manager templates do not include official WorkSchedule mutation permissions", () => {
+  for (const code of ["TALENT_GROUP_MANAGER", "ORG_UNIT_MANAGER"] as const) {
+    const manager = getRoleTemplate(code);
+    assert.ok(manager);
+    assert.equal(
+      manager.permissions.includes(Permission.WORK_SCHEDULE_READ),
+      true,
+    );
+    assert.equal(
+      manager.permissions.includes(Permission.WORK_SCHEDULE_CREATE),
+      false,
+    );
+    assert.equal(
+      manager.permissions.includes(Permission.WORK_SCHEDULE_UPDATE),
+      false,
+    );
+    assert.equal(
+      manager.permissions.includes(Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE),
+      false,
+    );
+  }
 });
 
 test("write adds only missing source-template permissions", async () => {
   const staleFinance = makeTemplateRoleWithoutPermissions({
-    code: "COMMERCIAL_FINANCE",
+    code: "REVENUE_FINANCE_OPS",
     missingPermissions: [
       Permission.REVENUE_LEDGER_LOOKUP,
-      Permission.COMMISSION_RULE_LOOKUP,
+      Permission.DASHBOARD_LITE_READ,
     ],
     extraPermissions: ["legacy.custom.permission"],
   });
@@ -163,19 +165,19 @@ test("write adds only missing source-template permissions", async () => {
   });
 
   const summary = await fixture.service.run({
-    roleCode: "COMMERCIAL_FINANCE",
+    roleCode: "REVENUE_FINANCE_OPS",
     mode: "write",
     mongoDbName: "media-dev",
   });
 
-  const finance = fixture.roles.records.get("COMMERCIAL_FINANCE");
+  const finance = fixture.roles.records.get("REVENUE_FINANCE_OPS");
   assert.ok(finance);
   assert.equal(
     finance.permissions.includes(Permission.REVENUE_LEDGER_LOOKUP),
     true,
   );
   assert.equal(
-    finance.permissions.includes(Permission.COMMISSION_RULE_LOOKUP),
+    finance.permissions.includes(Permission.DASHBOARD_LITE_READ),
     true,
   );
   assert.equal(finance.permissions.includes("legacy.custom.permission"), true);
@@ -188,12 +190,53 @@ test("write adds only missing source-template permissions", async () => {
   assert.equal(fixture.roles.replacePermissionsCalls, 1);
 });
 
-test("write leaves non-target roles untouched", async () => {
-  const staleAdmin = makeAdminFullRoleWithoutActorKindPermission({
-    permissions: [
-      ...templatePermissionsWithoutActorKind(),
-      "legacy.custom.permission",
+test("write adds only missing source-template permissions for commission ops", async () => {
+  const staleCommission = makeTemplateRoleWithoutPermissions({
+    code: "COMMISSION_OPS",
+    missingPermissions: [
+      Permission.COMMISSION_RULE_LOOKUP,
+      Permission.COMMISSION_SETTLEMENT_READ,
     ],
+    extraPermissions: ["legacy.custom.permission"],
+  });
+  const fixture = createRuntimeRoleSyncFixture({
+    roles: [staleCommission],
+  });
+
+  const summary = await fixture.service.run({
+    roleCode: "COMMISSION_OPS",
+    mode: "write",
+    mongoDbName: "media-dev",
+  });
+
+  const commission = fixture.roles.records.get("COMMISSION_OPS");
+  assert.ok(commission);
+  assert.equal(
+    commission.permissions.includes(Permission.COMMISSION_RULE_LOOKUP),
+    true,
+  );
+  assert.equal(
+    commission.permissions.includes(Permission.COMMISSION_SETTLEMENT_READ),
+    true,
+  );
+  assert.equal(
+    commission.permissions.includes("legacy.custom.permission"),
+    true,
+  );
+  assert.equal(
+    commission.permissions.includes(Permission.REVENUE_LEDGER_CREATE),
+    false,
+  );
+  assert.equal(summary.updated, true);
+  assert.equal(summary.updateNeeded, false);
+  assert.equal(fixture.roles.replacePermissionsCalls, 1);
+});
+
+test("write leaves non-target roles untouched", async () => {
+  const staleAccessAdmin = makeTemplateRoleWithoutPermissions({
+    code: "ACCESS_ADMIN",
+    missingPermissions: [Permission.USER_PROVISION_ACCOUNT],
+    extraPermissions: ["legacy.custom.permission"],
   });
   const viewer = makeRole({
     id: "viewer-role",
@@ -201,29 +244,32 @@ test("write leaves non-target roles untouched", async () => {
     permissions: getRoleTemplate("VIEWER_AUDITOR")?.permissions ?? [],
   });
   const fixture = createRuntimeRoleSyncFixture({
-    roles: [staleAdmin, viewer],
+    roles: [staleAccessAdmin, viewer],
   });
   const viewerBefore = [
     ...(fixture.roles.records.get("VIEWER_AUDITOR")?.permissions ?? []),
   ];
 
   const summary = await fixture.service.run({
-    roleCode: "ADMIN_FULL",
+    roleCode: "ACCESS_ADMIN",
     mode: "write",
     mongoDbName: "media-dev",
   });
 
-  const admin = fixture.roles.records.get("ADMIN_FULL");
-  assert.ok(admin);
+  const accessAdmin = fixture.roles.records.get("ACCESS_ADMIN");
+  assert.ok(accessAdmin);
   assert.equal(
-    admin.permissions.includes(Permission.USER_ACTOR_KIND_UPDATE),
+    accessAdmin.permissions.includes(Permission.USER_PROVISION_ACCOUNT),
     true,
   );
-  assert.equal(admin.permissions.includes("legacy.custom.permission"), true);
+  assert.equal(
+    accessAdmin.permissions.includes("legacy.custom.permission"),
+    true,
+  );
   assert.equal(
     fixture.roles.records
       .get("VIEWER_AUDITOR")
-      ?.permissions.includes(Permission.USER_ACTOR_KIND_UPDATE),
+      ?.permissions.includes(Permission.USER_PROVISION_ACCOUNT),
     false,
   );
   assert.deepEqual(
@@ -298,23 +344,23 @@ test("CLI write mode requires explicit confirm flag and env file", () => {
     () => parseCliArgs([]),
     runtimeSyncErrorWithCode("RUNTIME_ROLE_SYNC_ROLES_REQUIRED"),
   );
-  assert.equal(parseCliArgs(["--roles", "COMMERCIAL_FINANCE"]).mode, "dry-run");
+  assert.equal(parseCliArgs(["--roles", "REVENUE_FINANCE_OPS"]).mode, "dry-run");
   assert.deepEqual(
     parseCliArgs([
       "--env-file",
       ".env.dev",
       "--roles",
-      "COMMERCIAL_FINANCE,PRODUCTION_OPS,HR_OPERATIONS",
+      "REVENUE_FINANCE_OPS,PRODUCTION_OPS,HR_OPERATIONS",
       "--dry-run",
     ]).roleCodes,
-    ["COMMERCIAL_FINANCE", "PRODUCTION_OPS", "HR_OPERATIONS"],
+    ["REVENUE_FINANCE_OPS", "PRODUCTION_OPS", "HR_OPERATIONS"],
   );
   assert.equal(
     parseCliArgs([
       "--env-file",
       ".env.dev",
       "--roles",
-      "COMMERCIAL_FINANCE",
+      "REVENUE_FINANCE_OPS",
       "--confirm-runtime-role-sync",
     ]).mode,
     "write",
@@ -329,10 +375,14 @@ test("CLI write mode requires explicit confirm flag and env file", () => {
         "--env-file",
         ".env.local",
         "--roles",
-        "COMMERCIAL_FINANCE",
+        "REVENUE_FINANCE_OPS",
         "--confirm-runtime-role-sync",
       ]),
     runtimeSyncErrorWithCode("RUNTIME_ROLE_SYNC_ENV_FILE_MUST_BE_DEV"),
+  );
+  assert.throws(
+    () => parseCliArgs(["--roles", "COMMERCIAL_FINANCE"]),
+    runtimeSyncErrorWithCode("RUNTIME_ROLE_SYNC_UNSUPPORTED_ROLE"),
   );
   assert.throws(
     () => parseCliArgs(["--roles", "NOT_A_ROLE"]),
@@ -342,11 +392,16 @@ test("CLI write mode requires explicit confirm flag and env file", () => {
 
 test("formatted output does not include secret-looking values", async () => {
   const fixture = createRuntimeRoleSyncFixture({
-    roles: [makeAdminFullRoleWithoutActorKindPermission()],
+    roles: [
+      makeTemplateRoleWithoutPermissions({
+        code: "ACCESS_ADMIN",
+        missingPermissions: [Permission.USER_PROVISION_ACCOUNT],
+      }),
+    ],
   });
 
   const summary = await fixture.service.run({
-    roleCode: "ADMIN_FULL",
+    roleCode: "ACCESS_ADMIN",
     mode: "dry-run",
     mongoDbName: "media-dev",
   });
@@ -359,7 +414,12 @@ test("formatted output does not include secret-looking values", async () => {
 
 test("invalid role code rejects and does not touch repository", async () => {
   const fixture = createRuntimeRoleSyncFixture({
-    roles: [makeAdminFullRoleWithoutActorKindPermission()],
+    roles: [
+      makeTemplateRoleWithoutPermissions({
+        code: "ACCESS_ADMIN",
+        missingPermissions: [Permission.USER_PROVISION_ACCOUNT],
+      }),
+    ],
   });
 
   await assert.rejects(
@@ -375,17 +435,19 @@ test("invalid role code rejects and does not touch repository", async () => {
   assert.equal(fixture.roles.replacePermissionsCalls, 0);
 });
 
-test("ADMIN_FULL-only path does not create roles", async () => {
+test("legacy ADMIN_FULL role code rejects before repository access", async () => {
   const fixture = createRuntimeRoleSyncFixture();
 
-  const dryRun = await fixture.service.run({
-    roleCode: "ADMIN_FULL",
-    mode: "dry-run",
-    mongoDbName: "media-dev",
-  });
-
-  assert.equal(dryRun.roleExists, false);
-  assert.equal(dryRun.created, false);
+  await assert.rejects(
+    () =>
+      fixture.service.run({
+        roleCode: "ADMIN_FULL",
+        mode: "dry-run",
+        mongoDbName: "media-dev",
+      }),
+    runtimeSyncErrorWithCode("RUNTIME_ROLE_SYNC_UNSUPPORTED_ROLE"),
+  );
+  assert.equal(fixture.roles.findByCodeCalls, 0);
   assert.equal(fixture.roles.replacePermissionsCalls, 0);
   await assert.rejects(
     () =>
@@ -394,7 +456,7 @@ test("ADMIN_FULL-only path does not create roles", async () => {
         mode: "write",
         mongoDbName: "media-dev",
       }),
-    runtimeSyncErrorWithCode("RUNTIME_ROLE_SYNC_ROLE_MISSING"),
+    runtimeSyncErrorWithCode("RUNTIME_ROLE_SYNC_UNSUPPORTED_ROLE"),
   );
   assert.equal(fixture.roles.records.size, 0);
 });
@@ -471,18 +533,6 @@ class FakeRuntimeRoleRepository {
   }
 }
 
-function makeAdminFullRoleWithoutActorKindPermission(
-  params: {
-    readonly permissions?: readonly string[];
-  } = {},
-): RoleRecord {
-  return makeRole({
-    id: "admin-full-role",
-    code: "ADMIN_FULL",
-    permissions: params.permissions ?? templatePermissionsWithoutActorKind(),
-  });
-}
-
 function makeTemplateRoleWithoutPermissions(params: {
   readonly code: RoleTemplateCode;
   readonly missingPermissions: readonly Permission[];
@@ -528,18 +578,14 @@ function makeRole(params: {
   };
 }
 
-function templatePermissionsWithoutActorKind(): readonly string[] {
-  const template = getRoleTemplate("ADMIN_FULL");
-  assert.ok(template);
-  return template.permissions.filter(
-    (permission) => permission !== Permission.USER_ACTOR_KIND_UPDATE,
-  );
-}
-
 function runtimeSyncErrorWithCode(code: string) {
   return (error: unknown): boolean => {
     assert.ok(error instanceof RuntimeRoleSyncError);
     assert.equal(error.code, code);
     return true;
   };
+}
+
+function hasString(values: readonly string[], value: string): boolean {
+  return values.includes(value);
 }

@@ -363,7 +363,6 @@ test(
       Permission.USER_DISABLE,
       Permission.USER_ARCHIVE,
       Permission.USER_AUTH_LINKAGE_SET,
-      Permission.USER_ACTOR_KIND_UPDATE,
     ]);
 
     await t.test("list/detail query keys", async () => {
@@ -1005,7 +1004,6 @@ test(
       "GET /",
       "GET /:userId",
       "PATCH /:userId",
-      "PATCH /:userId/actor-kind",
       "POST /",
       "POST /:userId/activate",
       "POST /:userId/archive",
@@ -1065,8 +1063,6 @@ test(
         USER_ARCHIVE: Permission.USER_ARCHIVE,
         USER_AUTH_LINKAGE_SET:
           Permission.USER_AUTH_LINKAGE_SET,
-        USER_ACTOR_KIND_UPDATE:
-          Permission.USER_ACTOR_KIND_UPDATE,
       },
       {
         USER_VIEW: "user:view",
@@ -1076,7 +1072,6 @@ test(
         USER_DISABLE: "user:disable",
         USER_ARCHIVE: "user:archive",
         USER_AUTH_LINKAGE_SET: "user:auth_linkage:set",
-        USER_ACTOR_KIND_UPDATE: "user:actor_kind:update",
       },
     );
 

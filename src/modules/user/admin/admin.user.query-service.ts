@@ -8,9 +8,7 @@ import {
 } from "@modules/user/domain/user.errors";
 import {
   USER_ACCOUNT_STATUSES,
-  USER_ACTOR_KINDS,
   UserAccountStatus,
-  UserActorKind,
 } from "@modules/user/domain/user.types";
 import {
   GetUserDetailQuery,
@@ -45,9 +43,6 @@ export class UserAdminQueryService {
 
     return this.readRepository.listUsers({
       state: parseOptionalState(query.state),
-      actorKind: parseOptionalActorKind(
-        query.actorKind,
-      ),
       hasEmploymentProfile:
         parseOptionalBoolean(
           query.hasEmploymentProfile,
@@ -130,34 +125,6 @@ function parseOptionalState(
 
   throw new UserValidationError(
     "state must be one of PENDING, ACTIVE, DISABLED, ARCHIVED",
-  );
-}
-
-function parseOptionalActorKind(
-  value: unknown,
-): UserActorKind | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value !== "string") {
-    throw new UserValidationError(
-      "actorKind must be one of ADMIN, STAFF",
-    );
-  }
-
-  const normalized = value.trim().toUpperCase();
-
-  if (
-    USER_ACTOR_KINDS.includes(
-      normalized as UserActorKind,
-    )
-  ) {
-    return normalized as UserActorKind;
-  }
-
-  throw new UserValidationError(
-    "actorKind must be one of ADMIN, STAFF",
   );
 }
 

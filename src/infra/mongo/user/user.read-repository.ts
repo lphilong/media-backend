@@ -7,10 +7,6 @@ import {
 } from "@modules/user/read/user.read-repository";
 import { UserValidationError } from "@modules/user/domain/user.errors";
 import {
-  normalizeAccountContexts,
-  type AccountContext,
-} from "@modules/account-context/domain/account-context.types";
-import {
   UserDetailView,
   UserListItemView,
 } from "@modules/user/domain/user.types";
@@ -18,7 +14,6 @@ import {
 interface UserReadDocument {
   readonly _id: string;
   readonly accountStatus: "PENDING" | "ACTIVE" | "DISABLED" | "ARCHIVED";
-  readonly actorKind: "ADMIN" | "STAFF";
   readonly authLinkage: {
     readonly provider: "auth0";
     readonly subject: string;
@@ -34,7 +29,6 @@ interface UserReadDocument {
   readonly contextAccess: {
     readonly contexts: readonly ["ADMIN"];
   };
-  readonly accountContexts?: readonly AccountContext[];
   readonly preferences: {
     readonly locale?: string;
     readonly timezone?: string;
@@ -69,12 +63,6 @@ export class MongoUserReadRepository
     if (input.state) {
       queryFilters.push({
         accountStatus: input.state,
-      });
-    }
-
-    if (input.actorKind) {
-      queryFilters.push({
-        actorKind: input.actorKind,
       });
     }
 
@@ -183,7 +171,6 @@ function toUserListItemView(document: UserReadDocument): UserListItemView {
     id: document._id,
     displayName: document.profile.displayName,
     email: document.profile.email,
-    actorKind: document.actorKind,
     accountStatus: document.accountStatus,
     authLinkage: {
       status: document.authLinkage.status ?? "LINKED",
@@ -196,7 +183,6 @@ function toUserDetailView(document: UserReadDocument): UserDetailView {
   return {
     id: document._id,
     accountStatus: document.accountStatus,
-    actorKind: document.actorKind,
     authLinkage: {
       provider: document.authLinkage.provider,
       subject: document.authLinkage.subject,
@@ -205,7 +191,6 @@ function toUserDetailView(document: UserReadDocument): UserDetailView {
     contextAccess: {
       contexts: document.contextAccess.contexts,
     },
-    accountContexts: normalizeAccountContexts(document.accountContexts),
     profile: {
       displayName: document.profile.displayName,
       email: document.profile.email,

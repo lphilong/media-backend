@@ -128,7 +128,6 @@ const GOVERNANCE_PERMISSIONS = Object.freeze([
   Permission.USER_AUTH_LINKAGE_UNLINK,
   Permission.USER_PROVISION_ACCOUNT,
   Permission.USER_PASSWORD_SETUP_SEND,
-  Permission.USER_ACTOR_KIND_UPDATE,
   Permission.ROLE_LIST,
   Permission.ROLE_VIEW,
   Permission.ROLE_CREATE,

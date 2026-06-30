@@ -13,7 +13,6 @@ export const AUTHORITATIVE_ADMIN_MUTATION_IDENTITIES = [
   "user.provision-account",
   "user.auth-linkage.unlink",
   "user.password-setup.send",
-  "user.actor-kind.update",
   "role.create",
   "role.update",
   "role.activate",
@@ -217,7 +216,6 @@ const ADMIN_MUTATION_PERMISSION_BY_IDENTITY: Readonly<
   "user.provision-account": Permission.USER_PROVISION_ACCOUNT,
   "user.auth-linkage.unlink": Permission.USER_AUTH_LINKAGE_UNLINK,
   "user.password-setup.send": Permission.USER_PASSWORD_SETUP_SEND,
-  "user.actor-kind.update": Permission.USER_ACTOR_KIND_UPDATE,
 
   "role.create": Permission.ROLE_CREATE,
   "role.update": Permission.ROLE_UPDATE,

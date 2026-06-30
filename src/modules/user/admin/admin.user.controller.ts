@@ -15,7 +15,6 @@ import {
   SendPasswordSetupCommand,
   SetAuthLinkageCommand,
   UnlinkAuthLinkageCommand,
-  UpdateUserActorKindCommand,
   UpdateUserCommand,
 } from "@modules/user/shared/user.contracts";
 import { UserValidationError } from "@modules/user/domain/user.errors";
@@ -33,12 +32,10 @@ type UserMutationCommand =
   | "USER_AUTH_LINKAGE_SET"
   | "USER_PROVISION"
   | "USER_AUTH_LINKAGE_UNLINK"
-  | "USER_PASSWORD_SETUP_SEND"
-  | "USER_ACTOR_KIND_UPDATE";
+  | "USER_PASSWORD_SETUP_SEND";
 
 const CREATE_USER_BODY_FIELDS: readonly string[] =
   Object.freeze([
-    "actorKind",
     "displayName",
     "email",
     "phone",
@@ -60,7 +57,6 @@ const SET_AUTH_LINKAGE_BODY_FIELDS: readonly string[] =
 
 const PROVISION_USER_BODY_FIELDS: readonly string[] =
   Object.freeze([
-    "actorKind",
     "displayName",
     "email",
     "phone",
@@ -69,9 +65,6 @@ const PROVISION_USER_BODY_FIELDS: readonly string[] =
     "credentialMode",
     "sendInvitation",
   ]);
-
-const UPDATE_ACTOR_KIND_BODY_FIELDS: readonly string[] =
-  Object.freeze(["actorKind", "reason"]);
 
 export class UserAdminController extends SecureController {
   constructor(
@@ -150,12 +143,6 @@ export class UserAdminController extends SecureController {
           parseSendPasswordSetupCommand(req),
         );
 
-      case "USER_ACTOR_KIND_UPDATE":
-        return this.service.updateActorKind(
-          actor,
-          parseUpdateActorKindCommand(req),
-        );
-
       default:
         throw new SystemInvariantError(
           "SYSTEM_INVARIANT_VIOLATION",
@@ -190,9 +177,6 @@ function parseCreateUserCommand(
   );
 
   return {
-    actorKind: body.actorKind as
-      | CreateUserCommand["actorKind"]
-      | undefined,
     displayName: body.displayName as string,
     email: body.email as string | undefined,
     phone: body.phone as string | undefined,
@@ -269,9 +253,6 @@ function parseProvisionUserCommand(
   );
 
   return {
-    actorKind: body.actorKind as
-      | ProvisionUserCommand["actorKind"]
-      | undefined,
     displayName: body.displayName as string,
     email: body.email as string,
     phone: body.phone as string | undefined,
@@ -380,23 +361,6 @@ function parseSendPasswordSetupCommand(
 
   return {
     userId: req.params.userId,
-  };
-}
-
-function parseUpdateActorKindCommand(
-  req: Request,
-): UpdateUserActorKindCommand {
-  const body = requireRecord(req.body);
-  assertNoUnexpectedFields(
-    body,
-    UPDATE_ACTOR_KIND_BODY_FIELDS,
-    "USER_ACTOR_KIND_UPDATE",
-  );
-
-  return {
-    userId: req.params.userId,
-    actorKind: body.actorKind as UpdateUserActorKindCommand["actorKind"],
-    reason: body.reason as string,
   };
 }
 
