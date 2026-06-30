@@ -11,7 +11,6 @@ import { RoleValidationError } from "@modules/role/domain/role.errors";
 import {
   ActivateRoleCommand,
   ArchiveRoleCommand,
-  AssignRoleToUserCommand,
   CreateRoleFromTemplateCommand,
   CreateRoleCommand,
   DeactivateRoleCommand,
@@ -29,9 +28,7 @@ type RoleMutationCommand =
   | "ROLE_DEACTIVATE"
   | "ROLE_ARCHIVE"
   | "ROLE_PERMISSION_ASSIGN"
-  | "ROLE_ASSIGNMENT_RULE_SET"
-  | "ROLE_ASSIGN_TO_USER"
-  | "ROLE_REVOKE_FROM_USER";
+  | "ROLE_ASSIGNMENT_RULE_SET";
 
 const CREATE_ROLE_BODY_FIELDS: readonly string[] = Object.freeze([
   "name",
@@ -71,16 +68,6 @@ const ROLE_ASSIGNMENT_RULE_FIELDS: readonly string[] = Object.freeze([
   "description",
   "state",
   "conditions",
-]);
-
-const ASSIGN_ROLE_TO_USER_BODY_FIELDS: readonly string[] = Object.freeze([
-  "userId",
-  "reason",
-  "scopeGrants",
-  "structuredScopeGrants",
-  "effectiveAt",
-  "expiresAt",
-  "reviewAt",
 ]);
 
 const OPTIONAL_REASON_BODY_FIELDS: readonly string[] = Object.freeze([
@@ -141,16 +128,6 @@ export class AdminRoleController extends SecureController {
         return this.service.setRoleAssignmentRules(
           actor,
           parseSetRoleAssignmentRulesCommand(req),
-        );
-
-      case "ROLE_ASSIGN_TO_USER":
-        throw new RoleValidationError(
-          "ROLE_ASSIGN_TO_USER is superseded by POST /admin/access-assignments/apply",
-        );
-
-      case "ROLE_REVOKE_FROM_USER":
-        throw new RoleValidationError(
-          "ROLE_REVOKE_FROM_USER is superseded by POST /admin/access-assignments/:assignmentId/revoke",
         );
 
       default:
@@ -317,39 +294,6 @@ function parseSetRoleAssignmentRulesCommand(
     roleId: req.params.roleId,
     rules:
       body.rules as readonly SetRoleAssignmentRulesCommand["rules"][number][],
-  };
-}
-
-function parseAssignRoleToUserCommand(req: Request): AssignRoleToUserCommand {
-  const body = requireRecord(req.body);
-  assertNoUnexpectedFields(
-    body,
-    ASSIGN_ROLE_TO_USER_BODY_FIELDS,
-    "ROLE_ASSIGN_TO_USER",
-  );
-
-  return {
-    roleId: req.params.roleId,
-    userId: body.userId as string,
-    reason: body.reason === undefined ? null : (body.reason as string | null),
-    scopeGrants: body.scopeGrants as
-      | AssignRoleToUserCommand["scopeGrants"]
-      | undefined,
-    structuredScopeGrants: body.structuredScopeGrants as
-      | AssignRoleToUserCommand["structuredScopeGrants"]
-      | undefined,
-    effectiveAt:
-      body.effectiveAt === undefined
-        ? null
-        : (body.effectiveAt as number | string | null),
-    expiresAt:
-      body.expiresAt === undefined
-        ? null
-        : (body.expiresAt as number | string | null),
-    reviewAt:
-      body.reviewAt === undefined
-        ? null
-        : (body.reviewAt as number | string | null),
   };
 }
 

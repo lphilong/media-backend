@@ -62,6 +62,7 @@ function createActor(
     id: `${type}-user-1`,
     type,
     context: "ADMIN",
+    accountContexts: type === "admin" ? ["ADMIN_CONSOLE"] : [],
     roles: [],
     permissions,
     isActive: true,
@@ -107,7 +108,10 @@ async function assertStaffActorDenied(
   await assert.rejects(promise, (error) => {
     assert.ok(error instanceof SystemInvariantError);
     assert.equal(error.code, "PERMISSION_DENIED");
-    assert.match(error.message, /actor\.type admin/i);
+    assert.match(
+      error.message,
+      /actor\.type admin|ADMIN_CONSOLE account context/i,
+    );
     return true;
   });
 }
@@ -289,9 +293,6 @@ test(
         getRolePermissionMatrix: async () => ({
           roleId: "role-1",
         }),
-      } as never,
-      {
-        listRoleAssignments: async () => ({ items: [] }),
       } as never,
     );
 
@@ -567,16 +568,6 @@ test(
       await assertRoleValidationRejected(
         controller.invoke(
           createRequest({
-            command: "ROLE_ASSIGNMENT_LIST",
-            params: { roleId: "role-1" },
-            query: { userId: "user-1" },
-          }),
-          actor,
-        ),
-      );
-      await assertRoleValidationRejected(
-        controller.invoke(
-          createRequest({
             command: "ROLE_PERMISSION_MATRIX",
             params: { roleId: "role-1" },
             query: { scopeGrants: "true" },
@@ -603,14 +594,6 @@ test(
           return {};
         },
         setRoleAssignmentRules: async () => {
-          serviceReached = true;
-          return {};
-        },
-        assignRoleToUser: async () => {
-          serviceReached = true;
-          return {};
-        },
-        revokeRoleFromUser: async () => {
           serviceReached = true;
           return {};
         },
@@ -675,32 +658,6 @@ test(
                 },
               ],
             },
-          }),
-          actor,
-        ),
-      );
-      await assertRoleValidationRejected(
-        controller.invoke(
-          createRequest({
-            command: "ROLE_ASSIGN_TO_USER",
-            params: { roleId: "role-1" },
-            body: {
-              userId: "user-2",
-              extra: true,
-            },
-          }),
-          actor,
-        ),
-      );
-      await assertRoleValidationRejected(
-        controller.invoke(
-          createRequest({
-            command: "ROLE_REVOKE_FROM_USER",
-            params: {
-              roleId: "role-1",
-              assignmentId: "assignment-1",
-            },
-            body: { reason: "done", userId: "user-2" },
           }),
           actor,
         ),
@@ -1014,162 +971,6 @@ test(
       assert.equal(capturedArchive?.reason, null);
     });
 
-    await t.test(
-      "revoke-assignment body contracts",
-      async () => {
-        let serviceReached = false;
-        let capturedCommand:
-          | {
-              reason?: string | null;
-            }
-          | undefined;
-        const controller =
-          new RoleMutationControllerHarness({
-            revokeRoleFromUser: async (
-              _actor: Actor,
-              command: {
-                reason?: string | null;
-              },
-            ) => {
-              serviceReached = true;
-              capturedCommand = command;
-              return { ok: true };
-            },
-          } as never);
-
-        await assertRoleValidationRejected(
-          controller.invoke(
-            createRequest({
-              command: "ROLE_REVOKE_FROM_USER",
-              params: {
-                roleId: "role-1",
-                assignmentId: "assignment-1",
-              },
-              body: null,
-            }),
-            actor,
-          ),
-        );
-        await assertRoleValidationRejected(
-          controller.invoke(
-            createRequest({
-              command: "ROLE_REVOKE_FROM_USER",
-              params: {
-                roleId: "role-1",
-                assignmentId: "assignment-1",
-              },
-              body: [],
-            }),
-            actor,
-          ),
-        );
-
-        for (const body of [
-          "x",
-          42,
-          false,
-        ]) {
-          await assertRoleValidationRejected(
-            controller.invoke(
-              createRequest({
-                command: "ROLE_REVOKE_FROM_USER",
-                params: {
-                  roleId: "role-1",
-                  assignmentId: "assignment-1",
-                },
-                body,
-              }),
-              actor,
-            ),
-          );
-        }
-
-        await assertRoleValidationRejected(
-          controller.invoke(
-            createRequest({
-              command: "ROLE_REVOKE_FROM_USER",
-              params: {
-                roleId: "role-1",
-                assignmentId: "assignment-1",
-              },
-              body: {
-                reason: "valid reason",
-                extra: true,
-              },
-            }),
-            actor,
-          ),
-        );
-        assert.equal(serviceReached, false);
-
-        assert.deepEqual(
-          await controller.invoke(
-            createRequest({
-              command: "ROLE_REVOKE_FROM_USER",
-              params: {
-                roleId: "role-1",
-                assignmentId: "assignment-1",
-              },
-            }),
-            actor,
-          ),
-          { ok: true },
-        );
-        assert.equal(serviceReached, true);
-        assert.equal(capturedCommand?.reason, null);
-
-        assert.deepEqual(
-          await controller.invoke(
-            createRequest({
-              command: "ROLE_REVOKE_FROM_USER",
-              params: {
-                roleId: "role-1",
-                assignmentId: "assignment-1",
-              },
-              body: {},
-            }),
-            actor,
-          ),
-          { ok: true },
-        );
-        assert.equal(capturedCommand?.reason, null);
-
-        assert.deepEqual(
-          await controller.invoke(
-            createRequest({
-              command: "ROLE_REVOKE_FROM_USER",
-              params: {
-                roleId: "role-1",
-                assignmentId: "assignment-1",
-              },
-              body: { reason: "valid reason" },
-            }),
-            actor,
-          ),
-          { ok: true },
-        );
-        assert.equal(
-          capturedCommand?.reason,
-          "valid reason",
-        );
-
-        assert.deepEqual(
-          await controller.invoke(
-            createRequest({
-              command: "ROLE_REVOKE_FROM_USER",
-              params: {
-                roleId: "role-1",
-                assignmentId: "assignment-1",
-              },
-              body: { reason: null },
-            }),
-            actor,
-          ),
-          { ok: true },
-        );
-        assert.equal(capturedCommand?.reason, null);
-      },
-    );
   },
 );
 
@@ -1216,14 +1017,11 @@ test(
     assert.deepEqual(roleRoutes, [
       "GET /",
       "GET /:roleId",
-      "GET /:roleId/assignments",
       "GET /:roleId/permission-matrix",
       "PATCH /:roleId",
       "POST /",
       "POST /:roleId/activate",
       "POST /:roleId/archive",
-      "POST /:roleId/assignments",
-      "POST /:roleId/assignments/:assignmentId/revoke",
       "POST /:roleId/deactivate",
       "POST /from-template",
       "PUT /:roleId/assignment-rules",

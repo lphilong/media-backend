@@ -459,7 +459,7 @@ test("access assignment lifecycle controller rejects frontend-owned authority fi
   }
 });
 
-test("old direct role and bundle assignment routes are hard-disabled", async () => {
+test("old direct role and bundle assignment routes are removed", async () => {
   const app = express();
   app.use(express.json());
   app.use(contextMiddleware("ADMIN"));
@@ -495,7 +495,10 @@ test("old direct role and bundle assignment routes are hard-disabled", async () 
         reason: "old path",
       }),
     });
-    assert.equal(direct.status, 400);
+    assert.equal(direct.status, 404);
+
+    const list = await fetch(`${toBaseUrl(server)}/admin/roles/role-staff/assignments`);
+    assert.equal(list.status, 404);
 
     const bundle = await fetch(
       `${toBaseUrl(server)}/admin/role-bundles/STAFF_CONSOLE_BUNDLE/versions/2026-06-26/assignments`,
@@ -509,7 +512,7 @@ test("old direct role and bundle assignment routes are hard-disabled", async () 
         }),
       },
     );
-    assert.equal(bundle.status, 400);
+    assert.equal(bundle.status, 404);
 
     const revoke = await fetch(
       `${toBaseUrl(server)}/admin/roles/role-staff/assignments/assignment-1/revoke`,
@@ -521,7 +524,7 @@ test("old direct role and bundle assignment routes are hard-disabled", async () 
         }),
       },
     );
-    assert.equal(revoke.status, 400);
+    assert.equal(revoke.status, 404);
   } finally {
     await close(server);
   }

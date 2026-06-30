@@ -1,21 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Actor } from "@core/actor/actor";
-import { RoleAssignmentConflictError, RoleValidationError } from "@modules/role/domain/role.errors";
+import { RoleValidationError } from "@modules/role/domain/role.errors";
 import {
   buildRoleAssignmentScopeFingerprint,
   normalizeRoleAssignmentScopeGrants,
 } from "@modules/role/domain/role-assignment-scope";
 import { isRoleAssignmentCurrentlyEffective } from "@modules/role/domain/role-assignment-lifecycle";
 import { getRoleBundle } from "@modules/role/domain/role-bundle.catalog";
-import { RoleBundleAdminService } from "@modules/role/admin/admin.role-bundle.service";
 import { EffectiveAccessAdminService } from "@modules/role/admin/admin.effective-access.service";
 import { NativeMongoUserRoleAssignmentRepository } from "@infra/mongo/role/role.repository";
 import {
   buildCurrentlyEffectiveRoleAssignmentExpression,
   MongoUserAuthRepository,
 } from "@infra/mongo/user/user.auth.repository";
-import { RoleBundleTemplate } from "@modules/role/domain/role-bundle.catalog";
 
 test("scope fingerprint is deterministic and object-bound", () => {
   const first = normalizeRoleAssignmentScopeGrants([
@@ -369,171 +366,6 @@ test("HR manager bundle expands to target HR operations and terms approval roles
   assert.equal(bundle.recommendedAccountContext, "ADMIN_CONSOLE");
 });
 
-test("bundle assignment expands to child assignments and records immutable origin", async () => {
-  const bundle = getRoleBundle("TALENT_GROUP_MANAGER_BUNDLE", "2026-06-26");
-  assert.ok(bundle);
-  const calls: Array<Record<string, unknown>> = [];
-  const service = new RoleBundleAdminService(
-    {
-      findByCode: async () => ({
-        id: "role-talent-group-manager",
-        code: "TALENT_GROUP_MANAGER",
-        name: "Talent Group Manager",
-        description: null,
-        state: "ACTIVE",
-        permissions: ["kpi:read"],
-        delegationBand: "LIMITED",
-        maxDelegatableBand: "NONE",
-        createdAt: 1,
-        updatedAt: 1,
-        activatedAt: 1,
-        archivedAt: null,
-      }),
-    } as never,
-    {
-      assignRoleToUser: async (_actor: Actor, command: Record<string, unknown>) => {
-        calls.push(command);
-        return {
-          assignmentId: "assignment-1",
-          roleId: "role-talent-group-manager",
-          userId: "user-1",
-        };
-      },
-    } as never,
-  );
-
-  const result = await service.assignBundle(actor(), {
-    bundleCode: bundle.code,
-    bundleVersion: bundle.version,
-    userId: "user-1",
-    reason: "Manage Group A",
-    structuredScopeGrants: [
-      { scopeType: "managedTalentGroup", targetId: "group-a" },
-    ],
-  });
-
-  assert.equal(result.childAssignments[0]?.status, "CREATED");
-  assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0]?.bundleOrigin, {
-    bundleAssignmentId: result.bundleAssignmentId,
-    bundleCode: bundle.code,
-    bundleVersion: bundle.version,
-  });
-  assert.equal(Object.isFrozen(bundle), true);
-});
-
-test("bundle duplicate child assignment is idempotently reported as existing", async () => {
-  const service = new RoleBundleAdminService(
-    {
-      findByCode: async () => ({
-        id: "role-self",
-        code: "STAFF_CONSOLE_USER",
-        state: "ACTIVE",
-      }),
-    } as never,
-    {
-      assignRoleToUser: async () => {
-        throw new RoleAssignmentConflictError("duplicate");
-      },
-    } as never,
-  );
-
-  const result = await service.assignBundle(actor(), {
-    bundleCode: "STAFF_CONSOLE_BUNDLE",
-    bundleVersion: "2026-06-26",
-    userId: "user-1",
-    reason: "Staff access",
-    structuredScopeGrants: [{ scopeType: "self" }],
-  });
-
-  assert.deepEqual(result.childAssignments, [
-    {
-      roleId: "role-self",
-      roleCode: "STAFF_CONSOLE_USER",
-      status: "EXISTING",
-      assignmentId: null,
-    },
-  ]);
-});
-
-test("bundle preflight rejects missing or inactive children before creating any assignment", async () => {
-  for (const secondChild of [null, { id: "role-b", code: "ROLE_B", state: "INACTIVE" }]) {
-    let assignmentCalls = 0;
-    const bundle = multiChildBundle();
-    const service = new RoleBundleAdminService(
-      {
-        findByCode: async (code: string) =>
-          code === "ROLE_A"
-            ? {
-                id: "role-a",
-                code: "ROLE_A",
-                state: "ACTIVE",
-              }
-            : secondChild,
-      } as never,
-      {
-        assignRoleToUser: async () => {
-          assignmentCalls += 1;
-          return { assignmentId: "unexpected" };
-        },
-      } as never,
-      () => bundle,
-    );
-
-    await assert.rejects(
-      () =>
-        service.assignBundle(actor(), {
-          bundleCode: bundle.code,
-          bundleVersion: bundle.version,
-          userId: "user-1",
-          reason: "Multi-child preflight",
-          structuredScopeGrants: [{ scopeType: "self" }],
-        }),
-      /must exist and be ACTIVE/u,
-    );
-    assert.equal(assignmentCalls, 0);
-  }
-});
-
-test("bundle passes submitted structured scope to every prevalidated child", async () => {
-  const calls: Array<Record<string, unknown>> = [];
-  const bundle = multiChildBundle();
-  const service = new RoleBundleAdminService(
-    {
-      findByCode: async (code: string) => ({
-        id: `id-${code}`,
-        code,
-        state: "ACTIVE",
-      }),
-    } as never,
-    {
-      assignRoleToUser: async (_actor: Actor, command: Record<string, unknown>) => {
-        calls.push(command);
-        return { assignmentId: `assignment-${calls.length}` };
-      },
-    } as never,
-    () => bundle,
-  );
-
-  const result = await service.assignBundle(actor(), {
-    bundleCode: bundle.code,
-    bundleVersion: bundle.version,
-    userId: "user-1",
-    reason: "Scoped bundle",
-    structuredScopeGrants: [
-      { scopeType: "managedOrgUnit", targetId: "org-a" },
-    ],
-  });
-
-  assert.equal(result.childAssignments.length, 2);
-  assert.equal(calls.length, 2);
-  for (const call of calls) {
-    assert.deepEqual(call.structuredScopeGrants, [
-      { scopeType: "managedOrgUnit", targetId: "org-a" },
-    ]);
-  }
-});
-
 test("effective access deduplicates permissions and traces child assignment scope and bundle origin", async () => {
   let writeCount = 0;
   const service = new EffectiveAccessAdminService(
@@ -781,18 +613,6 @@ test("actorKind, route labels, and reporting manager alone grant no effective pe
   );
 });
 
-function actor(): Actor {
-  return new Actor({
-    id: "admin-1",
-    type: "admin",
-    context: "ADMIN",
-    roles: [],
-    permissions: [],
-    scopeGrants: {},
-    isActive: true,
-  });
-}
-
 function fakeDb(input: {
   readonly users: readonly Record<string, unknown>[];
   readonly role_assignments: readonly Record<string, unknown>[];
@@ -834,22 +654,4 @@ function fakeDb(input: {
       };
     },
   } as never;
-}
-
-function multiChildBundle(): RoleBundleTemplate {
-  return {
-    code: "HR_STAFF_BUNDLE",
-    name: "Test multi-child bundle",
-    description: "Test only",
-    businessPurpose: "Verify preflight behavior",
-    status: "ACTIVE",
-    version: "test-v1",
-    childRoles: ["ROLE_A", "ROLE_B"],
-    recommendedAccountContext: "ADMIN_CONSOLE",
-    recommendedScopes: ["self"],
-    sensitiveWarning: null,
-    sensitive: false,
-    createdAt: "2026-06-18T00:00:00.000Z",
-    updatedAt: "2026-06-18T00:00:00.000Z",
-  };
 }

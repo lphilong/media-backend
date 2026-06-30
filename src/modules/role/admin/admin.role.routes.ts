@@ -69,24 +69,6 @@ export function adminRoleRoutes(
     mutationController.execute,
   );
 
-  router.post(
-    "/:roleId/assignments",
-    withCommand("ROLE_ASSIGN_TO_USER"),
-    mutationController.execute,
-  );
-
-  router.get(
-    "/:roleId/assignments",
-    withCommand("ROLE_ASSIGNMENT_LIST"),
-    queryController.execute,
-  );
-
-  router.post(
-    "/:roleId/assignments/:assignmentId/revoke",
-    withCommand("ROLE_REVOKE_FROM_USER"),
-    mutationController.execute,
-  );
-
   router.get(
     "/:roleId/permission-matrix",
     withCommand("ROLE_PERMISSION_MATRIX"),

@@ -295,7 +295,6 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     businessCodeSequenceRepository: roleBusinessCodeSequenceRepository,
     roleReadonlyAccess,
     roleReadRepository,
-    roleAssignmentReadRepository,
   } = createRoleInfra(infra.primaryDb);
   const structuredScopeAuthority = new StructuredScopeAuthorityService(
     new NativeMongoStructuredScopeAuthorityReader(infra.primaryDb),
@@ -315,7 +314,6 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
 
   const roleQueryService = new RoleAdminQueryService(
     roleReadRepository,
-    roleAssignmentReadRepository,
   );
 
   const roleController = new AdminRoleController(roleService);
@@ -331,7 +329,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     "/role-bundles",
     adminRoleBundleRoutes(
       new AdminRoleBundleController(
-        new RoleBundleAdminService(roleRepository, roleService),
+        new RoleBundleAdminService(),
       ),
     ),
   );

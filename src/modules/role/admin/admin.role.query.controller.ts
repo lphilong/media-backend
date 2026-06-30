@@ -7,14 +7,12 @@ import { Actor } from "@core/actor/actor";
 import { ContextType } from "@core/context/context.types";
 import { SystemInvariantError } from "@core/error/system-error";
 import {
-  ROLE_ADMIN_ASSIGNMENT_LIST_PRESENTER_KEY,
   ROLE_ADMIN_DETAIL_PRESENTER_KEY,
   ROLE_ADMIN_LIST_PRESENTER_KEY,
   ROLE_ADMIN_PERMISSION_MATRIX_PRESENTER_KEY,
 } from "@modules/role/shared/role.presenter-keys";
 import {
   GetRoleDetailQuery,
-  ListRoleAssignmentsQuery,
   ListRolePermissionMatrixQuery,
   ListRolesQuery,
 } from "@modules/role/shared/role.contracts";
@@ -24,7 +22,6 @@ import { RoleAdminQueryService } from "./admin.role.query-service";
 type RoleQueryCommand =
   | "ROLE_LIST"
   | "ROLE_GET_DETAIL"
-  | "ROLE_ASSIGNMENT_LIST"
   | "ROLE_PERMISSION_MATRIX";
 
 const LIST_ROLES_QUERY_FIELDS: readonly string[] =
@@ -37,9 +34,6 @@ const LIST_ROLES_QUERY_FIELDS: readonly string[] =
 
 const GET_ROLE_DETAIL_QUERY_FIELDS: readonly string[] =
   Object.freeze([]);
-
-const LIST_ROLE_ASSIGNMENTS_QUERY_FIELDS: readonly string[] =
-  Object.freeze(["state", "cursor", "limit"]);
 
 const ROLE_PERMISSION_MATRIX_QUERY_FIELDS: readonly string[] =
   Object.freeze([]);
@@ -76,12 +70,6 @@ export class AdminRoleQueryController extends SecureController {
         return this.service.getRoleDetail(
           actor,
           parseGetRoleDetailQuery(req),
-        );
-
-      case "ROLE_ASSIGNMENT_LIST":
-        return this.service.listRoleAssignments(
-          actor,
-          parseListRoleAssignmentsQuery(req),
         );
 
       case "ROLE_PERMISSION_MATRIX":
@@ -130,13 +118,6 @@ export class AdminRoleQueryController extends SecureController {
           )
           .present(result, context);
 
-      case "ROLE_ASSIGNMENT_LIST":
-        return registry
-          .get<unknown, PresentationResult>(
-            ROLE_ADMIN_ASSIGNMENT_LIST_PRESENTER_KEY,
-          )
-          .present(result, context);
-
       case "ROLE_PERMISSION_MATRIX":
         return registry
           .get<unknown, PresentationResult>(
@@ -181,23 +162,6 @@ function parseGetRoleDetailQuery(
 
   return {
     roleId: req.params.roleId,
-  };
-}
-
-function parseListRoleAssignmentsQuery(
-  req: Request,
-): ListRoleAssignmentsQuery {
-  assertNoUnexpectedQueryFields(
-    readQueryRecord(req),
-    LIST_ROLE_ASSIGNMENTS_QUERY_FIELDS,
-    "ROLE_ASSIGNMENT_LIST",
-  );
-
-  return {
-    roleId: req.params.roleId,
-    state: req.query.state as string | undefined,
-    limit: req.query.limit as string | undefined,
-    cursor: req.query.cursor as string | undefined,
   };
 }
 
