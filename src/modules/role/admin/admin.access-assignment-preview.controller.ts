@@ -15,11 +15,14 @@ import {
   AccessAssignmentSourceContext,
 } from "./admin.access-assignment-preview.service";
 import { AccessAssignmentApplyAdminService } from "./admin.access-assignment-apply.service";
+import { AccessAssignmentLifecycleAdminService } from "./admin.access-assignment-lifecycle.service";
 
 type AccessAssignmentCommand =
   | "ACCESS_ASSIGNMENT_PREVIEW"
   | "ACCESS_ASSIGNMENT_APPLY"
-  | "ACCESS_ASSIGNMENT_TARGET_OPTIONS";
+  | "ACCESS_ASSIGNMENT_TARGET_OPTIONS"
+  | "ACCESS_ASSIGNMENT_LIST"
+  | "ACCESS_ASSIGNMENT_REVOKE";
 
 const PREVIEW_FIELDS = Object.freeze([
   "targetUserId",
@@ -70,6 +73,7 @@ export class AdminAccessAssignmentPreviewController extends SecureController {
   constructor(
     private readonly service: AccessAssignmentPreviewAdminService,
     private readonly applyService?: AccessAssignmentApplyAdminService,
+    private readonly lifecycleService?: AccessAssignmentLifecycleAdminService,
   ) {
     super();
   }
@@ -117,6 +121,36 @@ export class AdminAccessAssignmentPreviewController extends SecureController {
         assertNoUnexpectedFields(requirePlainObjectBody(req.body), [], command);
         return this.service.listTargetOptions();
 
+      case "ACCESS_ASSIGNMENT_LIST":
+        PermissionGuard.assert(
+          actor,
+          PermissionResolver.resolve(Permission.ROLE_ASSIGNMENT_VIEW),
+        );
+        if (!this.lifecycleService) {
+          throw new SystemInvariantError(
+            "SYSTEM_INVARIANT_VIOLATION",
+            "Access assignment lifecycle service missing",
+          );
+        }
+        assertNoUnexpectedFields(requirePlainObjectBody(req.body), [], command);
+        return this.lifecycleService.listForTargetUser(req.query.targetUserId);
+
+      case "ACCESS_ASSIGNMENT_REVOKE":
+        PermissionGuard.assert(
+          actor,
+          PermissionResolver.resolve(Permission.ROLE_REVOKE_FROM_USER),
+        );
+        if (!this.lifecycleService) {
+          throw new SystemInvariantError(
+            "SYSTEM_INVARIANT_VIOLATION",
+            "Access assignment lifecycle service missing",
+          );
+        }
+        return this.lifecycleService.revoke(actor, {
+          assignmentId: req.params.assignmentId,
+          reason: parseLifecycleReasonCommand(req),
+        });
+
       default:
         throw new SystemInvariantError(
           "SYSTEM_INVARIANT_VIOLATION",
@@ -133,6 +167,13 @@ export class AdminAccessAssignmentPreviewController extends SecureController {
   ): Promise<PresentationResult> {
     return { data: toPlainObject(result, "accessAssignmentPreview") };
   }
+}
+
+function parseLifecycleReasonCommand(req: Request): unknown {
+  const body = requirePlainObjectBody(req.body);
+  assertNoForbiddenAuthorityFields(body, "ACCESS_ASSIGNMENT_REVOKE");
+  assertNoUnexpectedFields(body, ["reason"], "ACCESS_ASSIGNMENT_REVOKE");
+  return body.reason;
 }
 
 function parsePreviewCommand(req: Request): AccessAssignmentPreviewCommand {

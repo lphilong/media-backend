@@ -63,6 +63,7 @@ import { adminEffectiveAccessRoutes } from "@modules/role/admin/admin.effective-
 import { AdminAccessAssignmentPreviewController } from "@modules/role/admin/admin.access-assignment-preview.controller";
 import { AccessAssignmentPreviewAdminService } from "@modules/role/admin/admin.access-assignment-preview.service";
 import { AccessAssignmentApplyAdminService } from "@modules/role/admin/admin.access-assignment-apply.service";
+import { AccessAssignmentLifecycleAdminService } from "@modules/role/admin/admin.access-assignment-lifecycle.service";
 import { adminAccessAssignmentPreviewRoutes } from "@modules/role/admin/admin.access-assignment-preview.routes";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import { NativeMongoStructuredScopeAuthorityReader } from "@infra/mongo/role/structured-scope-authority.repository";
@@ -348,6 +349,12 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       new AdminAccessAssignmentPreviewController(
         new AccessAssignmentPreviewAdminService(infra.primaryDb),
         new AccessAssignmentApplyAdminService(
+          infra.primaryDb,
+          authoritativeAuditGuard,
+          adminMutationBridge,
+          actorSnapshotCacheInvalidator,
+        ),
+        new AccessAssignmentLifecycleAdminService(
           infra.primaryDb,
           authoritativeAuditGuard,
           adminMutationBridge,

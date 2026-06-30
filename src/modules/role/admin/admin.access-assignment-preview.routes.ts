@@ -7,6 +7,12 @@ export function adminAccessAssignmentPreviewRoutes(
 ): Router {
   const router = Router();
 
+  router.get(
+    "/",
+    withCommand("ACCESS_ASSIGNMENT_LIST"),
+    controller.execute,
+  );
+
   router.post(
     "/preview",
     withCommand("ACCESS_ASSIGNMENT_PREVIEW"),
@@ -22,6 +28,12 @@ export function adminAccessAssignmentPreviewRoutes(
   router.get(
     "/targets",
     withCommand("ACCESS_ASSIGNMENT_TARGET_OPTIONS"),
+    controller.execute,
+  );
+
+  router.post(
+    "/:assignmentId/revoke",
+    withCommand("ACCESS_ASSIGNMENT_REVOKE"),
     controller.execute,
   );
 

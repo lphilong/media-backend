@@ -15,7 +15,6 @@ import {
   CreateRoleFromTemplateCommand,
   CreateRoleCommand,
   DeactivateRoleCommand,
-  RevokeRoleFromUserCommand,
   SetRoleAssignmentRulesCommand,
   SetRolePermissionsCommand,
   UpdateRoleCommand,
@@ -150,9 +149,8 @@ export class AdminRoleController extends SecureController {
         );
 
       case "ROLE_REVOKE_FROM_USER":
-        return this.service.revokeRoleFromUser(
-          actor,
-          parseRevokeRoleFromUserCommand(req),
+        throw new RoleValidationError(
+          "ROLE_REVOKE_FROM_USER is superseded by POST /admin/access-assignments/:assignmentId/revoke",
         );
 
       default:
@@ -352,26 +350,6 @@ function parseAssignRoleToUserCommand(req: Request): AssignRoleToUserCommand {
       body.reviewAt === undefined
         ? null
         : (body.reviewAt as number | string | null),
-  };
-}
-
-function parseRevokeRoleFromUserCommand(
-  req: Request,
-): RevokeRoleFromUserCommand {
-  const body = requirePlainObjectBodyForOptionalReasonMutation(
-    req.body,
-    "ROLE_REVOKE_FROM_USER",
-  );
-  assertNoUnexpectedFields(
-    body,
-    OPTIONAL_REASON_BODY_FIELDS,
-    "ROLE_REVOKE_FROM_USER",
-  );
-
-  return {
-    roleId: req.params.roleId,
-    assignmentId: req.params.assignmentId,
-    reason: body.reason === undefined ? null : (body.reason as string | null),
   };
 }
 

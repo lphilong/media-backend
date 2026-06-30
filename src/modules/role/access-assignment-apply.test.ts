@@ -17,6 +17,7 @@ import {
 import { runWithDomainEventCollector } from "@system/event-bridge/domain-event.types";
 import { AccessAssignmentPreviewAdminService } from "@modules/role/admin/admin.access-assignment-preview.service";
 import { AccessAssignmentApplyAdminService } from "@modules/role/admin/admin.access-assignment-apply.service";
+import { AccessAssignmentLifecycleAdminService } from "@modules/role/admin/admin.access-assignment-lifecycle.service";
 import { AdminAccessAssignmentPreviewController } from "@modules/role/admin/admin.access-assignment-preview.controller";
 import { adminAccessAssignmentPreviewRoutes } from "@modules/role/admin/admin.access-assignment-preview.routes";
 import { AdminRoleController } from "@modules/role/admin/admin.role.controller";
@@ -261,6 +262,203 @@ test("access assignment apply controller rejects frontend-owned authority fields
   }
 });
 
+test("access assignment lifecycle lists target-user assignments with audit summary", async () => {
+  const db = fakeDb({
+    users: [
+      activeUser("access-admin", ["ADMIN_CONSOLE"]),
+      activeUser("target-user", ["STAFF_CONSOLE"]),
+    ],
+    roles: [
+      role("role-staff", "STAFF_CONSOLE_USER", [
+        Permission.WORK_SCHEDULE_READ,
+      ]),
+    ],
+    role_assignments: [
+      targetAssignment("assignment-target", "role-staff", {
+        bundleOrigin: {
+          bundleAssignmentId: "bundle-assignment-1",
+          bundleCode: "STAFF_CONSOLE_BUNDLE",
+          bundleVersion: "2026-06-26",
+        },
+        origin: "BUNDLE",
+      }),
+    ],
+  });
+
+  const result = await new AccessAssignmentLifecycleAdminService(
+    db,
+    fakeAudit().guard,
+    fakeBridge(),
+    fakeInvalidator().service,
+  ).listForTargetUser("target-user");
+
+  assert.equal(readPath(result, ["targetUser", "id"]), "target-user");
+  assert.deepEqual(result.supportedLifecycleActions, ["REVOKE"]);
+  assert.equal(readPath(result, ["items", 0, "assignmentId"]), "assignment-target");
+  assert.equal(readPath(result, ["items", 0, "roleCode"]), "STAFF_CONSOLE_USER");
+  assert.equal(readPath(result, ["items", 0, "status"]), "ACTIVE");
+  assert.equal(readPath(result, ["items", 0, "bundleOrigin", "bundleCode"]), "STAFF_CONSOLE_BUNDLE");
+  assert.equal(readPath(result, ["items", 0, "auditSummary", "action"]), "ASSIGN");
+});
+
+test("access assignment lifecycle revoke requires reason, writes audit, invalidates cache, and returns effective access", async () => {
+  const audit = fakeAudit();
+  const invalidator = fakeInvalidator();
+  const db = fakeDb({
+    users: [
+      activeUser("access-admin", ["ADMIN_CONSOLE"]),
+      activeUser("target-user", ["STAFF_CONSOLE"]),
+    ],
+    roles: [
+      role("role-staff", "STAFF_CONSOLE_USER", [
+        Permission.WORK_SCHEDULE_READ,
+      ]),
+    ],
+    role_assignments: [targetAssignment("assignment-target", "role-staff")],
+  });
+
+  const result = await withTrace(() =>
+    new AccessAssignmentLifecycleAdminService(
+      db,
+      audit.guard,
+      fakeBridge(),
+      invalidator.service,
+    ).revoke(actor(), {
+      assignmentId: "assignment-target",
+      reason: "No longer needs staff console access",
+    }),
+  );
+
+  const assignment = db.rows("role_assignments")[0];
+  assert.equal(result.revoked, true);
+  assert.equal(result.lifecycleStatus, "REVOKED");
+  assert.equal(assignment.state, "REVOKED");
+  assert.equal(assignment.revokedBy, "access-admin");
+  assert.equal(assignment.revokeReason, "No longer needs staff console access");
+  assert.equal(audit.records.length, 1);
+  assert.equal(readPath(result, ["auditTrace", "written"]), true);
+  assert.deepEqual(readPath(result, ["effectiveAccessAfterLifecycle", "permissions"]), []);
+  assert.equal(invalidator.calls.length, 1);
+});
+
+test("access assignment lifecycle revoke blocks missing reason, self revoke, and already inactive assignments", async () => {
+  const missingReason = await withTrace(() =>
+    new AccessAssignmentLifecycleAdminService(
+      fakeDb({
+        users: [
+          activeUser("access-admin", ["ADMIN_CONSOLE"]),
+          activeUser("target-user", ["STAFF_CONSOLE"]),
+        ],
+        roles: [role("role-staff", "STAFF_CONSOLE_USER", [])],
+        role_assignments: [targetAssignment("assignment-target", "role-staff")],
+      }),
+      fakeAudit().guard,
+      fakeBridge(),
+      fakeInvalidator().service,
+    ).revoke(actor(), {
+      assignmentId: "assignment-target",
+      reason: " ",
+    }),
+  ).catch((error) => error);
+  assert.match(String(missingReason.message), /reason is required/u);
+
+  const selfRevoke = await withTrace(() =>
+    new AccessAssignmentLifecycleAdminService(
+      fakeDb({
+        users: [activeUser("access-admin", ["ADMIN_CONSOLE"])],
+        roles: [role("role-access", "ACCESS_ADMIN", [Permission.ROLE_REVOKE_FROM_USER])],
+        role_assignments: [
+          {
+            ...targetAssignment("assignment-self", "role-access"),
+            userId: "access-admin",
+          },
+        ],
+      }),
+      fakeAudit().guard,
+      fakeBridge(),
+      fakeInvalidator().service,
+    ).revoke(actor(), {
+      assignmentId: "assignment-self",
+      reason: "self revoke attempt",
+    }),
+  );
+  assert.equal(selfRevoke.revoked, false);
+  assert.deepEqual(readCodes(selfRevoke.blockers), ["SELF_LIFECYCLE_BLOCKED"]);
+
+  const inactive = await withTrace(() =>
+    new AccessAssignmentLifecycleAdminService(
+      fakeDb({
+        users: [
+          activeUser("access-admin", ["ADMIN_CONSOLE"]),
+          activeUser("target-user", ["STAFF_CONSOLE"]),
+        ],
+        roles: [role("role-staff", "STAFF_CONSOLE_USER", [])],
+        role_assignments: [
+          {
+            ...targetAssignment("assignment-revoked", "role-staff"),
+            state: "REVOKED",
+            revokedAt: 2,
+          },
+        ],
+      }),
+      fakeAudit().guard,
+      fakeBridge(),
+      fakeInvalidator().service,
+    ).revoke(actor(), {
+      assignmentId: "assignment-revoked",
+      reason: "repeat revoke",
+    }),
+  );
+  assert.equal(inactive.revoked, false);
+  assert.deepEqual(readCodes(inactive.blockers), ["ASSIGNMENT_ALREADY_INACTIVE"]);
+});
+
+test("access assignment lifecycle controller rejects frontend-owned authority fields", async () => {
+  let lifecycleReached = false;
+  const app = express();
+  app.use(express.json());
+  app.use(contextMiddleware("ADMIN"));
+  app.use((req, _res, next) => {
+    bindActor(req, actor());
+    next();
+  });
+  app.use(
+    "/admin/access-assignments",
+    adminAccessAssignmentPreviewRoutes(
+      new AdminAccessAssignmentPreviewController(
+        new AccessAssignmentPreviewAdminService(fakeDb({})),
+        undefined,
+        {
+          async revoke(): Promise<unknown> {
+            lifecycleReached = true;
+            return {};
+          },
+        } as unknown as AccessAssignmentLifecycleAdminService,
+      ),
+    ),
+  );
+  app.use(errorHandler);
+
+  const server = await listen(app);
+  try {
+    const response = await fetch(
+      `${toBaseUrl(server)}/admin/access-assignments/assignment-1/revoke`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          reason: "attempt",
+          actorKind: "ADMIN",
+        }),
+      },
+    );
+    assert.equal(response.status, 400);
+    assert.equal(lifecycleReached, false);
+  } finally {
+    await close(server);
+  }
+});
+
 test("old direct role and bundle assignment routes are hard-disabled", async () => {
   const app = express();
   app.use(express.json());
@@ -312,6 +510,18 @@ test("old direct role and bundle assignment routes are hard-disabled", async () 
       },
     );
     assert.equal(bundle.status, 400);
+
+    const revoke = await fetch(
+      `${toBaseUrl(server)}/admin/roles/role-staff/assignments/assignment-1/revoke`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          reason: "old revoke path",
+        }),
+      },
+    );
+    assert.equal(revoke.status, 400);
   } finally {
     await close(server);
   }
@@ -361,7 +571,11 @@ function actor(): Actor {
     type: "admin",
     context: "ADMIN",
     roles: [],
-    permissions: [Permission.ROLE_ASSIGN_TO_USER, Permission.ROLE_ASSIGNMENT_VIEW],
+    permissions: [
+      Permission.ROLE_ASSIGN_TO_USER,
+      Permission.ROLE_ASSIGNMENT_VIEW,
+      Permission.ROLE_REVOKE_FROM_USER,
+    ],
     accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
   });
@@ -483,6 +697,37 @@ function actorDelegationAssignment(id: string, roleId: string): Record<string, u
   };
 }
 
+function targetAssignment(
+  id: string,
+  roleId: string,
+  options?: {
+    readonly origin?: string;
+    readonly bundleOrigin?: Record<string, unknown> | null;
+  },
+): Record<string, unknown> {
+  return {
+    _id: id,
+    roleId,
+    userId: "target-user",
+    structuredScopeGrants: [{ scopeType: "self" }],
+    scopeFingerprint: "scope:v1:self",
+    state: "ACTIVE",
+    effectiveAt: 1,
+    expiresAt: null,
+    reviewAt: null,
+    assignedBy: "access-admin",
+    assignedAt: 1,
+    revokedAt: null,
+    revokedBy: null,
+    revokeReason: null,
+    origin: options?.origin ?? "DIRECT",
+    bundleOrigin: options?.bundleOrigin ?? null,
+    reason: "initial grant",
+    createdAt: 1,
+    updatedAt: 1,
+  };
+}
+
 function responsibility(
   id: string,
   profileId: string,
@@ -546,6 +791,14 @@ function fakeDb(
             Object.assign(row, update.$set);
           }
           return { matchedCount: row ? 1 : 0, modifiedCount: row ? 1 : 0 };
+        },
+        async findOneAndUpdate(query: Record<string, unknown>, update: Record<string, unknown>) {
+          const row = rows.find((item) => matches(item, query));
+          if (row && isPlainObject(update.$set)) {
+            Object.assign(row, update.$set);
+            return row;
+          }
+          return null;
         },
       };
     },
