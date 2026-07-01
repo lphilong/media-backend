@@ -13,7 +13,6 @@ import { createStudioResourceInfra } from "@infra/providers/studio-resource.infr
 import { createWorkScheduleInfra } from "@infra/providers/work-schedule.infra";
 import { createEventAssignmentInfra } from "@infra/providers/event-assignment.infra";
 import { createContractRegistryInfra } from "@infra/providers/contract-registry.infra";
-import { createTalentKpiInfra } from "@infra/providers/talent-kpi.infra";
 import { createKpiInfra } from "@infra/providers/kpi.infra";
 import { createCommissionRevenueShareInfra } from "@infra/providers/commission.infra";
 import { createRevenueLedgerInfra } from "@infra/providers/revenue-ledger.infra";
@@ -170,13 +169,6 @@ import { ContractObligationAdminQueryService } from "@modules/contract-registry/
 import { ContractObligationEventEvidenceLinkAdminController } from "@modules/contract-registry/admin/admin.contract-obligation-event-evidence-link.controller";
 import { ContractObligationEventEvidenceLinkAdminQueryService } from "@modules/contract-registry/admin/admin.contract-obligation-event-evidence-link.query-service";
 import { ContractObligationEventEvidenceLinkAdminService } from "@modules/contract-registry/admin/admin.contract-obligation-event-evidence-link.service";
-
-/* TALENT KPI */
-import { adminTalentKpiRoutes } from "@modules/talent-kpi/admin/admin.talent-kpi.routes";
-import { TalentKpiAdminController } from "@modules/talent-kpi/admin/admin.talent-kpi.controller";
-import { TalentKpiAdminQueryController } from "@modules/talent-kpi/admin/admin.talent-kpi.query.controller";
-import { TalentKpiAdminService } from "@modules/talent-kpi/admin/admin.talent-kpi.service";
-import { TalentKpiAdminQueryService } from "@modules/talent-kpi/admin/admin.talent-kpi.query-service";
 
 /* KPI V2 */
 import { adminKpiRoutes } from "@modules/kpi/admin/admin.kpi.routes";
@@ -461,14 +453,6 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     contractObligationEventEvidenceLinkRepository,
     contractObligationEventEvidenceLinkReadRepository,
   } = createContractRegistryInfra(infra.primaryDb);
-  const {
-    talentKpiRepository,
-    businessCodeSequenceRepository: talentKpiBusinessCodeSequenceRepository,
-    talentKpiReadRepository,
-    talentKpiTalentReadonlyAccess,
-    talentKpiPlatformAccountReadonlyAccess,
-    talentKpiEventReadonlyAccess,
-  } = createTalentKpiInfra(infra.primaryDb);
   const {
     kpiPlanRepository,
     kpiActualRepository,
@@ -1004,29 +988,6 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       contractObligationController,
       contractObligationEventEvidenceLinkController,
     ),
-  );
-
-  /* TALENT KPI */
-  const talentKpiService = new TalentKpiAdminService(
-    talentKpiRepository,
-    talentKpiBusinessCodeSequenceRepository,
-    talentKpiTalentReadonlyAccess,
-    talentKpiPlatformAccountReadonlyAccess,
-    talentKpiEventReadonlyAccess,
-    authoritativeAuditGuard,
-    adminMutationBridge,
-  );
-  const talentKpiQueryService = new TalentKpiAdminQueryService(
-    talentKpiReadRepository,
-  );
-  const talentKpiController = new TalentKpiAdminController(talentKpiService);
-  const talentKpiQueryController = new TalentKpiAdminQueryController(
-    talentKpiQueryService,
-  );
-
-  r.use(
-    "/talent-kpi-records",
-    adminTalentKpiRoutes(talentKpiController, talentKpiQueryController),
   );
 
   /* KPI V2 */

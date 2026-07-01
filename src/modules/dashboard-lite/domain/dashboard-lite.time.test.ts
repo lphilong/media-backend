@@ -31,9 +31,6 @@ const SNAPSHOT_PROJECTION: DashboardLiteSnapshotProjection =
   {
     todayEventCount: 11,
     next7DayEventCount: 22,
-    draftTalentKpiCount: 3,
-    finalizedTalentKpiCount30d: 4,
-    staleTalentKpiDraftCount: 5,
     draftRevenueEntryCount: 6,
     finalizedRevenueAmount30d: 700.25,
     reconciledRevenueAmount30d: 650.5,
@@ -317,8 +314,6 @@ test("Dashboard Lite admin snapshot exposes backend-owned window metadata withou
   assert.deepEqual(snapshot.overview, {
     todayEventCount:
       SNAPSHOT_PROJECTION.todayEventCount,
-    draftTalentKpiCount:
-      SNAPSHOT_PROJECTION.draftTalentKpiCount,
     draftRevenueEntryCount:
       SNAPSHOT_PROJECTION.draftRevenueEntryCount,
     draftSettlementCount:

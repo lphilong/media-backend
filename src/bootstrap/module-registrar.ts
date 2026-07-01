@@ -17,7 +17,6 @@ import { createStudioResourceBootstrapRegistrar } from "@modules/studio-resource
 import { createWorkScheduleBootstrapRegistrar } from "@modules/work-schedule/shared/work-schedule.bootstrap";
 import { createEventAssignmentBootstrapRegistrar } from "@modules/event-assignment/shared/event-assignment.bootstrap";
 import { createContractRegistryBootstrapRegistrar } from "@modules/contract-registry/shared/contract-registry.bootstrap";
-import { createTalentKpiBootstrapRegistrar } from "@modules/talent-kpi/shared/talent-kpi.bootstrap";
 import { createKpiBootstrapRegistrar } from "@modules/kpi/shared/kpi.bootstrap";
 import { createCommissionBootstrapRegistrar } from "@modules/commission/shared/commission.bootstrap";
 import { createRevenueLedgerBootstrapRegistrar } from "@modules/revenue-ledger/shared/revenue-ledger.bootstrap";
@@ -65,7 +64,6 @@ const BOOTSTRAP_REGISTRARS: readonly BootstrapRegistrar[] =
     createWorkScheduleBootstrapRegistrar(),
     createEventAssignmentBootstrapRegistrar(),
     createContractRegistryBootstrapRegistrar(),
-    createTalentKpiBootstrapRegistrar(),
     createKpiBootstrapRegistrar(),
     createResponsibilityBootstrapRegistrar(),
     createCommissionBootstrapRegistrar(),

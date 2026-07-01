@@ -18,9 +18,6 @@ const SNAPSHOT_PROJECTION: DashboardLiteSnapshotProjection =
   Object.freeze({
     todayEventCount: 11,
     next7DayEventCount: 22,
-    draftTalentKpiCount: 3,
-    finalizedTalentKpiCount30d: 4,
-    staleTalentKpiDraftCount: 5,
     draftRevenueEntryCount: 6,
     finalizedRevenueAmount30d: 700.25,
     reconciledRevenueAmount30d: 650.5,
@@ -80,7 +77,6 @@ test("Dashboard Lite service logs total and window timing without changing snaps
 
   assert.deepEqual(snapshot.overview, {
     todayEventCount: 11,
-    draftTalentKpiCount: 3,
     draftRevenueEntryCount: 6,
     draftSettlementCount: 8,
     activeCommissionRuleCount: 9,

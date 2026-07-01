@@ -10,8 +10,6 @@ import {
   DASHBOARD_LITE_REVENUE_RECONCILED_RECONCILED_AT_INDEX_NAME,
   DASHBOARD_LITE_SETTLEMENT_DRAFT_CREATED_AT_INDEX_NAME,
   DASHBOARD_LITE_SETTLEMENT_FINALIZED_FINALIZED_AT_INDEX_NAME,
-  DASHBOARD_LITE_TALENT_KPI_DRAFT_CREATED_AT_INDEX_NAME,
-  DASHBOARD_LITE_TALENT_KPI_FINALIZED_PUBLISHED_AT_INDEX_NAME,
   initDashboardLiteSupportIndexes,
 } from "@infra/mongo/dashboard-lite/dashboard-lite.index";
 import {
@@ -66,33 +64,6 @@ export function createDashboardLiteBootstrapRegistrar(): BootstrapRegistrar {
         {
           status: "ACTIVE",
           effectiveEndDate: {
-            $type: "number",
-          },
-        },
-      );
-
-      await assertRequiredPartialIndex(
-        db,
-        "talent_kpi_records",
-        DASHBOARD_LITE_TALENT_KPI_DRAFT_CREATED_AT_INDEX_NAME,
-        {
-          createdAt: 1,
-        },
-        {
-          status: "DRAFT",
-        },
-      );
-
-      await assertRequiredPartialIndex(
-        db,
-        "talent_kpi_records",
-        DASHBOARD_LITE_TALENT_KPI_FINALIZED_PUBLISHED_AT_INDEX_NAME,
-        {
-          publishedAt: 1,
-        },
-        {
-          status: "FINALIZED",
-          publishedAt: {
             $type: "number",
           },
         },

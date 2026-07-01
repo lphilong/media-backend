@@ -11,8 +11,6 @@ import {
   DASHBOARD_LITE_REVENUE_RECONCILED_RECONCILED_AT_INDEX_NAME,
   DASHBOARD_LITE_SETTLEMENT_DRAFT_CREATED_AT_INDEX_NAME,
   DASHBOARD_LITE_SETTLEMENT_FINALIZED_FINALIZED_AT_INDEX_NAME,
-  DASHBOARD_LITE_TALENT_KPI_DRAFT_CREATED_AT_INDEX_NAME,
-  DASHBOARD_LITE_TALENT_KPI_FINALIZED_PUBLISHED_AT_INDEX_NAME,
 } from "@infra/mongo/dashboard-lite/dashboard-lite.index";
 import { EVENT_STATUS_WINDOW_INDEX_NAME } from "@infra/mongo/event-assignment/event-assignment.index";
 import { DashboardLiteSnapshotProjection } from "@modules/dashboard-lite/domain/dashboard-lite.types";
@@ -30,12 +28,6 @@ interface EventReadDocument {
   readonly status: "PLANNED" | "CONFIRMED";
   readonly eventStartAt: number;
   readonly eventEndAt: number;
-}
-
-interface TalentKpiReadDocument {
-  readonly status: "DRAFT" | "FINALIZED";
-  readonly createdAt: number;
-  readonly publishedAt: number | null;
 }
 
 interface RevenueEntryReadDocument {
@@ -91,7 +83,6 @@ const FALLBACK_TIMING_CONTEXT: DashboardLiteTimingContext = Object.freeze({
 
 export class NativeMongoDashboardLiteReadRepository implements DashboardLiteReadRepository {
   private readonly eventsCollection: Collection<EventReadDocument>;
-  private readonly talentKpiCollection: Collection<TalentKpiReadDocument>;
   private readonly revenueEntriesCollection: Collection<RevenueEntryReadDocument>;
   private readonly commissionRulesCollection: Collection<CommissionRuleReadDocument>;
   private readonly commissionSettlementsCollection: Collection<CommissionSettlementReadDocument>;
@@ -101,8 +92,6 @@ export class NativeMongoDashboardLiteReadRepository implements DashboardLiteRead
 
   constructor(db: Db, options: DashboardLiteReadRepositoryOptions = {}) {
     this.eventsCollection = db.collection<EventReadDocument>("events");
-    this.talentKpiCollection =
-      db.collection<TalentKpiReadDocument>("talent_kpi_records");
     this.revenueEntriesCollection =
       db.collection<RevenueEntryReadDocument>("revenue_entries");
     this.commissionRulesCollection =
@@ -126,19 +115,17 @@ export class NativeMongoDashboardLiteReadRepository implements DashboardLiteRead
         timingContext,
         now: this.timingNow,
         metadata: {
-          metricGroupCount: 5,
+          metricGroupCount: 4,
         },
       },
       async () => {
         const [
           eventMetrics,
-          talentKpiMetrics,
           revenueMetrics,
           commissionMetrics,
           expiringContractCount30d,
         ] = await Promise.all([
           this.readEventMetrics(input, timingContext),
-          this.readTalentKpiMetrics(input, timingContext),
           this.readRevenueMetrics(input, timingContext),
           this.readCommissionMetrics(input, timingContext),
           this.readExpiringContractCount(input, timingContext),
@@ -147,10 +134,6 @@ export class NativeMongoDashboardLiteReadRepository implements DashboardLiteRead
         return {
           todayEventCount: eventMetrics.todayEventCount,
           next7DayEventCount: eventMetrics.next7DayEventCount,
-          draftTalentKpiCount: talentKpiMetrics.draftTalentKpiCount,
-          finalizedTalentKpiCount30d:
-            talentKpiMetrics.finalizedTalentKpiCount30d,
-          staleTalentKpiDraftCount: talentKpiMetrics.staleTalentKpiDraftCount,
           draftRevenueEntryCount: revenueMetrics.draftRevenueEntryCount,
           finalizedRevenueAmount30d: revenueMetrics.finalizedRevenueAmount30d,
           reconciledRevenueAmount30d: revenueMetrics.reconciledRevenueAmount30d,
@@ -248,110 +231,6 @@ export class NativeMongoDashboardLiteReadRepository implements DashboardLiteRead
         return {
           todayEventCount,
           next7DayEventCount,
-        };
-      },
-    );
-  }
-
-  private async readTalentKpiMetrics(
-    input: DashboardLiteSnapshotReadInput,
-    timingContext: DashboardLiteTimingContext,
-  ): Promise<{
-    readonly draftTalentKpiCount: number;
-    readonly finalizedTalentKpiCount30d: number;
-    readonly staleTalentKpiDraftCount: number;
-  }> {
-    return measureDashboardLiteStage(
-      {
-        operation: "dashboardLite.metrics.talentKpi",
-        logger: this.logger,
-        timingContext,
-        now: this.timingNow,
-        metadata: {
-          metricGroup: "talentKpi",
-        },
-      },
-      async () => {
-        const [draftSummary, finalizedTalentKpiCount30d] = await Promise.all([
-          this.measureMongoOperation(
-            timingContext,
-            {
-              operation: "dashboardLite.metrics.talentKpi.draftSummary",
-              metricGroup: "talentKpi",
-              collectionName: "talent_kpi_records",
-              operationKind: "aggregate",
-              businessWindow: "staleDrafts",
-              metricNames: ["draftTalentKpiCount", "staleTalentKpiDraftCount"],
-            },
-            () =>
-              this.talentKpiCollection
-                .aggregate<DualCountAggregationDocument>(
-                  [
-                    {
-                      $match: {
-                        status: "DRAFT",
-                      },
-                    },
-                    {
-                      $group: {
-                        _id: null,
-                        count: { $sum: 1 },
-                        staleCount: {
-                          $sum: {
-                            $cond: [
-                              {
-                                $lt: [
-                                  "$createdAt",
-                                  input.staleDraftThresholdAt,
-                                ],
-                              },
-                              1,
-                              0,
-                            ],
-                          },
-                        },
-                      },
-                    },
-                  ],
-                  {
-                    hint: DASHBOARD_LITE_TALENT_KPI_DRAFT_CREATED_AT_INDEX_NAME,
-                  },
-                )
-                .toArray(),
-            (rows) => ({ resultCount: rows.length }),
-          ),
-          this.measureMongoOperation(
-            timingContext,
-            {
-              operation: "dashboardLite.metrics.talentKpi.finalized30d",
-              metricGroup: "talentKpi",
-              collectionName: "talent_kpi_records",
-              operationKind: "countDocuments",
-              businessWindow: "trailing30Days",
-            },
-            () =>
-              this.talentKpiCollection.countDocuments(
-                {
-                  status: "FINALIZED",
-                  publishedAt: {
-                    $gte: input.trailing30DayWindowStartAt,
-                    $lt: input.generatedAt,
-                  },
-                },
-                {
-                  hint: DASHBOARD_LITE_TALENT_KPI_FINALIZED_PUBLISHED_AT_INDEX_NAME,
-                },
-              ),
-            (count) => ({ resultCount: count }),
-          ),
-        ]);
-
-        const summary = draftSummary[0];
-
-        return {
-          draftTalentKpiCount: readNumeric(summary?.count),
-          finalizedTalentKpiCount30d,
-          staleTalentKpiDraftCount: readNumeric(summary?.staleCount),
         };
       },
     );

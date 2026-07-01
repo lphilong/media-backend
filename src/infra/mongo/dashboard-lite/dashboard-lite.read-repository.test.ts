@@ -129,9 +129,6 @@ test("Native Mongo Dashboard Lite repository logs groups and operations without 
   assert.deepEqual(projection, {
     todayEventCount: 11,
     next7DayEventCount: 22,
-    draftTalentKpiCount: 3,
-    finalizedTalentKpiCount30d: 4,
-    staleTalentKpiDraftCount: 5,
     draftRevenueEntryCount: 6,
     finalizedRevenueAmount30d: 700.25,
     reconciledRevenueAmount30d: 650.5,
@@ -152,9 +149,6 @@ test("Native Mongo Dashboard Lite repository logs groups and operations without 
     "dashboardLite.metrics.events",
     "dashboardLite.metrics.events.today",
     "dashboardLite.metrics.events.next7Days",
-    "dashboardLite.metrics.talentKpi",
-    "dashboardLite.metrics.talentKpi.draftSummary",
-    "dashboardLite.metrics.talentKpi.finalized30d",
     "dashboardLite.metrics.revenue",
     "dashboardLite.metrics.revenue.draftSummary",
     "dashboardLite.metrics.revenue.finalized30d",
@@ -209,12 +203,6 @@ function createFakeDb(): Db {
     [
       "events",
       createCountingCollection([11, 22], []),
-    ],
-    [
-      "talent_kpi_records",
-      createCountingCollection( [4], [
-        [{ _id: null, count: 3, staleCount: 5 }],
-      ]),
     ],
     [
       "revenue_entries",

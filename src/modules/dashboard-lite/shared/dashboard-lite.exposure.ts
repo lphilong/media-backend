@@ -47,7 +47,6 @@ const DASHBOARD_LITE_CONTRACT_EXPIRY_FIELDS = [
 
 const DASHBOARD_LITE_OVERVIEW_FIELDS = [
   "todayEventCount",
-  "draftTalentKpiCount",
   "draftRevenueEntryCount",
   "draftSettlementCount",
   "activeCommissionRuleCount",
@@ -57,8 +56,6 @@ const DASHBOARD_LITE_OVERVIEW_FIELDS = [
 const DASHBOARD_LITE_OPERATIONS_FIELDS = [
   "todayEventCount",
   "next7DayEventCount",
-  "draftTalentKpiCount",
-  "finalizedTalentKpiCount30d",
 ] as const;
 
 const DASHBOARD_LITE_COMMERCIAL_FIELDS = [
@@ -71,7 +68,6 @@ const DASHBOARD_LITE_COMMERCIAL_FIELDS = [
 ] as const;
 
 const DASHBOARD_LITE_ATTENTION_FIELDS = [
-  "staleTalentKpiDraftCount",
   "staleRevenueDraftCount",
   "staleSettlementDraftCount",
   "expiringContractCount30d",
@@ -172,7 +168,6 @@ function exposeOverview(
     ExposurePolicy.expose(
       {
         todayEventCount: input.todayEventCount,
-        draftTalentKpiCount: input.draftTalentKpiCount,
         draftRevenueEntryCount:
           input.draftRevenueEntryCount,
         draftSettlementCount:
@@ -197,9 +192,6 @@ function exposeOperations(
         todayEventCount: input.todayEventCount,
         next7DayEventCount:
           input.next7DayEventCount,
-        draftTalentKpiCount: input.draftTalentKpiCount,
-        finalizedTalentKpiCount30d:
-          input.finalizedTalentKpiCount30d,
       },
       DASHBOARD_LITE_OPERATIONS_FIELDS,
     ),
@@ -238,8 +230,6 @@ function exposeAttention(
   return toPlainObject(
     ExposurePolicy.expose(
       {
-        staleTalentKpiDraftCount:
-          input.staleTalentKpiDraftCount,
         staleRevenueDraftCount:
           input.staleRevenueDraftCount,
         staleSettlementDraftCount:

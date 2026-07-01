@@ -3,11 +3,6 @@ import { Db } from "mongodb";
 export const DASHBOARD_LITE_CONTRACT_ACTIVE_EFFECTIVE_END_DATE_INDEX_NAME =
   "idx_dashboard_lite_contract_active_effective_end_date";
 
-export const DASHBOARD_LITE_TALENT_KPI_DRAFT_CREATED_AT_INDEX_NAME =
-  "idx_dashboard_lite_talent_kpi_draft_created_at";
-export const DASHBOARD_LITE_TALENT_KPI_FINALIZED_PUBLISHED_AT_INDEX_NAME =
-  "idx_dashboard_lite_talent_kpi_finalized_published_at";
-
 export const DASHBOARD_LITE_REVENUE_DRAFT_CREATED_AT_INDEX_NAME =
   "idx_dashboard_lite_revenue_draft_created_at";
 export const DASHBOARD_LITE_REVENUE_FINALIZED_FINALIZED_AT_INDEX_NAME =
@@ -36,37 +31,6 @@ export async function initDashboardLiteSupportIndexes(
       partialFilterExpression: {
         status: "ACTIVE",
         effectiveEndDate: {
-          $type: "number",
-        },
-      },
-    },
-  );
-
-  const talentKpiRecords = db.collection(
-    "talent_kpi_records",
-  );
-  await talentKpiRecords.createIndex(
-    {
-      createdAt: 1,
-    },
-    {
-      name:
-        DASHBOARD_LITE_TALENT_KPI_DRAFT_CREATED_AT_INDEX_NAME,
-      partialFilterExpression: {
-        status: "DRAFT",
-      },
-    },
-  );
-  await talentKpiRecords.createIndex(
-    {
-      publishedAt: 1,
-    },
-    {
-      name:
-        DASHBOARD_LITE_TALENT_KPI_FINALIZED_PUBLISHED_AT_INDEX_NAME,
-      partialFilterExpression: {
-        status: "FINALIZED",
-        publishedAt: {
           $type: "number",
         },
       },

@@ -165,7 +165,6 @@ function toSnapshotView(
     windows: toWindowsView(window),
     overview: {
       todayEventCount: projection.todayEventCount,
-      draftTalentKpiCount: projection.draftTalentKpiCount,
       draftRevenueEntryCount: projection.draftRevenueEntryCount,
       draftSettlementCount: projection.draftSettlementCount,
       activeCommissionRuleCount: projection.activeCommissionRuleCount,
@@ -174,8 +173,6 @@ function toSnapshotView(
     operations: {
       todayEventCount: projection.todayEventCount,
       next7DayEventCount: projection.next7DayEventCount,
-      draftTalentKpiCount: projection.draftTalentKpiCount,
-      finalizedTalentKpiCount30d: projection.finalizedTalentKpiCount30d,
     },
     commercial: {
       draftRevenueEntryCount: projection.draftRevenueEntryCount,
@@ -186,7 +183,6 @@ function toSnapshotView(
       activeCommissionRuleCount: projection.activeCommissionRuleCount,
     },
     attention: {
-      staleTalentKpiDraftCount: projection.staleTalentKpiDraftCount,
       staleRevenueDraftCount: projection.staleRevenueDraftCount,
       staleSettlementDraftCount: projection.staleSettlementDraftCount,
       expiringContractCount30d: projection.expiringContractCount30d,

@@ -7,7 +7,6 @@ export type DashboardLiteScope =
 
 export interface DashboardLiteOverviewView {
   readonly todayEventCount: number;
-  readonly draftTalentKpiCount: number;
   readonly draftRevenueEntryCount: number;
   readonly draftSettlementCount: number;
   readonly activeCommissionRuleCount: number;
@@ -17,8 +16,6 @@ export interface DashboardLiteOverviewView {
 export interface DashboardLiteOperationsView {
   readonly todayEventCount: number;
   readonly next7DayEventCount: number;
-  readonly draftTalentKpiCount: number;
-  readonly finalizedTalentKpiCount30d: number;
 }
 
 export interface DashboardLiteCommercialView {
@@ -31,7 +28,6 @@ export interface DashboardLiteCommercialView {
 }
 
 export interface DashboardLiteAttentionView {
-  readonly staleTalentKpiDraftCount: number;
   readonly staleRevenueDraftCount: number;
   readonly staleSettlementDraftCount: number;
   readonly expiringContractCount30d: number;
@@ -73,9 +69,6 @@ export interface DashboardLiteSnapshotView {
 export interface DashboardLiteSnapshotProjection {
   readonly todayEventCount: number;
   readonly next7DayEventCount: number;
-  readonly draftTalentKpiCount: number;
-  readonly finalizedTalentKpiCount30d: number;
-  readonly staleTalentKpiDraftCount: number;
   readonly draftRevenueEntryCount: number;
   readonly finalizedRevenueAmount30d: number;
   readonly reconciledRevenueAmount30d: number;
