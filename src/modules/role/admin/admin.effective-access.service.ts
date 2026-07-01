@@ -9,6 +9,7 @@ import {
 } from "@modules/account-context/domain/account-context.types";
 import { RoleAssignmentScopeGrant, buildRoleAssignmentScopeFingerprint } from "@modules/role/domain/role-assignment-scope";
 import { isRoleAssignmentCurrentlyEffective } from "@modules/role/domain/role-assignment-lifecycle";
+import { classifySensitiveAccess } from "@modules/role/domain/sensitive-access-policy";
 import { RoleDependencyError } from "@modules/role/domain/role.errors";
 import { UserRoleAssignmentRecord } from "@modules/role/domain/role.types";
 
@@ -45,6 +46,7 @@ interface RoleDocument {
   readonly name: string;
   readonly state: string;
   readonly permissions: readonly string[];
+  readonly templateCode?: string;
 }
 
 export class EffectiveAccessAdminService {
@@ -84,6 +86,15 @@ export class EffectiveAccessAdminService {
         continue;
       }
       for (const permission of role.permissions) {
+        const accessRisk = classifySensitiveAccess([
+          {
+            roleCode: role.code,
+            roleTemplateCode: role.templateCode ?? role.code,
+            permissions: role.permissions,
+            structuredScopeGrants: assignment.structuredScopeGrants ?? [],
+            bundleCode: assignment.bundleOrigin?.bundleCode ?? null,
+          },
+        ]);
         const sources = permissionSources.get(permission) ?? [];
         sources.push({
           assignmentId: assignment._id,
@@ -97,6 +108,12 @@ export class EffectiveAccessAdminService {
           legacyScopeGrants: assignment.scopeGrants ?? null,
           origin: assignment.origin ?? "LEGACY",
           bundleOrigin: assignment.bundleOrigin ?? null,
+          accessRisk,
+          isSensitive: accessRisk.isSensitive,
+          isGlobalLike: accessRisk.isGlobalLike,
+          isHighRisk: accessRisk.isHighRisk,
+          requiresReview: accessRisk.requiresReview,
+          isBreakGlassLike: accessRisk.isBreakGlassLike,
         });
         permissionSources.set(permission, sources);
       }
@@ -105,6 +122,15 @@ export class EffectiveAccessAdminService {
     const assignments = activeAssignments.map((assignment) => {
       const role = roleById.get(assignment.roleId);
       const structuredScopeGrants = assignment.structuredScopeGrants ?? [];
+      const accessRisk = classifySensitiveAccess([
+        {
+          roleCode: role?.code ?? null,
+          roleTemplateCode: role?.templateCode ?? role?.code ?? null,
+          permissions: role ? role.permissions : [],
+          structuredScopeGrants,
+          bundleCode: assignment.bundleOrigin?.bundleCode ?? null,
+        },
+      ]);
       return {
         assignmentId: assignment._id,
         roleId: assignment.roleId,
@@ -124,9 +150,13 @@ export class EffectiveAccessAdminService {
         reviewAt: assignment.reviewAt ?? null,
         origin: assignment.origin ?? "LEGACY",
         bundleOrigin: assignment.bundleOrigin ?? null,
-        sensitiveOrGlobal: structuredScopeGrants.some((grant) =>
-          ["global", "financeGlobal"].includes(grant.scopeType),
-        ),
+        sensitiveOrGlobal: accessRisk.isSensitive || accessRisk.isGlobalLike,
+        isSensitive: accessRisk.isSensitive,
+        isGlobalLike: accessRisk.isGlobalLike,
+        isHighRisk: accessRisk.isHighRisk,
+        requiresReview: accessRisk.requiresReview,
+        isBreakGlassLike: accessRisk.isBreakGlassLike,
+        accessRisk,
       };
     });
 
@@ -160,6 +190,7 @@ export class EffectiveAccessAdminService {
         id: role._id,
         code: role.code,
         name: role.name,
+        templateCode: role.templateCode ?? null,
       })),
       permissions: [...permissionSources.keys()].sort(),
       permissionSourceTrace: [...permissionSources.entries()]

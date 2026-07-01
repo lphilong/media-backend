@@ -15,6 +15,7 @@ import {
   RoleAssignmentScopeGrant,
   buildRoleAssignmentScopeFingerprint,
 } from "@modules/role/domain/role-assignment-scope";
+import { classifySensitiveAccess } from "@modules/role/domain/sensitive-access-policy";
 import {
   RoleDependencyError,
   RoleValidationError,
@@ -423,6 +424,16 @@ function toAssignmentLifecycleView(
   const currentlyEffective = isRoleAssignmentCurrentlyEffective(assignment, now);
   const scopeFingerprint =
     assignment.scopeFingerprint ?? buildRoleAssignmentScopeFingerprint(undefined);
+  const structuredScopeGrants = assignment.structuredScopeGrants ?? [];
+  const accessRisk = classifySensitiveAccess([
+    {
+      roleCode: role?.code ?? null,
+      roleTemplateCode: role?.templateCode ?? role?.code ?? null,
+      permissions: role?.permissions ?? [],
+      structuredScopeGrants,
+      bundleCode: assignment.bundleOrigin?.bundleCode ?? null,
+    },
+  ]);
 
   return {
     assignmentId: assignment._id,
@@ -432,7 +443,7 @@ function toAssignmentLifecycleView(
     roleName: role?.name ?? null,
     roleTemplateCode: role?.templateCode ?? null,
     roleTemplateVersion: role?.templateVersion ?? null,
-    structuredScopeGrants: assignment.structuredScopeGrants ?? [],
+    structuredScopeGrants,
     scopeFingerprint,
     status: assignment.state,
     lifecycleState: assignment.state,
@@ -454,9 +465,13 @@ function toAssignmentLifecycleView(
     origin: assignment.origin ?? "LEGACY",
     bundleOrigin: assignment.bundleOrigin ?? null,
     reason: assignment.reason,
-    sensitiveOrGlobal: (assignment.structuredScopeGrants ?? []).some((grant) =>
-      ["global", "financeGlobal"].includes(grant.scopeType),
-    ),
+    sensitiveOrGlobal: accessRisk.isSensitive || accessRisk.isGlobalLike,
+    isSensitive: accessRisk.isSensitive,
+    isGlobalLike: accessRisk.isGlobalLike,
+    isHighRisk: accessRisk.isHighRisk,
+    requiresReview: accessRisk.requiresReview,
+    isBreakGlassLike: accessRisk.isBreakGlassLike,
+    accessRisk,
     supportedActions: assignment.state === "ACTIVE" ? ["REVOKE"] : [],
     auditSummary: {
       assignmentId: assignment._id,

@@ -26,6 +26,11 @@ const TRUE_LEGACY_ASSIGNMENT_TARGET_CODES = [
   "TALENT_STAFF_SELF",
 ] as const;
 
+const EFFECTIVE_AT = Date.UTC(2026, 0, 1);
+const REVIEW_AT_30_DAYS = Date.UTC(2026, 0, 31);
+const REVIEW_AT_120_DAYS = Date.UTC(2026, 3, 30);
+const EXPIRES_AT_7_DAYS = Date.UTC(2026, 0, 8);
+
 test("access assignment preview normalizes scope and computes proposed manager access without mutation", async () => {
   const db = fakeDb({
     users: [activeUser("target-user", ["MANAGER_CONSOLE"])],
@@ -258,6 +263,8 @@ test("access assignment preview expands canonical auditor bundle in memory witho
     bundleVersion: "2026-06-26",
     structuredScopeGrants: [{ scopeType: "global" }],
     reason: "audit coverage",
+    effectiveAt: EFFECTIVE_AT,
+    reviewAt: REVIEW_AT_30_DAYS,
   });
 
   assert.equal(result.canApply, true);
@@ -300,6 +307,8 @@ test("access assignment preview treats canonical target roles as assignable", as
       assignmentTargetCode: code,
       structuredScopeGrants: [{ scopeType: "global" }],
       reason: `canonical assignment for ${code}`,
+      effectiveAt: EFFECTIVE_AT,
+      reviewAt: REVIEW_AT_30_DAYS,
     });
 
     assert.equal(result.canApply, true);
@@ -367,6 +376,8 @@ test("access assignment preview blocks direct true legacy ROLE targets", async (
       assignmentTargetCode: code,
       structuredScopeGrants: [{ scopeType: "global" }],
       reason: "legacy check",
+      effectiveAt: EFFECTIVE_AT,
+      reviewAt: REVIEW_AT_30_DAYS,
     });
 
     assert.equal(result.canApply, false);
@@ -395,6 +406,9 @@ test("access assignment preview blocks sensitive global access without reason an
     assignmentTargetCode: "OWNER_ADMIN",
     structuredScopeGrants: [{ scopeType: "global" }],
     actorUserId: "actor-user",
+    effectiveAt: EFFECTIVE_AT,
+    reviewAt: Date.UTC(2026, 0, 8),
+    expiresAt: EXPIRES_AT_7_DAYS,
   } as Parameters<AccessAssignmentPreviewAdminService["preview"]>[0]);
 
   assert.equal(result.canApply, false);
@@ -403,6 +417,72 @@ test("access assignment preview blocks sensitive global access without reason an
     "SELF_ASSIGNMENT_BLOCKED",
   ]);
   assert.equal(db.writeCount, 0);
+});
+
+test("access assignment preview requires review for sensitive or global grants", async () => {
+  const db = fakeDb({
+    users: [activeUser("target-user", ["ADMIN_CONSOLE"])],
+    employment_profiles: [activeProfile("profile-1", "target-user")],
+    roles: [
+      role("role-auditor", "VIEWER_AUDITOR", [Permission.KPI_READ]),
+    ],
+    role_assignments: [],
+    responsibility_assignments: [],
+  });
+
+  const missingReview = await new AccessAssignmentPreviewAdminService(db).preview({
+    targetUserId: "target-user",
+    assignmentTargetType: "ROLE_TEMPLATE",
+    assignmentTargetCode: "VIEWER_AUDITOR",
+    structuredScopeGrants: [{ scopeType: "global" }],
+    reason: "global audit access",
+    effectiveAt: EFFECTIVE_AT,
+  });
+  assert.equal(missingReview.canApply, false);
+  assert.deepEqual(readCodes(missingReview.blockers), ["REVIEW_AT_REQUIRED"]);
+  assert.equal(readPath(missingReview, ["sensitiveAccess", "isGlobalLike"]), true);
+  assert.equal(readPath(missingReview, ["sensitiveAccess", "requiresReview"]), true);
+
+  const lateReview = await new AccessAssignmentPreviewAdminService(db).preview({
+    targetUserId: "target-user",
+    assignmentTargetType: "ROLE_TEMPLATE",
+    assignmentTargetCode: "VIEWER_AUDITOR",
+    structuredScopeGrants: [{ scopeType: "global" }],
+    reason: "global audit access",
+    effectiveAt: EFFECTIVE_AT,
+    reviewAt: REVIEW_AT_120_DAYS,
+  });
+  assert.equal(lateReview.canApply, false);
+  assert.deepEqual(readCodes(lateReview.blockers), [
+    "REVIEW_AT_EXCEEDS_MAX_WINDOW",
+  ]);
+});
+
+test("access assignment preview classifies owner admin as break-glass-like and requires short expiry", async () => {
+  const db = fakeDb({
+    users: [activeUser("target-user", ["ADMIN_CONSOLE"])],
+    employment_profiles: [activeProfile("profile-1", "target-user")],
+    roles: [
+      role("role-owner", "OWNER_ADMIN", [Permission.ROLE_ASSIGN_TO_USER]),
+    ],
+    role_assignments: [],
+    responsibility_assignments: [],
+  });
+
+  const result = await new AccessAssignmentPreviewAdminService(db).preview({
+    targetUserId: "target-user",
+    assignmentTargetType: "ROLE_TEMPLATE",
+    assignmentTargetCode: "OWNER_ADMIN",
+    structuredScopeGrants: [{ scopeType: "global" }],
+    reason: "emergency owner recovery",
+    effectiveAt: EFFECTIVE_AT,
+    reviewAt: Date.UTC(2026, 0, 8),
+  });
+
+  assert.equal(result.canApply, false);
+  assert.deepEqual(readCodes(result.blockers), ["EXPIRES_AT_REQUIRED"]);
+  assert.equal(readPath(result, ["sensitiveAccess", "isBreakGlassLike"]), true);
+  assert.equal(readPath(result, ["sensitiveAccess", "maxExpiryWindowDays"]), 14);
 });
 
 test("access assignment preview duplicate checks match current active-state lifecycle behavior", async () => {

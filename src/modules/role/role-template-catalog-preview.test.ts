@@ -190,6 +190,14 @@ test("target role templates keep contract obligation evidence mutation authority
     ),
     true,
   );
+  assert.equal(
+    auditor?.permissions.includes(Permission.EMPLOYMENT_TERMS_READ),
+    true,
+  );
+  assert.equal(
+    auditor?.permissions.includes(Permission.EMPLOYMENT_TERMS_READ_SENSITIVE),
+    false,
+  );
 
   const externalTalentTemplates = ROLE_TEMPLATE_CATALOG.filter(
     (template) =>

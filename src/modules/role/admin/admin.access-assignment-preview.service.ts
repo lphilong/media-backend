@@ -12,6 +12,10 @@ import {
   normalizeRoleAssignmentScopeGrants,
   RoleAssignmentScopeGrant,
 } from "@modules/role/domain/role-assignment-scope";
+import {
+  classifySensitiveAccess,
+  validateSensitiveAccessLifecycle,
+} from "@modules/role/domain/sensitive-access-policy";
 import { isRoleAssignmentCurrentlyEffective } from "@modules/role/domain/role-assignment-lifecycle";
 import { getRoleBundle, listRoleBundles } from "@modules/role/domain/role-bundle.catalog";
 import {
@@ -145,18 +149,6 @@ const MANAGER_REQUIREMENTS = {
   },
 } as const;
 
-const HIGH_RISK_ROLE_CODES = new Set([
-  "OWNER_ADMIN",
-  "ACCESS_ADMIN",
-  "HR_TERMS_APPROVER",
-  "REVENUE_APPROVER",
-  "REVENUE_RECONCILER",
-  "COMMISSION_APPROVER",
-  "ATTENDANCE_APPROVER",
-  "MONTHLY_CLOSE_OWNER",
-  "PAYROLL_DRAFT_APPROVER",
-]);
-
 export class AccessAssignmentPreviewAdminService {
   private readonly users: Collection<UserDocument>;
   private readonly employmentProfiles: Collection<EmploymentProfileDocument>;
@@ -216,7 +208,13 @@ export class AccessAssignmentPreviewAdminService {
           requiredScopeTypes: template.scopePlan.flatMap((entry) => entry.scopes),
           requiresResponsibility: isManagerRoleCode(template.code),
           requiredResponsibilityType: requiredResponsibilityTypeForRole(template.code),
-          sensitiveLevel: HIGH_RISK_ROLE_CODES.has(template.code)
+          sensitiveLevel: classifySensitiveAccess([
+            {
+              roleCode: template.code,
+              roleTemplateCode: template.code,
+              permissions: getRoleTemplate(template.code)?.permissions ?? [],
+            },
+          ]).isHighRisk
             ? "HIGH_RISK"
             : "STANDARD",
           legacyAssignable: !LEGACY_ASSIGNMENT_TARGET_CODES.has(template.code),
@@ -303,12 +301,18 @@ export class AccessAssignmentPreviewAdminService {
       blockers.push(blocker("SELF_ASSIGNMENT_BLOCKED", "Current actor cannot assign access to themselves."));
     }
 
-    const sensitiveAccess = evaluateSensitiveAccess(
-      proposedAssignments,
-      targetResolution.sensitive,
-    );
+    const sensitiveAccess = buildSensitiveAccessView({
+      assignments: proposedAssignments,
+      catalogSensitive: targetResolution.sensitive,
+      effectiveAt,
+      reviewAt,
+      expiresAt,
+    });
     if (sensitiveAccess.reasonRequired && !reason) {
       blockers.push(blocker("REASON_REQUIRED", "Reason is required for sensitive or global access."));
+    }
+    for (const lifecycleBlocker of sensitiveAccess.lifecycleBlockers) {
+      blockers.push(blocker(lifecycleBlocker.code, lifecycleBlocker.summary));
     }
     if (sensitiveAccess.sensitiveOrGlobal) {
       warnings.push(warning("ADDITIONAL_REVIEW_REQUIRED", "Additional review is required for sensitive or global access."));
@@ -607,7 +611,13 @@ export class AccessAssignmentPreviewAdminService {
       },
       bundleOrigin: null,
       bundleExpansion: null,
-      sensitive: HIGH_RISK_ROLE_CODES.has(governingCode),
+      sensitive: classifySensitiveAccess([
+        {
+          roleCode: role.code,
+          roleTemplateCode: governingCode,
+          permissions: role.permissions,
+        },
+      ]).isSensitive,
       requiredAccountContexts: template ? [template.recommendedAccountContext] : [],
       legacyRoleStatus: {
         checked: true,
@@ -854,6 +864,15 @@ function assignmentToEffectiveAccessItem(
   if (!role) {
     return null;
   }
+  const accessRisk = classifySensitiveAccess([
+    {
+      roleCode: role.code,
+      roleTemplateCode: role.templateCode ?? role.code,
+      permissions: role.permissions,
+      structuredScopeGrants: assignment.structuredScopeGrants ?? [],
+      bundleCode: assignment.bundleOrigin?.bundleCode ?? null,
+    },
+  ]);
   return {
     assignmentId: assignment._id,
     roleId: assignment.roleId,
@@ -870,12 +889,26 @@ function assignmentToEffectiveAccessItem(
     origin: assignment.origin ?? "LEGACY",
     bundleOrigin: assignment.bundleOrigin ?? null,
     previewProposed: false,
+    accessRisk,
+    isSensitive: accessRisk.isSensitive,
+    isGlobalLike: accessRisk.isGlobalLike,
+    isHighRisk: accessRisk.isHighRisk,
+    requiresReview: accessRisk.requiresReview,
+    isBreakGlassLike: accessRisk.isBreakGlassLike,
   };
 }
 
 function proposedAssignmentToEffectiveAccessItem(
   assignment: ProposedAssignment,
 ): Record<string, unknown> {
+  const accessRisk = classifySensitiveAccess([
+    {
+      roleCode: assignment.roleCode,
+      permissions: assignment.permissions,
+      structuredScopeGrants: assignment.structuredScopeGrants,
+      bundleCode: assignment.bundleOrigin?.bundleCode ?? null,
+    },
+  ]);
   return {
     assignmentId: assignment.assignmentId,
     roleId: assignment.roleId,
@@ -891,33 +924,60 @@ function proposedAssignmentToEffectiveAccessItem(
     origin: assignment.origin,
     bundleOrigin: assignment.bundleOrigin,
     previewProposed: true,
+    accessRisk,
+    isSensitive: accessRisk.isSensitive,
+    isGlobalLike: accessRisk.isGlobalLike,
+    isHighRisk: accessRisk.isHighRisk,
+    requiresReview: accessRisk.requiresReview,
+    isBreakGlassLike: accessRisk.isBreakGlassLike,
   };
 }
 
-function evaluateSensitiveAccess(
-  assignments: readonly ProposedAssignment[],
-  catalogSensitive: boolean,
-): Record<string, unknown> & {
+function buildSensitiveAccessView(params: {
+  readonly assignments: readonly ProposedAssignment[];
+  readonly catalogSensitive: boolean;
+  readonly effectiveAt: number;
+  readonly reviewAt: number | null;
+  readonly expiresAt: number | null;
+}): Record<string, unknown> & {
   readonly sensitiveOrGlobal: boolean;
   readonly reasonRequired: boolean;
+  readonly lifecycleBlockers: readonly { readonly code: string; readonly summary: string }[];
 } {
-  const globalScopes = assignments.flatMap((assignment) =>
-    assignment.structuredScopeGrants.filter((grant) =>
-      ["global", "financeGlobal"].includes(grant.scopeType),
-    ),
-  );
-  const highRiskRoles = assignments.filter((assignment) =>
-    HIGH_RISK_ROLE_CODES.has(assignment.roleCode),
-  );
-  const sensitiveOrGlobal =
-    catalogSensitive || globalScopes.length > 0 || highRiskRoles.length > 0;
+  const classification = classifySensitiveAccess(params.assignments, {
+    catalogSensitive: params.catalogSensitive,
+  });
+  const lifecycleValidation = validateSensitiveAccessLifecycle(classification, {
+    effectiveAt: params.effectiveAt,
+    reviewAt: params.reviewAt,
+    expiresAt: params.expiresAt,
+  });
+  const sensitiveOrGlobal = classification.isSensitive || classification.isGlobalLike;
   return {
     sensitiveOrGlobal,
-    reasonRequired: sensitiveOrGlobal,
-    globalScopes,
-    highRiskRoleCodes: highRiskRoles.map((assignment) => assignment.roleCode),
-    reviewPolicy: "REVIEW_REQUIRED_WHERE_OWNER_POLICY_EXISTS",
-    approvalWorkflow: "NOT_IMPLEMENTED_IN_4A",
+    isSensitive: classification.isSensitive,
+    isGlobalLike: classification.isGlobalLike,
+    isHighRisk: classification.isHighRisk,
+    requiresReview: classification.requiresReview,
+    reasonRequired: classification.requiresReason,
+    requiresExpiry: classification.requiresExpiry,
+    isBreakGlassLike: classification.isBreakGlassLike,
+    isPrivilegedAccessGovernance: classification.isPrivilegedAccessGovernance,
+    reviewAt: params.reviewAt,
+    expiresAt: params.expiresAt,
+    maxReviewWindowDays: classification.maxReviewWindowDays,
+    maxExpiryWindowDays: classification.maxExpiryWindowDays,
+    globalScopes: classification.globalScopes,
+    highRiskRoleCodes: classification.highRiskRoleCodes,
+    sensitiveRoleCodes: classification.sensitiveRoleCodes,
+    sensitivePermissions: classification.sensitivePermissions,
+    riskReasons: classification.riskReasons,
+    lifecycleBlockers: lifecycleValidation.blockers,
+    denyReasons: lifecycleValidation.blockers.map((item) => item.code),
+    reviewPolicy: classification.requiresReview
+      ? "REVIEW_REQUIRED"
+      : "NOT_REQUIRED",
+    approvalWorkflow: "NOT_IMPLEMENTED_IN_AUTH_5A",
   };
 }
 

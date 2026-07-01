@@ -1053,6 +1053,7 @@ function actor(id: string, permissions: readonly Permission[]): Actor {
     roles: [],
     permissions,
     scopeGrants: {},
+    accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
   });
 }

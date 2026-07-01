@@ -38,6 +38,9 @@ const TRUE_LEGACY_ASSIGNMENT_TARGET_CODES = [
   "TALENT_STAFF_SELF",
 ] as const;
 
+const EFFECTIVE_AT = Date.UTC(2026, 0, 1);
+const REVIEW_AT_30_DAYS = Date.UTC(2026, 0, 31);
+
 test("access assignment apply creates role assignment with audit trace and effective access", async () => {
   const audit = fakeAudit();
   const invalidator = fakeInvalidator();
@@ -112,6 +115,8 @@ test("access assignment apply permits canonical target roles through preview cla
         assignmentTargetCode: code,
         structuredScopeGrants: [{ scopeType: "global" }],
         reason: `canonical assignment for ${code}`,
+        effectiveAt: EFFECTIVE_AT,
+        reviewAt: REVIEW_AT_30_DAYS,
       }),
     );
 
@@ -120,7 +125,43 @@ test("access assignment apply permits canonical target roles through preview cla
     assert.equal(result.applyStatus, "APPLIED");
     assert.deepEqual(readCodes(result.blockers), []);
     assert.equal(inserted?.roleId, `role-${code}`);
+    assert.equal(inserted?.reviewAt, REVIEW_AT_30_DAYS);
+    assert.equal(readPath(result, ["sensitiveAccess", "isGlobalLike"]), true);
+    assert.equal(readPath(result, ["sensitiveAccess", "requiresReview"]), true);
+    assert.equal(
+      readPath(result, ["effectiveAccessAfterApply", "activeRoleAssignments", 0, "isGlobalLike"]),
+      true,
+    );
+    assert.equal(
+      readPath(result, ["effectiveAccessAfterApply", "activeRoleAssignments", 0, "requiresReview"]),
+      true,
+    );
   }
+});
+
+test("access assignment apply returns review policy blockers for global grants", async () => {
+  const db = baseApplyDb({
+    targetContexts: ["ADMIN_CONSOLE"],
+    targetRoleCode: "VIEWER_AUDITOR",
+    targetRolePermissions: [Permission.KPI_READ],
+  });
+
+  const result = await withTrace(() =>
+    applyWithFakes(db, {
+      targetUserId: "target-user",
+      assignmentTargetType: "ROLE_TEMPLATE",
+      assignmentTargetCode: "VIEWER_AUDITOR",
+      structuredScopeGrants: [{ scopeType: "global" }],
+      reason: "global audit access",
+      effectiveAt: EFFECTIVE_AT,
+    }),
+  );
+
+  assert.equal(result.applied, false);
+  assert.deepEqual(readCodes(result.blockers), ["REVIEW_AT_REQUIRED"]);
+  assert.equal(readPath(result, ["sensitiveAccess", "isGlobalLike"]), true);
+  assert.equal(readPath(result, ["sensitiveAccess", "requiresReview"]), true);
+  assert.equal(db.rows("role_assignments").filter((row) => row.userId === "target-user").length, 0);
 });
 
 test("access assignment apply blocks missing AccountContext without mutation", async () => {
@@ -231,6 +272,8 @@ test("access assignment apply blocks true legacy targets and self-assignment", a
         assignmentTargetCode: code,
         structuredScopeGrants: [{ scopeType: "global" }],
         reason: "legacy check",
+        effectiveAt: EFFECTIVE_AT,
+        reviewAt: REVIEW_AT_30_DAYS,
       }),
     );
     assert.equal(legacy.applied, false);
@@ -343,8 +386,46 @@ test("access assignment lifecycle lists target-user assignments with audit summa
   assert.equal(readPath(result, ["items", 0, "assignmentId"]), "assignment-target");
   assert.equal(readPath(result, ["items", 0, "roleCode"]), "STAFF_CONSOLE_USER");
   assert.equal(readPath(result, ["items", 0, "status"]), "ACTIVE");
+  assert.equal(readPath(result, ["items", 0, "isSensitive"]), false);
+  assert.equal(readPath(result, ["items", 0, "isGlobalLike"]), false);
+  assert.equal(readPath(result, ["items", 0, "requiresReview"]), false);
   assert.equal(readPath(result, ["items", 0, "bundleOrigin", "bundleCode"]), "STAFF_CONSOLE_BUNDLE");
   assert.equal(readPath(result, ["items", 0, "auditSummary", "action"]), "ASSIGN");
+});
+
+test("access assignment lifecycle lists sensitive and global classification", async () => {
+  const db = fakeDb({
+    users: [
+      activeUser("access-admin", ["ADMIN_CONSOLE"]),
+      activeUser("target-user", ["ADMIN_CONSOLE"]),
+    ],
+    roles: [
+      role("role-owner", "OWNER_ADMIN", [
+        Permission.ROLE_ASSIGN_TO_USER,
+      ]),
+    ],
+    role_assignments: [
+      {
+        ...targetAssignment("assignment-owner", "role-owner"),
+        structuredScopeGrants: [{ scopeType: "global" }],
+        scopeFingerprint: "scope:v1:global",
+        reviewAt: REVIEW_AT_30_DAYS,
+      },
+    ],
+  });
+
+  const result = await new AccessAssignmentLifecycleAdminService(
+    db,
+    fakeAudit().guard,
+    fakeBridge(),
+    fakeInvalidator().service,
+  ).listForTargetUser("target-user");
+
+  assert.equal(readPath(result, ["items", 0, "isSensitive"]), true);
+  assert.equal(readPath(result, ["items", 0, "isGlobalLike"]), true);
+  assert.equal(readPath(result, ["items", 0, "isHighRisk"]), true);
+  assert.equal(readPath(result, ["items", 0, "requiresReview"]), true);
+  assert.equal(readPath(result, ["items", 0, "isBreakGlassLike"]), true);
 });
 
 test("access assignment lifecycle revoke requires reason, writes audit, invalidates cache, and returns effective access", async () => {
