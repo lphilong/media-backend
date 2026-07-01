@@ -101,10 +101,8 @@ import { TalentAdminQueryService } from "@modules/talent/admin/admin.talent.quer
 
 /* TALENT GROUP */
 import { TalentGroupAdminService } from "@modules/talent-group/admin/admin.talent-group.service";
-import { TalentGroupManagerAssignmentAdminService } from "@modules/talent-group/admin/admin.talent-group-manager-assignment.service";
 import { TalentGroupAdminQueryService } from "@modules/talent-group/admin/admin.talent-group.query-service";
 import { TalentGroupAdminController } from "@modules/talent-group/admin/admin.talent-group.controller";
-import { TalentGroupManagerAssignmentAdminController } from "@modules/talent-group/admin/admin.talent-group-manager-assignment.controller";
 import { TalentGroupAdminQueryController } from "@modules/talent-group/admin/admin.talent-group.query.controller";
 import { adminTalentGroupRoutes } from "@modules/talent-group/admin/admin.talent-group.routes";
 
@@ -661,23 +659,9 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     },
     structuredScopeAuthority,
   );
-  const talentGroupManagerAssignmentService =
-    new TalentGroupManagerAssignmentAdminService(
-      talentGroupRepository,
-      undefined,
-      authoritativeAuditGuard,
-      adminMutationBridge,
-      structuredScopeAuthority,
-      responsibilityService,
-    );
-
   const talentGroupController = new TalentGroupAdminController(
     talentGroupService,
   );
-  const talentGroupManagerAssignmentController =
-    new TalentGroupManagerAssignmentAdminController(
-      talentGroupManagerAssignmentService,
-    );
   const talentGroupQueryController = new TalentGroupAdminQueryController(
     talentGroupQueryService,
   );
@@ -687,7 +671,6 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     adminTalentGroupRoutes(
       talentGroupController,
       talentGroupQueryController,
-      talentGroupManagerAssignmentController,
     ),
   );
 

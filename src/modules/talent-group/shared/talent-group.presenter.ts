@@ -3,12 +3,9 @@ import { ContextType } from "@core/context/context.types";
 import { PresentationResult } from "@app/base/presentation-result.types";
 import {
   TalentGroupMemberMutationView,
-  TalentGroupMutationView,
 } from "@modules/talent-group/domain/talent-group.types";
-import { TalentGroupManagerAssignmentView } from "@modules/kpi/domain/kpi.types";
 import {
   GetTalentGroupDetailResult,
-  ListTalentGroupManagerAssignmentsResult,
   ListTalentGroupMembersResult,
   ListTalentGroupsByTalentResult,
   ListTalentGroupsResult,
@@ -19,7 +16,6 @@ import {
   TalentGroupAdminListExposure,
   TalentGroupAdminMutationExposure,
   TalentGroupByTalentExposure,
-  TalentGroupManagerAssignmentExposure,
   TalentGroupMemberExposure,
 } from "./talent-group.exposure";
 
@@ -119,34 +115,10 @@ export class TalentGroupAdminByTalentListPresenter extends Presenter<
   }
 }
 
-export class TalentGroupAdminManagerAssignmentListPresenter extends Presenter<
-  ListTalentGroupManagerAssignmentsResult,
-  PresentationResult
-> {
-  present(
-    input: ListTalentGroupManagerAssignmentsResult,
-    _context: ContextType,
-  ): PresentationResult {
-    return {
-      data: TalentGroupManagerAssignmentExposure.exposeMany(input.items),
-    };
-  }
-}
-
 function isTalentGroupMemberMutationView(
   input: TalentGroupMutationResult,
 ): input is TalentGroupMemberMutationView {
   return (
     typeof input === "object" && input !== null && "membershipStatus" in input
-  );
-}
-
-export function isTalentGroupManagerAssignmentView(
-  input: TalentGroupMutationResult,
-): input is TalentGroupManagerAssignmentView {
-  return (
-    typeof input === "object" &&
-    input !== null &&
-    "managerEmploymentProfileId" in input
   );
 }

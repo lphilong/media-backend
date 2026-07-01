@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Actor } from "@core/actor/actor";
 import { Permission } from "./permission.enum";
-import { PermissionGuard } from "./permission.guard";
+import {
+  deriveActorScopeGrantsFromPermissions,
+  PermissionGuard,
+} from "./permission.guard";
 import { PermissionResolver } from "./permission.resolver";
 
 function actor(
@@ -61,5 +64,46 @@ test("ADMIN_CONSOLE alone does not satisfy action permission checks", () => {
         PermissionResolver.resolve(Permission.ROLE_CREATE),
       ),
     /Missing permission role:create/u,
+  );
+});
+
+test("WorkSchedule permissions do not derive scope grants", () => {
+  const adminContextActor = actor({
+    permissions: [Permission.WORK_SCHEDULE_READ],
+    accountContexts: ["ADMIN_CONSOLE"],
+  });
+
+  assert.deepEqual(
+    deriveActorScopeGrantsFromPermissions(adminContextActor.permissions),
+    {},
+  );
+  assert.deepEqual(
+    PermissionGuard.resolveWorkScheduleScopeGrants(adminContextActor),
+    [],
+  );
+  assert.equal(
+    PermissionGuard.hasWorkScheduleScopeGrant(adminContextActor, "team"),
+    false,
+  );
+});
+
+test("WorkSchedule scope grants resolve only from declared actor scope grants", () => {
+  const adminContextActor = actor({
+    permissions: [Permission.WORK_SCHEDULE_READ],
+    scopeGrants: { workSchedule: ["team", "self"] },
+    accountContexts: ["ADMIN_CONSOLE"],
+  });
+
+  assert.deepEqual(
+    PermissionGuard.resolveWorkScheduleScopeGrants(adminContextActor),
+    ["self", "team"],
+  );
+  assert.equal(
+    PermissionGuard.hasWorkScheduleScopeGrant(adminContextActor, "team"),
+    true,
+  );
+  assert.equal(
+    PermissionGuard.hasWorkScheduleScopeGrant(adminContextActor, "department"),
+    false,
   );
 });

@@ -25,6 +25,19 @@ import { adminRoleRoutes } from "@modules/role/admin/admin.role.routes";
 import { AdminRoleBundleController } from "@modules/role/admin/admin.role-bundle.controller";
 import { adminRoleBundleRoutes } from "@modules/role/admin/admin.role-bundle.routes";
 
+const CANONICAL_ASSIGNMENT_TARGET_CODES = [
+  "HR_OPERATIONS",
+  "PRODUCTION_OPS",
+  "VIEWER_AUDITOR",
+] as const;
+
+const TRUE_LEGACY_ASSIGNMENT_TARGET_CODES = [
+  "ADMIN_FULL",
+  "TEAM_MANAGER",
+  "COMMERCIAL_FINANCE",
+  "TALENT_STAFF_SELF",
+] as const;
+
 test("access assignment apply creates role assignment with audit trace and effective access", async () => {
   const audit = fakeAudit();
   const invalidator = fakeInvalidator();
@@ -76,6 +89,38 @@ test("access assignment apply creates role assignment with audit trace and effec
     Permission.WORK_SCHEDULE_READ,
   ]);
   assert.equal(invalidator.calls.length, 1);
+});
+
+test("access assignment apply permits canonical target roles through preview classification", async () => {
+  const permissionsByCode = {
+    HR_OPERATIONS: Permission.EMPLOYMENT_PROFILE_READ,
+    PRODUCTION_OPS: Permission.EVENT_READ,
+    VIEWER_AUDITOR: Permission.KPI_READ,
+  } as const;
+
+  for (const code of CANONICAL_ASSIGNMENT_TARGET_CODES) {
+    const db = baseApplyDb({
+      targetContexts: ["ADMIN_CONSOLE"],
+      targetRoleCode: code,
+      targetRolePermissions: [permissionsByCode[code]],
+    });
+
+    const result = await withTrace(() =>
+      applyWithFakes(db, {
+        targetUserId: "target-user",
+        assignmentTargetType: "ROLE_TEMPLATE",
+        assignmentTargetCode: code,
+        structuredScopeGrants: [{ scopeType: "global" }],
+        reason: `canonical assignment for ${code}`,
+      }),
+    );
+
+    const inserted = db.rows("role_assignments").find((row) => row.userId === "target-user");
+    assert.equal(result.applied, true);
+    assert.equal(result.applyStatus, "APPLIED");
+    assert.deepEqual(readCodes(result.blockers), []);
+    assert.equal(inserted?.roleId, `role-${code}`);
+  }
 });
 
 test("access assignment apply blocks missing AccountContext without mutation", async () => {
@@ -172,25 +217,26 @@ test("access assignment apply blocks missing responsibility and requires reason 
   assert.deepEqual(readCodes(missingReason.blockers), ["REASON_REQUIRED"]);
 });
 
-test("access assignment apply blocks legacy targets and self-assignment", async () => {
-  const legacy = await withTrace(() =>
-    applyWithFakes(
-      baseApplyDb({
-        targetContexts: ["ADMIN_CONSOLE"],
-        targetRoleCode: "PRODUCTION_OPS",
-        targetRolePermissions: [Permission.EVENT_READ],
-      }),
-      {
+test("access assignment apply blocks true legacy targets and self-assignment", async () => {
+  for (const code of TRUE_LEGACY_ASSIGNMENT_TARGET_CODES) {
+    const db = baseApplyDb({
+      targetContexts: ["ADMIN_CONSOLE", "STAFF_CONSOLE"],
+      targetRoleCode: code,
+      targetRolePermissions: [Permission.ROLE_ASSIGN_TO_USER],
+    });
+    const legacy = await withTrace(() =>
+      applyWithFakes(db, {
         targetUserId: "target-user",
         assignmentTargetType: "ROLE_TEMPLATE",
-        assignmentTargetCode: "PRODUCTION_OPS",
+        assignmentTargetCode: code,
         structuredScopeGrants: [{ scopeType: "global" }],
         reason: "legacy check",
-      },
-    ),
-  );
-  assert.equal(legacy.applied, false);
-  assert.deepEqual(readCodes(legacy.blockers), ["LEGACY_ROLE_BLOCKED"]);
+      }),
+    );
+    assert.equal(legacy.applied, false);
+    assert.deepEqual(readCodes(legacy.blockers), ["LEGACY_ROLE_BLOCKED"]);
+    assert.equal(db.rows("role_assignments").filter((row) => row.userId === "target-user").length, 0);
+  }
 
   const self = await withTrace(() =>
     applyWithFakes(

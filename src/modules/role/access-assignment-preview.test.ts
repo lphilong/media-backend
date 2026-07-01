@@ -13,6 +13,19 @@ import { AccessAssignmentPreviewAdminService } from "@modules/role/admin/admin.a
 import { AdminAccessAssignmentPreviewController } from "@modules/role/admin/admin.access-assignment-preview.controller";
 import { adminAccessAssignmentPreviewRoutes } from "@modules/role/admin/admin.access-assignment-preview.routes";
 
+const CANONICAL_ASSIGNMENT_TARGET_CODES = [
+  "HR_OPERATIONS",
+  "PRODUCTION_OPS",
+  "VIEWER_AUDITOR",
+] as const;
+
+const TRUE_LEGACY_ASSIGNMENT_TARGET_CODES = [
+  "ADMIN_FULL",
+  "TEAM_MANAGER",
+  "COMMERCIAL_FINANCE",
+  "TALENT_STAFF_SELF",
+] as const;
+
 test("access assignment preview normalizes scope and computes proposed manager access without mutation", async () => {
   const db = fakeDb({
     users: [activeUser("target-user", ["MANAGER_CONSOLE"])],
@@ -229,7 +242,7 @@ test("access assignment preview accepts OrgUnit manager only with central active
   );
 });
 
-test("access assignment preview expands bundles in memory and blocks legacy child roles", async () => {
+test("access assignment preview expands canonical auditor bundle in memory without legacy blocking", async () => {
   const db = fakeDb({
     users: [activeUser("target-user", ["ADMIN_CONSOLE"])],
     employment_profiles: [activeProfile("profile-1", "target-user")],
@@ -247,13 +260,54 @@ test("access assignment preview expands bundles in memory and blocks legacy chil
     reason: "audit coverage",
   });
 
-  assert.equal(result.canApply, false);
-  assert.deepEqual(readCodes(result.blockers), ["LEGACY_ROLE_BLOCKED"]);
+  assert.equal(result.canApply, true);
+  assert.deepEqual(readCodes(result.blockers), []);
   assert.equal(
     readPath(result, ["bundleExpansion", "persistedParentBundleAssignment"]),
     false,
   );
+  assert.deepEqual(
+    readPath(result, ["bundleExpansion", "childRoleCodes"]),
+    ["VIEWER_AUDITOR"],
+  );
+  assert.deepEqual(
+    readPath(result, ["legacyRoleStatus", "blockedCodes"]),
+    [],
+  );
+  assert.equal(readPath(result, ["proposedAssignments", 0, "roleCode"]), "VIEWER_AUDITOR");
   assert.equal(db.writeCount, 0);
+});
+
+test("access assignment preview treats canonical target roles as assignable", async () => {
+  const permissionsByCode = {
+    HR_OPERATIONS: Permission.EMPLOYMENT_PROFILE_READ,
+    PRODUCTION_OPS: Permission.EVENT_READ,
+    VIEWER_AUDITOR: Permission.KPI_READ,
+  } as const;
+
+  for (const code of CANONICAL_ASSIGNMENT_TARGET_CODES) {
+    const db = fakeDb({
+      users: [activeUser("target-user", ["ADMIN_CONSOLE"])],
+      employment_profiles: [activeProfile("profile-1", "target-user")],
+      roles: [role(`role-${code}`, code, [permissionsByCode[code]])],
+      role_assignments: [],
+      responsibility_assignments: [],
+    });
+
+    const result = await new AccessAssignmentPreviewAdminService(db).preview({
+      targetUserId: "target-user",
+      assignmentTargetType: "ROLE_TEMPLATE",
+      assignmentTargetCode: code,
+      structuredScopeGrants: [{ scopeType: "global" }],
+      reason: `canonical assignment for ${code}`,
+    });
+
+    assert.equal(result.canApply, true);
+    assert.deepEqual(readCodes(result.blockers), []);
+    assert.equal(readPath(result, ["proposedAssignments", 0, "roleCode"]), code);
+    assert.deepEqual(readPath(result, ["legacyRoleStatus", "blockedCodes"]), []);
+    assert.equal(db.writeCount, 0);
+  }
 });
 
 test("access assignment preview expands non-legacy bundles in memory without persistence", async () => {
@@ -296,26 +350,32 @@ test("access assignment preview expands non-legacy bundles in memory without per
   assert.equal(db.writeCount, 0);
 });
 
-test("access assignment preview blocks direct legacy ROLE targets", async () => {
-  const db = fakeDb({
-    users: [activeUser("target-user", ["ADMIN_CONSOLE"])],
-    employment_profiles: [activeProfile("profile-1", "target-user")],
-    roles: [role("legacy-role", "ADMIN_FULL", [Permission.ROLE_ASSIGN_TO_USER])],
-    role_assignments: [],
-    responsibility_assignments: [],
-  });
+test("access assignment preview blocks direct true legacy ROLE targets", async () => {
+  for (const code of TRUE_LEGACY_ASSIGNMENT_TARGET_CODES) {
+    const db = fakeDb({
+      users: [activeUser("target-user", ["ADMIN_CONSOLE", "STAFF_CONSOLE"])],
+      employment_profiles: [activeProfile("profile-1", "target-user")],
+      roles: [role(`legacy-${code}`, code, [Permission.ROLE_ASSIGN_TO_USER])],
+      role_assignments: [],
+      responsibility_assignments: [],
+    });
 
-  const result = await new AccessAssignmentPreviewAdminService(db).preview({
-    targetUserId: "target-user",
-    assignmentTargetType: "ROLE",
-    assignmentTargetId: "legacy-role",
-    assignmentTargetCode: "ADMIN_FULL",
-    structuredScopeGrants: [{ scopeType: "global" }],
-    reason: "legacy check",
-  });
+    const result = await new AccessAssignmentPreviewAdminService(db).preview({
+      targetUserId: "target-user",
+      assignmentTargetType: "ROLE",
+      assignmentTargetId: `legacy-${code}`,
+      assignmentTargetCode: code,
+      structuredScopeGrants: [{ scopeType: "global" }],
+      reason: "legacy check",
+    });
 
-  assert.equal(result.canApply, false);
-  assert.deepEqual(readCodes(result.blockers), ["LEGACY_ROLE_BLOCKED"]);
+    assert.equal(result.canApply, false);
+    assert.deepEqual(readCodes(result.blockers), ["LEGACY_ROLE_BLOCKED"]);
+    assert.deepEqual(readPath(result, ["legacyRoleStatus", "blockedCodes"]), [
+      code,
+      code,
+    ]);
+  }
 });
 
 test("access assignment preview blocks sensitive global access without reason and self-assignment", async () => {
@@ -472,20 +532,17 @@ test("access assignment targets endpoint is metadata-only and does not expose us
     assert.equal(data.frontendSettableFields.includes("consoleCode"), false);
     const targets = data.assignmentTargets as Array<Record<string, unknown>>;
     assert.equal(targets.length > 0, true);
+    for (const code of CANONICAL_ASSIGNMENT_TARGET_CODES) {
+      const target = targets.find((item) => item.code === code);
+      assert.equal(target?.legacyAssignable, true);
+    }
     assert.equal(
-      targets.some(
-        (item) =>
-          item.code === "PRODUCTION_OPS" && item.legacyAssignable === false,
-      ),
+      targets.find((item) => item.code === "AUDITOR_BUNDLE")?.legacyAssignable,
       true,
     );
-    assert.equal(
-      targets.some(
-        (item) =>
-          item.code === "AUDITOR_BUNDLE" && item.legacyAssignable === false,
-      ),
-      true,
-    );
+    for (const code of TRUE_LEGACY_ASSIGNMENT_TARGET_CODES) {
+      assert.equal(targets.some((item) => item.code === code), false);
+    }
   } finally {
     await close(server);
   }

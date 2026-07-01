@@ -3,7 +3,6 @@ import {
   toPlainObject,
 } from "@app/base/presentation-result.types";
 import { ExposurePolicy } from "@core/exposure/exposure.policy";
-import { TalentGroupManagerAssignmentView } from "@modules/kpi/domain/kpi.types";
 import {
   TalentGroupByTalentListItemView,
   TalentGroupDetailView,
@@ -66,22 +65,6 @@ const TALENT_GROUP_BY_TALENT_FIELDS = [
   "joinedAt",
   "createdAt",
   "updatedAt",
-] as const;
-
-const TALENT_GROUP_MANAGER_ASSIGNMENT_FIELDS = [
-  "id",
-  "groupId",
-  "managerEmploymentProfileId",
-  "role",
-  "effectiveFrom",
-  "effectiveTo",
-  "status",
-  "isPrimary",
-  "createdAt",
-  "updatedAt",
-  "groupRef",
-  "managerRef",
-  "managerHasLinkedAdminUser",
 ] as const;
 
 export const TalentGroupAdminListExposure = Object.freeze({
@@ -199,46 +182,8 @@ export const TalentGroupByTalentExposure = Object.freeze({
   },
 });
 
-export const TalentGroupManagerAssignmentExposure = Object.freeze({
-  expose(input: TalentGroupManagerAssignmentView): PlainObject {
-    return toPlainObject(
-      ExposurePolicy.expose(
-        {
-          id: input.id,
-          groupId: input.groupId,
-          managerEmploymentProfileId: input.managerEmploymentProfileId,
-          role: input.role,
-          effectiveFrom: input.effectiveFrom,
-          effectiveTo: input.effectiveTo,
-          status: input.status,
-          isPrimary: input.isPrimary,
-          createdAt: input.createdAt,
-          updatedAt: input.updatedAt,
-          groupRef: input.groupRef,
-          managerRef: input.managerRef,
-          managerHasLinkedAdminUser: input.managerHasLinkedAdminUser,
-        },
-        TALENT_GROUP_MANAGER_ASSIGNMENT_FIELDS,
-      ),
-      "TalentGroupManagerAssignment exposure",
-    );
-  },
-
-  exposeMany(
-    items: readonly TalentGroupManagerAssignmentView[],
-  ): readonly PlainObject[] {
-    return items.map((item) => this.expose(item));
-  },
-});
-
 export const TalentGroupAdminMutationExposure = Object.freeze({
-  expose(
-    input: TalentGroupMutationView | TalentGroupManagerAssignmentView,
-  ): PlainObject {
-    if ("managerEmploymentProfileId" in input) {
-      return TalentGroupManagerAssignmentExposure.expose(input);
-    }
-
+  expose(input: TalentGroupMutationView): PlainObject {
     return TalentGroupAdminDetailExposure.expose(input);
   },
 });

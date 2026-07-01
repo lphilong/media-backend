@@ -15,13 +15,13 @@ import {
 
 const NOW = 1_779_552_000_000;
 
-test("dry-run reports missing TEAM_MANAGER managedGroup event scope without writing", async () => {
+test("dry-run reports missing TALENT_GROUP_MANAGER managedGroup event scope without writing", async () => {
   const fixture = createAccessRepairFixture({
-    roles: [makeRole("TEAM_MANAGER")],
+    roles: [makeRole("TALENT_GROUP_MANAGER")],
     assignments: [
       {
         assignmentId: "assignment-team-manager",
-        roleId: "role-team-manager",
+        roleId: "role-talent-group-manager",
         userId: "user-team-manager",
         scopeGrants: {
           workSchedule: ["self", "team", "department"],
@@ -42,7 +42,7 @@ test("dry-run reports missing TEAM_MANAGER managedGroup event scope without writ
   });
 
   const summary = await fixture.service.run({
-    roleCodes: ["TEAM_MANAGER"],
+    roleCodes: ["TALENT_GROUP_MANAGER"],
     mode: "dry-run",
     mongoDbName: "media-dev",
   });
@@ -181,7 +181,7 @@ test("EmploymentProfile diagnostic reports manual linkage and safe candidates", 
 
 test("write mode requires explicit target and .env.dev", () => {
   assert.equal(
-    parseCliArgs(["--roles", "TEAM_MANAGER"]).mode,
+    parseCliArgs(["--roles", "TALENT_GROUP_MANAGER"]).mode,
     "dry-run",
   );
   assert.deepEqual(
@@ -189,12 +189,12 @@ test("write mode requires explicit target and .env.dev", () => {
       "--env-file",
       ".env.dev",
       "--roles",
-      "TEAM_MANAGER,PRODUCTION_OPS",
+      "TALENT_GROUP_MANAGER,PRODUCTION_OPS",
       "--role",
       "HR_OPERATIONS",
       "--dry-run",
     ]).roleCodes,
-    ["TEAM_MANAGER", "PRODUCTION_OPS", "HR_OPERATIONS"],
+    ["TALENT_GROUP_MANAGER", "PRODUCTION_OPS", "HR_OPERATIONS"],
   );
   assert.throws(
     () =>
@@ -202,7 +202,7 @@ test("write mode requires explicit target and .env.dev", () => {
         "--env-file",
         ".env.dev",
         "--roles",
-        "TEAM_MANAGER",
+        "TALENT_GROUP_MANAGER",
         "--confirm-access-repair",
       ]),
     accessRepairErrorWithCode("ACCESS_REPAIR_WRITE_TARGET_REQUIRED"),
@@ -213,7 +213,7 @@ test("write mode requires explicit target and .env.dev", () => {
         "--env-file",
         ".env.local",
         "--roles",
-        "TEAM_MANAGER",
+        "TALENT_GROUP_MANAGER",
         "--user-id",
         "user-1",
         "--confirm-access-repair",
@@ -225,7 +225,7 @@ test("write mode requires explicit target and .env.dev", () => {
       "--env-file",
       ".env.dev",
       "--roles",
-      "TEAM_MANAGER",
+      "TALENT_GROUP_MANAGER",
       "--assignment-id",
       "assignment-1",
       "--confirm-access-repair",
@@ -236,7 +236,7 @@ test("write mode requires explicit target and .env.dev", () => {
 
 test("formatted access repair summary masks sensitive auth fields", async () => {
   const fixture = createAccessRepairFixture({
-    roles: [makeRole("TEAM_MANAGER")],
+    roles: [makeRole("TALENT_GROUP_MANAGER")],
     assignments: [
       {
         assignmentId: "assignment-team-manager",
@@ -259,13 +259,20 @@ test("formatted access repair summary masks sensitive auth fields", async () => 
 
   const output = formatAccessRepairSummary(
     await fixture.service.run({
-      roleCodes: ["TEAM_MANAGER"],
+      roleCodes: ["TALENT_GROUP_MANAGER"],
       mode: "dry-run",
     }),
   );
 
   assert.doesNotMatch(output, /team\.manager@example\.test/u);
   assert.doesNotMatch(output, /auth0\|team-manager/u);
+});
+
+test("access repair rejects legacy role codes", () => {
+  assert.throws(
+    () => parseCliArgs(["--roles", "TEAM_MANAGER"]),
+    accessRepairErrorWithCode("ACCESS_REPAIR_UNSUPPORTED_ROLE"),
+  );
 });
 
 test("access repair package script does not embed confirm flag", () => {

@@ -11,7 +11,6 @@ import {
   WorkScheduleActorScopeGrant,
 } from "../actor/actor";
 import { PermissionContract } from "./permission.contract";
-import { Permission } from "./permission.enum";
 import { SystemInvariantError } from "../error/system-error";
 
 const WORK_SCHEDULE_SCOPE_GRANTS_ORDER: readonly WorkScheduleActorScopeGrant[] =
@@ -25,22 +24,6 @@ const WORK_SCHEDULE_SCOPE_GRANTS_ORDER: readonly WorkScheduleActorScopeGrant[] =
 const WORK_SCHEDULE_SCOPE_GRANT_SET = new Set<
   WorkScheduleActorScopeGrant
 >(WORK_SCHEDULE_SCOPE_GRANTS_ORDER);
-
-const WORK_SCHEDULE_BASELINE_SCOPE_GRANTS: readonly WorkScheduleActorScopeGrant[] =
-  Object.freeze([
-    "self",
-    "team",
-    "department",
-  ]);
-
-const WORK_SCHEDULE_ACTION_PERMISSIONS = new Set<
-  string
->([
-  Permission.WORK_SCHEDULE_READ,
-  Permission.WORK_SCHEDULE_CREATE,
-  Permission.WORK_SCHEDULE_UPDATE,
-  Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
-]);
 
 const EVENT_ASSIGNMENT_SCOPE_GRANTS_ORDER: readonly EventAssignmentActorScopeGrant[] =
   Object.freeze(["global", "managedGroup"]);
@@ -92,26 +75,9 @@ const DASHBOARD_LITE_SCOPE_GRANT_SET = new Set<
 >(DASHBOARD_LITE_SCOPE_GRANTS_ORDER);
 
 export function deriveActorScopeGrantsFromPermissions(
-  permissions: readonly string[],
+  _permissions: readonly string[],
 ): Readonly<ActorScopeGrants> {
-  const hasAnyWorkScheduleActionPermission =
-    permissions.some((permission) =>
-      WORK_SCHEDULE_ACTION_PERMISSIONS.has(
-        permission,
-      ),
-    );
-  if (!hasAnyWorkScheduleActionPermission) {
-    return Object.freeze({});
-  }
-
-  const derived: {
-    workSchedule?: readonly WorkScheduleActorScopeGrant[];
-  } = {};
-
-  derived.workSchedule = Object.freeze([
-    ...WORK_SCHEDULE_BASELINE_SCOPE_GRANTS,
-  ]);
-  return Object.freeze(derived);
+  return Object.freeze({});
 }
 
 export class PermissionGuard {
@@ -166,13 +132,9 @@ export class PermissionGuard {
 
     const declared =
       actor.scopeGrants.workSchedule;
-    const fallbackDerived =
-      deriveActorScopeGrantsFromPermissions(
-        actor.permissions,
-      ).workSchedule ?? [];
 
     if (!declared) {
-      return fallbackDerived;
+      return [];
     }
 
     return normalizeWorkScheduleScopeGrants(

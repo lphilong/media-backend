@@ -422,15 +422,15 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
   };
 }
 
-function helpText(): string {
+export function helpText(): string {
   return [
     "Runtime role sync",
     "",
     "Dry run:",
-    "  npm run role:sync-runtime -- --env-file .env.dev --roles COMMERCIAL_FINANCE,PRODUCTION_OPS,HR_OPERATIONS --dry-run",
+    "  npm run role:sync-runtime -- --env-file .env.dev --roles REVENUE_FINANCE_OPS,PRODUCTION_OPS,HR_OPERATIONS --dry-run",
     "",
     "Write mode:",
-    "  npm run role:sync-runtime -- --env-file .env.dev --roles COMMERCIAL_FINANCE,PRODUCTION_OPS,HR_OPERATIONS --confirm-runtime-role-sync",
+    "  npm run role:sync-runtime -- --env-file .env.dev --roles REVENUE_FINANCE_OPS,PRODUCTION_OPS,HR_OPERATIONS --confirm-runtime-role-sync",
     "",
     "Notes:",
     `  Supported role template codes: ${ROLE_TEMPLATE_CODES.join(", ")}.`,

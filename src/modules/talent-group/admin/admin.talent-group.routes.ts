@@ -2,12 +2,10 @@ import { Router } from "express";
 import { withCommand } from "@app/base/command.middleware";
 import { TalentGroupAdminController } from "./admin.talent-group.controller";
 import { TalentGroupAdminQueryController } from "./admin.talent-group.query.controller";
-import { TalentGroupManagerAssignmentAdminController } from "./admin.talent-group-manager-assignment.controller";
 
 export function adminTalentGroupRoutes(
   mutationController: TalentGroupAdminController,
   queryController: TalentGroupAdminQueryController,
-  managerAssignmentController: TalentGroupManagerAssignmentAdminController,
 ): Router {
   const router = Router();
 
@@ -35,12 +33,6 @@ export function adminTalentGroupRoutes(
     "/:groupId/members",
     withCommand("TALENT_GROUP_LIST_MEMBERS"),
     queryController.execute,
-  );
-
-  router.get(
-    "/:groupId/manager-assignments",
-    withCommand("TALENT_GROUP_MANAGER_ASSIGNMENT_LIST"),
-    managerAssignmentController.execute,
   );
 
   router.patch(
@@ -71,18 +63,6 @@ export function adminTalentGroupRoutes(
     "/:groupId/members",
     withCommand("TALENT_GROUP_ADD_MEMBER"),
     mutationController.execute,
-  );
-
-  router.post(
-    "/:groupId/manager-assignments",
-    withCommand("TALENT_GROUP_MANAGER_ASSIGNMENT_CREATE"),
-    managerAssignmentController.execute,
-  );
-
-  router.post(
-    "/:groupId/manager-assignments/:assignmentId/revoke",
-    withCommand("TALENT_GROUP_MANAGER_ASSIGNMENT_REVOKE"),
-    managerAssignmentController.execute,
   );
 
   router.patch(

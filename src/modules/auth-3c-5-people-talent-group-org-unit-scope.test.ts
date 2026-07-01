@@ -10,16 +10,21 @@ import { Permission } from "@core/permission/permission.enum";
 import { bindTraceId } from "@core/trace/trace.context";
 import { EmploymentProfileAdminQueryService } from "@modules/employment-profile/admin/admin.employment-profile.query-service";
 import { EmploymentProfileAdminService } from "@modules/employment-profile/admin/admin.employment-profile.service";
-import { EmploymentProfilePermissionScopeError } from "@modules/employment-profile/domain/employment-profile.errors";
+import {
+  EmploymentProfilePermissionScopeError,
+  EmploymentProfileValidationError,
+} from "@modules/employment-profile/domain/employment-profile.errors";
 import { EmploymentProfileRecord } from "@modules/employment-profile/domain/employment-profile.types";
 import { OrgUnitAdminQueryService } from "@modules/org-unit/admin/admin.org-unit.query-service";
 import { OrgUnitAdminService } from "@modules/org-unit/admin/admin.org-unit.service";
 import { OrgUnitResponsibilityAdminService } from "@modules/org-unit/admin/admin.org-unit-responsibility.service";
-import { OrgUnitPermissionScopeError } from "@modules/org-unit/domain/org-unit.errors";
+import {
+  OrgUnitPermissionScopeError,
+  OrgUnitValidationError,
+} from "@modules/org-unit/domain/org-unit.errors";
 import { OrgUnitRecord } from "@modules/org-unit/domain/org-unit.types";
 import { RoleAssignmentScopeGrant } from "@modules/role/domain/role-assignment-scope";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
-import { TalentGroupManagerAssignmentAdminService } from "@modules/talent-group/admin/admin.talent-group-manager-assignment.service";
 import { TalentGroupAdminQueryService } from "@modules/talent-group/admin/admin.talent-group.query-service";
 import { TalentGroupAdminService } from "@modules/talent-group/admin/admin.talent-group.service";
 import { TalentGroupPermissionScopeError } from "@modules/talent-group/domain/talent-group.errors";
@@ -129,11 +134,14 @@ test("EmploymentProfile mutations retain exact managedOrgUnit authority while se
       displayName: "Updated Person",
     }),
   );
-  await runWithTrace(() =>
-    allowedService.assignEmploymentProfileManager(actor, {
-      employmentProfileId: "ep-1",
-      newManagerEmploymentProfileId: null,
-    }),
+  await assert.rejects(
+    runWithTrace(() =>
+      allowedService.assignEmploymentProfileManager(actor, {
+        employmentProfileId: "ep-1",
+        newManagerEmploymentProfileId: null,
+      }),
+    ),
+    EmploymentProfileValidationError,
   );
   await runWithTrace(() =>
     allowedService.placeEmploymentProfileOnLeave(actor, {
@@ -173,7 +181,7 @@ test("EmploymentProfile mutations retain exact managedOrgUnit authority while se
         newManagerEmploymentProfileId: "manager-existing",
       }),
     ),
-    EmploymentProfilePermissionScopeError,
+    EmploymentProfileValidationError,
   );
   await assert.rejects(
     runWithTrace(() =>
@@ -265,6 +273,7 @@ test("EmploymentProfile coarse scope, reporting manager, role name, actor kind, 
       Permission.EMPLOYMENT_PROFILE_UPDATE,
     ],
     scopeGrants: { employmentProfile: ["global"] } as never,
+    accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
   });
   const query = new EmploymentProfileAdminQueryService(
@@ -335,9 +344,9 @@ test("TalentGroup detail, members, mutation, and manager assignment require mana
         return { employmentProfileId: "manager-profile" };
       },
     },
-    managerAssignmentRepository: {
-      async listActiveAssignmentsByManagerEmploymentProfile() {
-        return [{ groupId: group.id }];
+    managedScopeReader: {
+      async resolveManagedScopeByResponsibleEmploymentProfile() {
+        return { talentGroupIds: [group.id] };
       },
     },
   } as never;
@@ -370,6 +379,7 @@ test("TalentGroup detail, members, mutation, and manager assignment require mana
     roles: ["TALENT_GROUP_MANAGER"],
     permissions: [Permission.TALENT_GROUP_READ],
     scopeGrants: { talentGroup: ["global"] } as never,
+    accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
   });
   await assert.rejects(
@@ -396,45 +406,6 @@ test("TalentGroup detail, members, mutation, and manager assignment require mana
       membershipId: member.id,
       newLineupOrder: 2,
     }),
-  );
-
-  const managerService = new TalentGroupManagerAssignmentAdminService(
-    {
-      async findGroupById() {
-        return group;
-      },
-    } as never,
-    {
-      async listActiveAssignmentsByGroup() {
-        return [];
-      },
-      async findManagerEmploymentProfileCandidate() {
-        return null;
-      },
-    } as never,
-    audit,
-    mutationBridge,
-    allowed,
-    () => NOW,
-  );
-  assert.deepEqual(
-    await managerService.listManagerAssignments(actor, { groupId: group.id }),
-    { items: [] },
-  );
-  await assert.rejects(
-    new TalentGroupManagerAssignmentAdminService(
-      {
-        async findGroupById() {
-          return group;
-        },
-      } as never,
-      {} as never,
-      audit,
-      mutationBridge,
-      denied,
-      () => NOW,
-    ).listManagerAssignments(actor, { groupId: group.id }),
-    TalentGroupPermissionScopeError,
   );
 });
 
@@ -483,34 +454,6 @@ test("TalentGroup hardened mutations deny mismatched scope while create remains 
     ),
     TalentGroupPermissionScopeError,
   );
-
-  const deniedManagerService = new TalentGroupManagerAssignmentAdminService(
-    { async findGroupById() { return group; } } as never,
-    {} as never,
-    audit,
-    mutationBridge,
-    mismatched,
-    () => NOW,
-  );
-  await assert.rejects(
-    runWithTrace(() =>
-      deniedManagerService.createManagerAssignment(actor, {
-        groupId: group.id,
-        managerEmploymentProfileId: "ep-1",
-      }),
-    ),
-    TalentGroupPermissionScopeError,
-  );
-  await assert.rejects(
-    runWithTrace(() =>
-      deniedManagerService.revokeManagerAssignment(actor, {
-        groupId: group.id,
-        assignmentId: "assignment-1",
-      }),
-    ),
-    TalentGroupPermissionScopeError,
-  );
-
   const coarseActor = new Actor({
     id: "admin-user",
     type: "admin",
@@ -518,6 +461,7 @@ test("TalentGroup hardened mutations deny mismatched scope while create remains 
     roles: ["TALENT_GROUP_MANAGER"],
     permissions,
     scopeGrants: { talentGroup: ["global"] } as never,
+    accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
   });
   await assert.rejects(
@@ -576,9 +520,13 @@ test("OrgUnit detail, children, profile, lifecycle, and responsibility require m
         return { employmentProfileId: "manager-profile" };
       },
     },
-    managerAssignmentRepository: {
-      async listActiveByManagerEmploymentProfileId() {
-        return [{ orgUnitId: org.id }, { orgUnitId: inactive.id }];
+    managedScopeReader: {
+      async resolveManagedScopeByResponsibleEmploymentProfile() {
+        return {
+          orgUnitIds: [org.id, inactive.id],
+          orgUnitScopes: [],
+          talentGroupIds: [],
+        };
       },
     },
   } as never;
@@ -613,6 +561,7 @@ test("OrgUnit detail, children, profile, lifecycle, and responsibility require m
     roles: ["ORG_UNIT_MANAGER"],
     permissions: [Permission.ORG_UNIT_READ],
     scopeGrants: { orgUnit: ["global"] } as never,
+    accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
   });
   await assert.rejects(
@@ -652,11 +601,31 @@ test("OrgUnit detail, children, profile, lifecycle, and responsibility require m
     audit,
     mutationBridge,
     allowed,
+    {
+      async getSummaryForSubject() {
+        return { items: [] };
+      },
+    } as never,
     () => NOW,
   );
   assert.deepEqual(
     await responsibility.listResponsibilities(actor, { orgUnitId: org.id }),
     { items: [] },
+  );
+  await assert.rejects(
+    new OrgUnitResponsibilityAdminService(
+      {
+        async findById() {
+          return org;
+        },
+      } as never,
+      {} as never,
+      audit,
+      mutationBridge,
+      allowed,
+      () => NOW,
+    ).listResponsibilities(actor, { orgUnitId: org.id }),
+    OrgUnitValidationError,
   );
   await assert.rejects(
     new OrgUnitResponsibilityAdminService(
@@ -708,7 +677,6 @@ test("OrgUnit lifecycle and responsibilities deny mismatched scope while create 
     ),
     OrgUnitPermissionScopeError,
   );
-
   const deniedResponsibility = new OrgUnitResponsibilityAdminService(
     { async findById() { return org; } } as never,
     {} as never,
@@ -754,6 +722,7 @@ test("OrgUnit lifecycle and responsibilities deny mismatched scope while create 
     roles: ["ORG_UNIT_MANAGER"],
     permissions,
     scopeGrants: { orgUnit: ["global"] } as never,
+    accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
   });
   await assert.rejects(
@@ -1097,6 +1066,7 @@ function adminActor(permissions: readonly Permission[]): Actor {
     roles: ["OWNER_ADMIN"],
     permissions,
     scopeGrants: {},
+    accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
   });
 }

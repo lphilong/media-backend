@@ -1,4 +1,3 @@
-import { TalentGroupManagerAssignmentView } from "@modules/kpi/domain/kpi.types";
 import {
   TalentGroupByTalentListItemView,
   TalentGroupDetailView,
@@ -64,18 +63,6 @@ export interface RemoveTalentGroupMemberCommand {
   readonly membershipId: string;
 }
 
-export interface CreateTalentGroupManagerAssignmentCommand {
-  readonly groupId: string;
-  readonly managerEmploymentProfileId: string;
-  readonly reason?: string | null;
-}
-
-export interface RevokeTalentGroupManagerAssignmentCommand {
-  readonly groupId: string;
-  readonly assignmentId: string;
-  readonly reason?: string | null;
-}
-
 export interface GetTalentGroupDetailQuery {
   readonly groupId: string;
 }
@@ -105,14 +92,9 @@ export interface ListTalentGroupsByTalentQuery {
   readonly sortDirection?: TalentGroupSortDirection | string;
 }
 
-export interface ListTalentGroupManagerAssignmentsQuery {
-  readonly groupId: string;
-}
-
 export type TalentGroupMutationResult =
   | TalentGroupMutationView
-  | TalentGroupMemberMutationView
-  | TalentGroupManagerAssignmentView;
+  | TalentGroupMemberMutationView;
 
 export type GetTalentGroupDetailResult = TalentGroupDetailView;
 
@@ -129,8 +111,4 @@ export interface ListTalentGroupMembersResult {
 export interface ListTalentGroupsByTalentResult {
   readonly items: readonly TalentGroupByTalentListItemView[];
   readonly nextCursor?: string;
-}
-
-export interface ListTalentGroupManagerAssignmentsResult {
-  readonly items: readonly TalentGroupManagerAssignmentView[];
 }

@@ -11,6 +11,3 @@ export const TALENT_GROUP_ADMIN_MEMBER_LIST_PRESENTER_KEY =
 
 export const TALENT_GROUP_ADMIN_BY_TALENT_LIST_PRESENTER_KEY =
   "talent-group.admin.by-talent-list";
-
-export const TALENT_GROUP_ADMIN_MANAGER_ASSIGNMENT_LIST_PRESENTER_KEY =
-  "talent-group.admin.manager-assignment-list";

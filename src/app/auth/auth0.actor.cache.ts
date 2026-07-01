@@ -4,9 +4,6 @@ import {
 } from "@core/actor/actor";
 import { ContextType } from "@core/context/context.types";
 import { AccountContext } from "@modules/account-context/domain/account-context.types";
-import {
-  deriveActorScopeGrantsFromPermissions,
-} from "@core/permission/permission.guard";
 
 export interface ActorSnapshot {
   id: string;
@@ -31,11 +28,7 @@ export function actorFromSnapshot(
     userAgent?: string;
   },
 ): Actor {
-  const scopeGrants =
-    snapshot.scopeGrants ??
-    deriveActorScopeGrantsFromPermissions(
-      snapshot.permissions,
-    );
+  const scopeGrants = snapshot.scopeGrants ?? {};
 
   return new Actor({
     id: snapshot.id,

@@ -12,6 +12,7 @@ import {
   RuntimeRoleSyncError,
   RuntimeRoleSyncService,
   formatRuntimeRoleSyncSummary,
+  helpText,
   parseCliArgs,
 } from "./runtime-role-sync";
 
@@ -387,6 +388,16 @@ test("CLI write mode requires explicit confirm flag and env file", () => {
   assert.throws(
     () => parseCliArgs(["--roles", "NOT_A_ROLE"]),
     runtimeSyncErrorWithCode("RUNTIME_ROLE_SYNC_UNSUPPORTED_ROLE"),
+  );
+});
+
+test("CLI help examples use canonical role codes only", () => {
+  const output = helpText();
+
+  assert.match(output, /REVENUE_FINANCE_OPS/u);
+  assert.doesNotMatch(
+    output,
+    /COMMERCIAL_FINANCE|ADMIN_FULL|TEAM_MANAGER|TALENT_STAFF_SELF/u,
   );
 });
 
