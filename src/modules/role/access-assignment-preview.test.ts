@@ -616,10 +616,27 @@ test("access assignment targets endpoint is metadata-only and does not expose us
       const target = targets.find((item) => item.code === code);
       assert.equal(target?.legacyAssignable, true);
     }
+    const ownerTarget = targets.find((item) => item.code === "OWNER_ADMIN");
+    assert.equal(ownerTarget?.assignabilityStatus, "RESTRICTED_SENSITIVE");
+    assert.equal(ownerTarget?.operatorFlowGroup, "RESTRICTED_SENSITIVE");
+
+    const auditorTarget = targets.find((item) => item.code === "VIEWER_AUDITOR");
+    assert.equal(auditorTarget?.assignabilityStatus, "READ_ONLY_AUDIT");
+    assert.deepEqual(auditorTarget?.requiredScopeTypes, ["global"]);
+
+    assert.equal(targets.some((item) => item.code === "ATTENDANCE_OPS"), false);
     assert.equal(
-      targets.find((item) => item.code === "AUDITOR_BUNDLE")?.legacyAssignable,
-      true,
+      targets.some((item) => item.assignabilityStatus === "FUTURE_READY_CONDITION"),
+      false,
     );
+    assert.equal(
+      targets.some((item) => item.assignabilityStatus === "SYSTEM_CONTROLLED"),
+      false,
+    );
+
+    const auditorBundle = targets.find((item) => item.code === "AUDITOR_BUNDLE");
+    assert.equal(auditorBundle?.legacyAssignable, true);
+    assert.equal(auditorBundle?.assignabilityStatus, "READ_ONLY_AUDIT");
     for (const code of TRUE_LEGACY_ASSIGNMENT_TARGET_CODES) {
       assert.equal(targets.some((item) => item.code === code), false);
     }

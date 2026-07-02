@@ -1,6 +1,7 @@
 import { ActorScopeGrants } from "@core/actor/actor";
 import { Permission } from "@core/permission/permission.enum";
 import { AccountContext } from "@modules/account-context/domain/account-context.types";
+import { RoleAssignmentScopeType } from "./role-assignment-scope";
 
 export const ROLE_TEMPLATE_CODES = [
   "OWNER_ADMIN",
@@ -45,6 +46,39 @@ export type RoleTemplateStatus =
   | "PREVIEW_ONLY"
   | "REQUIRES_FUTURE_SCOPE";
 
+export type RoleAssignabilityStatus =
+  | "READY_ASSIGNABLE"
+  | "REQUIRES_SCOPE_SELECTION"
+  | "RESTRICTED_SENSITIVE"
+  | "FUTURE_READY_CONDITION"
+  | "SYSTEM_CONTROLLED"
+  | "READ_ONLY_AUDIT";
+
+export type RoleFeatureStatus =
+  | "SOURCE_BACKED"
+  | "PARTIAL_SOURCE_BACKED"
+  | "FUTURE_READY";
+
+export type RoleOperatorFlowGroup =
+  | "READY_TO_ASSIGN"
+  | "REQUIRES_SCOPE_SELECTION"
+  | "RESTRICTED_SENSITIVE"
+  | "FUTURE_READINESS"
+  | "SYSTEM_CONTROLLED"
+  | "READ_ONLY_AUDIT";
+
+export type RoleSensitivityLevel = "STANDARD" | "SENSITIVE" | "HIGH_RISK";
+export type RoleReviewPolicy = "NOT_REQUIRED" | "REVIEW_REQUIRED";
+export type RoleAccountContextLifecyclePolicy = "SYSTEM_DERIVED_PREVIEW_ONLY";
+export type RoleResponsibilityPolicy =
+  | "NOT_REQUIRED"
+  | "REQUIRES_EXISTING_RESPONSIBILITY";
+export type RoleScopeSelectorSupport =
+  | "SUPPORTED"
+  | "NOT_REQUIRED"
+  | "UNSUPPORTED";
+export type RoleLegacyVisibility = "NORMAL_OPERATOR" | "INTERNAL_ONLY";
+
 export interface RoleTemplateScopePlanEntry {
   readonly module: string;
   readonly scopes: readonly string[];
@@ -65,6 +99,16 @@ export interface RoleTemplateDefinition {
   readonly warnings: readonly string[];
   readonly implementationNotes: readonly string[];
   readonly status: RoleTemplateStatus;
+  readonly assignabilityStatus: RoleAssignabilityStatus;
+  readonly featureStatus: RoleFeatureStatus;
+  readonly operatorFlowGroup: RoleOperatorFlowGroup;
+  readonly sensitivityLevel: RoleSensitivityLevel;
+  readonly reviewPolicy: RoleReviewPolicy;
+  readonly accountContextLifecyclePolicy: RoleAccountContextLifecyclePolicy;
+  readonly responsibilityPolicy: RoleResponsibilityPolicy;
+  readonly scopeSelectorSupport: RoleScopeSelectorSupport;
+  readonly futureReadinessNote: string | null;
+  readonly legacyVisibility: RoleLegacyVisibility;
 }
 
 export interface LegacyRoleTemplateMapping {
@@ -81,9 +125,47 @@ export type RoleTemplateListItem = Omit<
   readonly permissionCount: number;
 };
 
+type RoleTemplateDefinitionInput = Omit<
+  RoleTemplateDefinition,
+  | "version"
+  | "assignabilityStatus"
+  | "featureStatus"
+  | "operatorFlowGroup"
+  | "sensitivityLevel"
+  | "reviewPolicy"
+  | "accountContextLifecyclePolicy"
+  | "responsibilityPolicy"
+  | "scopeSelectorSupport"
+  | "futureReadinessNote"
+  | "legacyVisibility"
+>;
+
 const TEMPLATE_VERSION = "2026-06-26";
 
 const ALL_PERMISSIONS = Object.freeze([...Object.values(Permission)]);
+
+const OPERATOR_SUPPORTED_SCOPE_SELECTORS = new Set<RoleAssignmentScopeType>([
+  "self",
+  "global",
+  "managedTalentGroup",
+  "managedOrgUnit",
+  "assignedPlatformAccount",
+  "financeGlobal",
+  "financePeriod",
+  "assignedEvent",
+  "assignedStudioResource",
+  "payrollPeriod",
+]);
+
+const RESTRICTED_SENSITIVE_ROLE_CODES = new Set<RoleTemplateCode>([
+  "OWNER_ADMIN",
+  "ACCESS_ADMIN",
+  "HR_TERMS_APPROVER",
+  "REVENUE_APPROVER",
+  "REVENUE_RECONCILER",
+  "COMMISSION_OPS",
+  "COMMISSION_APPROVER",
+]);
 
 export const LEGACY_ROLE_TEMPLATE_COMPATIBILITY: readonly LegacyRoleTemplateMapping[] =
   Object.freeze([
@@ -831,6 +913,16 @@ export function listRoleTemplates(): readonly RoleTemplateListItem[] {
     warnings: item.warnings,
     implementationNotes: item.implementationNotes,
     status: item.status,
+    assignabilityStatus: item.assignabilityStatus,
+    featureStatus: item.featureStatus,
+    operatorFlowGroup: item.operatorFlowGroup,
+    sensitivityLevel: item.sensitivityLevel,
+    reviewPolicy: item.reviewPolicy,
+    accountContextLifecyclePolicy: item.accountContextLifecyclePolicy,
+    responsibilityPolicy: item.responsibilityPolicy,
+    scopeSelectorSupport: item.scopeSelectorSupport,
+    futureReadinessNote: item.futureReadinessNote,
+    legacyVisibility: item.legacyVisibility,
     permissionCount: item.permissions.length,
   }));
 }
@@ -911,10 +1003,12 @@ export function validateRoleTemplateCatalog(): void {
 }
 
 function template(
-  definition: Omit<RoleTemplateDefinition, "version">,
+  definition: RoleTemplateDefinitionInput,
 ): RoleTemplateDefinition {
+  const metadata = buildRoleTemplateMetadata(definition);
   return Object.freeze({
     ...definition,
+    ...metadata,
     version: TEMPLATE_VERSION,
     permissions: Object.freeze([...definition.permissions]),
     recommendedScopeGrants: scopeGrants(definition.recommendedScopeGrants),
@@ -982,4 +1076,164 @@ function scopePlan(
 
 function scopeGrants(grants: ActorScopeGrants): Readonly<ActorScopeGrants> {
   return Object.freeze(grants);
+}
+
+export function operatorRequiredScopeTypesForRoleTemplate(
+  code: string,
+): readonly RoleAssignmentScopeType[] {
+  const normalized = normalizeRoleTemplateCode(code);
+  switch (normalized) {
+    case "OWNER_ADMIN":
+    case "ACCESS_ADMIN":
+    case "KPI_OPERATIONS":
+    case "VIEWER_AUDITOR":
+      return Object.freeze(["global"]);
+    case "HR_OPERATIONS":
+    case "HR_TERMS_APPROVER":
+      return Object.freeze(["managedOrgUnit"]);
+    case "PRODUCTION_OPS":
+      return Object.freeze(["assignedEvent", "assignedStudioResource"]);
+    case "PLATFORM_CHANNEL_OPS":
+      return Object.freeze(["assignedPlatformAccount"]);
+    case "CREATIVE_VISUAL_LEAD":
+    case "CONTENT_OPS":
+      return Object.freeze(["managedTalentGroup", "assignedEvent"]);
+    case "TALENT_GROUP_MANAGER":
+      return Object.freeze(["managedTalentGroup"]);
+    case "ORG_UNIT_MANAGER":
+      return Object.freeze(["managedOrgUnit"]);
+    case "COMMERCIAL_CONTRACT_OPS":
+      return Object.freeze(["contractPortfolio"]);
+    case "REVENUE_FINANCE_OPS":
+    case "REVENUE_APPROVER":
+    case "REVENUE_RECONCILER":
+    case "COMMISSION_OPS":
+    case "COMMISSION_APPROVER":
+      return Object.freeze(["financeGlobal", "financePeriod"]);
+    case "ATTENDANCE_OPS":
+    case "LEAVE_REVIEWER":
+    case "ATTENDANCE_APPROVER":
+      return Object.freeze(["attendancePeriodOrg"]);
+    case "MONTHLY_CLOSE_OWNER":
+      return Object.freeze(["financePeriod", "payrollPeriod"]);
+    case "PAYROLL_DRAFT_OPS":
+    case "PAYROLL_DRAFT_APPROVER":
+      return Object.freeze(["payrollPeriod"]);
+    case "STAFF_CONSOLE_USER":
+      return Object.freeze(["self"]);
+    default:
+      return Object.freeze([]);
+  }
+}
+
+function buildRoleTemplateMetadata(
+  definition: RoleTemplateDefinitionInput,
+): Pick<
+  RoleTemplateDefinition,
+  | "assignabilityStatus"
+  | "featureStatus"
+  | "operatorFlowGroup"
+  | "sensitivityLevel"
+  | "reviewPolicy"
+  | "accountContextLifecyclePolicy"
+  | "responsibilityPolicy"
+  | "scopeSelectorSupport"
+  | "futureReadinessNote"
+  | "legacyVisibility"
+> {
+  const requiredScopes = operatorRequiredScopeTypesForRoleTemplate(definition.code);
+  const unsupportedScopes = requiredScopes.filter(
+    (scopeType) => !OPERATOR_SUPPORTED_SCOPE_SELECTORS.has(scopeType),
+  );
+  const scopeSelectorSupport =
+    requiredScopes.length === 0
+      ? "NOT_REQUIRED"
+      : unsupportedScopes.length > 0
+        ? "UNSUPPORTED"
+        : "SUPPORTED";
+  const futureReadinessNote =
+    definition.permissions.length === 0
+      ? "This target role code is reserved for a future source-backed module."
+      : scopeSelectorSupport === "UNSUPPORTED"
+        ? `Operator scope selector support is not available for: ${unsupportedScopes.join(", ")}.`
+        : null;
+  const featureStatus =
+    definition.permissions.length === 0
+      ? "FUTURE_READY"
+      : definition.status === "READY" && !futureReadinessNote
+        ? "SOURCE_BACKED"
+        : "PARTIAL_SOURCE_BACKED";
+  const sensitivityLevel = RESTRICTED_SENSITIVE_ROLE_CODES.has(definition.code)
+    ? "HIGH_RISK"
+    : definition.warnings.some((warning) => /sensitive|approval|approve|void|lifecycle/iu.test(warning))
+      ? "SENSITIVE"
+      : "STANDARD";
+  const reviewPolicy =
+    sensitivityLevel === "STANDARD" && !requiredScopes.includes("global")
+      ? "NOT_REQUIRED"
+      : "REVIEW_REQUIRED";
+  const responsibilityPolicy =
+    definition.code === "TALENT_GROUP_MANAGER" || definition.code === "ORG_UNIT_MANAGER"
+      ? "REQUIRES_EXISTING_RESPONSIBILITY"
+      : "NOT_REQUIRED";
+  const assignabilityStatus = classifyAssignability({
+    code: definition.code,
+    futureReadinessNote,
+    requiredScopes,
+    sensitivityLevel,
+  });
+
+  return {
+    assignabilityStatus,
+    featureStatus,
+    operatorFlowGroup: flowGroupForAssignability(assignabilityStatus),
+    sensitivityLevel,
+    reviewPolicy,
+    accountContextLifecyclePolicy: "SYSTEM_DERIVED_PREVIEW_ONLY",
+    responsibilityPolicy,
+    scopeSelectorSupport,
+    futureReadinessNote,
+    legacyVisibility: "NORMAL_OPERATOR",
+  };
+}
+
+function classifyAssignability(params: {
+  readonly code: RoleTemplateCode;
+  readonly futureReadinessNote: string | null;
+  readonly requiredScopes: readonly RoleAssignmentScopeType[];
+  readonly sensitivityLevel: RoleSensitivityLevel;
+}): RoleAssignabilityStatus {
+  if (params.futureReadinessNote) {
+    return "FUTURE_READY_CONDITION";
+  }
+  if (params.code === "VIEWER_AUDITOR") {
+    return "READ_ONLY_AUDIT";
+  }
+  if (params.sensitivityLevel !== "STANDARD") {
+    return "RESTRICTED_SENSITIVE";
+  }
+  if (params.requiredScopes.length > 0) {
+    return "REQUIRES_SCOPE_SELECTION";
+  }
+  return "READY_ASSIGNABLE";
+}
+
+function flowGroupForAssignability(
+  status: RoleAssignabilityStatus,
+): RoleOperatorFlowGroup {
+  switch (status) {
+    case "READY_ASSIGNABLE":
+      return "READY_TO_ASSIGN";
+    case "REQUIRES_SCOPE_SELECTION":
+      return "REQUIRES_SCOPE_SELECTION";
+    case "RESTRICTED_SENSITIVE":
+      return "RESTRICTED_SENSITIVE";
+    case "SYSTEM_CONTROLLED":
+      return "SYSTEM_CONTROLLED";
+    case "READ_ONLY_AUDIT":
+      return "READ_ONLY_AUDIT";
+    case "FUTURE_READY_CONDITION":
+    default:
+      return "FUTURE_READINESS";
+  }
 }

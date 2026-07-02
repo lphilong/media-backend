@@ -1,4 +1,16 @@
 import { RoleAssignmentScopeType } from "./role-assignment-scope";
+import {
+  getRoleTemplate,
+  RoleAccountContextLifecyclePolicy,
+  RoleAssignabilityStatus,
+  RoleFeatureStatus,
+  RoleLegacyVisibility,
+  RoleOperatorFlowGroup,
+  RoleResponsibilityPolicy,
+  RoleReviewPolicy,
+  RoleScopeSelectorSupport,
+  RoleSensitivityLevel,
+} from "./role-template.catalog";
 
 export const ROLE_BUNDLE_CODES = [
   "OWNER_ADMIN_BUNDLE",
@@ -44,11 +56,34 @@ export interface RoleBundleTemplate {
   readonly recommendedScopes: readonly RoleAssignmentScopeType[];
   readonly sensitiveWarning: string | null;
   readonly sensitive: boolean;
+  readonly assignabilityStatus: RoleAssignabilityStatus;
+  readonly featureStatus: RoleFeatureStatus;
+  readonly operatorFlowGroup: RoleOperatorFlowGroup;
+  readonly sensitivityLevel: RoleSensitivityLevel;
+  readonly reviewPolicy: RoleReviewPolicy;
+  readonly accountContextLifecyclePolicy: RoleAccountContextLifecyclePolicy;
+  readonly responsibilityPolicy: RoleResponsibilityPolicy;
+  readonly scopeSelectorSupport: RoleScopeSelectorSupport;
+  readonly futureReadinessNote: string | null;
+  readonly legacyVisibility: RoleLegacyVisibility;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
 
 const VERSION = "2026-06-26";
+
+const OPERATOR_SUPPORTED_SCOPE_SELECTORS = new Set<RoleAssignmentScopeType>([
+  "self",
+  "global",
+  "managedTalentGroup",
+  "managedOrgUnit",
+  "assignedPlatformAccount",
+  "financeGlobal",
+  "financePeriod",
+  "assignedEvent",
+  "assignedStudioResource",
+  "payrollPeriod",
+]);
 
 export const ROLE_BUNDLE_CATALOG: readonly RoleBundleTemplate[] = Object.freeze([
   bundle("OWNER_ADMIN_BUNDLE", "Owner Admin", "Owner-controlled full administration preset.", ["OWNER_ADMIN"], "ADMIN_CONSOLE", ["global"], true),
@@ -99,6 +134,12 @@ function bundle(
   recommendedScopes: readonly RoleAssignmentScopeType[],
   sensitive: boolean,
 ): RoleBundleTemplate {
+  const metadata = buildBundleMetadata({
+    code,
+    childRoles,
+    recommendedScopes,
+    sensitive,
+  });
   return Object.freeze({
     code,
     name,
@@ -113,7 +154,112 @@ function bundle(
       ? "Sensitive/global access requires an explicit reason and later review-policy enforcement."
       : null,
     sensitive,
+    ...metadata,
     createdAt: `${VERSION}T00:00:00.000Z`,
     updatedAt: `${VERSION}T00:00:00.000Z`,
   });
+}
+
+function buildBundleMetadata(params: {
+  readonly code: RoleBundleCode;
+  readonly childRoles: readonly string[];
+  readonly recommendedScopes: readonly RoleAssignmentScopeType[];
+  readonly sensitive: boolean;
+}): Pick<
+  RoleBundleTemplate,
+  | "assignabilityStatus"
+  | "featureStatus"
+  | "operatorFlowGroup"
+  | "sensitivityLevel"
+  | "reviewPolicy"
+  | "accountContextLifecyclePolicy"
+  | "responsibilityPolicy"
+  | "scopeSelectorSupport"
+  | "futureReadinessNote"
+  | "legacyVisibility"
+> {
+  const childTemplates = params.childRoles
+    .map((code) => getRoleTemplate(code))
+    .filter((item): item is NonNullable<typeof item> => item !== null);
+  const unsupportedScopes = params.recommendedScopes.filter(
+    (scopeType) => !OPERATOR_SUPPORTED_SCOPE_SELECTORS.has(scopeType),
+  );
+  const childFuture = childTemplates.some(
+    (template) => template.assignabilityStatus === "FUTURE_READY_CONDITION",
+  );
+  const childRestricted = childTemplates.some(
+    (template) => template.assignabilityStatus === "RESTRICTED_SENSITIVE",
+  );
+  const childAuditOnly = childTemplates.every(
+    (template) => template.assignabilityStatus === "READ_ONLY_AUDIT",
+  );
+  const scopeSelectorSupport =
+    params.recommendedScopes.length === 0
+      ? "NOT_REQUIRED"
+      : unsupportedScopes.length > 0
+        ? "UNSUPPORTED"
+        : "SUPPORTED";
+  const futureReadinessNote =
+    childFuture
+      ? "One or more child roles need future source readiness before normal assignment."
+      : unsupportedScopes.length > 0
+        ? `Operator scope selector support is not available for: ${unsupportedScopes.join(", ")}.`
+        : null;
+  const sensitivityLevel =
+    params.sensitive || childRestricted
+      ? "HIGH_RISK"
+      : params.recommendedScopes.includes("global")
+        ? "SENSITIVE"
+        : "STANDARD";
+  const assignabilityStatus = futureReadinessNote
+    ? "FUTURE_READY_CONDITION"
+    : childAuditOnly || params.code === "AUDITOR_BUNDLE"
+      ? "READ_ONLY_AUDIT"
+      : sensitivityLevel !== "STANDARD"
+        ? "RESTRICTED_SENSITIVE"
+        : params.recommendedScopes.length > 0
+          ? "REQUIRES_SCOPE_SELECTION"
+          : "READY_ASSIGNABLE";
+
+  return {
+    assignabilityStatus,
+    featureStatus: futureReadinessNote
+      ? childTemplates.length > 0
+        ? "PARTIAL_SOURCE_BACKED"
+        : "FUTURE_READY"
+      : "SOURCE_BACKED",
+    operatorFlowGroup: flowGroupForAssignability(assignabilityStatus),
+    sensitivityLevel,
+    reviewPolicy:
+      sensitivityLevel === "STANDARD" && !params.recommendedScopes.includes("global")
+        ? "NOT_REQUIRED"
+        : "REVIEW_REQUIRED",
+    accountContextLifecyclePolicy: "SYSTEM_DERIVED_PREVIEW_ONLY",
+    responsibilityPolicy: params.childRoles.some(
+      (code) => code === "TALENT_GROUP_MANAGER" || code === "ORG_UNIT_MANAGER",
+    )
+      ? "REQUIRES_EXISTING_RESPONSIBILITY"
+      : "NOT_REQUIRED",
+    scopeSelectorSupport,
+    futureReadinessNote,
+    legacyVisibility: "NORMAL_OPERATOR",
+  };
+}
+
+function flowGroupForAssignability(status: RoleAssignabilityStatus): RoleOperatorFlowGroup {
+  switch (status) {
+    case "READY_ASSIGNABLE":
+      return "READY_TO_ASSIGN";
+    case "REQUIRES_SCOPE_SELECTION":
+      return "REQUIRES_SCOPE_SELECTION";
+    case "RESTRICTED_SENSITIVE":
+      return "RESTRICTED_SENSITIVE";
+    case "SYSTEM_CONTROLLED":
+      return "SYSTEM_CONTROLLED";
+    case "READ_ONLY_AUDIT":
+      return "READ_ONLY_AUDIT";
+    case "FUTURE_READY_CONDITION":
+    default:
+      return "FUTURE_READINESS";
+  }
 }

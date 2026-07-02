@@ -69,6 +69,18 @@ test("role template catalog contains target templates only with valid unique per
 
   for (const template of ROLE_TEMPLATE_CATALOG) {
     assert.equal(typeof template.recommendedAccountContext, "string");
+    assert.match(
+      template.assignabilityStatus,
+      /^(READY_ASSIGNABLE|REQUIRES_SCOPE_SELECTION|RESTRICTED_SENSITIVE|FUTURE_READY_CONDITION|SYSTEM_CONTROLLED|READ_ONLY_AUDIT)$/u,
+    );
+    assert.match(
+      template.operatorFlowGroup,
+      /^(READY_TO_ASSIGN|REQUIRES_SCOPE_SELECTION|RESTRICTED_SENSITIVE|FUTURE_READINESS|SYSTEM_CONTROLLED|READ_ONLY_AUDIT)$/u,
+    );
+    assert.notEqual(template.featureStatus, undefined);
+    assert.notEqual(template.sensitivityLevel, undefined);
+    assert.notEqual(template.reviewPolicy, undefined);
+    assert.equal(template.legacyVisibility, "NORMAL_OPERATOR");
     const permissions = template.permissions.map((permission) => permission);
     assert.equal(
       new Set(permissions).size,
@@ -88,6 +100,21 @@ test("role template catalog contains target templates only with valid unique per
   const owner = getRoleTemplate("OWNER_ADMIN");
   assert.notEqual(owner, null);
   assert.deepEqual(owner?.permissions, ALL_PERMISSION_CODES);
+  assert.equal(owner?.assignabilityStatus, "RESTRICTED_SENSITIVE");
+  assert.equal(owner?.operatorFlowGroup, "RESTRICTED_SENSITIVE");
+
+  const auditor = getRoleTemplate("VIEWER_AUDITOR");
+  assert.equal(auditor?.assignabilityStatus, "READ_ONLY_AUDIT");
+  assert.equal(auditor?.operatorFlowGroup, "READ_ONLY_AUDIT");
+
+  const attendance = getRoleTemplate("ATTENDANCE_OPS");
+  assert.equal(attendance?.assignabilityStatus, "FUTURE_READY_CONDITION");
+  assert.equal(attendance?.operatorFlowGroup, "FUTURE_READINESS");
+  assert.match(attendance?.futureReadinessNote ?? "", /future source-backed module/u);
+
+  const commercial = getRoleTemplate("COMMERCIAL_CONTRACT_OPS");
+  assert.equal(commercial?.assignabilityStatus, "FUTURE_READY_CONDITION");
+  assert.match(commercial?.futureReadinessNote ?? "", /contractPortfolio/u);
 });
 
 test("target role templates keep contract obligation evidence mutation authority admin-global first", () => {

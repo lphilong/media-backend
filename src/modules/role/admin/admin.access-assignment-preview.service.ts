@@ -22,6 +22,7 @@ import {
   getRoleTemplate,
   listRoleTemplates,
   normalizeRoleTemplateCode,
+  operatorRequiredScopeTypesForRoleTemplate,
 } from "@modules/role/domain/role-template.catalog";
 import { RoleValidationError } from "@modules/role/domain/role.errors";
 import { UserRoleAssignmentRecord } from "@modules/role/domain/role.types";
@@ -136,6 +137,13 @@ const LEGACY_ASSIGNMENT_TARGET_CODES = new Set([
   "TALENT_STAFF_SELF",
 ]);
 
+const NORMAL_ASSIGNMENT_TARGET_STATUSES = new Set([
+  "READY_ASSIGNABLE",
+  "REQUIRES_SCOPE_SELECTION",
+  "RESTRICTED_SENSITIVE",
+  "READ_ONLY_AUDIT",
+]);
+
 const MANAGER_REQUIREMENTS = {
   TALENT_GROUP_MANAGER: {
     scopeType: "managedTalentGroup",
@@ -200,47 +208,77 @@ export class AccessAssignmentPreviewAdminService {
         "entitlements",
       ],
       assignmentTargets: [
-        ...listRoleTemplates().map((template) => ({
-          assignmentKind: "ROLE_TEMPLATE",
-          code: template.code,
-          name: template.name,
-          recommendedAccountContext: template.recommendedAccountContext,
-          requiredScopeTypes: template.scopePlan.flatMap((entry) => entry.scopes),
-          requiresResponsibility: isManagerRoleCode(template.code),
-          requiredResponsibilityType: requiredResponsibilityTypeForRole(template.code),
-          sensitiveLevel: classifySensitiveAccess([
-            {
-              roleCode: template.code,
-              roleTemplateCode: template.code,
-              permissions: getRoleTemplate(template.code)?.permissions ?? [],
-            },
-          ]).isHighRisk
-            ? "HIGH_RISK"
-            : "STANDARD",
-          legacyAssignable: !LEGACY_ASSIGNMENT_TARGET_CODES.has(template.code),
-          recommendedPickerMode: isManagerRoleCode(template.code)
-            ? "RESPONSIBILITY_SCOPE_FIRST"
-            : "SEARCH_FIRST",
-        })),
-        ...listRoleBundles().map((bundle) => ({
-          assignmentKind: "BUNDLE",
-          code: bundle.code,
-          version: bundle.version,
-          name: bundle.name,
-          childRoles: bundle.childRoles,
-          recommendedAccountContext: bundle.recommendedAccountContext,
-          requiredScopeTypes: bundle.recommendedScopes,
-          requiresResponsibility: bundle.childRoles.some(isManagerRoleCode),
-          requiredResponsibilityType:
-            bundle.childRoles.map(requiredResponsibilityTypeForRole).filter(Boolean),
-          sensitiveLevel: bundle.sensitive ? "HIGH_RISK" : "STANDARD",
-          legacyAssignable: !bundle.childRoles.some((code) =>
-            LEGACY_ASSIGNMENT_TARGET_CODES.has(code),
-          ),
-          recommendedPickerMode: bundle.childRoles.some(isManagerRoleCode)
-            ? "RESPONSIBILITY_SCOPE_FIRST"
-            : "SEARCH_FIRST",
-        })),
+        ...listRoleTemplates()
+          .filter(
+            (template) =>
+              !LEGACY_ASSIGNMENT_TARGET_CODES.has(template.code) &&
+              NORMAL_ASSIGNMENT_TARGET_STATUSES.has(template.assignabilityStatus),
+          )
+          .map((template) => ({
+            assignmentKind: "ROLE_TEMPLATE",
+            code: template.code,
+            name: template.name,
+            recommendedAccountContext: template.recommendedAccountContext,
+            requiredScopeTypes: operatorRequiredScopeTypesForRoleTemplate(template.code),
+            requiresResponsibility: isManagerRoleCode(template.code),
+            requiredResponsibilityType: requiredResponsibilityTypeForRole(template.code),
+            sensitiveLevel: classifySensitiveAccess([
+              {
+                roleCode: template.code,
+                roleTemplateCode: template.code,
+                permissions: getRoleTemplate(template.code)?.permissions ?? [],
+              },
+            ]).isHighRisk
+              ? "HIGH_RISK"
+              : "STANDARD",
+            legacyAssignable: true,
+            assignabilityStatus: template.assignabilityStatus,
+            featureStatus: template.featureStatus,
+            operatorFlowGroup: template.operatorFlowGroup,
+            reviewPolicy: template.reviewPolicy,
+            accountContextLifecyclePolicy: template.accountContextLifecyclePolicy,
+            responsibilityPolicy: template.responsibilityPolicy,
+            scopeSelectorSupport: template.scopeSelectorSupport,
+            futureReadinessNote: template.futureReadinessNote,
+            legacyVisibility: template.legacyVisibility,
+            recommendedPickerMode: isManagerRoleCode(template.code)
+              ? "RESPONSIBILITY_SCOPE_FIRST"
+              : "SEARCH_FIRST",
+          })),
+        ...listRoleBundles()
+          .filter(
+            (bundle) =>
+              !bundle.childRoles.some((code) =>
+                LEGACY_ASSIGNMENT_TARGET_CODES.has(code),
+              ) &&
+              NORMAL_ASSIGNMENT_TARGET_STATUSES.has(bundle.assignabilityStatus),
+          )
+          .map((bundle) => ({
+            assignmentKind: "BUNDLE",
+            code: bundle.code,
+            version: bundle.version,
+            name: bundle.name,
+            childRoles: bundle.childRoles,
+            recommendedAccountContext: bundle.recommendedAccountContext,
+            requiredScopeTypes: bundle.recommendedScopes,
+            requiresResponsibility: bundle.childRoles.some(isManagerRoleCode),
+            requiredResponsibilityType:
+              bundle.childRoles.map(requiredResponsibilityTypeForRole).filter(Boolean),
+            sensitiveLevel: bundle.sensitivityLevel,
+            legacyAssignable: true,
+            assignabilityStatus: bundle.assignabilityStatus,
+            featureStatus: bundle.featureStatus,
+            operatorFlowGroup: bundle.operatorFlowGroup,
+            reviewPolicy: bundle.reviewPolicy,
+            accountContextLifecyclePolicy: bundle.accountContextLifecyclePolicy,
+            responsibilityPolicy: bundle.responsibilityPolicy,
+            scopeSelectorSupport: bundle.scopeSelectorSupport,
+            futureReadinessNote: bundle.futureReadinessNote,
+            legacyVisibility: bundle.legacyVisibility,
+            recommendedPickerMode: bundle.childRoles.some(isManagerRoleCode)
+              ? "RESPONSIBILITY_SCOPE_FIRST"
+              : "SEARCH_FIRST",
+          })),
       ],
       previewRemainsAuthoritative: true,
     };
