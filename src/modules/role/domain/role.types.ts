@@ -89,6 +89,24 @@ export interface UserRoleAssignmentRecord {
   readonly updatedAt: number;
 }
 
+export interface BundleAssignmentRecord {
+  readonly bundleAssignmentId: string;
+  readonly targetUserId: string;
+  readonly bundleCode: string;
+  readonly bundleVersion: string;
+  readonly assignedBy: string;
+  readonly assignedAt: number;
+  readonly reason: string;
+  readonly status: "ACTIVE" | "REVOKED" | "EXPIRED";
+  readonly effectiveAt: number | null;
+  readonly expiresAt: number | null;
+  readonly reviewAt: number | null;
+  readonly childRoleAssignmentIds: readonly string[];
+  readonly sourceTrace?: Record<string, unknown>;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
 export interface RoleListItemView {
   readonly id: string;
   readonly code: string;

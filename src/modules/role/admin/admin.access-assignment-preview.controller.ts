@@ -95,7 +95,7 @@ export class AdminAccessAssignmentPreviewController extends SecureController {
         return this.service.preview({
           ...parsePreviewCommand(req),
           actorUserId: actor.id,
-        });
+        }, { actor });
 
       case "ACCESS_ASSIGNMENT_APPLY":
         PermissionGuard.assert(

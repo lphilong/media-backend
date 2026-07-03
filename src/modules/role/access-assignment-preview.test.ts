@@ -77,7 +77,7 @@ test("access assignment preview normalizes scope and computes proposed manager a
   assert.equal(db.writeCount, 0);
 });
 
-test("access assignment preview blocks missing required AccountContext without mutating it", async () => {
+test("access assignment preview proposes missing required AccountContext without mutating it", async () => {
   const db = fakeDb({
     users: [activeUser("target-user", ["STAFF_CONSOLE"])],
     employment_profiles: [activeProfile("profile-1", "target-user")],
@@ -102,10 +102,10 @@ test("access assignment preview blocks missing required AccountContext without m
     reason: "manager scope setup",
   });
 
-  assert.equal(result.canApply, false);
+  assert.equal(result.canApply, true);
   assert.equal(
     readPath(result, ["accountContextRequirement", "status"]),
-    "MISSING_REQUIRED_CONTEXT",
+    "PROPOSED_FOR_APPLICATION",
   );
   assert.deepEqual(
     readPath(result, ["accountContextRequirement", "requiredAccountContexts"]),
@@ -121,19 +121,19 @@ test("access assignment preview blocks missing required AccountContext without m
   );
   assert.equal(
     readPath(result, ["accountContextRequirement", "materializationInScope"]),
-    false,
+    true,
   );
-  assert.deepEqual(readCodes(result.blockers), [
-    "REQUIRED_ACCOUNT_CONTEXT_MISSING",
-  ]);
+  assert.deepEqual(readCodes(result.blockers), []);
+  assert.deepEqual(
+    readPath(result, ["accountContextRequirement", "proposedAccountContexts"]),
+    ["MANAGER_CONSOLE"],
+  );
   const managerConsole = findConsole(result, "MANAGER_CONSOLE");
-  assert.equal(managerConsole?.proposedEligible, false);
-  assert.deepEqual(managerConsole?.blockers, [
-    "REQUIRED_ACCOUNT_CONTEXT_MISSING",
-  ]);
+  assert.equal(managerConsole?.proposedEligible, true);
+  assert.deepEqual(managerConsole?.blockers, []);
   assert.equal(
     readPath(result, ["previewCompleteness", "status"]),
-    "PARTIAL",
+    "COMPLETE",
   );
   assert.equal(
     readPath(result, [
@@ -141,8 +141,47 @@ test("access assignment preview blocks missing required AccountContext without m
       "workspaceAvailability",
       "primaryWorkspace",
     ]),
-    "STAFF_CONSOLE",
+    "MANAGER_CONSOLE",
   );
+  assert.equal(db.writeCount, 0);
+});
+
+test("access assignment preview blocks missing AccountContext when actor is not authorized to materialize it", async () => {
+  const db = fakeDb({
+    users: [activeUser("target-user", ["STAFF_CONSOLE"])],
+    employment_profiles: [activeProfile("profile-1", "target-user")],
+    roles: [
+      role("role-tgm", "TALENT_GROUP_MANAGER", [
+        Permission.TALENT_GROUP_READ,
+      ]),
+    ],
+    role_assignments: [],
+    responsibility_assignments: [
+      responsibility("resp-1", "profile-1", "TALENT_GROUP", "group-a", "TALENT_GROUP_MANAGER"),
+    ],
+  });
+
+  const result = await new AccessAssignmentPreviewAdminService(db).preview(
+    {
+      targetUserId: "target-user",
+      assignmentTargetType: "ROLE_TEMPLATE",
+      assignmentTargetCode: "TALENT_GROUP_MANAGER",
+      structuredScopeGrants: [
+        { scopeType: "managedTalentGroup", targetId: "group-a" },
+      ],
+      reason: "manager scope setup",
+    },
+    { actor: previewActor([]) },
+  );
+
+  assert.equal(result.canApply, false);
+  assert.equal(
+    readPath(result, ["accountContextRequirement", "status"]),
+    "BLOCKED_UNAUTHORIZED",
+  );
+  assert.deepEqual(readCodes(result.blockers), [
+    "ACCOUNT_CONTEXT_MATERIALIZATION_NOT_AUTHORIZED",
+  ]);
   assert.equal(db.writeCount, 0);
 });
 
@@ -187,7 +226,7 @@ test("access assignment preview blocks missing responsibility and duplicate exac
   assert.equal(result.canApply, false);
   assert.deepEqual(
     readCodes(result.blockers),
-    ["DUPLICATE_ACTIVE_ASSIGNMENT", "RESPONSIBILITY_REQUIRED"],
+    ["DUPLICATE_ACTIVE_ASSIGNMENT", "RESPONSIBILITY_MATERIALIZATION_NOT_AUTHORIZED"],
   );
   assert.equal(db.writeCount, 0);
 });
@@ -240,10 +279,54 @@ test("access assignment preview accepts OrgUnit manager only with central active
   ).preview(command);
 
   assert.equal(missing.canApply, false);
-  assert.deepEqual(readCodes(missing.blockers), ["RESPONSIBILITY_REQUIRED"]);
+  assert.deepEqual(readCodes(missing.blockers), ["RESPONSIBILITY_MATERIALIZATION_NOT_AUTHORIZED"]);
   assert.equal(
     readPath(missing, ["responsibilityRequirements", 0, "status"]),
-    "MISSING_RESPONSIBILITY",
+    "MISSING_RESPONSIBILITY_UNAUTHORIZED",
+  );
+});
+
+test("access assignment preview proposes manager responsibility create when actor is authorized", async () => {
+  const result = await new AccessAssignmentPreviewAdminService(
+    fakeDb({
+      users: [activeUser("target-user", ["MANAGER_CONSOLE"])],
+      employment_profiles: [activeProfile("profile-1", "target-user")],
+      roles: [
+        role("role-tgm", "TALENT_GROUP_MANAGER", [
+          Permission.TALENT_GROUP_READ,
+        ]),
+      ],
+      role_assignments: [],
+      responsibility_assignments: [],
+      talent_groups: [{ _id: "group-a", status: "ACTIVE" }],
+    }),
+  ).preview(
+    {
+      targetUserId: "target-user",
+      assignmentTargetType: "ROLE_TEMPLATE",
+      assignmentTargetCode: "TALENT_GROUP_MANAGER",
+      structuredScopeGrants: [
+        { scopeType: "managedTalentGroup", targetId: "group-a" },
+      ],
+      reason: "manager scope setup",
+    },
+    { actor: previewActor([Permission.ROLE_ASSIGN_TO_USER, Permission.TALENT_GROUP_UPDATE]) },
+  );
+
+  assert.equal(result.canApply, true);
+  assert.deepEqual(readCodes(result.blockers), []);
+  assert.equal(
+    readPath(result, ["responsibilityRequirements", 0, "status"]),
+    "CREATE_PROPOSED",
+  );
+  assert.equal(
+    readPath(result, [
+      "responsibilityRequirements",
+      0,
+      "proposedResponsibility",
+      "subjectId",
+    ]),
+    "group-a",
   );
 });
 
@@ -786,6 +869,18 @@ function responsibility(
     effectiveAt: 1,
     expiresAt: null,
   };
+}
+
+function previewActor(permissions: readonly Permission[]): Actor {
+  return new Actor({
+    id: "access-admin",
+    type: "admin",
+    context: "ADMIN",
+    roles: [],
+    permissions,
+    accountContexts: ["ADMIN_CONSOLE"],
+    isActive: true,
+  });
 }
 
 function fakeDb(

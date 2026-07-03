@@ -1,5 +1,7 @@
 import crypto from "crypto";
 import { ClientSession, Collection, Db } from "mongodb";
+import { Actor } from "@core/actor/actor";
+import { Permission } from "@core/permission/permission.enum";
 import {
   buildWorkspaceAvailability,
 } from "@modules/account-context/account-context.workspace-availability";
@@ -58,6 +60,11 @@ export interface AccessAssignmentSourceContext {
   readonly attendancePeriodOrgUnitId?: string;
 }
 
+export interface AccessAssignmentPreviewOptions {
+  readonly session?: ClientSession;
+  readonly actor?: Actor;
+}
+
 interface UserDocument {
   readonly _id: string;
   readonly actorKind: "ADMIN" | "STAFF";
@@ -114,6 +121,16 @@ interface ResponsibilityDocument {
   readonly expiresAt: number | null;
 }
 
+interface TalentGroupDocument {
+  readonly _id: string;
+  readonly status: string;
+}
+
+interface OrgUnitDocument {
+  readonly _id: string;
+  readonly status: string;
+}
+
 interface ProposedAssignment {
   readonly assignmentId: string;
   readonly roleId: string;
@@ -163,6 +180,8 @@ export class AccessAssignmentPreviewAdminService {
   private readonly roles: Collection<RoleDocument>;
   private readonly assignments: Collection<AssignmentDocument>;
   private readonly responsibilities: Collection<ResponsibilityDocument>;
+  private readonly talentGroups: Collection<TalentGroupDocument>;
+  private readonly orgUnits: Collection<OrgUnitDocument>;
 
   constructor(private readonly db: Db) {
     this.users = db.collection<UserDocument>("users");
@@ -172,6 +191,8 @@ export class AccessAssignmentPreviewAdminService {
     this.assignments = db.collection<AssignmentDocument>("role_assignments");
     this.responsibilities =
       db.collection<ResponsibilityDocument>("responsibility_assignments");
+    this.talentGroups = db.collection<TalentGroupDocument>("talent_groups");
+    this.orgUnits = db.collection<OrgUnitDocument>("org_units");
   }
 
   listTargetOptions(): Record<string, unknown> {
@@ -286,7 +307,7 @@ export class AccessAssignmentPreviewAdminService {
 
   async preview(
     command: AccessAssignmentPreviewCommand,
-    options?: { readonly session?: ClientSession },
+    options?: AccessAssignmentPreviewOptions,
   ): Promise<Record<string, unknown>> {
     const now = Date.now();
     const targetUserId = normalizeRequiredText(command.targetUserId, "targetUserId");
@@ -366,19 +387,30 @@ export class AccessAssignmentPreviewAdminService {
     }
 
     const responsibilityRequirements = await this.evaluateResponsibilityRequirements({
+      actor: options?.actor,
       employmentProfile,
       proposedAssignments,
       structuredScopeGrants,
+      reason,
       now,
       session: options?.session,
     });
     for (const requirement of responsibilityRequirements) {
-      if (requirement.status !== "SATISFIED") {
-        blockers.push(blocker("RESPONSIBILITY_REQUIRED", "Matching active management responsibility is required."));
+      if (
+        requirement.status !== "SATISFIED" &&
+        requirement.status !== "CREATE_PROPOSED"
+      ) {
+        blockers.push(
+          blocker(
+            responsibilityBlockerCode(requirement.status),
+            "Matching active management responsibility is required.",
+          ),
+        );
       }
     }
 
     const accountContextRequirement = buildAccountContextRequirement({
+      actor: options?.actor,
       currentAccountContexts: targetUser?.accountContexts ?? [],
       requiredAccountContexts: targetResolution.requiredAccountContexts,
       targetUserResolved: !!targetUser,
@@ -386,35 +418,43 @@ export class AccessAssignmentPreviewAdminService {
     const missingRequiredAccountContexts =
       accountContextRequirement.missingAccountContexts;
 
-    if (targetUser && missingRequiredAccountContexts.length > 0) {
+    if (
+      targetUser &&
+      missingRequiredAccountContexts.length > 0 &&
+      accountContextRequirement.status === "BLOCKED_UNAUTHORIZED"
+    ) {
       blockers.push(
         blocker(
-          "REQUIRED_ACCOUNT_CONTEXT_MISSING",
-          "Target user is missing required AccountContext for the selected assignment target; preview does not mutate AccountContext.",
+          "ACCOUNT_CONTEXT_MATERIALIZATION_NOT_AUTHORIZED",
+          "Target user is missing required AccountContext and the actor is not authorized to materialize it.",
         ),
       );
+    }
+
+    if (
+      targetUser &&
+      missingRequiredAccountContexts.length > 0 &&
+      accountContextRequirement.status === "PROPOSED_FOR_APPLICATION"
+    ) {
       warnings.push(
         warning(
-          "ACCOUNT_CONTEXT_NOT_MUTATED_IN_PREVIEW",
-          "AccountContext materialization is not in scope for this preview.",
+          "ACCOUNT_CONTEXT_WILL_BE_MATERIALIZED_ON_APPLY",
+          "Required AccountContext is missing and will be applied if this preview is confirmed.",
         ),
       );
-      completenessGaps.push({
-        code: "ACCOUNT_CONTEXT_MATERIALIZATION_DEFERRED",
-        summary:
-          "Required AccountContext is missing and cannot be materialized by the 4A preview contract.",
-        materializationInScope: false,
-        missingAccountContexts: missingRequiredAccountContexts,
-      });
     }
 
     const currentEffectiveAccess = targetUser
-      ? await this.computeEffectiveAccess(targetUser, [], options?.session)
+      ? await this.computeEffectiveAccess(targetUser, [], [], options?.session)
       : null;
     const proposedEffectiveAccess = targetUser
       ? await this.computeEffectiveAccess(
           targetUser,
           proposedAssignments,
+          accountContextRequirement.status === "PROPOSED_FOR_APPLICATION" ||
+            accountContextRequirement.status === "SATISFIED"
+            ? targetResolution.requiredAccountContexts
+            : [],
           options?.session,
         )
       : null;
@@ -429,7 +469,7 @@ export class AccessAssignmentPreviewAdminService {
     const consoleEntitlementPreview = buildConsoleEntitlementPreview({
       currentAccountContexts: targetUser?.accountContexts ?? [],
       proposedContexts: targetResolution.requiredAccountContexts,
-      missingRequiredAccountContexts,
+      accountContextRequirement,
       responsibilityRequirements,
       blockers,
     });
@@ -502,9 +542,9 @@ export class AccessAssignmentPreviewAdminService {
           ...(missingRequiredAccountContexts.length > 0
             ? [
                 {
-                  code: "ACCOUNT_CONTEXT_MATERIALIZATION_DEFERRED",
+                  code: "ACCOUNT_CONTEXT_MATERIALIZATION_PREVIEWED",
                   summary:
-                    "AccountContext materialization is deferred outside 4A preview.",
+                    "Required AccountContext materialization is represented as an explicit preview item.",
                 },
               ]
             : []),
@@ -514,7 +554,9 @@ export class AccessAssignmentPreviewAdminService {
           : "PARTIAL",
         pickerOptions: "TARGET_METADATA_ONLY",
         accountContextMaterialization:
-          missingRequiredAccountContexts.length > 0 ? "DEFERRED_OUT_OF_SCOPE" : "NOT_REQUIRED",
+          missingRequiredAccountContexts.length > 0
+            ? accountContextRequirement.status
+            : "NOT_REQUIRED",
       },
       sourceTrace: {
         roleSource: "roles",
@@ -586,6 +628,12 @@ export class AccessAssignmentPreviewAdminService {
           childRoleCodes: bundle.childRoles,
           proposedChildCount: childRoles.length,
           persistedParentBundleAssignment: false,
+          parentBundleAssignmentPreview: {
+            status: "PROPOSED",
+            targetUserId: command.targetUserId,
+            bundleCode: bundle.code,
+            bundleVersion: bundle.version,
+          },
         },
         sensitive: bundle.sensitive,
         requiredAccountContexts: [bundle.recommendedAccountContext],
@@ -740,9 +788,11 @@ export class AccessAssignmentPreviewAdminService {
   }
 
   private async evaluateResponsibilityRequirements(params: {
+    readonly actor?: Actor;
     readonly employmentProfile: EmploymentProfileDocument | null;
     readonly proposedAssignments: readonly ProposedAssignment[];
     readonly structuredScopeGrants: readonly RoleAssignmentScopeGrant[];
+    readonly reason: string | null;
     readonly now: number;
     readonly session?: ClientSession;
   }): Promise<readonly Record<string, unknown>[]> {
@@ -783,6 +833,26 @@ export class AccessAssignmentPreviewAdminService {
           effectiveAt: { $lte: params.now },
           $or: [{ expiresAt: null }, { expiresAt: { $gte: params.now } }],
         }, mongoOptions(params.session));
+        const actorAuthorized = canMaterializeResponsibility(
+          params.actor,
+          requirement.responsibilityType,
+        );
+        const subjectStatus = responsibility
+          ? "NOT_EVALUATED"
+          : await this.resolveResponsibilitySubjectStatus(
+              requirement.subjectType,
+              scope.targetId,
+              params.session,
+            );
+        const status = responsibility
+          ? "SATISFIED"
+          : !actorAuthorized
+            ? "MISSING_RESPONSIBILITY_UNAUTHORIZED"
+            : subjectStatus !== "ACTIVE"
+              ? "MISSING_RESPONSIBILITY_TARGET_NOT_ACTIVE"
+              : !params.reason
+                ? "CREATE_PROPOSED_REASON_REQUIRED"
+                : "CREATE_PROPOSED";
         requirements.push({
           roleCode: assignment.roleCode,
           scopeType: scope.scopeType,
@@ -790,17 +860,55 @@ export class AccessAssignmentPreviewAdminService {
           requiredResponsibilityType: requirement.responsibilityType,
           requiredSubjectType: requirement.subjectType,
           employmentProfileId: params.employmentProfile._id,
-          status: responsibility ? "SATISFIED" : "MISSING_RESPONSIBILITY",
+          status,
           responsibilityAssignmentId: responsibility?._id ?? null,
+          operation: responsibility ? "REUSE_EXISTING" : "CREATE_REQUIRED",
+          actorAuthorized,
+          previewOnly: true,
+          reasonRequired: !responsibility,
+          reasonSatisfied: !!responsibility || !!params.reason,
+          subjectStatus,
+          proposedResponsibility: responsibility
+            ? null
+            : {
+                subjectType: requirement.subjectType,
+                subjectId: scope.targetId,
+                responsibleEmploymentProfileId: params.employmentProfile._id,
+                responsibilityType: requirement.responsibilityType,
+                responsibilityRole:
+                  requirement.responsibilityType === "TALENT_GROUP_MANAGER"
+                    ? "MANAGER"
+                    : "UNIT_MANAGER",
+                isPrimary: true,
+              },
         });
       }
     }
     return requirements;
   }
 
+  private async resolveResponsibilitySubjectStatus(
+    subjectType: "TALENT_GROUP" | "ORG_UNIT",
+    subjectId: string | undefined,
+    session?: ClientSession,
+  ): Promise<"ACTIVE" | "MISSING" | "INACTIVE"> {
+    if (!subjectId) {
+      return "MISSING";
+    }
+    const subject =
+      subjectType === "TALENT_GROUP"
+        ? await this.talentGroups.findOne({ _id: subjectId }, mongoOptions(session))
+        : await this.orgUnits.findOne({ _id: subjectId }, mongoOptions(session));
+    if (!subject) {
+      return "MISSING";
+    }
+    return subject.status === "ACTIVE" ? "ACTIVE" : "INACTIVE";
+  }
+
   private async computeEffectiveAccess(
     user: UserDocument,
     proposedAssignments: readonly ProposedAssignment[],
+    proposedAccountContexts: readonly AccountContext[] = [],
     session?: ClientSession,
   ): Promise<Record<string, unknown>> {
     const now = Date.now();
@@ -852,7 +960,10 @@ export class AccessAssignmentPreviewAdminService {
         permissionSources.set(permission, sources);
       }
     }
-    const accountContexts = normalizeAccountContexts(user.accountContexts);
+    const accountContexts = normalizeAccountContexts([
+      ...(user.accountContexts ?? []),
+      ...proposedAccountContexts,
+    ]);
     return {
       readOnly: true,
       previewComputedInMemory: proposedAssignments.length > 0,
@@ -1020,6 +1131,7 @@ function buildSensitiveAccessView(params: {
 }
 
 function buildAccountContextRequirement(params: {
+  readonly actor?: Actor;
   readonly currentAccountContexts: readonly AccountContext[];
   readonly requiredAccountContexts: readonly AccountContext[];
   readonly targetUserResolved: boolean;
@@ -1027,12 +1139,17 @@ function buildAccountContextRequirement(params: {
   readonly status:
     | "NOT_REQUIRED"
     | "SATISFIED"
-    | "MISSING_REQUIRED_CONTEXT"
+    | "PROPOSED_FOR_APPLICATION"
+    | "BLOCKED_UNAUTHORIZED"
     | "TARGET_USER_UNRESOLVED";
   readonly requiredAccountContexts: readonly AccountContext[];
   readonly currentAccountContexts: readonly AccountContext[];
   readonly missingAccountContexts: readonly AccountContext[];
-  readonly materializationInScope: false;
+  readonly reusedAccountContexts: readonly AccountContext[];
+  readonly proposedAccountContexts: readonly AccountContext[];
+  readonly materializationInScope: true;
+  readonly actorAuthorized: boolean;
+  readonly grantsAuthorityByItself: false;
 } {
   const currentAccountContexts = normalizeAccountContexts(
     params.currentAccountContexts,
@@ -1043,13 +1160,19 @@ function buildAccountContextRequirement(params: {
   const missingAccountContexts = requiredAccountContexts.filter(
     (context) => !currentAccountContexts.includes(context),
   );
+  const reusedAccountContexts = requiredAccountContexts.filter((context) =>
+    currentAccountContexts.includes(context),
+  );
+  const actorAuthorized = canMaterializeAccountContext(params.actor);
   const status =
     requiredAccountContexts.length === 0
       ? "NOT_REQUIRED"
       : !params.targetUserResolved
         ? "TARGET_USER_UNRESOLVED"
         : missingAccountContexts.length > 0
-          ? "MISSING_REQUIRED_CONTEXT"
+          ? actorAuthorized
+            ? "PROPOSED_FOR_APPLICATION"
+            : "BLOCKED_UNAUTHORIZED"
           : "SATISFIED";
 
   return {
@@ -1057,38 +1180,53 @@ function buildAccountContextRequirement(params: {
     requiredAccountContexts,
     currentAccountContexts,
     missingAccountContexts,
-    materializationInScope: false,
+    reusedAccountContexts,
+    proposedAccountContexts:
+      status === "PROPOSED_FOR_APPLICATION" ? missingAccountContexts : [],
+    materializationInScope: true,
+    actorAuthorized,
+    grantsAuthorityByItself: false,
   };
 }
 
 function buildConsoleEntitlementPreview(params: {
   readonly currentAccountContexts: readonly AccountContext[];
   readonly proposedContexts: readonly AccountContext[];
-  readonly missingRequiredAccountContexts: readonly AccountContext[];
+  readonly accountContextRequirement: Record<string, unknown>;
   readonly responsibilityRequirements: readonly Record<string, unknown>[];
   readonly blockers: readonly Record<string, unknown>[];
 }): Record<string, unknown> {
   const current = normalizeAccountContexts(params.currentAccountContexts);
   const proposed = [...new Set([...current, ...params.proposedContexts])];
-  const missingRequired = new Set(
-    normalizeAccountContexts(params.missingRequiredAccountContexts),
-  );
+  const blockedAccountContexts =
+    params.accountContextRequirement.status === "BLOCKED_UNAUTHORIZED"
+      ? new Set(
+          normalizeAccountContexts(
+            params.accountContextRequirement.missingAccountContexts,
+          ),
+        )
+      : new Set<AccountContext>();
   return {
     previewOnly: true,
     accountContextMutated: false,
+    accountContextMaterializationPreviewed: true,
     grantsAuthorityByItself: false,
     consoles: (["STAFF_CONSOLE", "MANAGER_CONSOLE", "ADMIN_CONSOLE"] as const).map(
       (context) => {
         const currentlyEligible = current.includes(context);
         const proposedEligible = proposed.includes(context);
-        const accountContextBlocked = missingRequired.has(context);
+        const accountContextBlocked = blockedAccountContexts.has(context);
         const managerBlocked =
           context === "MANAGER_CONSOLE" &&
           params.responsibilityRequirements.some(
-            (item) => item.status !== "SATISFIED",
+            (item) =>
+              item.status !== "SATISFIED" &&
+              item.status !== "CREATE_PROPOSED",
           );
         const consoleBlockers = [
-          ...(accountContextBlocked ? ["REQUIRED_ACCOUNT_CONTEXT_MISSING"] : []),
+          ...(accountContextBlocked
+            ? ["ACCOUNT_CONTEXT_MATERIALIZATION_NOT_AUTHORIZED"]
+            : []),
           ...(managerBlocked ? ["RESPONSIBILITY_REQUIRED"] : []),
         ];
         return {
@@ -1107,6 +1245,49 @@ function buildConsoleEntitlementPreview(params: {
     ),
     blockerCodes: params.blockers.map((item) => item.code),
   };
+}
+
+function canMaterializeAccountContext(actor: Actor | undefined): boolean {
+  if (!actor) {
+    return true;
+  }
+  return (
+    actor.context === "ADMIN" &&
+    actor.accountContexts.includes("ADMIN_CONSOLE") &&
+    actor.permissions.includes(Permission.ROLE_ASSIGN_TO_USER)
+  );
+}
+
+function canMaterializeResponsibility(
+  actor: Actor | undefined,
+  responsibilityType: string,
+): boolean {
+  if (!actor) {
+    return false;
+  }
+  if (actor.context !== "ADMIN" || !actor.accountContexts.includes("ADMIN_CONSOLE")) {
+    return false;
+  }
+  if (responsibilityType === "TALENT_GROUP_MANAGER") {
+    return actor.permissions.includes(Permission.TALENT_GROUP_UPDATE);
+  }
+  if (responsibilityType === "ORG_UNIT_MANAGER") {
+    return actor.permissions.includes(Permission.ORG_UNIT_UPDATE);
+  }
+  return false;
+}
+
+function responsibilityBlockerCode(status: unknown): string {
+  if (status === "MISSING_RESPONSIBILITY_UNAUTHORIZED") {
+    return "RESPONSIBILITY_MATERIALIZATION_NOT_AUTHORIZED";
+  }
+  if (status === "MISSING_RESPONSIBILITY_TARGET_NOT_ACTIVE") {
+    return "RESPONSIBILITY_TARGET_NOT_ASSIGNABLE";
+  }
+  if (status === "CREATE_PROPOSED_REASON_REQUIRED") {
+    return "REASON_REQUIRED";
+  }
+  return "RESPONSIBILITY_REQUIRED";
 }
 
 function buildEffectiveAccessDelta(

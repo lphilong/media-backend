@@ -87,15 +87,61 @@ interface AssignmentRuleDocument {
 interface ApplyUserDocument {
   readonly _id: string;
   readonly accountStatus: string;
+  readonly accountContexts?: readonly string[];
   readonly disabledAt?: number | null;
   readonly archivedAt?: number | null;
+  readonly updatedAt?: number;
+}
+
+interface BundleAssignmentDocument {
+  readonly _id: string;
+  readonly targetUserId: string;
+  readonly bundleCode: string;
+  readonly bundleVersion: string;
+  readonly assignedBy: string;
+  readonly assignedAt: number;
+  readonly reason: string;
+  readonly status: "ACTIVE";
+  readonly effectiveAt: number | null;
+  readonly expiresAt: number | null;
+  readonly reviewAt: number | null;
+  readonly childRoleAssignmentIds: readonly string[];
+  readonly sourceTrace: Record<string, unknown>;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+interface ResponsibilityAssignmentDocument {
+  readonly _id: string;
+  readonly subjectType: string;
+  readonly subjectId: string;
+  readonly responsibleEmploymentProfileId: string;
+  readonly responsibilityType: string;
+  readonly responsibilityRole: string | null;
+  readonly includeDescendants: boolean | null;
+  readonly actionMask: readonly string[];
+  readonly isPrimary: boolean;
+  readonly status: "ACTIVE";
+  readonly effectiveAt: number;
+  readonly expiresAt: number | null;
+  readonly revokedAt: number | null;
+  readonly reason: string | null;
+  readonly createdBy: string;
+  readonly createdAt: number;
+  readonly updatedBy: string;
+  readonly updatedAt: number;
+  readonly revokedBy: string | null;
+  readonly revokedReason: string | null;
 }
 
 export class AccessAssignmentApplyAdminService {
   private readonly previewService: AccessAssignmentPreviewAdminService;
+  private readonly users: Collection<ApplyUserDocument>;
   private readonly roles: Collection<RoleDocument>;
   private readonly assignments: Collection<AssignmentDocument>;
   private readonly assignmentRules: Collection<AssignmentRuleDocument>;
+  private readonly bundleAssignments: Collection<BundleAssignmentDocument>;
+  private readonly responsibilities: Collection<ResponsibilityAssignmentDocument>;
 
   constructor(
     private readonly db: Db,
@@ -104,11 +150,16 @@ export class AccessAssignmentApplyAdminService {
     private readonly actorSnapshotCacheInvalidator: ActorSnapshotCacheInvalidator,
   ) {
     this.previewService = new AccessAssignmentPreviewAdminService(db);
+    this.users = db.collection<ApplyUserDocument>("users");
     this.roles = db.collection<RoleDocument>("roles");
     this.assignments = db.collection<AssignmentDocument>("role_assignments");
     this.assignmentRules = db.collection<AssignmentRuleDocument>(
       "role_assignment_rules",
     );
+    this.bundleAssignments =
+      db.collection<BundleAssignmentDocument>("bundle_assignments");
+    this.responsibilities =
+      db.collection<ResponsibilityAssignmentDocument>("responsibility_assignments");
   }
 
   async apply(
@@ -130,7 +181,7 @@ export class AccessAssignmentApplyAdminService {
             ...command,
             actorUserId: actor.id,
           },
-          { session },
+          { session, actor },
         );
         const blockers = [...readRecords(preview.blockers)];
         const reason = normalizeReason(command.reason);
@@ -142,6 +193,10 @@ export class AccessAssignmentApplyAdminService {
         if (blockers.length > 0) {
           controls.markExplicitNoOpSuccess();
           return buildBlockedApplyResult(preview, blockers);
+        }
+        const applyReason = reason;
+        if (!applyReason) {
+          throw new RoleValidationError("reason is required");
         }
 
         const proposedAssignments = readProposedAssignments(preview);
@@ -156,6 +211,30 @@ export class AccessAssignmentApplyAdminService {
         const now = Date.now();
         const appliedAssignments: AssignmentDocument[] = [];
         const trackedRoleIds = new Set<string>();
+        const bundleAssignment = buildBundleAssignmentDocument({
+          preview,
+          proposedAssignments,
+          actorId: actor.id,
+          targetUserId: command.targetUserId,
+          reason: applyReason,
+          now,
+        });
+        const accountContextResult = await this.materializeAccountContext({
+          preview,
+          actor,
+          targetUserId: command.targetUserId,
+          reason: applyReason,
+          now,
+          session,
+        });
+        const responsibilityOperationResult =
+          await this.materializeResponsibilities({
+            preview,
+            actor,
+            reason: applyReason,
+            now,
+            session,
+          });
 
         for (const proposed of proposedAssignments) {
           const role = await this.requireActiveRole(proposed.roleId, session);
@@ -204,13 +283,28 @@ export class AccessAssignmentApplyAdminService {
             revokedBy: null,
             revokeReason: null,
             origin: proposed.origin,
-            bundleOrigin: proposed.bundleOrigin,
-            reason,
+            bundleOrigin:
+              proposed.origin === "BUNDLE" && bundleAssignment
+                ? {
+                    bundleAssignmentId: bundleAssignment._id,
+                    bundleCode: bundleAssignment.bundleCode,
+                    bundleVersion: bundleAssignment.bundleVersion,
+                  }
+                : proposed.bundleOrigin,
+            reason: applyReason,
             createdAt: now,
             updatedAt: now,
           };
           appliedAssignments.push(assignment);
           trackedRoleIds.add(proposed.roleId);
+        }
+
+        if (bundleAssignment) {
+          const withChildren: BundleAssignmentDocument = {
+            ...bundleAssignment,
+            childRoleAssignmentIds: appliedAssignments.map((item) => item._id),
+          };
+          await this.bundleAssignments.insertOne(withChildren, { session });
         }
 
         try {
@@ -247,10 +341,13 @@ export class AccessAssignmentApplyAdminService {
             assignmentIds: appliedAssignments.map((item) => item._id),
             roleIds: appliedAssignments.map((item) => item.roleId),
             scopeFingerprints: appliedAssignments.map((item) => item.scopeFingerprint),
-            reason,
+            reason: applyReason,
             bundleExpansion: preview.bundleExpansion ?? null,
+            bundleAssignmentId: bundleAssignment?._id ?? null,
             responsibilityRequirements: preview.responsibilityRequirements ?? [],
+            responsibilityOperationResult,
             accountContextRequirement: preview.accountContextRequirement ?? null,
+            accountContextResult,
             sensitiveAccess: preview.sensitiveAccess ?? null,
             sourceTrace: preview.sourceTrace ?? null,
           },
@@ -301,26 +398,31 @@ export class AccessAssignmentApplyAdminService {
           bundleExpansion: rewriteAppliedBundleExpansion(
             preview.bundleExpansion,
             appliedAssignments,
+            bundleAssignment,
           ),
-          accountContextResult: {
-            materialized: false,
-            materializationPolicy: "DEFERRED_FAIL_CLOSED",
-            requirement: preview.accountContextRequirement ?? null,
-            grantsAuthorityByItself: false,
-          },
+          accountContextResult,
           consoleEntitlementResult: preview.consoleEntitlementPreview ?? null,
           responsibilityRequirements: preview.responsibilityRequirements ?? [],
+          responsibilityOperationResult,
           sensitiveAccess: preview.sensitiveAccess ?? null,
           duplicateConflicts: [],
           auditTrace: {
             written: true,
             mutationType: "role.assign-to-user",
             assignmentIds: appliedAssignments.map((item) => item._id),
+            bundleAssignmentId: bundleAssignment?._id ?? null,
+            accountContextMaterialized: accountContextResult.materialized,
+            responsibilityOperationIds: responsibilityOperationResult.items.map(
+              (item) => item.responsibilityAssignmentId,
+            ),
             targetUserId: command.targetUserId,
           },
           sourceTrace: {
             ...(isRecord(preview.sourceTrace) ? preview.sourceTrace : {}),
             mutatesSource: true,
+            bundleAssignmentSource: bundleAssignment
+              ? "bundle_assignments"
+              : null,
             auditSource: "audit_log",
           },
         };
@@ -352,7 +454,7 @@ export class AccessAssignmentApplyAdminService {
     if (!actor.isActive) {
       throw new RoleDependencyError(`Assignment actor is not ACTIVE: ${actor.id}`);
     }
-    const actorUser = await this.db.collection<ApplyUserDocument>("users").findOne(
+    const actorUser = await this.users.findOne(
       {
         _id: actor.id,
         accountStatus: "ACTIVE",
@@ -363,6 +465,250 @@ export class AccessAssignmentApplyAdminService {
     );
     if (!actorUser) {
       throw new RoleDependencyError(`Assignment actor is not assignable: ${actor.id}`);
+    }
+  }
+
+  private async materializeAccountContext(params: {
+    readonly preview: Record<string, unknown>;
+    readonly actor: Actor;
+    readonly targetUserId: string;
+    readonly reason: string;
+    readonly now: number;
+    readonly session: ClientSession;
+  }): Promise<{
+    readonly materialized: boolean;
+    readonly materializationPolicy: string;
+    readonly requirement: unknown;
+    readonly previousAccountContexts: readonly string[];
+    readonly appliedAccountContexts: readonly string[];
+    readonly resultingAccountContexts: readonly string[];
+    readonly grantsAuthorityByItself: false;
+    readonly reason: string;
+  }> {
+    const requirement = readAccountContextRequirement(params.preview);
+    if (requirement.proposedAccountContexts.length === 0) {
+      return {
+        materialized: false,
+        materializationPolicy:
+          requirement.requiredAccountContexts.length === 0
+            ? "NOT_REQUIRED"
+            : "REUSED_EXISTING",
+        requirement: params.preview.accountContextRequirement ?? null,
+        previousAccountContexts: requirement.currentAccountContexts,
+        appliedAccountContexts: [],
+        resultingAccountContexts: requirement.currentAccountContexts,
+        grantsAuthorityByItself: false,
+        reason: params.reason,
+      };
+    }
+
+    if (requirement.status !== "PROPOSED_FOR_APPLICATION") {
+      throw new RoleDependencyError(
+        "AccountContext materialization was not allowed by preview.",
+      );
+    }
+    if (
+      params.actor.context !== "ADMIN" ||
+      !params.actor.accountContexts.includes("ADMIN_CONSOLE") ||
+      !params.actor.permissions.includes(Permission.ROLE_ASSIGN_TO_USER)
+    ) {
+      throw new RoleDependencyError(
+        "Actor is not authorized to materialize required AccountContext.",
+      );
+    }
+
+    const targetUser = await this.users.findOne(
+      {
+        _id: params.targetUserId,
+        accountStatus: "ACTIVE",
+        disabledAt: null,
+        archivedAt: null,
+      },
+      { session: params.session },
+    );
+    if (!targetUser) {
+      throw new RoleDependencyError(
+        `Target user is no longer assignable: ${params.targetUserId}`,
+      );
+    }
+    const current = normalizeAccountContextArray(targetUser.accountContexts);
+    const resulting = normalizeAccountContextArray([
+      ...current,
+      ...requirement.proposedAccountContexts,
+    ]);
+
+    await this.users.updateOne(
+      { _id: params.targetUserId },
+      { $set: { accountContexts: resulting, updatedAt: params.now } },
+      { session: params.session },
+    );
+
+    return {
+      materialized: true,
+      materializationPolicy: "APPLIED_FROM_ACCESS_ASSIGNMENT_PREVIEW",
+      requirement: params.preview.accountContextRequirement ?? null,
+      previousAccountContexts: current,
+      appliedAccountContexts: requirement.proposedAccountContexts,
+      resultingAccountContexts: resulting,
+      grantsAuthorityByItself: false,
+      reason: params.reason,
+    };
+  }
+
+  private async materializeResponsibilities(params: {
+    readonly preview: Record<string, unknown>;
+    readonly actor: Actor;
+    readonly reason: string;
+    readonly now: number;
+    readonly session: ClientSession;
+  }): Promise<{
+    readonly materialized: boolean;
+    readonly items: readonly {
+      readonly operation: string;
+      readonly responsibilityAssignmentId: string | null;
+      readonly subjectType: string | null;
+      readonly subjectId: string | null;
+      readonly responsibilityType: string | null;
+      readonly source: string;
+    }[];
+  }> {
+    const requirements = readRecords(params.preview.responsibilityRequirements);
+    const items: Array<{
+      readonly operation: string;
+      readonly responsibilityAssignmentId: string | null;
+      readonly subjectType: string | null;
+      readonly subjectId: string | null;
+      readonly responsibilityType: string | null;
+      readonly source: string;
+    }> = [];
+
+    for (const requirement of requirements) {
+      if (requirement.status === "SATISFIED") {
+        items.push({
+          operation: "REUSE_EXISTING",
+          responsibilityAssignmentId:
+            typeof requirement.responsibilityAssignmentId === "string"
+              ? requirement.responsibilityAssignmentId
+              : null,
+          subjectType:
+            typeof requirement.requiredSubjectType === "string"
+              ? requirement.requiredSubjectType
+              : null,
+          subjectId:
+            typeof requirement.targetId === "string"
+              ? requirement.targetId
+              : null,
+          responsibilityType:
+            typeof requirement.requiredResponsibilityType === "string"
+              ? requirement.requiredResponsibilityType
+              : null,
+          source: "responsibility_assignments",
+        });
+        continue;
+      }
+      if (requirement.status !== "CREATE_PROPOSED") {
+        continue;
+      }
+      const proposed = isRecord(requirement.proposedResponsibility)
+        ? requirement.proposedResponsibility
+        : null;
+      if (!proposed) {
+        throw new RoleDependencyError(
+          "Responsibility materialization was proposed without a responsibility payload.",
+        );
+      }
+      const subjectType = readRequiredString(
+        proposed.subjectType,
+        "proposedResponsibility.subjectType",
+      );
+      const subjectId = readRequiredString(
+        proposed.subjectId,
+        "proposedResponsibility.subjectId",
+      );
+      const responsibleEmploymentProfileId = readRequiredString(
+        proposed.responsibleEmploymentProfileId,
+        "proposedResponsibility.responsibleEmploymentProfileId",
+      );
+      const responsibilityType = readRequiredString(
+        proposed.responsibilityType,
+        "proposedResponsibility.responsibilityType",
+      );
+      assertActorCanMaterializeResponsibility(params.actor, responsibilityType);
+      await this.assertNoActivePrimaryResponsibility({
+        subjectType,
+        subjectId,
+        responsibilityType,
+        now: params.now,
+        session: params.session,
+      });
+
+      const assignment: ResponsibilityAssignmentDocument = {
+        _id: crypto.randomUUID(),
+        subjectType,
+        subjectId,
+        responsibleEmploymentProfileId,
+        responsibilityType,
+        responsibilityRole:
+          typeof proposed.responsibilityRole === "string"
+            ? proposed.responsibilityRole
+            : null,
+        includeDescendants: false,
+        actionMask: [],
+        isPrimary: true,
+        status: "ACTIVE",
+        effectiveAt: params.now,
+        expiresAt: null,
+        revokedAt: null,
+        reason: params.reason,
+        createdBy: params.actor.id,
+        createdAt: params.now,
+        updatedBy: params.actor.id,
+        updatedAt: params.now,
+        revokedBy: null,
+        revokedReason: null,
+      };
+      await this.responsibilities.insertOne(assignment, {
+        session: params.session,
+      });
+      items.push({
+        operation: "CREATE",
+        responsibilityAssignmentId: assignment._id,
+        subjectType,
+        subjectId,
+        responsibilityType,
+        source: "responsibility_assignments",
+      });
+    }
+
+    return {
+      materialized: items.some((item) => item.operation === "CREATE"),
+      items,
+    };
+  }
+
+  private async assertNoActivePrimaryResponsibility(params: {
+    readonly subjectType: string;
+    readonly subjectId: string;
+    readonly responsibilityType: string;
+    readonly now: number;
+    readonly session: ClientSession;
+  }): Promise<void> {
+    const existing = await this.responsibilities.findOne(
+      {
+        subjectType: params.subjectType,
+        subjectId: params.subjectId,
+        responsibilityType: params.responsibilityType,
+        isPrimary: true,
+        status: "ACTIVE",
+        effectiveAt: { $lte: params.now },
+        $or: [{ expiresAt: null }, { expiresAt: { $gte: params.now } }],
+      },
+      { session: params.session },
+    );
+    if (existing) {
+      throw new RoleAssignmentConflictError(
+        `Active primary responsibility already exists for ${params.subjectType}:${params.subjectId}:${params.responsibilityType}`,
+      );
     }
   }
 
@@ -474,8 +820,11 @@ function buildBlockedApplyResult(
     bundleExpansion: preview.bundleExpansion ?? null,
     accountContextResult: {
       materialized: false,
-      materializationPolicy: "DEFERRED_FAIL_CLOSED",
+      materializationPolicy: "NOT_APPLIED_BLOCKED",
       requirement: preview.accountContextRequirement ?? null,
+      previousAccountContexts: readAccountContextRequirement(preview).currentAccountContexts,
+      appliedAccountContexts: [],
+      resultingAccountContexts: readAccountContextRequirement(preview).currentAccountContexts,
       grantsAuthorityByItself: false,
     },
     consoleEntitlementResult: preview.consoleEntitlementPreview ?? null,
@@ -538,19 +887,140 @@ function readProposedAssignments(
   });
 }
 
+function buildBundleAssignmentDocument(params: {
+  readonly preview: Record<string, unknown>;
+  readonly proposedAssignments: readonly ProposedAssignmentForApply[];
+  readonly actorId: string;
+  readonly targetUserId: string;
+  readonly reason: string;
+  readonly now: number;
+}): BundleAssignmentDocument | null {
+  const expansion = params.preview.bundleExpansion;
+  const target = params.preview.assignmentTarget;
+  if (!isRecord(expansion) || !isRecord(target)) {
+    return null;
+  }
+  const bundleCode = readRequiredString(target.code, "assignmentTarget.code");
+  const bundleVersion = readRequiredString(
+    target.version,
+    "assignmentTarget.version",
+  );
+  return {
+    _id: crypto.randomUUID(),
+    targetUserId: params.targetUserId,
+    bundleCode,
+    bundleVersion,
+    assignedBy: params.actorId,
+    assignedAt: params.now,
+    reason: params.reason,
+    status: "ACTIVE",
+    effectiveAt: readNullableNumber(
+      params.proposedAssignments[0]?.effectiveAt,
+      "bundleAssignment.effectiveAt",
+    ),
+    expiresAt: readNullableNumber(
+      params.proposedAssignments[0]?.expiresAt,
+      "bundleAssignment.expiresAt",
+    ),
+    reviewAt: readNullableNumber(
+      params.proposedAssignments[0]?.reviewAt,
+      "bundleAssignment.reviewAt",
+    ),
+    childRoleAssignmentIds: [],
+    sourceTrace: {
+      source: "access-assignment.apply",
+      bundleCatalogSource: "role-bundle.catalog",
+      previewBundleAssignmentId:
+        typeof expansion.bundleAssignmentId === "string"
+          ? expansion.bundleAssignmentId
+          : null,
+    },
+    createdAt: params.now,
+    updatedAt: params.now,
+  };
+}
+
 function rewriteAppliedBundleExpansion(
   value: unknown,
   assignments: readonly AssignmentDocument[],
+  bundleAssignment: BundleAssignmentDocument | null,
 ): unknown {
   if (!isRecord(value)) {
     return null;
   }
   return {
     ...value,
-    persistedParentBundleAssignment: false,
+    persistedParentBundleAssignment: bundleAssignment !== null,
+    parentBundleAssignment: bundleAssignment
+      ? {
+          bundleAssignmentId: bundleAssignment._id,
+          bundleCode: bundleAssignment.bundleCode,
+          bundleVersion: bundleAssignment.bundleVersion,
+          targetUserId: bundleAssignment.targetUserId,
+          assignedBy: bundleAssignment.assignedBy,
+          assignedAt: bundleAssignment.assignedAt,
+          status: bundleAssignment.status,
+          reason: bundleAssignment.reason,
+        }
+      : null,
     appliedChildCount: assignments.length,
     childAssignmentIds: assignments.map((item) => item._id),
   };
+}
+
+function readAccountContextRequirement(preview: Record<string, unknown>): {
+  readonly status: string | null;
+  readonly requiredAccountContexts: readonly string[];
+  readonly currentAccountContexts: readonly string[];
+  readonly proposedAccountContexts: readonly string[];
+} {
+  const requirement = isRecord(preview.accountContextRequirement)
+    ? preview.accountContextRequirement
+    : {};
+  return {
+    status:
+      typeof requirement.status === "string" ? requirement.status : null,
+    requiredAccountContexts: readStringArray(
+      requirement.requiredAccountContexts,
+    ),
+    currentAccountContexts: readStringArray(
+      requirement.currentAccountContexts,
+    ),
+    proposedAccountContexts: readStringArray(
+      requirement.proposedAccountContexts,
+    ),
+  };
+}
+
+function normalizeAccountContextArray(values: unknown): readonly string[] {
+  const order = ["STAFF_CONSOLE", "MANAGER_CONSOLE", "ADMIN_CONSOLE"];
+  const set = new Set(readStringArray(values));
+  return order.filter((item) => set.has(item));
+}
+
+function assertActorCanMaterializeResponsibility(
+  actor: Actor,
+  responsibilityType: string,
+): void {
+  if (
+    actor.context !== "ADMIN" ||
+    !actor.accountContexts.includes("ADMIN_CONSOLE")
+  ) {
+    throw new RoleDependencyError(
+      "Responsibility materialization requires ADMIN_CONSOLE actor context.",
+    );
+  }
+  const requiredPermission =
+    responsibilityType === "TALENT_GROUP_MANAGER"
+      ? Permission.TALENT_GROUP_UPDATE
+      : responsibilityType === "ORG_UNIT_MANAGER"
+        ? Permission.ORG_UNIT_UPDATE
+        : null;
+  if (!requiredPermission || !actor.permissions.includes(requiredPermission)) {
+    throw new RoleDependencyError(
+      `Actor is not authorized to materialize responsibility ${responsibilityType}.`,
+    );
+  }
 }
 
 function readRecords(value: unknown): readonly Record<string, unknown>[] {

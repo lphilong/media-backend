@@ -164,7 +164,7 @@ test("access assignment apply returns review policy blockers for global grants",
   assert.equal(db.rows("role_assignments").filter((row) => row.userId === "target-user").length, 0);
 });
 
-test("access assignment apply blocks missing AccountContext without mutation", async () => {
+test("access assignment apply materializes missing AccountContext before child assignment", async () => {
   const db = baseApplyDb({
     targetContexts: ["STAFF_CONSOLE"],
     targetRoleCode: "TALENT_GROUP_MANAGER",
@@ -186,13 +186,30 @@ test("access assignment apply blocks missing AccountContext without mutation", a
     }),
   );
 
-  assert.equal(result.applied, false);
-  assert.deepEqual(readCodes(result.blockers), ["REQUIRED_ACCOUNT_CONTEXT_MISSING"]);
-  assert.equal(db.rows("role_assignments").filter((row) => row.userId === "target-user").length, 0);
-  assert.equal(readPath(result, ["auditTrace", "written"]), false);
+  assert.equal(result.applied, true);
+  assert.deepEqual(readCodes(result.blockers), []);
+  assert.equal(db.rows("role_assignments").filter((row) => row.userId === "target-user").length, 1);
+  assert.deepEqual(
+    db.rows("users").find((row) => row._id === "target-user")?.accountContexts,
+    ["STAFF_CONSOLE", "MANAGER_CONSOLE"],
+  );
+  assert.equal(readPath(result, ["accountContextResult", "materialized"]), true);
+  assert.deepEqual(
+    readPath(result, ["accountContextResult", "appliedAccountContexts"]),
+    ["MANAGER_CONSOLE"],
+  );
+  assert.equal(
+    readPath(result, [
+      "effectiveAccessAfterApply",
+      "workspaceAvailability",
+      "primaryWorkspace",
+    ]),
+    "MANAGER_CONSOLE",
+  );
+  assert.equal(readPath(result, ["auditTrace", "written"]), true);
 });
 
-test("access assignment apply expands bundle into child assignments without parent bundle lifecycle", async () => {
+test("access assignment apply creates bundle parent and traces child assignments to it", async () => {
   const db = baseApplyDb({
     targetContexts: ["STAFF_CONSOLE"],
     targetRoleCode: "STAFF_CONSOLE_USER",
@@ -214,8 +231,59 @@ test("access assignment apply expands bundle into child assignments without pare
   assert.equal(result.applied, true);
   assert.equal(inserted?.origin, "BUNDLE");
   assert.equal(readPath(inserted, ["bundleOrigin", "bundleCode"]), "STAFF_CONSOLE_BUNDLE");
-  assert.equal(readPath(result, ["bundleExpansion", "persistedParentBundleAssignment"]), false);
+  assert.equal(db.rows("bundle_assignments").length, 1);
+  const parent = db.rows("bundle_assignments")[0];
+  assert.equal(parent?.targetUserId, "target-user");
+  assert.equal(parent?.bundleCode, "STAFF_CONSOLE_BUNDLE");
+  assert.equal(readPath(inserted, ["bundleOrigin", "bundleAssignmentId"]), parent?._id);
+  assert.equal(readPath(result, ["bundleExpansion", "persistedParentBundleAssignment"]), true);
+  assert.equal(
+    readPath(result, ["bundleExpansion", "parentBundleAssignment", "bundleAssignmentId"]),
+    parent?._id,
+  );
   assert.equal(readPath(result, ["bundleExpansion", "appliedChildCount"]), 1);
+});
+
+test("access assignment apply creates required responsibility only when actor is authorized", async () => {
+  const db = baseApplyDb({
+    targetContexts: ["MANAGER_CONSOLE"],
+    targetRoleCode: "TALENT_GROUP_MANAGER",
+    targetRolePermissions: [Permission.TALENT_GROUP_READ],
+    talentGroups: [{ _id: "group-a", status: "ACTIVE" }],
+  });
+
+  const result = await withTrace(() =>
+    applyWithFakes(
+      db,
+      {
+        targetUserId: "target-user",
+        assignmentTargetType: "ROLE_TEMPLATE",
+        assignmentTargetCode: "TALENT_GROUP_MANAGER",
+        structuredScopeGrants: [
+          { scopeType: "managedTalentGroup", targetId: "group-a" },
+        ],
+        reason: "manager setup",
+      },
+      actor([Permission.TALENT_GROUP_UPDATE]),
+    ),
+  );
+
+  const created = db.rows("responsibility_assignments")[0];
+  assert.equal(result.applied, true);
+  assert.equal(created?.subjectType, "TALENT_GROUP");
+  assert.equal(created?.subjectId, "group-a");
+  assert.equal(created?.responsibleEmploymentProfileId, "profile-1");
+  assert.equal(created?.responsibilityType, "TALENT_GROUP_MANAGER");
+  assert.equal(readPath(result, ["responsibilityOperationResult", "materialized"]), true);
+  assert.equal(
+    readPath(result, [
+      "responsibilityOperationResult",
+      "items",
+      0,
+      "responsibilityAssignmentId",
+    ]),
+    created?._id,
+  );
 });
 
 test("access assignment apply blocks missing responsibility and requires reason for all changes", async () => {
@@ -237,7 +305,7 @@ test("access assignment apply blocks missing responsibility and requires reason 
     }),
   );
   assert.equal(missingResponsibility.applied, false);
-  assert.deepEqual(readCodes(missingResponsibility.blockers), ["RESPONSIBILITY_REQUIRED"]);
+  assert.deepEqual(readCodes(missingResponsibility.blockers), ["RESPONSIBILITY_MATERIALIZATION_NOT_AUTHORIZED"]);
 
   const missingReason = await withTrace(() =>
     applyWithFakes(
@@ -299,10 +367,7 @@ test("access assignment apply blocks true legacy targets and self-assignment", a
     ),
   );
   assert.equal(self.applied, false);
-  assert.deepEqual(readCodes(self.blockers), [
-    "REQUIRED_ACCOUNT_CONTEXT_MISSING",
-    "SELF_ASSIGNMENT_BLOCKED",
-  ]);
+  assert.deepEqual(readCodes(self.blockers), ["SELF_ASSIGNMENT_BLOCKED"]);
 });
 
 test("access assignment apply controller rejects frontend-owned authority fields", async () => {
@@ -663,6 +728,8 @@ function baseApplyDb(params: {
   readonly targetRoleCode: string;
   readonly targetRolePermissions: readonly string[];
   readonly responsibilities?: readonly Record<string, unknown>[];
+  readonly talentGroups?: readonly Record<string, unknown>[];
+  readonly orgUnits?: readonly Record<string, unknown>[];
 }): FakeDb {
   const targetUserId = params.targetUserId ?? "target-user";
   return fakeDb({
@@ -680,22 +747,26 @@ function baseApplyDb(params: {
     role_assignments: [actorDelegationAssignment("assignment-actor", "role-access")],
     role_assignment_rules: [],
     responsibility_assignments: params.responsibilities ?? [],
+    talent_groups: params.talentGroups ?? [],
+    org_units: params.orgUnits ?? [],
+    bundle_assignments: [],
   });
 }
 
 async function applyWithFakes(
   db: FakeDb,
   command: Parameters<AccessAssignmentApplyAdminService["apply"]>[1],
+  applyActor = actor(),
 ): Promise<Record<string, unknown>> {
   return new AccessAssignmentApplyAdminService(
     db,
     fakeAudit().guard,
     fakeBridge(),
     fakeInvalidator().service,
-  ).apply(actor(), command);
+  ).apply(applyActor, command);
 }
 
-function actor(): Actor {
+function actor(extraPermissions: readonly Permission[] = []): Actor {
   return new Actor({
     id: "access-admin",
     type: "admin",
@@ -705,6 +776,7 @@ function actor(): Actor {
       Permission.ROLE_ASSIGN_TO_USER,
       Permission.ROLE_ASSIGNMENT_VIEW,
       Permission.ROLE_REVOKE_FROM_USER,
+      ...extraPermissions,
     ],
     accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
@@ -914,6 +986,10 @@ function fakeDb(
         async insertMany(docs: readonly Record<string, unknown>[]) {
           rows.push(...docs.map((doc) => ({ ...doc })));
           return { insertedCount: docs.length };
+        },
+        async insertOne(doc: Record<string, unknown>) {
+          rows.push({ ...doc });
+          return { insertedId: doc._id, acknowledged: true };
         },
         async updateOne(query: Record<string, unknown>, update: Record<string, unknown>) {
           const row = rows.find((item) => matches(item, query));

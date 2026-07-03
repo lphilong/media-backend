@@ -5,6 +5,7 @@ import {
   ROLE_ASSIGNMENT_ROLE_STATE_UPDATED_LIST_INDEX_NAME,
   ROLE_ASSIGNMENT_RULE_ROLE_LIST_INDEX_NAME,
   ROLE_ASSIGNMENT_RULE_UNIQ_CODE_INDEX,
+  BUNDLE_ASSIGNMENT_TARGET_STATUS_INDEX_NAME,
   ROLE_SEARCH_CODE_UPDATED_LIST_INDEX_NAME,
   ROLE_SEARCH_NAME_UPDATED_LIST_INDEX_NAME,
   ROLE_STATE_UPDATED_LIST_INDEX_NAME,
@@ -103,6 +104,18 @@ export function createRoleBootstrapRegistrar(): BootstrapRegistrar {
           roleId: 1,
           state: 1,
           updatedAt: -1,
+          _id: 1,
+        },
+      );
+
+      await assertRequiredIndex(
+        db,
+        "bundle_assignments",
+        BUNDLE_ASSIGNMENT_TARGET_STATUS_INDEX_NAME,
+        {
+          targetUserId: 1,
+          status: 1,
+          assignedAt: -1,
           _id: 1,
         },
       );

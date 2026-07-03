@@ -15,6 +15,8 @@ export const ROLE_ACTIVE_ASSIGNMENT_UNIQ_INDEX =
   "uniq_role_assignment_active_role_user_scope";
 export const ROLE_ASSIGNMENT_ROLE_STATE_UPDATED_LIST_INDEX_NAME =
   "idx_role_assignment_role_state_updated";
+export const BUNDLE_ASSIGNMENT_TARGET_STATUS_INDEX_NAME =
+  "idx_bundle_assignment_target_status";
 
 export const ROLE_ASSIGNMENT_RULE_ROLE_LIST_INDEX_NAME =
   "idx_role_assignment_rule_role";
@@ -27,6 +29,8 @@ export async function initRoleIndexes(
   const roleCollection = db.collection("roles");
   const assignmentCollection =
     db.collection("role_assignments");
+  const bundleAssignmentCollection =
+    db.collection("bundle_assignments");
   const assignmentRuleCollection =
     db.collection("role_assignment_rules");
 
@@ -84,6 +88,13 @@ export async function initRoleIndexes(
     { roleId: 1, state: 1, updatedAt: -1, _id: 1 },
     {
       name: ROLE_ASSIGNMENT_ROLE_STATE_UPDATED_LIST_INDEX_NAME,
+    },
+  );
+
+  await bundleAssignmentCollection.createIndex(
+    { targetUserId: 1, status: 1, assignedAt: -1, _id: 1 },
+    {
+      name: BUNDLE_ASSIGNMENT_TARGET_STATUS_INDEX_NAME,
     },
   );
 
