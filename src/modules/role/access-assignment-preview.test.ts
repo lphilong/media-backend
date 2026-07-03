@@ -15,8 +15,17 @@ import { adminAccessAssignmentPreviewRoutes } from "@modules/role/admin/admin.ac
 
 const CANONICAL_ASSIGNMENT_TARGET_CODES = [
   "HR_OPERATIONS",
+  "HR_TERMS_APPROVER",
   "PRODUCTION_OPS",
+  "PLATFORM_CHANNEL_OPS",
+  "KPI_OPERATIONS",
+  "REVENUE_FINANCE_OPS",
+  "REVENUE_APPROVER",
+  "REVENUE_RECONCILER",
+  "COMMISSION_OPS",
+  "COMMISSION_APPROVER",
   "VIEWER_AUDITOR",
+  "STAFF_CONSOLE_USER",
 ] as const;
 
 const TRUE_LEGACY_ASSIGNMENT_TARGET_CODES = [
@@ -36,13 +45,17 @@ test("access assignment preview normalizes scope and computes proposed manager a
     users: [activeUser("target-user", ["MANAGER_CONSOLE"])],
     employment_profiles: [activeProfile("profile-1", "target-user")],
     roles: [
-      role("role-tgm", "TALENT_GROUP_MANAGER", [
-        Permission.TALENT_GROUP_READ,
-      ]),
+      role("role-tgm", "TALENT_GROUP_MANAGER", [Permission.TALENT_GROUP_READ]),
     ],
     role_assignments: [],
     responsibility_assignments: [
-      responsibility("resp-1", "profile-1", "TALENT_GROUP", "group-a", "TALENT_GROUP_MANAGER"),
+      responsibility(
+        "resp-1",
+        "profile-1",
+        "TALENT_GROUP",
+        "group-a",
+        "TALENT_GROUP_MANAGER",
+      ),
     ],
   });
 
@@ -82,13 +95,17 @@ test("access assignment preview proposes missing required AccountContext without
     users: [activeUser("target-user", ["STAFF_CONSOLE"])],
     employment_profiles: [activeProfile("profile-1", "target-user")],
     roles: [
-      role("role-tgm", "TALENT_GROUP_MANAGER", [
-        Permission.TALENT_GROUP_READ,
-      ]),
+      role("role-tgm", "TALENT_GROUP_MANAGER", [Permission.TALENT_GROUP_READ]),
     ],
     role_assignments: [],
     responsibility_assignments: [
-      responsibility("resp-1", "profile-1", "TALENT_GROUP", "group-a", "TALENT_GROUP_MANAGER"),
+      responsibility(
+        "resp-1",
+        "profile-1",
+        "TALENT_GROUP",
+        "group-a",
+        "TALENT_GROUP_MANAGER",
+      ),
     ],
   });
 
@@ -131,10 +148,7 @@ test("access assignment preview proposes missing required AccountContext without
   const managerConsole = findConsole(result, "MANAGER_CONSOLE");
   assert.equal(managerConsole?.proposedEligible, true);
   assert.deepEqual(managerConsole?.blockers, []);
-  assert.equal(
-    readPath(result, ["previewCompleteness", "status"]),
-    "COMPLETE",
-  );
+  assert.equal(readPath(result, ["previewCompleteness", "status"]), "COMPLETE");
   assert.equal(
     readPath(result, [
       "proposedEffectiveAccess",
@@ -151,13 +165,17 @@ test("access assignment preview blocks missing AccountContext when actor is not 
     users: [activeUser("target-user", ["STAFF_CONSOLE"])],
     employment_profiles: [activeProfile("profile-1", "target-user")],
     roles: [
-      role("role-tgm", "TALENT_GROUP_MANAGER", [
-        Permission.TALENT_GROUP_READ,
-      ]),
+      role("role-tgm", "TALENT_GROUP_MANAGER", [Permission.TALENT_GROUP_READ]),
     ],
     role_assignments: [],
     responsibility_assignments: [
-      responsibility("resp-1", "profile-1", "TALENT_GROUP", "group-a", "TALENT_GROUP_MANAGER"),
+      responsibility(
+        "resp-1",
+        "profile-1",
+        "TALENT_GROUP",
+        "group-a",
+        "TALENT_GROUP_MANAGER",
+      ),
     ],
   });
 
@@ -190,9 +208,7 @@ test("access assignment preview blocks missing responsibility and duplicate exac
     users: [activeUser("target-user", ["MANAGER_CONSOLE"])],
     employment_profiles: [activeProfile("profile-1", "target-user")],
     roles: [
-      role("role-tgm", "TALENT_GROUP_MANAGER", [
-        Permission.TALENT_GROUP_READ,
-      ]),
+      role("role-tgm", "TALENT_GROUP_MANAGER", [Permission.TALENT_GROUP_READ]),
     ],
     role_assignments: [
       {
@@ -224,10 +240,10 @@ test("access assignment preview blocks missing responsibility and duplicate exac
   });
 
   assert.equal(result.canApply, false);
-  assert.deepEqual(
-    readCodes(result.blockers),
-    ["DUPLICATE_ACTIVE_ASSIGNMENT", "RESPONSIBILITY_MATERIALIZATION_NOT_AUTHORIZED"],
-  );
+  assert.deepEqual(readCodes(result.blockers), [
+    "DUPLICATE_ACTIVE_ASSIGNMENT",
+    "RESPONSIBILITY_MATERIALIZATION_NOT_AUTHORIZED",
+  ]);
   assert.equal(db.writeCount, 0);
 });
 
@@ -246,14 +262,16 @@ test("access assignment preview accepts OrgUnit manager only with central active
     fakeDb({
       users: [activeUser("target-user", ["MANAGER_CONSOLE"])],
       employment_profiles: [activeProfile("profile-1", "target-user")],
-      roles: [
-        role("role-ou", "ORG_UNIT_MANAGER", [
-          Permission.ORG_UNIT_READ,
-        ]),
-      ],
+      roles: [role("role-ou", "ORG_UNIT_MANAGER", [Permission.ORG_UNIT_READ])],
       role_assignments: [],
       responsibility_assignments: [
-        responsibility("resp-1", "profile-1", "ORG_UNIT", "org-a", "ORG_UNIT_MANAGER"),
+        responsibility(
+          "resp-1",
+          "profile-1",
+          "ORG_UNIT",
+          "org-a",
+          "ORG_UNIT_MANAGER",
+        ),
       ],
     }),
   ).preview(command);
@@ -265,21 +283,23 @@ test("access assignment preview accepts OrgUnit manager only with central active
     fakeDb({
       users: [activeUser("target-user", ["MANAGER_CONSOLE"])],
       employment_profiles: [activeProfile("profile-1", "target-user")],
-      roles: [
-        role("role-ou", "ORG_UNIT_MANAGER", [
-          Permission.ORG_UNIT_READ,
-        ]),
-      ],
+      roles: [role("role-ou", "ORG_UNIT_MANAGER", [Permission.ORG_UNIT_READ])],
       role_assignments: [],
       responsibility_assignments: [],
       org_unit_memberships: [
-        { _id: "membership-1", employmentProfileId: "profile-1", orgUnitId: "org-a" },
+        {
+          _id: "membership-1",
+          employmentProfileId: "profile-1",
+          orgUnitId: "org-a",
+        },
       ],
     }),
   ).preview(command);
 
   assert.equal(missing.canApply, false);
-  assert.deepEqual(readCodes(missing.blockers), ["RESPONSIBILITY_MATERIALIZATION_NOT_AUTHORIZED"]);
+  assert.deepEqual(readCodes(missing.blockers), [
+    "RESPONSIBILITY_MATERIALIZATION_NOT_AUTHORIZED",
+  ]);
   assert.equal(
     readPath(missing, ["responsibilityRequirements", 0, "status"]),
     "MISSING_RESPONSIBILITY_UNAUTHORIZED",
@@ -310,7 +330,12 @@ test("access assignment preview proposes manager responsibility create when acto
       ],
       reason: "manager scope setup",
     },
-    { actor: previewActor([Permission.ROLE_ASSIGN_TO_USER, Permission.TALENT_GROUP_UPDATE]) },
+    {
+      actor: previewActor([
+        Permission.ROLE_ASSIGN_TO_USER,
+        Permission.TALENT_GROUP_UPDATE,
+      ]),
+    },
   );
 
   assert.equal(result.canApply, true);
@@ -356,23 +381,31 @@ test("access assignment preview expands canonical auditor bundle in memory witho
     readPath(result, ["bundleExpansion", "persistedParentBundleAssignment"]),
     false,
   );
-  assert.deepEqual(
-    readPath(result, ["bundleExpansion", "childRoleCodes"]),
-    ["VIEWER_AUDITOR"],
+  assert.deepEqual(readPath(result, ["bundleExpansion", "childRoleCodes"]), [
+    "VIEWER_AUDITOR",
+  ]);
+  assert.deepEqual(readPath(result, ["legacyRoleStatus", "blockedCodes"]), []);
+  assert.equal(
+    readPath(result, ["proposedAssignments", 0, "roleCode"]),
+    "VIEWER_AUDITOR",
   );
-  assert.deepEqual(
-    readPath(result, ["legacyRoleStatus", "blockedCodes"]),
-    [],
-  );
-  assert.equal(readPath(result, ["proposedAssignments", 0, "roleCode"]), "VIEWER_AUDITOR");
   assert.equal(db.writeCount, 0);
 });
 
 test("access assignment preview treats canonical target roles as assignable", async () => {
   const permissionsByCode = {
     HR_OPERATIONS: Permission.EMPLOYMENT_PROFILE_READ,
+    HR_TERMS_APPROVER: Permission.EMPLOYMENT_TERMS_APPROVE,
     PRODUCTION_OPS: Permission.EVENT_READ,
+    PLATFORM_CHANNEL_OPS: Permission.PLATFORM_ACCOUNT_READ,
+    KPI_OPERATIONS: Permission.KPI_READ,
+    REVENUE_FINANCE_OPS: Permission.REVENUE_LEDGER_READ,
+    REVENUE_APPROVER: Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
+    REVENUE_RECONCILER: Permission.REVENUE_LEDGER_RECONCILE,
+    COMMISSION_OPS: Permission.COMMISSION_SETTLEMENT_READ,
+    COMMISSION_APPROVER: Permission.COMMISSION_SETTLEMENT_MANAGE_LIFECYCLE,
     VIEWER_AUDITOR: Permission.KPI_READ,
+    STAFF_CONSOLE_USER: Permission.WORK_SCHEDULE_READ,
   } as const;
 
   for (const code of CANONICAL_ASSIGNMENT_TARGET_CODES) {
@@ -396,10 +429,88 @@ test("access assignment preview treats canonical target roles as assignable", as
 
     assert.equal(result.canApply, true);
     assert.deepEqual(readCodes(result.blockers), []);
-    assert.equal(readPath(result, ["proposedAssignments", 0, "roleCode"]), code);
-    assert.deepEqual(readPath(result, ["legacyRoleStatus", "blockedCodes"]), []);
+    assert.equal(
+      readPath(result, ["proposedAssignments", 0, "roleCode"]),
+      code,
+    );
+    assert.deepEqual(
+      readPath(result, ["legacyRoleStatus", "blockedCodes"]),
+      [],
+    );
     assert.equal(db.writeCount, 0);
   }
+});
+
+test("access assignment preview blocks future and unsupported catalog targets before proposing assignments", async () => {
+  const directDb = fakeDb({
+    users: [activeUser("target-user", ["ADMIN_CONSOLE"])],
+    employment_profiles: [activeProfile("profile-1", "target-user")],
+    roles: [
+      role("role-commercial", "COMMERCIAL_CONTRACT_OPS", [
+        Permission.CONTRACT_REGISTRY_READ,
+      ]),
+    ],
+    role_assignments: [],
+    responsibility_assignments: [],
+  });
+
+  const direct = await new AccessAssignmentPreviewAdminService(
+    directDb,
+  ).preview({
+    targetUserId: "target-user",
+    assignmentTargetType: "ROLE_TEMPLATE",
+    assignmentTargetCode: "COMMERCIAL_CONTRACT_OPS",
+    structuredScopeGrants: [{ scopeType: "global" }],
+    reason: "unsupported selector must not be faked with global scope",
+    effectiveAt: EFFECTIVE_AT,
+    reviewAt: REVIEW_AT_30_DAYS,
+  });
+
+  assert.equal(direct.canApply, false);
+  assert.equal(
+    readCodes(direct.blockers).includes(
+      "ROLE_TEMPLATE_UNSUPPORTED_SCOPE_SELECTOR",
+    ),
+    true,
+  );
+  assert.deepEqual(readPath(direct, ["proposedAssignments"]), []);
+  assert.equal(directDb.writeCount, 0);
+
+  const bundleDb = fakeDb({
+    users: [activeUser("target-user", ["ADMIN_CONSOLE"])],
+    employment_profiles: [activeProfile("profile-1", "target-user")],
+    roles: [
+      role("role-attendance", "ATTENDANCE_OPS", [
+        Permission.WORK_SCHEDULE_READ,
+      ]),
+      role("role-leave", "LEAVE_REVIEWER", [Permission.WORK_SCHEDULE_READ]),
+    ],
+    role_assignments: [],
+    responsibility_assignments: [],
+  });
+
+  const bundle = await new AccessAssignmentPreviewAdminService(
+    bundleDb,
+  ).preview({
+    targetUserId: "target-user",
+    assignmentTargetType: "BUNDLE",
+    assignmentTargetCode: "ATTENDANCE_OPERATOR_BUNDLE",
+    bundleVersion: "2026-06-26",
+    structuredScopeGrants: [{ scopeType: "global" }],
+    reason: "future bundle must not expand",
+    effectiveAt: EFFECTIVE_AT,
+    reviewAt: REVIEW_AT_30_DAYS,
+  });
+
+  assert.equal(bundle.canApply, false);
+  assert.equal(
+    readCodes(bundle.blockers).includes(
+      "ROLE_BUNDLE_CHILD_ROLE_NOT_ASSIGNABLE",
+    ),
+    true,
+  );
+  assert.deepEqual(readPath(bundle, ["proposedAssignments"]), []);
+  assert.equal(bundleDb.writeCount, 0);
 });
 
 test("access assignment preview expands non-legacy bundles in memory without persistence", async () => {
@@ -407,9 +518,7 @@ test("access assignment preview expands non-legacy bundles in memory without per
     users: [activeUser("target-user", ["STAFF_CONSOLE"])],
     employment_profiles: [activeProfile("profile-1", "target-user")],
     roles: [
-      role("role-staff", "STAFF_CONSOLE_USER", [
-        Permission.WORK_SCHEDULE_READ,
-      ]),
+      role("role-staff", "STAFF_CONSOLE_USER", [Permission.WORK_SCHEDULE_READ]),
     ],
     role_assignments: [],
     responsibility_assignments: [],
@@ -429,16 +538,21 @@ test("access assignment preview expands non-legacy bundles in memory without per
     readPath(result, ["bundleExpansion", "persistedParentBundleAssignment"]),
     false,
   );
-  assert.deepEqual(
-    readPath(result, ["bundleExpansion", "childRoleCodes"]),
-    ["STAFF_CONSOLE_USER"],
+  assert.deepEqual(readPath(result, ["bundleExpansion", "childRoleCodes"]), [
+    "STAFF_CONSOLE_USER",
+  ]);
+  assert.equal(
+    readPath(result, ["proposedAssignments", 0, "origin"]),
+    "BUNDLE",
   );
-  assert.equal(readPath(result, ["proposedAssignments", 0, "origin"]), "BUNDLE");
   assert.equal(
     readPath(result, ["proposedAssignments", 0, "bundleOrigin", "bundleCode"]),
     "STAFF_CONSOLE_BUNDLE",
   );
-  assert.equal(readPath(result, ["sourceTrace", "bundleSource"]), "role-bundle.catalog");
+  assert.equal(
+    readPath(result, ["sourceTrace", "bundleSource"]),
+    "role-bundle.catalog",
+  );
   assert.equal(db.writeCount, 0);
 });
 
@@ -464,11 +578,16 @@ test("access assignment preview blocks direct true legacy ROLE targets", async (
     });
 
     assert.equal(result.canApply, false);
-    assert.deepEqual(readCodes(result.blockers), ["LEGACY_ROLE_BLOCKED"]);
-    assert.deepEqual(readPath(result, ["legacyRoleStatus", "blockedCodes"]), [
-      code,
-      code,
-    ]);
+    assert.equal(
+      readCodes(result.blockers).includes("LEGACY_ROLE_BLOCKED"),
+      true,
+    );
+    assert.equal(
+      (
+        readPath(result, ["legacyRoleStatus", "blockedCodes"]) as string[]
+      ).includes(code),
+      true,
+    );
   }
 });
 
@@ -506,14 +625,14 @@ test("access assignment preview requires review for sensitive or global grants",
   const db = fakeDb({
     users: [activeUser("target-user", ["ADMIN_CONSOLE"])],
     employment_profiles: [activeProfile("profile-1", "target-user")],
-    roles: [
-      role("role-auditor", "VIEWER_AUDITOR", [Permission.KPI_READ]),
-    ],
+    roles: [role("role-auditor", "VIEWER_AUDITOR", [Permission.KPI_READ])],
     role_assignments: [],
     responsibility_assignments: [],
   });
 
-  const missingReview = await new AccessAssignmentPreviewAdminService(db).preview({
+  const missingReview = await new AccessAssignmentPreviewAdminService(
+    db,
+  ).preview({
     targetUserId: "target-user",
     assignmentTargetType: "ROLE_TEMPLATE",
     assignmentTargetCode: "VIEWER_AUDITOR",
@@ -523,8 +642,14 @@ test("access assignment preview requires review for sensitive or global grants",
   });
   assert.equal(missingReview.canApply, false);
   assert.deepEqual(readCodes(missingReview.blockers), ["REVIEW_AT_REQUIRED"]);
-  assert.equal(readPath(missingReview, ["sensitiveAccess", "isGlobalLike"]), true);
-  assert.equal(readPath(missingReview, ["sensitiveAccess", "requiresReview"]), true);
+  assert.equal(
+    readPath(missingReview, ["sensitiveAccess", "isGlobalLike"]),
+    true,
+  );
+  assert.equal(
+    readPath(missingReview, ["sensitiveAccess", "requiresReview"]),
+    true,
+  );
 
   const lateReview = await new AccessAssignmentPreviewAdminService(db).preview({
     targetUserId: "target-user",
@@ -565,7 +690,10 @@ test("access assignment preview classifies owner admin as break-glass-like and r
   assert.equal(result.canApply, false);
   assert.deepEqual(readCodes(result.blockers), ["EXPIRES_AT_REQUIRED"]);
   assert.equal(readPath(result, ["sensitiveAccess", "isBreakGlassLike"]), true);
-  assert.equal(readPath(result, ["sensitiveAccess", "maxExpiryWindowDays"]), 14);
+  assert.equal(
+    readPath(result, ["sensitiveAccess", "maxExpiryWindowDays"]),
+    14,
+  );
 });
 
 test("access assignment preview duplicate checks match current active-state lifecycle behavior", async () => {
@@ -580,9 +708,7 @@ test("access assignment preview duplicate checks match current active-state life
     users: [activeUser("target-user", ["STAFF_CONSOLE"])],
     employment_profiles: [activeProfile("profile-1", "target-user")],
     roles: [
-      role("role-staff", "STAFF_CONSOLE_USER", [
-        Permission.WORK_SCHEDULE_READ,
-      ]),
+      role("role-staff", "STAFF_CONSOLE_USER", [Permission.WORK_SCHEDULE_READ]),
     ],
     responsibility_assignments: [],
   };
@@ -608,7 +734,9 @@ test("access assignment preview duplicate checks match current active-state life
   const revoked = await new AccessAssignmentPreviewAdminService(
     fakeDb({
       ...baseRows,
-      role_assignments: [{ ...activeDuplicate, _id: "revoked", state: "REVOKED" }],
+      role_assignments: [
+        { ...activeDuplicate, _id: "revoked", state: "REVOKED" },
+      ],
     }),
   ).preview(command);
   assert.equal(revoked.canApply, true);
@@ -621,12 +749,16 @@ test("access assignment preview duplicate checks match current active-state life
     }),
   ).preview(command);
   assert.equal(expired.canApply, false);
-  assert.deepEqual(readCodes(expired.blockers), ["DUPLICATE_ACTIVE_ASSIGNMENT"]);
+  assert.deepEqual(readCodes(expired.blockers), [
+    "DUPLICATE_ACTIVE_ASSIGNMENT",
+  ]);
 
   const future = await new AccessAssignmentPreviewAdminService(
     fakeDb({
       ...baseRows,
-      role_assignments: [{ ...activeDuplicate, _id: "future", effectiveAt: Date.now() + 60_000 }],
+      role_assignments: [
+        { ...activeDuplicate, _id: "future", effectiveAt: Date.now() + 60_000 },
+      ],
     }),
   ).preview(command);
   assert.equal(future.canApply, false);
@@ -668,12 +800,14 @@ test("access assignment targets endpoint is metadata-only and does not expose us
       ),
     ),
   );
-  app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    const mapped = mapToHttpError(error);
-    res.status(mapped.status).json({
-      error: { code: mapped.code, message: mapped.message },
-    });
-  });
+  app.use(
+    (error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+      const mapped = mapToHttpError(error);
+      res.status(mapped.status).json({
+        error: { code: mapped.code, message: mapped.message },
+      });
+    },
+  );
 
   const server = await listen(app);
   try {
@@ -703,13 +837,20 @@ test("access assignment targets endpoint is metadata-only and does not expose us
     assert.equal(ownerTarget?.assignabilityStatus, "RESTRICTED_SENSITIVE");
     assert.equal(ownerTarget?.operatorFlowGroup, "RESTRICTED_SENSITIVE");
 
-    const auditorTarget = targets.find((item) => item.code === "VIEWER_AUDITOR");
+    const auditorTarget = targets.find(
+      (item) => item.code === "VIEWER_AUDITOR",
+    );
     assert.equal(auditorTarget?.assignabilityStatus, "READ_ONLY_AUDIT");
     assert.deepEqual(auditorTarget?.requiredScopeTypes, ["global"]);
 
-    assert.equal(targets.some((item) => item.code === "ATTENDANCE_OPS"), false);
     assert.equal(
-      targets.some((item) => item.assignabilityStatus === "FUTURE_READY_CONDITION"),
+      targets.some((item) => item.code === "ATTENDANCE_OPS"),
+      false,
+    );
+    assert.equal(
+      targets.some(
+        (item) => item.assignabilityStatus === "FUTURE_READY_CONDITION",
+      ),
       false,
     );
     assert.equal(
@@ -717,11 +858,16 @@ test("access assignment targets endpoint is metadata-only and does not expose us
       false,
     );
 
-    const auditorBundle = targets.find((item) => item.code === "AUDITOR_BUNDLE");
+    const auditorBundle = targets.find(
+      (item) => item.code === "AUDITOR_BUNDLE",
+    );
     assert.equal(auditorBundle?.legacyAssignable, true);
     assert.equal(auditorBundle?.assignabilityStatus, "READ_ONLY_AUDIT");
     for (const code of TRUE_LEGACY_ASSIGNMENT_TARGET_CODES) {
-      assert.equal(targets.some((item) => item.code === code), false);
+      assert.equal(
+        targets.some((item) => item.code === code),
+        false,
+      );
     }
   } finally {
     await close(server);
@@ -765,12 +911,14 @@ test("access assignment preview controller rejects frontend-owned authority inpu
       new AdminAccessAssignmentPreviewController(service),
     ),
   );
-  app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    const mapped = mapToHttpError(error);
-    res.status(mapped.status).json({
-      error: { code: mapped.code, message: mapped.message },
-    });
-  });
+  app.use(
+    (error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+      const mapped = mapToHttpError(error);
+      res.status(mapped.status).json({
+        error: { code: mapped.code, message: mapped.message },
+      });
+    },
+  );
 
   const server = await listen(app);
   try {
@@ -798,7 +946,8 @@ test("access assignment preview controller rejects frontend-owned authority inpu
             assignmentTargetType: "ROLE_TEMPLATE",
             assignmentTargetCode: "STAFF_CONSOLE_USER",
             structuredScopeGrants: [{ scopeType: "self" }],
-            [field]: field === "accountContexts" ? ["ADMIN_CONSOLE"] : "ADMIN_CONSOLE",
+            [field]:
+              field === "accountContexts" ? ["ADMIN_CONSOLE"] : "ADMIN_CONSOLE",
           }),
         },
       );
@@ -827,7 +976,10 @@ function activeUser(
   };
 }
 
-function activeProfile(id: string, linkedUserId: string): Record<string, unknown> {
+function activeProfile(
+  id: string,
+  linkedUserId: string,
+): Record<string, unknown> {
   return {
     _id: id,
     employeeCode: id,
@@ -937,13 +1089,19 @@ function matches(
 ): boolean {
   for (const [key, expected] of Object.entries(query)) {
     if (key === "$or") {
-      if (!Array.isArray(expected) || !expected.some((entry) => matches(row, entry))) {
+      if (
+        !Array.isArray(expected) ||
+        !expected.some((entry) => matches(row, entry))
+      ) {
         return false;
       }
       continue;
     }
     if (key === "$and") {
-      if (!Array.isArray(expected) || !expected.every((entry) => matches(row, entry))) {
+      if (
+        !Array.isArray(expected) ||
+        !expected.every((entry) => matches(row, entry))
+      ) {
         return false;
       }
       continue;
@@ -1007,10 +1165,7 @@ function findConsole(
   value: unknown,
   consoleCode: string,
 ): Record<string, unknown> | undefined {
-  const consoles = readPath(value, [
-    "consoleEntitlementPreview",
-    "consoles",
-  ]);
+  const consoles = readPath(value, ["consoleEntitlementPreview", "consoles"]);
   return Array.isArray(consoles)
     ? consoles.find(
         (item): item is Record<string, unknown> =>

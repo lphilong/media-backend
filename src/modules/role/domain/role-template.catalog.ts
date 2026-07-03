@@ -39,12 +39,11 @@ export const LEGACY_ROLE_TEMPLATE_CODES = [
 ] as const;
 
 export type RoleTemplateCode = (typeof ROLE_TEMPLATE_CODES)[number];
-export type LegacyRoleTemplateCode = (typeof LEGACY_ROLE_TEMPLATE_CODES)[number];
+export type LegacyRoleTemplateCode =
+  (typeof LEGACY_ROLE_TEMPLATE_CODES)[number];
 
 export type RoleTemplateStatus =
-  | "READY"
-  | "PREVIEW_ONLY"
-  | "REQUIRES_FUTURE_SCOPE";
+  "READY" | "PREVIEW_ONLY" | "REQUIRES_FUTURE_SCOPE";
 
 export type RoleAssignabilityStatus =
   | "READY_ASSIGNABLE"
@@ -55,9 +54,7 @@ export type RoleAssignabilityStatus =
   | "READ_ONLY_AUDIT";
 
 export type RoleFeatureStatus =
-  | "SOURCE_BACKED"
-  | "PARTIAL_SOURCE_BACKED"
-  | "FUTURE_READY";
+  "SOURCE_BACKED" | "PARTIAL_SOURCE_BACKED" | "FUTURE_READY";
 
 export type RoleOperatorFlowGroup =
   | "READY_TO_ASSIGN"
@@ -71,12 +68,9 @@ export type RoleSensitivityLevel = "STANDARD" | "SENSITIVE" | "HIGH_RISK";
 export type RoleReviewPolicy = "NOT_REQUIRED" | "REVIEW_REQUIRED";
 export type RoleAccountContextLifecyclePolicy = "SYSTEM_DERIVED_PREVIEW_ONLY";
 export type RoleResponsibilityPolicy =
-  | "NOT_REQUIRED"
-  | "REQUIRES_EXISTING_RESPONSIBILITY";
+  "NOT_REQUIRED" | "REQUIRES_EXISTING_RESPONSIBILITY";
 export type RoleScopeSelectorSupport =
-  | "SUPPORTED"
-  | "NOT_REQUIRED"
-  | "UNSUPPORTED";
+  "SUPPORTED" | "NOT_REQUIRED" | "UNSUPPORTED";
 export type RoleLegacyVisibility = "NORMAL_OPERATOR" | "INTERNAL_ONLY";
 
 export interface RoleTemplateScopePlanEntry {
@@ -154,7 +148,13 @@ const OPERATOR_SUPPORTED_SCOPE_SELECTORS = new Set<RoleAssignmentScopeType>([
   "financePeriod",
   "assignedEvent",
   "assignedStudioResource",
-  "payrollPeriod",
+]);
+
+const ASSIGNABLE_ROLE_TEMPLATE_STATUSES = new Set<RoleAssignabilityStatus>([
+  "READY_ASSIGNABLE",
+  "REQUIRES_SCOPE_SELECTION",
+  "RESTRICTED_SENSITIVE",
+  "READ_ONLY_AUDIT",
 ]);
 
 const RESTRICTED_SENSITIVE_ROLE_CODES = new Set<RoleTemplateCode>([
@@ -169,14 +169,16 @@ const RESTRICTED_SENSITIVE_ROLE_CODES = new Set<RoleTemplateCode>([
 
 export const LEGACY_ROLE_TEMPLATE_COMPATIBILITY: readonly LegacyRoleTemplateMapping[] =
   Object.freeze([
-    legacyMap("ADMIN_FULL", ["OWNER_ADMIN", "ACCESS_ADMIN"], [
-      "OWNER_ADMIN_BUNDLE",
-      "ACCESS_ADMIN_BUNDLE",
-    ]),
-    legacyMap("TEAM_MANAGER", ["TALENT_GROUP_MANAGER", "ORG_UNIT_MANAGER"], [
-      "TALENT_GROUP_MANAGER_BUNDLE",
-      "ORG_UNIT_MANAGER_BUNDLE",
-    ]),
+    legacyMap(
+      "ADMIN_FULL",
+      ["OWNER_ADMIN", "ACCESS_ADMIN"],
+      ["OWNER_ADMIN_BUNDLE", "ACCESS_ADMIN_BUNDLE"],
+    ),
+    legacyMap(
+      "TEAM_MANAGER",
+      ["TALENT_GROUP_MANAGER", "ORG_UNIT_MANAGER"],
+      ["TALENT_GROUP_MANAGER_BUNDLE", "ORG_UNIT_MANAGER_BUNDLE"],
+    ),
     legacyMap(
       "COMMERCIAL_FINANCE",
       [
@@ -194,9 +196,11 @@ export const LEGACY_ROLE_TEMPLATE_COMPATIBILITY: readonly LegacyRoleTemplateMapp
         "COMMISSION_APPROVER_BUNDLE",
       ],
     ),
-    legacyMap("TALENT_STAFF_SELF", ["STAFF_CONSOLE_USER"], [
-      "STAFF_CONSOLE_BUNDLE",
-    ]),
+    legacyMap(
+      "TALENT_STAFF_SELF",
+      ["STAFF_CONSOLE_USER"],
+      ["STAFF_CONSOLE_BUNDLE"],
+    ),
   ]);
 
 const GOVERNANCE_PERMISSIONS = Object.freeze([
@@ -445,9 +449,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: GOVERNANCE_PERMISSIONS,
       recommendedScopeGrants: scopeGrants({}),
-      scopePlan: [
-        scopePlan("Access Governance", ["global"], "READY"),
-      ],
+      scopePlan: [scopePlan("Access Governance", ["global"], "READY")],
       warnings: [
         "Can assign roles and modify user linkage; operational module permissions are intentionally excluded.",
       ],
@@ -459,7 +461,8 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
     template({
       code: "HR_OPERATIONS",
       name: "HR Operations",
-      description: "People, organization, employment, talent, and talent-group operations preset.",
+      description:
+        "People, organization, employment, talent, and talent-group operations preset.",
       category: "PEOPLE_OPERATIONS",
       recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: PEOPLE_OPERATIONS_PERMISSIONS,
@@ -468,7 +471,11 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         kpi: Object.freeze(["global"]),
       }),
       scopePlan: [
-        scopePlan("People and Organization", ["managedOrgUnit"], "REQUIRES_FUTURE_SCOPE"),
+        scopePlan(
+          "People and Organization",
+          ["managedOrgUnit"],
+          "REQUIRES_FUTURE_SCOPE",
+        ),
         scopePlan("Work Schedule", ["department"], "READY"),
         scopePlan("KPI", ["global"], "READY"),
       ],
@@ -478,12 +485,13 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       implementationNotes: [
         "Normalizes the previous HR template to staff operations only; approval is split to HR_TERMS_APPROVER.",
       ],
-      status: "REQUIRES_FUTURE_SCOPE",
+      status: "READY",
     }),
     template({
       code: "HR_TERMS_APPROVER",
       name: "HR Terms Approver",
-      description: "Employment terms sensitive-read, approval, and audit preset.",
+      description:
+        "Employment terms sensitive-read, approval, and audit preset.",
       category: "PEOPLE_APPROVAL",
       recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: [
@@ -494,7 +502,11 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       ],
       recommendedScopeGrants: scopeGrants({}),
       scopePlan: [
-        scopePlan("Employment Terms", ["managedOrgUnit"], "REQUIRES_FUTURE_SCOPE"),
+        scopePlan(
+          "Employment Terms",
+          ["managedOrgUnit"],
+          "REQUIRES_FUTURE_SCOPE",
+        ),
       ],
       warnings: [
         "Includes sensitive employment terms access and approval authority.",
@@ -502,12 +514,13 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       implementationNotes: [
         "Separated from HR_OPERATIONS to avoid granting sensitive approval by default.",
       ],
-      status: "REQUIRES_FUTURE_SCOPE",
+      status: "READY",
     }),
     template({
       code: "PRODUCTION_OPS",
       name: "Production Ops",
-      description: "Production operations preset for events, studio resources, and work schedules.",
+      description:
+        "Production operations preset for events, studio resources, and work schedules.",
       category: "PRODUCTION",
       recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: PRODUCTION_PERMISSIONS,
@@ -518,7 +531,11 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       scopePlan: [
         scopePlan("Event Assignment", ["global", "assignedEvent"], "READY"),
         scopePlan("Work Schedule", ["global"], "READY"),
-        scopePlan("Studio Resource", ["assignedStudioResource"], "REQUIRES_FUTURE_SCOPE"),
+        scopePlan(
+          "Studio Resource",
+          ["assignedStudioResource"],
+          "REQUIRES_FUTURE_SCOPE",
+        ),
       ],
       warnings: [
         "Platform Account is read/lookup only for assignment and display references.",
@@ -526,18 +543,23 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       implementationNotes: [
         "Normalizes PRODUCTION_OPS by excluding Platform Account create/update/ownership/lifecycle/capabilities permissions.",
       ],
-      status: "REQUIRES_FUTURE_SCOPE",
+      status: "READY",
     }),
     template({
       code: "PLATFORM_CHANNEL_OPS",
       name: "Platform Channel Ops",
-      description: "Platform account metadata, ownership, lifecycle, and capability operations preset.",
+      description:
+        "Platform account metadata, ownership, lifecycle, and capability operations preset.",
       category: "PLATFORM",
       recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: PLATFORM_PERMISSIONS,
       recommendedScopeGrants: scopeGrants({}),
       scopePlan: [
-        scopePlan("Platform Account", ["assignedPlatformAccount", "global"], "REQUIRES_FUTURE_SCOPE"),
+        scopePlan(
+          "Platform Account",
+          ["assignedPlatformAccount", "global"],
+          "REQUIRES_FUTURE_SCOPE",
+        ),
       ],
       warnings: [
         "Credential access is outside the current Permission enum and is not granted by this template.",
@@ -545,12 +567,13 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       implementationNotes: [
         "Uses existing platform account metadata and lifecycle permissions.",
       ],
-      status: "REQUIRES_FUTURE_SCOPE",
+      status: "READY",
     }),
     template({
       code: "CREATIVE_VISUAL_LEAD",
       name: "Creative Visual Lead",
-      description: "Creative lead preset for scoped event, studio-resource, talent, and schedule visibility.",
+      description:
+        "Creative lead preset for scoped event, studio-resource, talent, and schedule visibility.",
       category: "CREATIVE",
       recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: [
@@ -569,7 +592,11 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         eventAssignment: Object.freeze(["managedGroup"]),
       }),
       scopePlan: [
-        scopePlan("Creative Workflow", ["managedTalentGroup", "assignedEvent"], "REQUIRES_FUTURE_SCOPE"),
+        scopePlan(
+          "Creative Workflow",
+          ["managedTalentGroup", "assignedEvent"],
+          "REQUIRES_FUTURE_SCOPE",
+        ),
       ],
       warnings: [
         "Creative project and visual-approval permissions do not exist yet; this is a visibility-only source-backed preset.",
@@ -582,7 +609,8 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
     template({
       code: "CONTENT_OPS",
       name: "Content Ops",
-      description: "Content operations preset for scoped event and studio operational visibility.",
+      description:
+        "Content operations preset for scoped event and studio operational visibility.",
       category: "CONTENT",
       recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: [
@@ -599,7 +627,11 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         eventAssignment: Object.freeze(["managedGroup"]),
       }),
       scopePlan: [
-        scopePlan("Content Workflow", ["managedTalentGroup", "assignedEvent"], "REQUIRES_FUTURE_SCOPE"),
+        scopePlan(
+          "Content Workflow",
+          ["managedTalentGroup", "assignedEvent"],
+          "REQUIRES_FUTURE_SCOPE",
+        ),
       ],
       warnings: [
         "Content project permissions do not exist yet; this is a source-backed operational visibility preset.",
@@ -612,7 +644,8 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
     template({
       code: "TALENT_GROUP_MANAGER",
       name: "Talent Group Manager",
-      description: "Manager capability preset for an explicitly assigned TalentGroup.",
+      description:
+        "Manager capability preset for an explicitly assigned TalentGroup.",
       category: "MANAGEMENT",
       recommendedAccountContext: "MANAGER_CONSOLE",
       permissions: [
@@ -641,12 +674,13 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       implementationNotes: [
         "Replaces legacy TEAM_MANAGER for target catalog and bundle expansion.",
       ],
-      status: "REQUIRES_FUTURE_SCOPE",
+      status: "READY",
     }),
     template({
       code: "ORG_UNIT_MANAGER",
       name: "Org Unit Manager",
-      description: "Manager capability preset for an explicitly assigned OrgUnit.",
+      description:
+        "Manager capability preset for an explicitly assigned OrgUnit.",
       category: "MANAGEMENT",
       recommendedAccountContext: "MANAGER_CONSOLE",
       permissions: [
@@ -672,33 +706,31 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       implementationNotes: [
         "Uses source-backed people, schedule, and KPI permissions only.",
       ],
-      status: "REQUIRES_FUTURE_SCOPE",
+      status: "READY",
     }),
     template({
       code: "KPI_OPERATIONS",
       name: "KPI Operations",
-      description: "KPI plan, allocation, actual, correction, progress, and finalize operations preset.",
+      description:
+        "KPI plan, allocation, actual, correction, progress, and finalize operations preset.",
       category: "KPI",
       recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: KPI_OPERATIONS_PERMISSIONS,
       recommendedScopeGrants: scopeGrants({
         kpi: Object.freeze(["global"]),
       }),
-      scopePlan: [
-        scopePlan("KPI", ["global"], "READY"),
-      ],
+      scopePlan: [scopePlan("KPI", ["global"], "READY")],
       warnings: [
         "Includes KPI finalize authority; approval policy is not split by the current Permission enum.",
       ],
-      implementationNotes: [
-        "Uses current KPI V2 permission keys.",
-      ],
+      implementationNotes: ["Uses current KPI V2 permission keys."],
       status: "READY",
     }),
     template({
       code: "COMMERCIAL_CONTRACT_OPS",
       name: "Commercial Contract Ops",
-      description: "Contract registry and obligation operations preset without finance approval authority.",
+      description:
+        "Contract registry and obligation operations preset without finance approval authority.",
       category: "COMMERCIAL",
       recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: COMMERCIAL_CONTRACT_PERMISSIONS,
@@ -714,12 +746,13 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       implementationNotes: [
         "Uses current contract registry and obligation operation permissions.",
       ],
-      status: "READY",
+      status: "REQUIRES_FUTURE_SCOPE",
     }),
     template({
       code: "REVENUE_FINANCE_OPS",
       name: "Revenue Finance Ops",
-      description: "Revenue ledger maker and platform earning review operations preset.",
+      description:
+        "Revenue ledger maker and platform earning review operations preset.",
       category: "FINANCE",
       recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: REVENUE_FINANCE_PERMISSIONS,
@@ -728,7 +761,11 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         dashboardLite: Object.freeze(["global"]),
       }),
       scopePlan: [
-        scopePlan("Revenue Ledger", ["financeGlobal", "financePeriod"], "READY"),
+        scopePlan(
+          "Revenue Ledger",
+          ["financeGlobal", "financePeriod"],
+          "READY",
+        ),
       ],
       warnings: [
         "Approval, void, and reconcile permissions are split to approver/reconciler roles.",
@@ -741,7 +778,8 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
     template({
       code: "REVENUE_APPROVER",
       name: "Revenue Approver",
-      description: "Revenue ledger approval, void, and lifecycle authority preset.",
+      description:
+        "Revenue ledger approval, void, and lifecycle authority preset.",
       category: "FINANCE_APPROVAL",
       recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: REVENUE_APPROVER_PERMISSIONS,
@@ -750,11 +788,13 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         dashboardLite: Object.freeze(["global"]),
       }),
       scopePlan: [
-        scopePlan("Revenue Ledger", ["financeGlobal", "financePeriod"], "READY"),
+        scopePlan(
+          "Revenue Ledger",
+          ["financeGlobal", "financePeriod"],
+          "READY",
+        ),
       ],
-      warnings: [
-        "Includes sensitive revenue approval and void authority.",
-      ],
+      warnings: ["Includes sensitive revenue approval and void authority."],
       implementationNotes: [
         "Uses current revenue platform earning approval permissions.",
       ],
@@ -777,11 +817,13 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         dashboardLite: Object.freeze(["global"]),
       }),
       scopePlan: [
-        scopePlan("Revenue Ledger", ["financeGlobal", "financePeriod"], "READY"),
+        scopePlan(
+          "Revenue Ledger",
+          ["financeGlobal", "financePeriod"],
+          "READY",
+        ),
       ],
-      warnings: [
-        "Includes reconciliation authority.",
-      ],
+      warnings: ["Includes reconciliation authority."],
       implementationNotes: [
         "Separated from Revenue Finance Ops for target SoD alignment.",
       ],
@@ -811,7 +853,8 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
     template({
       code: "COMMISSION_APPROVER",
       name: "Commission Approver",
-      description: "Commission settlement approval-oriented preset using available settlement lifecycle permission.",
+      description:
+        "Commission settlement approval-oriented preset using available settlement lifecycle permission.",
       category: "COMMISSION_APPROVAL",
       recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: [
@@ -822,7 +865,11 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         commission: Object.freeze(["global"]),
       }),
       scopePlan: [
-        scopePlan("Commission", ["financeGlobal", "financePeriod"], "REQUIRES_FUTURE_SCOPE"),
+        scopePlan(
+          "Commission",
+          ["financeGlobal", "financePeriod"],
+          "REQUIRES_FUTURE_SCOPE",
+        ),
       ],
       warnings: [
         "The current Permission enum does not expose a distinct commission approval permission.",
@@ -830,18 +877,61 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       implementationNotes: [
         "Uses settlement lifecycle as the closest available source-backed approver capability.",
       ],
-      status: "REQUIRES_FUTURE_SCOPE",
+      status: "READY",
     }),
-    futureTemplate("ATTENDANCE_OPS", "Attendance Ops", "Attendance operations preset.", "ATTENDANCE", "ADMIN_CONSOLE", ["attendancePeriodOrg"]),
-    futureTemplate("LEAVE_REVIEWER", "Leave Reviewer", "Leave request review preset.", "ATTENDANCE_REVIEW", "ADMIN_CONSOLE", ["attendancePeriodOrg"]),
-    futureTemplate("ATTENDANCE_APPROVER", "Attendance Approver", "Attendance approval preset.", "ATTENDANCE_APPROVAL", "ADMIN_CONSOLE", ["attendancePeriodOrg"]),
-    futureTemplate("MONTHLY_CLOSE_OWNER", "Monthly Close Owner", "Monthly close ownership preset.", "MONTHLY_CLOSE", "ADMIN_CONSOLE", ["financePeriod", "payrollPeriod"]),
-    futureTemplate("PAYROLL_DRAFT_OPS", "Payroll Draft Ops", "Payroll draft operations preset.", "PAYROLL", "ADMIN_CONSOLE", ["payrollPeriod"]),
-    futureTemplate("PAYROLL_DRAFT_APPROVER", "Payroll Draft Approver", "Payroll draft approval preset.", "PAYROLL_APPROVAL", "ADMIN_CONSOLE", ["payrollPeriod"]),
+    futureTemplate(
+      "ATTENDANCE_OPS",
+      "Attendance Ops",
+      "Attendance operations preset.",
+      "ATTENDANCE",
+      "ADMIN_CONSOLE",
+      ["attendancePeriodOrg"],
+    ),
+    futureTemplate(
+      "LEAVE_REVIEWER",
+      "Leave Reviewer",
+      "Leave request review preset.",
+      "ATTENDANCE_REVIEW",
+      "ADMIN_CONSOLE",
+      ["attendancePeriodOrg"],
+    ),
+    futureTemplate(
+      "ATTENDANCE_APPROVER",
+      "Attendance Approver",
+      "Attendance approval preset.",
+      "ATTENDANCE_APPROVAL",
+      "ADMIN_CONSOLE",
+      ["attendancePeriodOrg"],
+    ),
+    futureTemplate(
+      "MONTHLY_CLOSE_OWNER",
+      "Monthly Close Owner",
+      "Monthly close ownership preset.",
+      "MONTHLY_CLOSE",
+      "ADMIN_CONSOLE",
+      ["financePeriod", "payrollPeriod"],
+    ),
+    futureTemplate(
+      "PAYROLL_DRAFT_OPS",
+      "Payroll Draft Ops",
+      "Payroll draft operations preset.",
+      "PAYROLL",
+      "ADMIN_CONSOLE",
+      ["payrollPeriod"],
+    ),
+    futureTemplate(
+      "PAYROLL_DRAFT_APPROVER",
+      "Payroll Draft Approver",
+      "Payroll draft approval preset.",
+      "PAYROLL_APPROVAL",
+      "ADMIN_CONSOLE",
+      ["payrollPeriod"],
+    ),
     template({
       code: "VIEWER_AUDITOR",
       name: "Viewer Auditor",
-      description: "Read-only auditor preset across operational and commercial modules.",
+      description:
+        "Read-only auditor preset across operational and commercial modules.",
       category: "AUDIT",
       recommendedAccountContext: "ADMIN_CONSOLE",
       permissions: VIEWER_AUDITOR_PERMISSIONS,
@@ -886,7 +976,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       implementationNotes: [
         "Replaces legacy TALENT_STAFF_SELF for new role creation and staff-console bundles.",
       ],
-      status: "REQUIRES_FUTURE_SCOPE",
+      status: "READY",
     }),
   ]);
 
@@ -894,9 +984,10 @@ const CATALOG_BY_CODE = new Map<RoleTemplateCode, RoleTemplateDefinition>(
   ROLE_TEMPLATE_CATALOG.map((item) => [item.code, item]),
 );
 
-const LEGACY_BY_CODE = new Map<LegacyRoleTemplateCode, LegacyRoleTemplateMapping>(
-  LEGACY_ROLE_TEMPLATE_COMPATIBILITY.map((item) => [item.legacyCode, item]),
-);
+const LEGACY_BY_CODE = new Map<
+  LegacyRoleTemplateCode,
+  LegacyRoleTemplateMapping
+>(LEGACY_ROLE_TEMPLATE_COMPATIBILITY.map((item) => [item.legacyCode, item]));
 
 validateRoleTemplateCatalog();
 
@@ -1002,6 +1093,92 @@ export function validateRoleTemplateCatalog(): void {
   }
 }
 
+export interface RoleTemplateAssignabilityBlocker {
+  readonly code:
+    | "ROLE_TEMPLATE_NOT_FOUND"
+    | "ROLE_TEMPLATE_FUTURE_GATED"
+    | "ROLE_TEMPLATE_HAS_NO_PERMISSIONS"
+    | "ROLE_TEMPLATE_UNSUPPORTED_SCOPE_SELECTOR"
+    | "ROLE_TEMPLATE_NOT_ASSIGNABLE";
+  readonly summary: string;
+}
+
+export interface RoleTemplateAssignabilityDecision {
+  readonly assignable: boolean;
+  readonly blockers: readonly RoleTemplateAssignabilityBlocker[];
+}
+
+export function evaluateRoleTemplateAssignability(
+  template: RoleTemplateDefinition | RoleTemplateListItem | null | undefined,
+): RoleTemplateAssignabilityDecision {
+  if (!template) {
+    return {
+      assignable: false,
+      blockers: [
+        {
+          code: "ROLE_TEMPLATE_NOT_FOUND",
+          summary: "Role template is not present in the active catalog.",
+        },
+      ],
+    };
+  }
+
+  const blockers: RoleTemplateAssignabilityBlocker[] = [];
+  const permissionCount =
+    "permissionCount" in template
+      ? template.permissionCount
+      : template.permissions.length;
+
+  if (permissionCount === 0) {
+    blockers.push({
+      code: "ROLE_TEMPLATE_HAS_NO_PERMISSIONS",
+      summary: "Role template has no source-backed permissions.",
+    });
+  }
+  if (template.scopeSelectorSupport === "UNSUPPORTED") {
+    blockers.push({
+      code: "ROLE_TEMPLATE_UNSUPPORTED_SCOPE_SELECTOR",
+      summary:
+        template.futureReadinessNote ??
+        "Role template requires an unsupported assignment scope selector.",
+    });
+  }
+  if (
+    template.status === "REQUIRES_FUTURE_SCOPE" ||
+    template.futureReadinessNote
+  ) {
+    blockers.push({
+      code: "ROLE_TEMPLATE_FUTURE_GATED",
+      summary:
+        template.futureReadinessNote ??
+        "Role template is explicitly gated for future source readiness.",
+    });
+  }
+  if (!ASSIGNABLE_ROLE_TEMPLATE_STATUSES.has(template.assignabilityStatus)) {
+    blockers.push({
+      code: "ROLE_TEMPLATE_NOT_ASSIGNABLE",
+      summary: `Role template assignability status is ${template.assignabilityStatus}.`,
+    });
+  }
+
+  return {
+    assignable: blockers.length === 0,
+    blockers: Object.freeze(blockers),
+  };
+}
+
+export function isRoleTemplateAssignable(
+  template: RoleTemplateDefinition | RoleTemplateListItem | null | undefined,
+): boolean {
+  return evaluateRoleTemplateAssignability(template).assignable;
+}
+
+export function isOperatorSupportedRoleAssignmentScopeType(
+  scopeType: RoleAssignmentScopeType,
+): boolean {
+  return OPERATOR_SUPPORTED_SCOPE_SELECTORS.has(scopeType);
+}
+
 function template(
   definition: RoleTemplateDefinitionInput,
 ): RoleTemplateDefinition {
@@ -1034,9 +1211,7 @@ function futureTemplate(
     recommendedAccountContext,
     permissions: Object.freeze([]),
     recommendedScopeGrants: scopeGrants({}),
-    scopePlan: [
-      scopePlan(name, scopes, "REQUIRES_FUTURE_SCOPE"),
-    ],
+    scopePlan: [scopePlan(name, scopes, "REQUIRES_FUTURE_SCOPE")],
     warnings: [
       "No source permission keys exist for this target role yet; this placeholder grants no runtime permissions.",
     ],
@@ -1141,7 +1316,9 @@ function buildRoleTemplateMetadata(
   | "futureReadinessNote"
   | "legacyVisibility"
 > {
-  const requiredScopes = operatorRequiredScopeTypesForRoleTemplate(definition.code);
+  const requiredScopes = operatorRequiredScopeTypesForRoleTemplate(
+    definition.code,
+  );
   const unsupportedScopes = requiredScopes.filter(
     (scopeType) => !OPERATOR_SUPPORTED_SCOPE_SELECTORS.has(scopeType),
   );
@@ -1165,7 +1342,9 @@ function buildRoleTemplateMetadata(
         : "PARTIAL_SOURCE_BACKED";
   const sensitivityLevel = RESTRICTED_SENSITIVE_ROLE_CODES.has(definition.code)
     ? "HIGH_RISK"
-    : definition.warnings.some((warning) => /sensitive|approval|approve|void|lifecycle/iu.test(warning))
+    : definition.warnings.some((warning) =>
+          /sensitive|approval|approve|void|lifecycle/iu.test(warning),
+        )
       ? "SENSITIVE"
       : "STANDARD";
   const reviewPolicy =
@@ -1173,7 +1352,8 @@ function buildRoleTemplateMetadata(
       ? "NOT_REQUIRED"
       : "REVIEW_REQUIRED";
   const responsibilityPolicy =
-    definition.code === "TALENT_GROUP_MANAGER" || definition.code === "ORG_UNIT_MANAGER"
+    definition.code === "TALENT_GROUP_MANAGER" ||
+    definition.code === "ORG_UNIT_MANAGER"
       ? "REQUIRES_EXISTING_RESPONSIBILITY"
       : "NOT_REQUIRED";
   const assignabilityStatus = classifyAssignability({

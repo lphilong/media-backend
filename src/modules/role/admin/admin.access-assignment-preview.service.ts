@@ -2,9 +2,7 @@ import crypto from "crypto";
 import { ClientSession, Collection, Db } from "mongodb";
 import { Actor } from "@core/actor/actor";
 import { Permission } from "@core/permission/permission.enum";
-import {
-  buildWorkspaceAvailability,
-} from "@modules/account-context/account-context.workspace-availability";
+import { buildWorkspaceAvailability } from "@modules/account-context/account-context.workspace-availability";
 import {
   AccountContext,
   normalizeAccountContexts,
@@ -19,8 +17,13 @@ import {
   validateSensitiveAccessLifecycle,
 } from "@modules/role/domain/sensitive-access-policy";
 import { isRoleAssignmentCurrentlyEffective } from "@modules/role/domain/role-assignment-lifecycle";
-import { getRoleBundle, listRoleBundles } from "@modules/role/domain/role-bundle.catalog";
 import {
+  evaluateRoleBundleAssignability,
+  getRoleBundle,
+  listRoleBundles,
+} from "@modules/role/domain/role-bundle.catalog";
+import {
+  evaluateRoleTemplateAssignability,
   getRoleTemplate,
   listRoleTemplates,
   normalizeRoleTemplateCode,
@@ -115,7 +118,8 @@ interface ResponsibilityDocument {
   readonly subjectType: "TALENT_GROUP" | "ORG_UNIT" | string;
   readonly subjectId: string;
   readonly responsibleEmploymentProfileId: string;
-  readonly responsibilityType: "TALENT_GROUP_MANAGER" | "ORG_UNIT_MANAGER" | string;
+  readonly responsibilityType:
+    "TALENT_GROUP_MANAGER" | "ORG_UNIT_MANAGER" | string;
   readonly status: string;
   readonly effectiveAt: number;
   readonly expiresAt: number | null;
@@ -154,13 +158,6 @@ const LEGACY_ASSIGNMENT_TARGET_CODES = new Set([
   "TALENT_STAFF_SELF",
 ]);
 
-const NORMAL_ASSIGNMENT_TARGET_STATUSES = new Set([
-  "READY_ASSIGNABLE",
-  "REQUIRES_SCOPE_SELECTION",
-  "RESTRICTED_SENSITIVE",
-  "READ_ONLY_AUDIT",
-]);
-
 const MANAGER_REQUIREMENTS = {
   TALENT_GROUP_MANAGER: {
     scopeType: "managedTalentGroup",
@@ -185,12 +182,14 @@ export class AccessAssignmentPreviewAdminService {
 
   constructor(private readonly db: Db) {
     this.users = db.collection<UserDocument>("users");
-    this.employmentProfiles =
-      db.collection<EmploymentProfileDocument>("employment_profiles");
+    this.employmentProfiles = db.collection<EmploymentProfileDocument>(
+      "employment_profiles",
+    );
     this.roles = db.collection<RoleDocument>("roles");
     this.assignments = db.collection<AssignmentDocument>("role_assignments");
-    this.responsibilities =
-      db.collection<ResponsibilityDocument>("responsibility_assignments");
+    this.responsibilities = db.collection<ResponsibilityDocument>(
+      "responsibility_assignments",
+    );
     this.talentGroups = db.collection<TalentGroupDocument>("talent_groups");
     this.orgUnits = db.collection<OrgUnitDocument>("org_units");
   }
@@ -233,16 +232,20 @@ export class AccessAssignmentPreviewAdminService {
           .filter(
             (template) =>
               !LEGACY_ASSIGNMENT_TARGET_CODES.has(template.code) &&
-              NORMAL_ASSIGNMENT_TARGET_STATUSES.has(template.assignabilityStatus),
+              evaluateRoleTemplateAssignability(template).assignable,
           )
           .map((template) => ({
             assignmentKind: "ROLE_TEMPLATE",
             code: template.code,
             name: template.name,
             recommendedAccountContext: template.recommendedAccountContext,
-            requiredScopeTypes: operatorRequiredScopeTypesForRoleTemplate(template.code),
+            requiredScopeTypes: operatorRequiredScopeTypesForRoleTemplate(
+              template.code,
+            ),
             requiresResponsibility: isManagerRoleCode(template.code),
-            requiredResponsibilityType: requiredResponsibilityTypeForRole(template.code),
+            requiredResponsibilityType: requiredResponsibilityTypeForRole(
+              template.code,
+            ),
             sensitiveLevel: classifySensitiveAccess([
               {
                 roleCode: template.code,
@@ -257,7 +260,8 @@ export class AccessAssignmentPreviewAdminService {
             featureStatus: template.featureStatus,
             operatorFlowGroup: template.operatorFlowGroup,
             reviewPolicy: template.reviewPolicy,
-            accountContextLifecyclePolicy: template.accountContextLifecyclePolicy,
+            accountContextLifecyclePolicy:
+              template.accountContextLifecyclePolicy,
             responsibilityPolicy: template.responsibilityPolicy,
             scopeSelectorSupport: template.scopeSelectorSupport,
             futureReadinessNote: template.futureReadinessNote,
@@ -271,8 +275,7 @@ export class AccessAssignmentPreviewAdminService {
             (bundle) =>
               !bundle.childRoles.some((code) =>
                 LEGACY_ASSIGNMENT_TARGET_CODES.has(code),
-              ) &&
-              NORMAL_ASSIGNMENT_TARGET_STATUSES.has(bundle.assignabilityStatus),
+              ) && evaluateRoleBundleAssignability(bundle).assignable,
           )
           .map((bundle) => ({
             assignmentKind: "BUNDLE",
@@ -283,8 +286,9 @@ export class AccessAssignmentPreviewAdminService {
             recommendedAccountContext: bundle.recommendedAccountContext,
             requiredScopeTypes: bundle.recommendedScopes,
             requiresResponsibility: bundle.childRoles.some(isManagerRoleCode),
-            requiredResponsibilityType:
-              bundle.childRoles.map(requiredResponsibilityTypeForRole).filter(Boolean),
+            requiredResponsibilityType: bundle.childRoles
+              .map(requiredResponsibilityTypeForRole)
+              .filter(Boolean),
             sensitiveLevel: bundle.sensitivityLevel,
             legacyAssignable: true,
             assignabilityStatus: bundle.assignabilityStatus,
@@ -310,15 +314,22 @@ export class AccessAssignmentPreviewAdminService {
     options?: AccessAssignmentPreviewOptions,
   ): Promise<Record<string, unknown>> {
     const now = Date.now();
-    const targetUserId = normalizeRequiredText(command.targetUserId, "targetUserId");
+    const targetUserId = normalizeRequiredText(
+      command.targetUserId,
+      "targetUserId",
+    );
     const reason = normalizeNullableText(command.reason, "reason");
     const structuredScopeGrants =
       normalizeRoleAssignmentScopeGrants(command.structuredScopeGrants) ?? [];
-    const scopeFingerprint =
-      buildRoleAssignmentScopeFingerprint(structuredScopeGrants);
+    const scopeFingerprint = buildRoleAssignmentScopeFingerprint(
+      structuredScopeGrants,
+    );
     const effectiveAt =
       normalizeOptionalTimestamp(command.effectiveAt, "effectiveAt") ?? now;
-    const expiresAt = normalizeOptionalTimestamp(command.expiresAt, "expiresAt");
+    const expiresAt = normalizeOptionalTimestamp(
+      command.expiresAt,
+      "expiresAt",
+    );
     const reviewAt = normalizeOptionalTimestamp(command.reviewAt, "reviewAt");
     assertAssignmentDates(effectiveAt, expiresAt, reviewAt);
 
@@ -332,7 +343,12 @@ export class AccessAssignmentPreviewAdminService {
     ]);
 
     if (!targetUser) {
-      blockers.push(blocker("TARGET_USER_NOT_ASSIGNABLE", "Target user is not active or assignable."));
+      blockers.push(
+        blocker(
+          "TARGET_USER_NOT_ASSIGNABLE",
+          "Target user is not active or assignable.",
+        ),
+      );
     }
 
     const targetResolution = await this.resolveAssignmentTarget(
@@ -351,13 +367,20 @@ export class AccessAssignmentPreviewAdminService {
       effectiveAt,
       expiresAt,
       reviewAt,
-      origin: targetResolution.bundleOrigin ? ("BUNDLE" as const) : ("DIRECT" as const),
+      origin: targetResolution.bundleOrigin
+        ? ("BUNDLE" as const)
+        : ("DIRECT" as const),
       bundleOrigin: targetResolution.bundleOrigin,
       reason,
     }));
 
     if (targetUserId === commandSourceActorId(command)) {
-      blockers.push(blocker("SELF_ASSIGNMENT_BLOCKED", "Current actor cannot assign access to themselves."));
+      blockers.push(
+        blocker(
+          "SELF_ASSIGNMENT_BLOCKED",
+          "Current actor cannot assign access to themselves.",
+        ),
+      );
     }
 
     const sensitiveAccess = buildSensitiveAccessView({
@@ -368,13 +391,23 @@ export class AccessAssignmentPreviewAdminService {
       expiresAt,
     });
     if (sensitiveAccess.reasonRequired && !reason) {
-      blockers.push(blocker("REASON_REQUIRED", "Reason is required for sensitive or global access."));
+      blockers.push(
+        blocker(
+          "REASON_REQUIRED",
+          "Reason is required for sensitive or global access.",
+        ),
+      );
     }
     for (const lifecycleBlocker of sensitiveAccess.lifecycleBlockers) {
       blockers.push(blocker(lifecycleBlocker.code, lifecycleBlocker.summary));
     }
     if (sensitiveAccess.sensitiveOrGlobal) {
-      warnings.push(warning("ADDITIONAL_REVIEW_REQUIRED", "Additional review is required for sensitive or global access."));
+      warnings.push(
+        warning(
+          "ADDITIONAL_REVIEW_REQUIRED",
+          "Additional review is required for sensitive or global access.",
+        ),
+      );
     }
 
     const duplicateConflicts = await this.findDuplicateConflicts(
@@ -383,18 +416,24 @@ export class AccessAssignmentPreviewAdminService {
       options?.session,
     );
     if (duplicateConflicts.length > 0) {
-      blockers.push(blocker("DUPLICATE_ACTIVE_ASSIGNMENT", "An active assignment already exists for the exact role, user, and scope."));
+      blockers.push(
+        blocker(
+          "DUPLICATE_ACTIVE_ASSIGNMENT",
+          "An active assignment already exists for the exact role, user, and scope.",
+        ),
+      );
     }
 
-    const responsibilityRequirements = await this.evaluateResponsibilityRequirements({
-      actor: options?.actor,
-      employmentProfile,
-      proposedAssignments,
-      structuredScopeGrants,
-      reason,
-      now,
-      session: options?.session,
-    });
+    const responsibilityRequirements =
+      await this.evaluateResponsibilityRequirements({
+        actor: options?.actor,
+        employmentProfile,
+        proposedAssignments,
+        structuredScopeGrants,
+        reason,
+        now,
+        session: options?.session,
+      });
     for (const requirement of responsibilityRequirements) {
       if (
         requirement.status !== "SATISFIED" &&
@@ -462,7 +501,8 @@ export class AccessAssignmentPreviewAdminService {
     if (!currentEffectiveAccess || !proposedEffectiveAccess) {
       completenessGaps.push({
         code: "EFFECTIVE_ACCESS_PARTIAL",
-        summary: "Effective-access delta is partial because the target user could not be resolved.",
+        summary:
+          "Effective-access delta is partial because the target user could not be resolved.",
       });
     }
 
@@ -502,7 +542,9 @@ export class AccessAssignmentPreviewAdminService {
       reasonRequirement: {
         required: sensitiveAccess.reasonRequired,
         satisfied: !sensitiveAccess.reasonRequired || !!reason,
-        codes: sensitiveAccess.reasonRequired ? ["SENSITIVE_OR_GLOBAL_REASON_REQUIRED"] : [],
+        codes: sensitiveAccess.reasonRequired
+          ? ["SENSITIVE_OR_GLOBAL_REASON_REQUIRED"]
+          : [],
       },
       lifecyclePreview: {
         effectiveAt,
@@ -549,9 +591,10 @@ export class AccessAssignmentPreviewAdminService {
               ]
             : []),
         ],
-        beforeAfterEffectiveAccess: currentEffectiveAccess && proposedEffectiveAccess
-          ? "SUPPORTED_IN_MEMORY"
-          : "PARTIAL",
+        beforeAfterEffectiveAccess:
+          currentEffectiveAccess && proposedEffectiveAccess
+            ? "SUPPORTED_IN_MEMORY"
+            : "PARTIAL",
         pickerOptions: "TARGET_METADATA_ONLY",
         accountContextMaterialization:
           missingRequiredAccountContexts.length > 0
@@ -561,7 +604,9 @@ export class AccessAssignmentPreviewAdminService {
       sourceTrace: {
         roleSource: "roles",
         assignmentSource: "role_assignments",
-        bundleSource: targetResolution.bundleExpansion ? "role-bundle.catalog" : null,
+        bundleSource: targetResolution.bundleExpansion
+          ? "role-bundle.catalog"
+          : null,
         accountContextSource: "users.accountContexts",
         responsibilitySource: "responsibility_assignments",
         mutatesSource: false,
@@ -584,27 +629,84 @@ export class AccessAssignmentPreviewAdminService {
   }> {
     const targetType = command.assignmentTargetType;
     if (!["ROLE", "ROLE_TEMPLATE", "BUNDLE"].includes(targetType)) {
-      throw new RoleValidationError("assignmentTargetType must be ROLE, ROLE_TEMPLATE, or BUNDLE");
+      throw new RoleValidationError(
+        "assignmentTargetType must be ROLE, ROLE_TEMPLATE, or BUNDLE",
+      );
     }
 
     if (targetType === "BUNDLE") {
-      const bundleCode = normalizeRequiredText(command.assignmentTargetCode, "assignmentTargetCode");
+      const bundleCode = normalizeRequiredText(
+        command.assignmentTargetCode,
+        "assignmentTargetCode",
+      );
       const normalizedBundleCode = normalizeRoleTemplateCode(bundleCode);
       const bundle = getRoleBundle(normalizedBundleCode, command.bundleVersion);
       if (!bundle || bundle.status !== "ACTIVE") {
-        blockers.push(blocker("BUNDLE_NOT_FOUND", "Bundle target is unknown or inactive."));
+        blockers.push(
+          blocker("BUNDLE_NOT_FOUND", "Bundle target is unknown or inactive."),
+        );
+        return emptyTarget(targetType, normalizedBundleCode);
+      }
+      const bundleReadiness = evaluateRoleBundleAssignability(bundle);
+      if (!bundleReadiness.assignable) {
+        for (const readinessBlocker of bundleReadiness.blockers) {
+          blockers.push(
+            blocker(
+              readinessBlocker.code,
+              readinessBlocker.summary,
+              readinessBlocker.childRoleCode
+                ? { childRoleCode: readinessBlocker.childRoleCode }
+                : undefined,
+            ),
+          );
+        }
         return emptyTarget(targetType, normalizedBundleCode);
       }
       const bundleAssignmentId = `preview:${crypto.randomUUID()}`;
       const childRoles: RoleDocument[] = [];
       for (const childCode of bundle.childRoles) {
         if (LEGACY_ASSIGNMENT_TARGET_CODES.has(childCode)) {
-          blockers.push(blocker("LEGACY_ROLE_BLOCKED", `Legacy role target is blocked: ${childCode}.`));
+          blockers.push(
+            blocker(
+              "LEGACY_ROLE_BLOCKED",
+              `Legacy role target is blocked: ${childCode}.`,
+            ),
+          );
           continue;
         }
         const role = await this.findActiveRoleByCode(childCode, session);
         if (!role) {
-          blockers.push(blocker("BUNDLE_CHILD_ROLE_NOT_ACTIVE", `Bundle child role must exist and be ACTIVE: ${childCode}.`));
+          blockers.push(
+            blocker(
+              "BUNDLE_CHILD_ROLE_NOT_ACTIVE",
+              `Bundle child role must exist and be ACTIVE: ${childCode}.`,
+            ),
+          );
+          continue;
+        }
+        const childTemplateReadiness = evaluateRoleTemplateAssignability(
+          getRoleTemplate(role.templateCode ?? role.code),
+        );
+        if (
+          role.permissions.length === 0 ||
+          !childTemplateReadiness.assignable
+        ) {
+          if (role.permissions.length === 0) {
+            blockers.push(
+              blocker(
+                "BUNDLE_CHILD_ROLE_HAS_NO_PERMISSIONS",
+                `Bundle child role has no source-backed permissions: ${childCode}.`,
+                { childRoleCode: childCode },
+              ),
+            );
+          }
+          for (const readinessBlocker of childTemplateReadiness.blockers) {
+            blockers.push(
+              blocker(readinessBlocker.code, readinessBlocker.summary, {
+                childRoleCode: childCode,
+              }),
+            );
+          }
           continue;
         }
         childRoles.push(role);
@@ -654,7 +756,10 @@ export class AccessAssignmentPreviewAdminService {
             session,
           )
         : await this.findActiveRoleByCode(
-            normalizeRequiredText(command.assignmentTargetCode, "assignmentTargetCode"),
+            normalizeRequiredText(
+              command.assignmentTargetCode,
+              "assignmentTargetCode",
+            ),
             session,
           );
     const requestedCode = normalizeRoleTemplateCode(
@@ -666,8 +771,14 @@ export class AccessAssignmentPreviewAdminService {
       legacyBlockedCodes.add(requestedCode);
     }
     if (!role) {
-      blockers.push(blocker("ROLE_NOT_FOUND", "Role target is unknown or inactive."));
-      return emptyTarget(targetType, requestedCode);
+      blockers.push(
+        blocker("ROLE_NOT_FOUND", "Role target is unknown or inactive."),
+      );
+      return emptyTarget(
+        targetType,
+        requestedCode,
+        [...legacyBlockedCodes].sort(),
+      );
     }
     if (role.state !== "ACTIVE") {
       blockers.push(blocker("ROLE_NOT_ACTIVE", "Role target must be ACTIVE."));
@@ -682,10 +793,35 @@ export class AccessAssignmentPreviewAdminService {
       }
     }
     for (const code of [...legacyBlockedCodes].sort()) {
-      blockers.push(blocker("LEGACY_ROLE_BLOCKED", `Legacy role target is blocked: ${code}.`));
+      blockers.push(
+        blocker(
+          "LEGACY_ROLE_BLOCKED",
+          `Legacy role target is blocked: ${code}.`,
+        ),
+      );
     }
     const governingCode = role.templateCode ?? role.code;
     const template = getRoleTemplate(governingCode);
+    const templateReadiness = evaluateRoleTemplateAssignability(template);
+    const roleHasNoPermissions = role.permissions.length === 0;
+    if (!templateReadiness.assignable || roleHasNoPermissions) {
+      if (roleHasNoPermissions) {
+        blockers.push(
+          blocker(
+            "ROLE_TARGET_HAS_NO_PERMISSIONS",
+            "Role target has no source-backed permissions and cannot be assigned.",
+          ),
+        );
+      }
+      for (const readinessBlocker of templateReadiness.blockers) {
+        blockers.push(blocker(readinessBlocker.code, readinessBlocker.summary));
+      }
+      return emptyTarget(
+        targetType,
+        requestedCode || governingCode,
+        [...legacyBlockedCodes].sort(),
+      );
+    }
     return {
       roles: [role],
       assignmentTarget: {
@@ -704,7 +840,9 @@ export class AccessAssignmentPreviewAdminService {
           permissions: role.permissions,
         },
       ]).isSensitive,
-      requiredAccountContexts: template ? [template.recommendedAccountContext] : [],
+      requiredAccountContexts: template
+        ? [template.recommendedAccountContext]
+        : [],
       legacyRoleStatus: {
         checked: true,
         blockedCodes: roleCodes.filter((code) =>
@@ -733,32 +871,41 @@ export class AccessAssignmentPreviewAdminService {
     session?: ClientSession,
   ): Promise<RoleDocument | null> {
     const normalized = normalizeRoleTemplateCode(code);
-    return this.roles.findOne({
-      state: "ACTIVE",
-      $or: [{ code: normalized }, { templateCode: normalized }],
-    }, mongoOptions(session));
+    return this.roles.findOne(
+      {
+        state: "ACTIVE",
+        $or: [{ code: normalized }, { templateCode: normalized }],
+      },
+      mongoOptions(session),
+    );
   }
 
   private async readAssignableUser(
     userId: string,
     session?: ClientSession,
   ): Promise<UserDocument | null> {
-    return this.users.findOne({
-      _id: userId,
-      accountStatus: "ACTIVE",
-      disabledAt: null,
-      archivedAt: null,
-    }, mongoOptions(session));
+    return this.users.findOne(
+      {
+        _id: userId,
+        accountStatus: "ACTIVE",
+        disabledAt: null,
+        archivedAt: null,
+      },
+      mongoOptions(session),
+    );
   }
 
   private async readActiveEmploymentProfileForUser(
     userId: string,
     session?: ClientSession,
   ): Promise<EmploymentProfileDocument | null> {
-    return this.employmentProfiles.findOne({
-      linkedUserId: userId,
-      employmentStatus: { $in: ["ACTIVE", "ON_LEAVE"] },
-    }, mongoOptions(session));
+    return this.employmentProfiles.findOne(
+      {
+        linkedUserId: userId,
+        employmentStatus: { $in: ["ACTIVE", "ON_LEAVE"] },
+      },
+      mongoOptions(session),
+    );
   }
 
   private async findDuplicateConflicts(
@@ -768,12 +915,15 @@ export class AccessAssignmentPreviewAdminService {
   ): Promise<readonly Record<string, unknown>[]> {
     const conflicts: Array<Record<string, unknown>> = [];
     for (const assignment of proposedAssignments) {
-      const existing = await this.assignments.findOne({
-        roleId: assignment.roleId,
-        userId,
-        scopeFingerprint: assignment.scopeFingerprint,
-        state: "ACTIVE",
-      }, mongoOptions(session));
+      const existing = await this.assignments.findOne(
+        {
+          roleId: assignment.roleId,
+          userId,
+          scopeFingerprint: assignment.scopeFingerprint,
+          state: "ACTIVE",
+        },
+        mongoOptions(session),
+      );
       if (existing) {
         conflicts.push({
           assignmentId: existing._id,
@@ -824,15 +974,18 @@ export class AccessAssignmentPreviewAdminService {
         continue;
       }
       for (const scope of matchingScopes) {
-        const responsibility = await this.responsibilities.findOne({
-          subjectType: requirement.subjectType,
-          subjectId: scope.targetId,
-          responsibleEmploymentProfileId: params.employmentProfile._id,
-          responsibilityType: requirement.responsibilityType,
-          status: "ACTIVE",
-          effectiveAt: { $lte: params.now },
-          $or: [{ expiresAt: null }, { expiresAt: { $gte: params.now } }],
-        }, mongoOptions(params.session));
+        const responsibility = await this.responsibilities.findOne(
+          {
+            subjectType: requirement.subjectType,
+            subjectId: scope.targetId,
+            responsibleEmploymentProfileId: params.employmentProfile._id,
+            responsibilityType: requirement.responsibilityType,
+            status: "ACTIVE",
+            effectiveAt: { $lte: params.now },
+            $or: [{ expiresAt: null }, { expiresAt: { $gte: params.now } }],
+          },
+          mongoOptions(params.session),
+        );
         const actorAuthorized = canMaterializeResponsibility(
           params.actor,
           requirement.responsibilityType,
@@ -897,8 +1050,14 @@ export class AccessAssignmentPreviewAdminService {
     }
     const subject =
       subjectType === "TALENT_GROUP"
-        ? await this.talentGroups.findOne({ _id: subjectId }, mongoOptions(session))
-        : await this.orgUnits.findOne({ _id: subjectId }, mongoOptions(session));
+        ? await this.talentGroups.findOne(
+            { _id: subjectId },
+            mongoOptions(session),
+          )
+        : await this.orgUnits.findOne(
+            { _id: subjectId },
+            mongoOptions(session),
+          );
     if (!subject) {
       return "MISSING";
     }
@@ -919,9 +1078,10 @@ export class AccessAssignmentPreviewAdminService {
     const activeCurrentAssignments = currentAssignments.filter((assignment) =>
       isRoleAssignmentCurrentlyEffective(assignment, now),
     );
-    const activeProposedAssignments = proposedAssignments.filter((assignment) =>
-      assignment.effectiveAt <= now &&
-      (assignment.expiresAt === null || assignment.expiresAt >= now),
+    const activeProposedAssignments = proposedAssignments.filter(
+      (assignment) =>
+        assignment.effectiveAt <= now &&
+        (assignment.expiresAt === null || assignment.expiresAt >= now),
     );
     const roleIds = [
       ...new Set([
@@ -931,7 +1091,10 @@ export class AccessAssignmentPreviewAdminService {
     ];
     const roles = roleIds.length
       ? await this.roles
-          .find({ _id: { $in: roleIds }, state: "ACTIVE" }, mongoOptions(session))
+          .find(
+            { _id: { $in: roleIds }, state: "ACTIVE" },
+            mongoOptions(session),
+          )
           .sort({ code: 1, _id: 1 })
           .toArray()
       : [];
@@ -939,7 +1102,10 @@ export class AccessAssignmentPreviewAdminService {
     const permissionSources = new Map<string, Array<Record<string, unknown>>>();
     const assignments = [
       ...activeCurrentAssignments.map((assignment) =>
-        assignmentToEffectiveAccessItem(assignment, roleById.get(assignment.roleId)),
+        assignmentToEffectiveAccessItem(
+          assignment,
+          roleById.get(assignment.roleId),
+        ),
       ),
       ...activeProposedAssignments.map(proposedAssignmentToEffectiveAccessItem),
     ].filter((item) => item !== null);
@@ -988,7 +1154,15 @@ export class AccessAssignmentPreviewAdminService {
   }
 }
 
-function emptyTarget(targetType: string, code: string): ReturnType<AccessAssignmentPreviewAdminService["resolveAssignmentTarget"]> extends Promise<infer T> ? T : never {
+function emptyTarget(
+  targetType: string,
+  code: string,
+  legacyBlockedCodes: readonly string[] = [],
+): ReturnType<
+  AccessAssignmentPreviewAdminService["resolveAssignmentTarget"]
+> extends Promise<infer T>
+  ? T
+  : never {
   return {
     roles: [],
     assignmentTarget: { type: targetType, code },
@@ -996,7 +1170,7 @@ function emptyTarget(targetType: string, code: string): ReturnType<AccessAssignm
     bundleExpansion: null,
     sensitive: false,
     requiredAccountContexts: [],
-    legacyRoleStatus: { checked: true, blockedCodes: [] },
+    legacyRoleStatus: { checked: true, blockedCodes: legacyBlockedCodes },
   };
 }
 
@@ -1030,7 +1204,8 @@ function assignmentToEffectiveAccessItem(
     permissions: role.permissions,
     structuredScopeGrants: assignment.structuredScopeGrants ?? [],
     scopeFingerprint:
-      assignment.scopeFingerprint ?? buildRoleAssignmentScopeFingerprint(undefined),
+      assignment.scopeFingerprint ??
+      buildRoleAssignmentScopeFingerprint(undefined),
     reason: assignment.reason,
     effectiveAt: assignment.effectiveAt,
     expiresAt: assignment.expiresAt ?? null,
@@ -1091,7 +1266,10 @@ function buildSensitiveAccessView(params: {
 }): Record<string, unknown> & {
   readonly sensitiveOrGlobal: boolean;
   readonly reasonRequired: boolean;
-  readonly lifecycleBlockers: readonly { readonly code: string; readonly summary: string }[];
+  readonly lifecycleBlockers: readonly {
+    readonly code: string;
+    readonly summary: string;
+  }[];
 } {
   const classification = classifySensitiveAccess(params.assignments, {
     catalogSensitive: params.catalogSensitive,
@@ -1101,7 +1279,8 @@ function buildSensitiveAccessView(params: {
     reviewAt: params.reviewAt,
     expiresAt: params.expiresAt,
   });
-  const sensitiveOrGlobal = classification.isSensitive || classification.isGlobalLike;
+  const sensitiveOrGlobal =
+    classification.isSensitive || classification.isGlobalLike;
   return {
     sensitiveOrGlobal,
     isSensitive: classification.isSensitive,
@@ -1211,38 +1390,37 @@ function buildConsoleEntitlementPreview(params: {
     accountContextMutated: false,
     accountContextMaterializationPreviewed: true,
     grantsAuthorityByItself: false,
-    consoles: (["STAFF_CONSOLE", "MANAGER_CONSOLE", "ADMIN_CONSOLE"] as const).map(
-      (context) => {
-        const currentlyEligible = current.includes(context);
-        const proposedEligible = proposed.includes(context);
-        const accountContextBlocked = blockedAccountContexts.has(context);
-        const managerBlocked =
-          context === "MANAGER_CONSOLE" &&
-          params.responsibilityRequirements.some(
-            (item) =>
-              item.status !== "SATISFIED" &&
-              item.status !== "CREATE_PROPOSED",
-          );
-        const consoleBlockers = [
-          ...(accountContextBlocked
-            ? ["ACCOUNT_CONTEXT_MATERIALIZATION_NOT_AUTHORIZED"]
-            : []),
-          ...(managerBlocked ? ["RESPONSIBILITY_REQUIRED"] : []),
-        ];
-        return {
-          console: context,
-          currentlyEligible,
-          proposedEligible:
-            proposedEligible && !accountContextBlocked && !managerBlocked,
-          blockers: consoleBlockers,
-          reasonCodes: proposedEligible
-            ? consoleBlockers.length > 0
-              ? consoleBlockers
-              : ["BACKEND_DERIVED_FROM_ASSIGNMENT_TARGET"]
-            : ["NO_MATCHING_ACCOUNT_CONTEXT_OR_ASSIGNMENT_TARGET"],
-        };
-      },
-    ),
+    consoles: (
+      ["STAFF_CONSOLE", "MANAGER_CONSOLE", "ADMIN_CONSOLE"] as const
+    ).map((context) => {
+      const currentlyEligible = current.includes(context);
+      const proposedEligible = proposed.includes(context);
+      const accountContextBlocked = blockedAccountContexts.has(context);
+      const managerBlocked =
+        context === "MANAGER_CONSOLE" &&
+        params.responsibilityRequirements.some(
+          (item) =>
+            item.status !== "SATISFIED" && item.status !== "CREATE_PROPOSED",
+        );
+      const consoleBlockers = [
+        ...(accountContextBlocked
+          ? ["ACCOUNT_CONTEXT_MATERIALIZATION_NOT_AUTHORIZED"]
+          : []),
+        ...(managerBlocked ? ["RESPONSIBILITY_REQUIRED"] : []),
+      ];
+      return {
+        console: context,
+        currentlyEligible,
+        proposedEligible:
+          proposedEligible && !accountContextBlocked && !managerBlocked,
+        blockers: consoleBlockers,
+        reasonCodes: proposedEligible
+          ? consoleBlockers.length > 0
+            ? consoleBlockers
+            : ["BACKEND_DERIVED_FROM_ASSIGNMENT_TARGET"]
+          : ["NO_MATCHING_ACCOUNT_CONTEXT_OR_ASSIGNMENT_TARGET"],
+      };
+    }),
     blockerCodes: params.blockers.map((item) => item.code),
   };
 }
@@ -1265,7 +1443,10 @@ function canMaterializeResponsibility(
   if (!actor) {
     return false;
   }
-  if (actor.context !== "ADMIN" || !actor.accountContexts.includes("ADMIN_CONSOLE")) {
+  if (
+    actor.context !== "ADMIN" ||
+    !actor.accountContexts.includes("ADMIN_CONSOLE")
+  ) {
     return false;
   }
   if (responsibilityType === "TALENT_GROUP_MANAGER") {
@@ -1315,9 +1496,9 @@ function readStringArray(value: unknown): readonly string[] {
     : [];
 }
 
-function requirementForRole(roleCode: string):
-  | (typeof MANAGER_REQUIREMENTS)[keyof typeof MANAGER_REQUIREMENTS]
-  | null {
+function requirementForRole(
+  roleCode: string,
+): (typeof MANAGER_REQUIREMENTS)[keyof typeof MANAGER_REQUIREMENTS] | null {
   if (roleCode === "TALENT_GROUP_MANAGER") {
     return MANAGER_REQUIREMENTS.TALENT_GROUP_MANAGER;
   }
@@ -1335,8 +1516,12 @@ function requiredResponsibilityTypeForRole(roleCode: string): string | null {
   return requirementForRole(roleCode)?.responsibilityType ?? null;
 }
 
-function blocker(code: string, summary: string): Record<string, unknown> {
-  return { severity: "BLOCKER", code, summary };
+function blocker(
+  code: string,
+  summary: string,
+  extra?: Record<string, unknown>,
+): Record<string, unknown> {
+  return { severity: "BLOCKER", code, summary, ...(extra ?? {}) };
 }
 
 function warning(code: string, summary: string): Record<string, unknown> {
