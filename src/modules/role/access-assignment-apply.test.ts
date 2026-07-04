@@ -407,6 +407,56 @@ test("access assignment apply creates bundle parent and traces child assignments
   assert.equal(readPath(result, ["bundleExpansion", "appliedChildCount"]), 1);
 });
 
+test("access assignment apply fails closed without side effects when staff bundle child runtime role is missing or inactive", async () => {
+  for (const roles of [
+    [role("role-access", "ACCESS_ADMIN", [Permission.ROLE_ASSIGN_TO_USER])],
+    [
+      role("role-access", "ACCESS_ADMIN", [Permission.ROLE_ASSIGN_TO_USER]),
+      role(
+        "role-staff",
+        "STAFF_CONSOLE_USER",
+        [Permission.WORK_SCHEDULE_READ],
+        {
+          state: "INACTIVE",
+        },
+      ),
+    ],
+  ]) {
+    const db = fakeDb({
+      users: [
+        activeUser("access-admin", ["ADMIN_CONSOLE"]),
+        activeUser("target-user", ["STAFF_CONSOLE"]),
+      ],
+      employment_profiles: [activeProfile("profile-1", "target-user")],
+      roles,
+      role_assignments: [],
+      role_assignment_rules: [],
+      responsibility_assignments: [],
+      bundle_assignments: [],
+    });
+
+    const result = await withTrace(() =>
+      applyWithFakes(db, {
+        targetUserId: "target-user",
+        assignmentTargetType: "BUNDLE",
+        assignmentTargetCode: "STAFF_CONSOLE_BUNDLE",
+        bundleVersion: "2026-06-26",
+        structuredScopeGrants: [{ scopeType: "self" }],
+        reason: "staff bundle setup",
+      }),
+    );
+
+    assert.equal(result.applied, false);
+    assert.equal(result.applyStatus, "BLOCKED");
+    assert.deepEqual(readCodes(result.blockers), [
+      "BUNDLE_CHILD_ROLE_NOT_ACTIVE",
+    ]);
+    assert.equal(db.rows("role_assignments").length, 0);
+    assert.equal(db.rows("bundle_assignments").length, 0);
+    assert.equal(readPath(result, ["auditTrace", "written"]), false);
+  }
+});
+
 test("access assignment apply creates required responsibility only when actor is authorized", async () => {
   const db = baseApplyDb({
     targetContexts: ["MANAGER_CONSOLE"],
@@ -1060,14 +1110,14 @@ function role(
   id: string,
   code: string,
   permissions: readonly string[],
-  options?: { readonly maxDelegatableBand?: string },
+  options?: { readonly maxDelegatableBand?: string; readonly state?: string },
 ): Record<string, unknown> {
   return {
     _id: id,
     id,
     code,
     name: code,
-    state: "ACTIVE",
+    state: options?.state ?? "ACTIVE",
     permissions,
     templateCode: code,
     delegationBand: "LIMITED",

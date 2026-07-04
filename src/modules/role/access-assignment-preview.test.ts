@@ -556,6 +556,50 @@ test("access assignment preview expands non-legacy bundles in memory without per
   assert.equal(db.writeCount, 0);
 });
 
+test("access assignment preview blocks staff bundle when child runtime role is missing or inactive without side effects", async () => {
+  for (const roles of [
+    [],
+    [
+      role(
+        "role-staff",
+        "STAFF_CONSOLE_USER",
+        [Permission.WORK_SCHEDULE_READ],
+        {
+          state: "INACTIVE",
+        },
+      ),
+    ],
+  ]) {
+    const db = fakeDb({
+      users: [activeUser("target-user", ["STAFF_CONSOLE"])],
+      employment_profiles: [activeProfile("profile-1", "target-user")],
+      roles,
+      role_assignments: [],
+      responsibility_assignments: [],
+    });
+
+    const result = await new AccessAssignmentPreviewAdminService(db).preview({
+      targetUserId: "target-user",
+      assignmentTargetType: "BUNDLE",
+      assignmentTargetCode: "STAFF_CONSOLE_BUNDLE",
+      bundleVersion: "2026-06-26",
+      structuredScopeGrants: [{ scopeType: "self" }],
+      reason: "staff access",
+    });
+
+    assert.equal(result.canApply, false);
+    assert.deepEqual(readCodes(result.blockers), [
+      "BUNDLE_CHILD_ROLE_NOT_ACTIVE",
+    ]);
+    assert.deepEqual(readPath(result, ["proposedAssignments"]), []);
+    assert.equal(
+      readPath(result, ["bundleExpansion", "proposedChildCount"]),
+      0,
+    );
+    assert.equal(db.writeCount, 0);
+  }
+});
+
 test("access assignment preview blocks direct true legacy ROLE targets", async () => {
   for (const code of TRUE_LEGACY_ASSIGNMENT_TARGET_CODES) {
     const db = fakeDb({
@@ -993,12 +1037,13 @@ function role(
   id: string,
   code: string,
   permissions: readonly string[],
+  options?: { readonly state?: string },
 ): Record<string, unknown> {
   return {
     _id: id,
     code,
     name: code,
-    state: "ACTIVE",
+    state: options?.state ?? "ACTIVE",
     permissions,
     templateCode: code,
   };

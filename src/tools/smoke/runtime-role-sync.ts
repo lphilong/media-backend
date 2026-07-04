@@ -1,14 +1,17 @@
 import path from "node:path";
+import crypto from "node:crypto";
 import dotenv from "dotenv";
 import { Db, MongoClient } from "mongodb";
 import { clearEnvCacheForTests, getEnv } from "@config/env";
 import { RoleRecord } from "@modules/role/domain/role.types";
 import {
+  evaluateRoleTemplateAssignability,
   getRoleTemplate,
   isRoleTemplateCode,
   normalizeRoleTemplateCode,
   ROLE_TEMPLATE_CODES,
   RoleTemplateCode,
+  RoleTemplateDefinition,
 } from "@modules/role/domain/role-template.catalog";
 
 export type RuntimeRoleSyncMode = "dry-run" | "write";
@@ -36,18 +39,32 @@ export interface RuntimeRoleSyncSummary {
   readonly roleExists: boolean;
   readonly missingPermissions: readonly string[];
   readonly extraPermissions: readonly string[];
+  readonly roleActive: boolean;
+  readonly activationNeeded: boolean;
   readonly updateNeeded: boolean;
   readonly updated: boolean;
-  readonly created: false;
+  readonly created: boolean;
+  readonly activated: boolean;
 }
 
-interface RuntimeRoleSyncRepository
-{
+interface RuntimeRoleSyncRepository {
   findByCode(code: string): Promise<RoleRecord | null>;
   replacePermissions(input: {
     readonly roleId: string;
     readonly roleCode: RoleTemplateCode;
     readonly permissions: readonly string[];
+    readonly updatedAt: number;
+  }): Promise<RoleRecord | null>;
+  createFromTemplate(input: {
+    readonly roleId: string;
+    readonly template: RoleTemplateDefinition;
+    readonly now: number;
+  }): Promise<RoleRecord>;
+  activateFromTemplate(input: {
+    readonly roleId: string;
+    readonly roleCode: RoleTemplateCode;
+    readonly permissions: readonly string[];
+    readonly templateVersion: string;
     readonly updatedAt: number;
   }): Promise<RoleRecord | null>;
 }
@@ -60,9 +77,7 @@ interface RuntimeRoleSyncDependencies {
 export class RuntimeRoleSyncService {
   constructor(private readonly deps: RuntimeRoleSyncDependencies) {}
 
-  async run(
-    input: RuntimeRoleSyncInput,
-  ): Promise<RuntimeRoleSyncSummary> {
+  async run(input: RuntimeRoleSyncInput): Promise<RuntimeRoleSyncSummary> {
     const roleCode = normalizeTargetRoleCode(input.roleCode);
     const template = getRoleTemplate(roleCode);
     if (!template) {
@@ -71,42 +86,89 @@ export class RuntimeRoleSyncService {
         `Runtime role sync template is missing: ${roleCode}`,
       );
     }
+    const readiness = evaluateRoleTemplateAssignability(template);
+    if (!readiness.assignable) {
+      throw new RuntimeRoleSyncError(
+        "RUNTIME_ROLE_SYNC_TEMPLATE_NOT_ASSIGNABLE",
+        `Runtime role sync target is not source-ready assignable: ${roleCode}`,
+      );
+    }
 
     const role = await this.deps.roleRepository.findByCode(roleCode);
     if (!role) {
-      if (input.mode === "write") {
-        throw new RuntimeRoleSyncError(
-          "RUNTIME_ROLE_SYNC_ROLE_MISSING",
-          `Runtime role does not exist and will not be created: ${roleCode}`,
-        );
+      if (input.mode === "dry-run") {
+        return buildSummary({
+          input,
+          roleCode,
+          role: null,
+          templatePermissions: template.permissions,
+          updated: false,
+          created: false,
+          activated: false,
+        });
       }
 
+      const created = await this.deps.roleRepository.createFromTemplate({
+        roleId: crypto.randomUUID(),
+        template,
+        now: this.now(),
+      });
       return buildSummary({
         input,
         roleCode,
-        role: null,
+        role: created,
         templatePermissions: template.permissions,
-        updated: false,
+        updated: true,
+        created: true,
+        activated: true,
       });
     }
 
-    assertSafeRuntimeRole(role, roleCode);
-    const summary = buildSummary({
+    assertSafeRuntimeRoleCode(role, roleCode);
+    const preWriteSummary = buildSummary({
       input,
       roleCode,
       role,
       templatePermissions: template.permissions,
       updated: false,
+      created: false,
+      activated: false,
     });
 
-    if (input.mode === "dry-run" || !summary.updateNeeded) {
-      return summary;
+    if (input.mode === "dry-run" || !preWriteSummary.updateNeeded) {
+      return preWriteSummary;
     }
 
     const permissions = mergePermissionCodeSets(
       role.permissions,
-      summary.missingPermissions,
+      preWriteSummary.missingPermissions,
     );
+
+    if (preWriteSummary.activationNeeded) {
+      const activated = await this.deps.roleRepository.activateFromTemplate({
+        roleId: role.id,
+        roleCode,
+        permissions,
+        templateVersion: template.version,
+        updatedAt: this.now(),
+      });
+      if (!activated) {
+        throw new RuntimeRoleSyncError(
+          "RUNTIME_ROLE_SYNC_ACTIVATION_FAILED",
+          `Failed to activate runtime role: ${roleCode}`,
+        );
+      }
+      return buildSummary({
+        input,
+        roleCode,
+        role: activated,
+        templatePermissions: template.permissions,
+        updated: true,
+        created: false,
+        activated: true,
+      });
+    }
+
     const updated = await this.deps.roleRepository.replacePermissions({
       roleId: role.id,
       roleCode,
@@ -126,6 +188,8 @@ export class RuntimeRoleSyncService {
       role: updated,
       templatePermissions: template.permissions,
       updated: true,
+      created: false,
+      activated: false,
     });
   }
 
@@ -194,6 +258,59 @@ class MongoRuntimeRoleSyncRepository implements RuntimeRoleSyncRepository {
 
     return doc ? toRoleRecord(doc) : null;
   }
+
+  async createFromTemplate(input: {
+    readonly roleId: string;
+    readonly template: RoleTemplateDefinition;
+    readonly now: number;
+  }): Promise<RoleRecord> {
+    const document: RuntimeRoleDocument = {
+      _id: input.roleId,
+      code: input.template.code,
+      name: input.template.name,
+      description: input.template.description,
+      state: "ACTIVE",
+      permissions: [...input.template.permissions],
+      delegationBand: "LIMITED",
+      maxDelegatableBand: "NONE",
+      templateCode: input.template.code,
+      templateVersion: input.template.version,
+      templateAppliedAt: input.now,
+      createdAt: input.now,
+      updatedAt: input.now,
+      activatedAt: input.now,
+      archivedAt: null,
+    };
+    await this.roles.insertOne(document);
+    return toRoleRecord(document);
+  }
+
+  async activateFromTemplate(input: {
+    readonly roleId: string;
+    readonly roleCode: RoleTemplateCode;
+    readonly permissions: readonly string[];
+    readonly templateVersion: string;
+    readonly updatedAt: number;
+  }): Promise<RoleRecord | null> {
+    const doc = await this.roles.findOneAndUpdate(
+      { _id: input.roleId, code: input.roleCode },
+      {
+        $set: {
+          state: "ACTIVE",
+          permissions: [...input.permissions],
+          templateCode: input.roleCode,
+          templateVersion: input.templateVersion,
+          templateAppliedAt: input.updatedAt,
+          updatedAt: input.updatedAt,
+          activatedAt: input.updatedAt,
+          archivedAt: null,
+        },
+      },
+      { returnDocument: "after" },
+    );
+
+    return doc ? toRoleRecord(doc) : null;
+  }
 }
 
 function toRoleRecord(document: RuntimeRoleDocument): RoleRecord {
@@ -229,6 +346,8 @@ function buildSummary(params: {
   readonly role: RoleRecord | null;
   readonly templatePermissions: readonly string[];
   readonly updated: boolean;
+  readonly created: boolean;
+  readonly activated: boolean;
 }): RuntimeRoleSyncSummary {
   const currentPermissions = params.role?.permissions ?? [];
   const missingPermissions = setDifference(
@@ -249,9 +368,15 @@ function buildSummary(params: {
     roleExists: params.role !== null,
     missingPermissions,
     extraPermissions,
-    updateNeeded: missingPermissions.length > 0,
+    roleActive: params.role?.state === "ACTIVE",
+    activationNeeded: params.role !== null && params.role.state !== "ACTIVE",
+    updateNeeded:
+      params.role === null ||
+      params.role.state !== "ACTIVE" ||
+      missingPermissions.length > 0,
     updated: params.updated,
-    created: false as const,
+    created: params.created,
+    activated: params.activated,
   });
 }
 
@@ -264,11 +389,14 @@ export function formatRuntimeRoleSyncSummary(
     `db: ${summary.mongoDbName ?? "not-provided"}`,
     `role: ${summary.roleCode}`,
     `roleExists: ${summary.roleExists}`,
+    `roleActive: ${summary.roleActive}`,
     `missingPermissions: ${formatList(summary.missingPermissions)}`,
     `extraPermissions: ${formatList(summary.extraPermissions)}`,
+    `activationNeeded: ${summary.activationNeeded}`,
     `updateNeeded: ${summary.updateNeeded}`,
     `updated: ${summary.updated}`,
     `created: ${summary.created}`,
+    `activated: ${summary.activated}`,
   ].join("\n");
 }
 
@@ -284,7 +412,7 @@ function normalizeTargetRoleCode(value: string): RoleTemplateCode {
   return normalized;
 }
 
-function assertSafeRuntimeRole(
+function assertSafeRuntimeRoleCode(
   role: RoleRecord,
   expectedCode: RoleTemplateCode,
 ): void {
@@ -292,13 +420,6 @@ function assertSafeRuntimeRole(
     throw new RuntimeRoleSyncError(
       "RUNTIME_ROLE_SYNC_ROLE_CODE_CONFLICT",
       `Runtime role code mismatch: ${expectedCode}`,
-    );
-  }
-
-  if (role.state !== "ACTIVE") {
-    throw new RuntimeRoleSyncError(
-      "RUNTIME_ROLE_SYNC_ROLE_STATE_CONFLICT",
-      `Runtime role exists but is not ACTIVE: ${expectedCode}`,
     );
   }
 }
@@ -518,9 +639,7 @@ async function runCli(): Promise<void> {
 if (require.main === module) {
   runCli().catch((error: unknown) => {
     const message =
-      error instanceof Error
-        ? error.message
-        : "Runtime role sync failed";
+      error instanceof Error ? error.message : "Runtime role sync failed";
     console.error(redactForOutput(message));
     process.exitCode = 1;
   });

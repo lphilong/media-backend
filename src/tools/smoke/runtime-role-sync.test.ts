@@ -309,6 +309,68 @@ test("rerun is idempotent after write", async () => {
   assert.equal(fixture.roles.replacePermissionsCalls, 1);
 });
 
+test("write materializes missing source-ready STAFF_CONSOLE_USER without duplicates", async () => {
+  const fixture = createRuntimeRoleSyncFixture();
+
+  const first = await fixture.service.run({
+    roleCode: "STAFF_CONSOLE_USER",
+    mode: "write",
+    mongoDbName: "media-dev",
+  });
+  const second = await fixture.service.run({
+    roleCode: "STAFF_CONSOLE_USER",
+    mode: "write",
+    mongoDbName: "media-dev",
+  });
+
+  const staff = fixture.roles.records.get("STAFF_CONSOLE_USER");
+  assert.ok(staff);
+  assert.equal(staff.state, "ACTIVE");
+  assert.equal(staff.templateCode, "STAFF_CONSOLE_USER");
+  assert.deepEqual(
+    staff.permissions,
+    getRoleTemplate("STAFF_CONSOLE_USER")?.permissions,
+  );
+  assert.equal(first.created, true);
+  assert.equal(first.activated, true);
+  assert.equal(first.updateNeeded, false);
+  assert.equal(second.created, false);
+  assert.equal(second.activated, false);
+  assert.equal(second.updated, false);
+  assert.equal(fixture.roles.createFromTemplateCalls, 1);
+  assert.equal(fixture.roles.records.size, 1);
+});
+
+test("write activates inactive source-ready STAFF_CONSOLE_USER and syncs missing permissions", async () => {
+  const fixture = createRuntimeRoleSyncFixture({
+    roles: [
+      makeTemplateRoleWithoutPermissions({
+        code: "STAFF_CONSOLE_USER",
+        missingPermissions: [Permission.WORK_SCHEDULE_READ],
+        state: "INACTIVE",
+      }),
+    ],
+  });
+
+  const summary = await fixture.service.run({
+    roleCode: "STAFF_CONSOLE_USER",
+    mode: "write",
+    mongoDbName: "media-dev",
+  });
+
+  const staff = fixture.roles.records.get("STAFF_CONSOLE_USER");
+  assert.ok(staff);
+  assert.equal(staff.state, "ACTIVE");
+  assert.equal(staff.archivedAt, null);
+  assert.equal(staff.permissions.includes(Permission.WORK_SCHEDULE_READ), true);
+  assert.equal(summary.created, false);
+  assert.equal(summary.activated, true);
+  assert.equal(summary.updated, true);
+  assert.equal(summary.updateNeeded, false);
+  assert.equal(fixture.roles.activateFromTemplateCalls, 1);
+  assert.equal(fixture.roles.replacePermissionsCalls, 0);
+});
+
 test("write does not add broad read permission unless source template has it", async () => {
   const fixture = createRuntimeRoleSyncFixture({
     roles: [
@@ -345,7 +407,10 @@ test("CLI write mode requires explicit confirm flag and env file", () => {
     () => parseCliArgs([]),
     runtimeSyncErrorWithCode("RUNTIME_ROLE_SYNC_ROLES_REQUIRED"),
   );
-  assert.equal(parseCliArgs(["--roles", "REVENUE_FINANCE_OPS"]).mode, "dry-run");
+  assert.equal(
+    parseCliArgs(["--roles", "REVENUE_FINANCE_OPS"]).mode,
+    "dry-run",
+  );
   assert.deepEqual(
     parseCliArgs([
       "--env-file",
@@ -505,6 +570,8 @@ class FakeRuntimeRoleRepository {
   readonly records = new Map<string, RoleRecord>();
   findByCodeCalls = 0;
   replacePermissionsCalls = 0;
+  createFromTemplateCalls = 0;
+  activateFromTemplateCalls = 0;
 
   constructor(roles: readonly RoleRecord[]) {
     for (const role of roles) {
@@ -542,12 +609,67 @@ class FakeRuntimeRoleRepository {
     this.records.set(updated.code, updated);
     return updated;
   }
+
+  async createFromTemplate(input: {
+    readonly roleId: string;
+    readonly template: NonNullable<ReturnType<typeof getRoleTemplate>>;
+    readonly now: number;
+  }): Promise<RoleRecord> {
+    this.createFromTemplateCalls += 1;
+    const role = makeRole({
+      id: input.roleId,
+      code: input.template.code,
+      permissions: input.template.permissions,
+    });
+    const created = {
+      ...role,
+      description: input.template.description,
+      templateVersion: input.template.version,
+      templateAppliedAt: input.now,
+      createdAt: input.now,
+      updatedAt: input.now,
+      activatedAt: input.now,
+    };
+    this.records.set(created.code, created);
+    return created;
+  }
+
+  async activateFromTemplate(input: {
+    readonly roleId: string;
+    readonly roleCode: RoleTemplateCode;
+    readonly permissions: readonly string[];
+    readonly templateVersion: string;
+    readonly updatedAt: number;
+  }): Promise<RoleRecord | null> {
+    this.activateFromTemplateCalls += 1;
+    const role = [...this.records.values()].find(
+      (candidate) =>
+        candidate.id === input.roleId && candidate.code === input.roleCode,
+    );
+    if (!role) {
+      return null;
+    }
+    const updated = {
+      ...role,
+      state: "ACTIVE" as const,
+      permissions: [...input.permissions],
+      templateCode: input.roleCode,
+      templateVersion: input.templateVersion,
+      templateAppliedAt: input.updatedAt,
+      updatedAt: input.updatedAt,
+      activatedAt: input.updatedAt,
+      archivedAt: null,
+    };
+    this.records.set(updated.code, updated);
+    return updated;
+  }
 }
 
 function makeTemplateRoleWithoutPermissions(params: {
   readonly code: RoleTemplateCode;
   readonly missingPermissions: readonly Permission[];
   readonly extraPermissions?: readonly string[];
+  readonly state?: RoleRecord["state"];
 }): RoleRecord {
   const template = getRoleTemplate(params.code);
   assert.ok(template);
@@ -561,6 +683,7 @@ function makeTemplateRoleWithoutPermissions(params: {
       ),
       ...(params.extraPermissions ?? []),
     ],
+    state: params.state,
   });
 }
 
@@ -568,6 +691,7 @@ function makeRole(params: {
   readonly id: string;
   readonly code: string;
   readonly permissions: readonly string[];
+  readonly state?: RoleRecord["state"];
 }): RoleRecord {
   const template = getRoleTemplate(params.code);
   return {
@@ -575,7 +699,7 @@ function makeRole(params: {
     code: params.code,
     name: template?.name ?? params.code,
     description: template?.description ?? null,
-    state: "ACTIVE",
+    state: params.state ?? "ACTIVE",
     permissions: [...params.permissions],
     delegationBand: params.code === "ADMIN_FULL" ? "PRIVILEGED" : "LIMITED",
     maxDelegatableBand: params.code === "ADMIN_FULL" ? "PRIVILEGED" : "NONE",
@@ -584,8 +708,8 @@ function makeRole(params: {
     templateAppliedAt: 1,
     createdAt: 1,
     updatedAt: 1,
-    activatedAt: 1,
-    archivedAt: null,
+    activatedAt: params.state === "INACTIVE" ? null : 1,
+    archivedAt: params.state === "ARCHIVED" ? 1 : null,
   };
 }
 
