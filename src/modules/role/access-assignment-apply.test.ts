@@ -357,6 +357,53 @@ test("access assignment apply materializes missing AccountContext before child a
   assert.equal(readPath(result, ["auditTrace", "written"]), true);
 });
 
+test("access assignment apply succeeds for Org Unit Manager with valid managedOrgUnit scope", async () => {
+  const db = baseApplyDb({
+    targetContexts: ["STAFF_CONSOLE"],
+    targetRoleCode: "ORG_UNIT_MANAGER",
+    targetRolePermissions: [Permission.ORG_UNIT_READ],
+    responsibilities: [
+      responsibility(
+        "resp-org",
+        "profile-1",
+        "ORG_UNIT",
+        "org-a",
+        "ORG_UNIT_MANAGER",
+      ),
+    ],
+  });
+
+  const result = await withTrace(() =>
+    applyWithFakes(db, {
+      targetUserId: "target-user",
+      assignmentTargetType: "ROLE_TEMPLATE",
+      assignmentTargetCode: "ORG_UNIT_MANAGER",
+      structuredScopeGrants: [
+        { scopeType: "managedOrgUnit", targetId: "org-a" },
+      ],
+      reason: "org unit manager setup",
+    }),
+  );
+
+  const inserted = db
+    .rows("role_assignments")
+    .find((row) => row.userId === "target-user");
+  assert.equal(result.applied, true);
+  assert.deepEqual(readCodes(result.blockers), []);
+  assert.equal(inserted?.roleId, "role-ORG_UNIT_MANAGER");
+  assert.deepEqual(inserted?.structuredScopeGrants, [
+    { scopeType: "managedOrgUnit", targetId: "org-a" },
+  ]);
+  assert.deepEqual(
+    db.rows("users").find((row) => row._id === "target-user")?.accountContexts,
+    ["STAFF_CONSOLE", "MANAGER_CONSOLE"],
+  );
+  assert.equal(
+    readPath(result, ["responsibilityOperationResult", "materialized"]),
+    false,
+  );
+});
+
 test("access assignment apply creates bundle parent and traces child assignments to it", async () => {
   const db = baseApplyDb({
     targetContexts: ["STAFF_CONSOLE"],
@@ -502,6 +549,42 @@ test("access assignment apply creates required responsibility only when actor is
   );
 });
 
+test("access assignment apply creates required Org Unit Manager responsibility only when actor is authorized", async () => {
+  const db = baseApplyDb({
+    targetContexts: ["MANAGER_CONSOLE"],
+    targetRoleCode: "ORG_UNIT_MANAGER",
+    targetRolePermissions: [Permission.ORG_UNIT_READ],
+    orgUnits: [{ _id: "org-a", status: "ACTIVE" }],
+  });
+
+  const result = await withTrace(() =>
+    applyWithFakes(
+      db,
+      {
+        targetUserId: "target-user",
+        assignmentTargetType: "ROLE_TEMPLATE",
+        assignmentTargetCode: "ORG_UNIT_MANAGER",
+        structuredScopeGrants: [
+          { scopeType: "managedOrgUnit", targetId: "org-a" },
+        ],
+        reason: "org manager setup",
+      },
+      actor([Permission.ORG_UNIT_UPDATE]),
+    ),
+  );
+
+  const created = db.rows("responsibility_assignments")[0];
+  assert.equal(result.applied, true);
+  assert.equal(created?.subjectType, "ORG_UNIT");
+  assert.equal(created?.subjectId, "org-a");
+  assert.equal(created?.responsibleEmploymentProfileId, "profile-1");
+  assert.equal(created?.responsibilityType, "ORG_UNIT_MANAGER");
+  assert.equal(
+    readPath(result, ["responsibilityOperationResult", "materialized"]),
+    true,
+  );
+});
+
 test("access assignment apply blocks missing responsibility and requires reason for all changes", async () => {
   const db = baseApplyDb({
     targetContexts: ["MANAGER_CONSOLE"],
@@ -522,6 +605,29 @@ test("access assignment apply blocks missing responsibility and requires reason 
   );
   assert.equal(missingResponsibility.applied, false);
   assert.deepEqual(readCodes(missingResponsibility.blockers), [
+    "RESPONSIBILITY_MATERIALIZATION_NOT_AUTHORIZED",
+  ]);
+
+  const missingOrgResponsibility = await withTrace(() =>
+    applyWithFakes(
+      baseApplyDb({
+        targetContexts: ["MANAGER_CONSOLE"],
+        targetRoleCode: "ORG_UNIT_MANAGER",
+        targetRolePermissions: [Permission.ORG_UNIT_READ],
+      }),
+      {
+        targetUserId: "target-user",
+        assignmentTargetType: "ROLE_TEMPLATE",
+        assignmentTargetCode: "ORG_UNIT_MANAGER",
+        structuredScopeGrants: [
+          { scopeType: "managedOrgUnit", targetId: "org-a" },
+        ],
+        reason: "org manager setup",
+      },
+    ),
+  );
+  assert.equal(missingOrgResponsibility.applied, false);
+  assert.deepEqual(readCodes(missingOrgResponsibility.blockers), [
     "RESPONSIBILITY_MATERIALIZATION_NOT_AUTHORIZED",
   ]);
 

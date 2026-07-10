@@ -47,6 +47,13 @@ export interface RuntimeRoleSyncSummary {
   readonly activated: boolean;
 }
 
+export const SOURCE_READY_ASSIGNABLE_RUNTIME_ROLE_CODES = Object.freeze(
+  ROLE_TEMPLATE_CODES.filter((code) => {
+    const template = getRoleTemplate(code);
+    return evaluateRoleTemplateAssignability(template).assignable;
+  }),
+);
+
 interface RuntimeRoleSyncRepository {
   findByCode(code: string): Promise<RoleRecord | null>;
   replacePermissions(input: {
@@ -455,6 +462,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
   let roleCodes: readonly RoleTemplateCode[] = [];
   let confirm = false;
   let dryRun = false;
+  let allSourceReadyAssignable = false;
   let help = false;
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -471,6 +479,11 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
 
     if (arg === "--dry-run") {
       dryRun = true;
+      continue;
+    }
+
+    if (arg === "--all-source-ready-assignable") {
+      allSourceReadyAssignable = true;
       continue;
     }
 
@@ -528,6 +541,10 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
     };
   }
 
+  if (allSourceReadyAssignable) {
+    roleCodes = SOURCE_READY_ASSIGNABLE_RUNTIME_ROLE_CODES;
+  }
+
   if (roleCodes.length === 0) {
     throw new RuntimeRoleSyncError(
       "RUNTIME_ROLE_SYNC_ROLES_REQUIRED",
@@ -549,14 +566,17 @@ export function helpText(): string {
     "",
     "Dry run:",
     "  npm run role:sync-runtime -- --env-file .env.dev --roles REVENUE_FINANCE_OPS,PRODUCTION_OPS,HR_OPERATIONS --dry-run",
+    "  npm run role:sync-runtime -- --env-file .env.dev --all-source-ready-assignable --dry-run",
     "",
     "Write mode:",
     "  npm run role:sync-runtime -- --env-file .env.dev --roles REVENUE_FINANCE_OPS,PRODUCTION_OPS,HR_OPERATIONS --confirm-runtime-role-sync",
+    "  npm run role:sync-runtime -- --env-file .env.dev --all-source-ready-assignable --confirm-runtime-role-sync",
     "",
     "Notes:",
     `  Supported role template codes: ${ROLE_TEMPLATE_CODES.join(", ")}.`,
-    "  --roles is always required outside --help.",
-    "  Write mode union-adds missing template permissions and never creates roles.",
+    "  Use --all-source-ready-assignable to sync every catalog target that passes assignability readiness.",
+    "  --roles or --all-source-ready-assignable is always required outside --help.",
+    "  Write mode materializes missing source-ready roles, activates inactive rows, and union-adds missing template permissions.",
   ].join("\n");
 }
 

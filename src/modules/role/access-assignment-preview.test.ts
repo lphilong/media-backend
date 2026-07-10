@@ -14,10 +14,14 @@ import { AdminAccessAssignmentPreviewController } from "@modules/role/admin/admi
 import { adminAccessAssignmentPreviewRoutes } from "@modules/role/admin/admin.access-assignment-preview.routes";
 
 const CANONICAL_ASSIGNMENT_TARGET_CODES = [
+  "OWNER_ADMIN",
+  "ACCESS_ADMIN",
   "HR_OPERATIONS",
   "HR_TERMS_APPROVER",
   "PRODUCTION_OPS",
   "PLATFORM_CHANNEL_OPS",
+  "TALENT_GROUP_MANAGER",
+  "ORG_UNIT_MANAGER",
   "KPI_OPERATIONS",
   "REVENUE_FINANCE_OPS",
   "REVENUE_APPROVER",
@@ -398,6 +402,8 @@ test("access assignment preview treats canonical target roles as assignable", as
     HR_TERMS_APPROVER: Permission.EMPLOYMENT_TERMS_APPROVE,
     PRODUCTION_OPS: Permission.EVENT_READ,
     PLATFORM_CHANNEL_OPS: Permission.PLATFORM_ACCOUNT_READ,
+    TALENT_GROUP_MANAGER: Permission.TALENT_GROUP_READ,
+    ORG_UNIT_MANAGER: Permission.ORG_UNIT_READ,
     KPI_OPERATIONS: Permission.KPI_READ,
     REVENUE_FINANCE_OPS: Permission.REVENUE_LEDGER_READ,
     REVENUE_APPROVER: Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
@@ -406,28 +412,73 @@ test("access assignment preview treats canonical target roles as assignable", as
     COMMISSION_APPROVER: Permission.COMMISSION_SETTLEMENT_MANAGE_LIFECYCLE,
     VIEWER_AUDITOR: Permission.KPI_READ,
     STAFF_CONSOLE_USER: Permission.WORK_SCHEDULE_READ,
+    OWNER_ADMIN: Permission.ROLE_ASSIGN_TO_USER,
+    ACCESS_ADMIN: Permission.ROLE_ASSIGN_TO_USER,
   } as const;
 
   for (const code of CANONICAL_ASSIGNMENT_TARGET_CODES) {
+    const isTalentGroupManager = code === "TALENT_GROUP_MANAGER";
+    const isOrgUnitManager = code === "ORG_UNIT_MANAGER";
+    const isManager = isTalentGroupManager || isOrgUnitManager;
+    const scope = isTalentGroupManager
+      ? [{ scopeType: "managedTalentGroup" as const, targetId: "group-a" }]
+      : isOrgUnitManager
+        ? [{ scopeType: "managedOrgUnit" as const, targetId: "org-a" }]
+        : [{ scopeType: "global" as const }];
     const db = fakeDb({
-      users: [activeUser("target-user", ["ADMIN_CONSOLE"])],
+      users: [
+        activeUser("target-user", [
+          "ADMIN_CONSOLE",
+          ...(isManager ? ["MANAGER_CONSOLE"] : []),
+        ]),
+      ],
       employment_profiles: [activeProfile("profile-1", "target-user")],
       roles: [role(`role-${code}`, code, [permissionsByCode[code]])],
       role_assignments: [],
-      responsibility_assignments: [],
+      responsibility_assignments: isTalentGroupManager
+        ? [
+            responsibility(
+              "resp-tgm",
+              "profile-1",
+              "TALENT_GROUP",
+              "group-a",
+              "TALENT_GROUP_MANAGER",
+            ),
+          ]
+        : isOrgUnitManager
+          ? [
+              responsibility(
+                "resp-ou",
+                "profile-1",
+                "ORG_UNIT",
+                "org-a",
+                "ORG_UNIT_MANAGER",
+              ),
+            ]
+          : [],
     });
 
     const result = await new AccessAssignmentPreviewAdminService(db).preview({
       targetUserId: "target-user",
       assignmentTargetType: "ROLE_TEMPLATE",
       assignmentTargetCode: code,
-      structuredScopeGrants: [{ scopeType: "global" }],
+      structuredScopeGrants: scope,
       reason: `canonical assignment for ${code}`,
       effectiveAt: EFFECTIVE_AT,
-      reviewAt: REVIEW_AT_30_DAYS,
+      reviewAt:
+        code === "OWNER_ADMIN" || code === "ACCESS_ADMIN"
+          ? EXPIRES_AT_7_DAYS
+          : REVIEW_AT_30_DAYS,
+      ...(code === "OWNER_ADMIN" || code === "ACCESS_ADMIN"
+        ? { expiresAt: EXPIRES_AT_7_DAYS }
+        : {}),
     });
 
-    assert.equal(result.canApply, true);
+    assert.equal(
+      result.canApply,
+      true,
+      `${code}: ${readCodes(result.blockers).join(",")}`,
+    );
     assert.deepEqual(readCodes(result.blockers), []);
     assert.equal(
       readPath(result, ["proposedAssignments", 0, "roleCode"]),
@@ -877,6 +928,26 @@ test("access assignment targets endpoint is metadata-only and does not expose us
       const target = targets.find((item) => item.code === code);
       assert.equal(target?.legacyAssignable, true);
     }
+    const talentGroupManagerTarget = targets.find(
+      (item) => item.code === "TALENT_GROUP_MANAGER",
+    );
+    assert.equal(
+      talentGroupManagerTarget?.assignabilityStatus,
+      "REQUIRES_SCOPE_SELECTION",
+    );
+    assert.deepEqual(talentGroupManagerTarget?.requiredScopeTypes, [
+      "managedTalentGroup",
+    ]);
+    const orgUnitManagerTarget = targets.find(
+      (item) => item.code === "ORG_UNIT_MANAGER",
+    );
+    assert.equal(
+      orgUnitManagerTarget?.assignabilityStatus,
+      "REQUIRES_SCOPE_SELECTION",
+    );
+    assert.deepEqual(orgUnitManagerTarget?.requiredScopeTypes, [
+      "managedOrgUnit",
+    ]);
     const ownerTarget = targets.find((item) => item.code === "OWNER_ADMIN");
     assert.equal(ownerTarget?.assignabilityStatus, "RESTRICTED_SENSITIVE");
     assert.equal(ownerTarget?.operatorFlowGroup, "RESTRICTED_SENSITIVE");

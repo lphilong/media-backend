@@ -11,6 +11,7 @@ import {
 import {
   RuntimeRoleSyncError,
   RuntimeRoleSyncService,
+  SOURCE_READY_ASSIGNABLE_RUNTIME_ROLE_CODES,
   formatRuntimeRoleSyncSummary,
   helpText,
   parseCliArgs,
@@ -341,6 +342,78 @@ test("write materializes missing source-ready STAFF_CONSOLE_USER without duplica
   assert.equal(fixture.roles.records.size, 1);
 });
 
+test("write materializes missing source-ready manager roles without duplicates", async () => {
+  const fixture = createRuntimeRoleSyncFixture();
+
+  for (const code of ["TALENT_GROUP_MANAGER", "ORG_UNIT_MANAGER"] as const) {
+    const first = await fixture.service.run({
+      roleCode: code,
+      mode: "write",
+      mongoDbName: "media-dev",
+    });
+    const second = await fixture.service.run({
+      roleCode: code,
+      mode: "write",
+      mongoDbName: "media-dev",
+    });
+    const role = fixture.roles.records.get(code);
+    const template = getRoleTemplate(code);
+
+    assert.ok(role);
+    assert.ok(template);
+    assert.equal(role.state, "ACTIVE");
+    assert.equal(role.templateCode, code);
+    assert.deepEqual(role.permissions, template.permissions);
+    assert.equal(first.created, true);
+    assert.equal(first.activated, true);
+    assert.equal(first.updateNeeded, false);
+    assert.equal(second.created, false);
+    assert.equal(second.activated, false);
+    assert.equal(second.updated, false);
+  }
+
+  assert.equal(fixture.roles.createFromTemplateCalls, 2);
+  assert.equal(fixture.roles.records.size, 2);
+});
+
+test("write activates inactive source-ready manager roles and syncs missing permissions", async () => {
+  const fixture = createRuntimeRoleSyncFixture({
+    roles: [
+      makeTemplateRoleWithoutPermissions({
+        code: "TALENT_GROUP_MANAGER",
+        missingPermissions: [Permission.KPI_READ_PROGRESS],
+        state: "INACTIVE",
+      }),
+      makeTemplateRoleWithoutPermissions({
+        code: "ORG_UNIT_MANAGER",
+        missingPermissions: [Permission.ORG_UNIT_READ],
+        state: "INACTIVE",
+      }),
+    ],
+  });
+
+  for (const code of ["TALENT_GROUP_MANAGER", "ORG_UNIT_MANAGER"] as const) {
+    const summary = await fixture.service.run({
+      roleCode: code,
+      mode: "write",
+      mongoDbName: "media-dev",
+    });
+    const role = fixture.roles.records.get(code);
+
+    assert.ok(role);
+    assert.equal(role.state, "ACTIVE");
+    assert.equal(role.archivedAt, null);
+    assert.deepEqual(summary.missingPermissions, []);
+    assert.equal(summary.created, false);
+    assert.equal(summary.activated, true);
+    assert.equal(summary.updated, true);
+    assert.equal(summary.updateNeeded, false);
+  }
+
+  assert.equal(fixture.roles.activateFromTemplateCalls, 2);
+  assert.equal(fixture.roles.replacePermissionsCalls, 0);
+});
+
 test("write activates inactive source-ready STAFF_CONSOLE_USER and syncs missing permissions", async () => {
   const fixture = createRuntimeRoleSyncFixture({
     roles: [
@@ -421,6 +494,15 @@ test("CLI write mode requires explicit confirm flag and env file", () => {
     ]).roleCodes,
     ["REVENUE_FINANCE_OPS", "PRODUCTION_OPS", "HR_OPERATIONS"],
   );
+  assert.deepEqual(
+    parseCliArgs(["--all-source-ready-assignable", "--dry-run"]).roleCodes,
+    SOURCE_READY_ASSIGNABLE_RUNTIME_ROLE_CODES,
+  );
+  assert.deepEqual(
+    parseCliArgs(["--roles", "STAFF_CONSOLE_USER", "--all-source-ready-assignable"])
+      .roleCodes,
+    SOURCE_READY_ASSIGNABLE_RUNTIME_ROLE_CODES,
+  );
   assert.equal(
     parseCliArgs([
       "--env-file",
@@ -460,6 +542,7 @@ test("CLI help examples use canonical role codes only", () => {
   const output = helpText();
 
   assert.match(output, /REVENUE_FINANCE_OPS/u);
+  assert.match(output, /all-source-ready-assignable/u);
   assert.doesNotMatch(
     output,
     /COMMERCIAL_FINANCE|ADMIN_FULL|TEAM_MANAGER|TALENT_STAFF_SELF/u,
