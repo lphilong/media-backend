@@ -12,6 +12,7 @@ import { PermissionResolver } from "@core/permission/permission.resolver";
 import { getTraceIdOrThrow } from "@core/trace/trace.context";
 import { ReferenceSummary } from "@modules/reference-summary";
 import { ResponsibilityManagedScopeReader } from "@modules/responsibility/domain/responsibility-managed-scope";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import {
   WorkScheduleConflictError,
   WorkScheduleInvalidResourceReferenceError,
@@ -28,6 +29,7 @@ import {
   WorkScheduleEmploymentProfileReadonlyAccess,
   WorkScheduleReferencedEmploymentProfile,
 } from "@modules/work-schedule/domain/work-schedule-employment-profile-readonly-access";
+import { readExactRosterGeneratedTarget } from "@modules/work-schedule/domain/work-schedule-roster-target";
 import {
   RescheduleWorkShiftInput,
   TransitionWorkShiftStatusInput,
@@ -61,6 +63,13 @@ import {
   SubmitWorkScheduleRequestBatchCommand,
   WorkScheduleRequestBatchMutationResult,
 } from "@modules/work-schedule/shared/work-schedule.contracts";
+import {
+  assertManagerWorkScheduleTarget,
+  assertManagerWorkSchedulePermission,
+  hasManagerWorkScheduleTargets,
+  ManagerWorkScheduleTargetAuthority,
+  resolveManagerWorkScheduleTargetAuthority,
+} from "./manager-work-schedule-authority";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -91,6 +100,7 @@ interface ManagedScopeResolution {
   readonly profiles: ReadonlyMap<string, WorkScheduleReferencedEmploymentProfile>;
   readonly orgUnitProfileIds: ReadonlySet<string>;
   readonly talentGroupProfileIds: ReadonlySet<string>;
+  readonly authority: ManagerWorkScheduleTargetAuthority;
 }
 
 export class WorkScheduleRequestBatchAdminService {
@@ -103,6 +113,7 @@ export class WorkScheduleRequestBatchAdminService {
     private readonly managedScopeReader: ResponsibilityManagedScopeReader,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
+    private readonly structuredAuthority: StructuredScopeAuthorityService,
     private readonly clock: () => number = Date.now,
   ) {}
 
@@ -110,7 +121,7 @@ export class WorkScheduleRequestBatchAdminService {
     actor: Actor,
     command: SubmitWorkScheduleRequestBatchCommand,
   ): Promise<WorkScheduleRequestBatchMutationResult> {
-    const permission = this.assertPermission(
+    const permission = assertManagerWorkSchedulePermission(
       actor,
       Permission.WORK_SCHEDULE_READ,
     );
@@ -127,6 +138,16 @@ export class WorkScheduleRequestBatchAdminService {
       async (session) => {
         const managerProfile =
           await this.requireManagerReadyEmploymentProfile(actor.id, session);
+        const scope = await this.resolveManagedScope(
+          actor,
+          managerProfile.id,
+          session,
+        );
+        if (!hasManagerWorkScheduleTargets(scope.authority)) {
+          throw new WorkSchedulePermissionScopeError(
+            "Active exact Manager responsibility plus matching structured WorkSchedule scope are required",
+          );
+        }
         const existing =
           await this.batchRepository.findBatchByClientToken(
             managerProfile.id,
@@ -138,7 +159,6 @@ export class WorkScheduleRequestBatchAdminService {
           return this.toBatchView(existing, session);
         }
 
-        const scope = await this.resolveManagedScope(managerProfile.id, session);
         if (scope.profiles.size === 0) {
           throw new WorkSchedulePermissionScopeError(
             "Active OrgUnit or TalentGroup manager assignment is required",
@@ -246,18 +266,29 @@ export class WorkScheduleRequestBatchAdminService {
     actor: Actor,
     query: ListWorkScheduleRequestBatchesQuery,
   ): Promise<ListWorkScheduleRequestBatchesResult> {
-    this.assertPermission(actor, Permission.WORK_SCHEDULE_READ);
+    assertManagerWorkSchedulePermission(actor, Permission.WORK_SCHEDULE_READ);
     const managerProfile =
       await this.requireManagerReadyEmploymentProfile(actor.id);
+    const scope = await this.resolveManagedScope(actor, managerProfile.id);
+    if (!hasManagerWorkScheduleTargets(scope.authority)) {
+      return { items: [], nextCursor: undefined };
+    }
     const normalized = normalizeListBatchesQuery(query);
     const result = await this.batchRepository.listBatches({
       ...normalized,
       submittedByEmploymentProfileId: managerProfile.id,
     });
 
+    const items = await Promise.all(
+      result.items.map(async (item) =>
+        (await this.isBatchWithinManagedScope(item.id, scope))
+          ? this.toBatchListItemView(item)
+          : null,
+      ),
+    );
     return {
-      items: await Promise.all(
-        result.items.map((item) => this.toBatchListItemView(item)),
+      items: items.filter(
+        (item): item is WorkScheduleRequestBatchListItemView => item !== null,
       ),
       nextCursor: result.nextCursor,
     };
@@ -267,15 +298,17 @@ export class WorkScheduleRequestBatchAdminService {
     actor: Actor,
     query: GetWorkScheduleRequestBatchDetailQuery,
   ): Promise<WorkScheduleRequestBatchView> {
-    this.assertPermission(actor, Permission.WORK_SCHEDULE_READ);
+    assertManagerWorkSchedulePermission(actor, Permission.WORK_SCHEDULE_READ);
     const managerProfile =
       await this.requireManagerReadyEmploymentProfile(actor.id);
+    const scope = await this.resolveManagedScope(actor, managerProfile.id);
     const batch = await this.requireBatch(query.batchId);
     if (batch.submittedByEmploymentProfileId !== managerProfile.id) {
       throw new WorkSchedulePermissionScopeError(
         "Manager can access only own WorkSchedule request batches",
       );
     }
+    await this.assertBatchWithinManagedScope(batch.id, scope);
     return this.toBatchView(batch);
   }
 
@@ -283,7 +316,7 @@ export class WorkScheduleRequestBatchAdminService {
     actor: Actor,
     command: CancelWorkScheduleRequestBatchCommand,
   ): Promise<WorkScheduleRequestBatchMutationResult> {
-    const permission = this.assertPermission(
+    const permission = assertManagerWorkSchedulePermission(
       actor,
       Permission.WORK_SCHEDULE_READ,
     );
@@ -297,6 +330,11 @@ export class WorkScheduleRequestBatchAdminService {
       "work-schedule.request.cancel",
       { batchId: command.batchId },
       async (session) => {
+        const scope = await this.resolveManagedScope(
+          actor,
+          managerProfile.id,
+          session,
+        );
         const batch = await this.requireBatch(command.batchId, session);
         if (batch.submittedByEmploymentProfileId !== managerProfile.id) {
           throw new WorkSchedulePermissionScopeError(
@@ -307,6 +345,7 @@ export class WorkScheduleRequestBatchAdminService {
           batch.id,
           session,
         );
+        await this.assertLinesWithinManagedScope(lines, scope, session);
         for (const line of lines) {
           assertPendingLine(line);
         }
@@ -346,7 +385,7 @@ export class WorkScheduleRequestBatchAdminService {
     actor: Actor,
     command: CancelWorkScheduleRequestBatchLineCommand,
   ): Promise<WorkScheduleRequestBatchMutationResult> {
-    const permission = this.assertPermission(
+    const permission = assertManagerWorkSchedulePermission(
       actor,
       Permission.WORK_SCHEDULE_READ,
     );
@@ -360,6 +399,11 @@ export class WorkScheduleRequestBatchAdminService {
       "work-schedule.request.cancel",
       { batchId: command.batchId, lineId: command.lineId },
       async (session) => {
+        const scope = await this.resolveManagedScope(
+          actor,
+          managerProfile.id,
+          session,
+        );
         const batch = await this.requireBatch(command.batchId, session);
         if (batch.submittedByEmploymentProfileId !== managerProfile.id) {
           throw new WorkSchedulePermissionScopeError(
@@ -367,6 +411,7 @@ export class WorkScheduleRequestBatchAdminService {
           );
         }
         const line = await this.requireLine(batch.id, command.lineId, session);
+        await this.assertLinesWithinManagedScope([line], scope, session);
         assertPendingLine(line);
         const now = this.clock();
         await this.transitionLineOrThrow(
@@ -903,6 +948,7 @@ export class WorkScheduleRequestBatchAdminService {
       line.memberEmploymentProfileId,
       session,
     );
+    this.assertShiftTargetWithinManagedScope(target, scope);
     assertActiveWorkShift(target, line.requestType);
 
     if (line.requestType === "RESCHEDULE_SHIFT") {
@@ -913,22 +959,24 @@ export class WorkScheduleRequestBatchAdminService {
   }
 
   private async resolveManagedScope(
+    actor: Actor,
     managerEmploymentProfileId: string,
     session?: ClientSession,
   ): Promise<ManagedScopeResolution> {
-    const managedScope =
-      await this.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
-        {
-          responsibleEmploymentProfileId: managerEmploymentProfileId,
-          asOf: this.clock(),
-        },
-        session,
-      );
+    const authority = await resolveManagerWorkScheduleTargetAuthority({
+      actor,
+      managerEmploymentProfileId,
+      permission: Permission.WORK_SCHEDULE_READ,
+      managedScopeReader: this.managedScopeReader,
+      structuredAuthority: this.structuredAuthority,
+      asOf: this.clock(),
+      session,
+    });
     const profiles = new Map<string, WorkScheduleReferencedEmploymentProfile>();
     const orgUnitProfileIds = new Set<string>();
     const talentGroupProfileIds = new Set<string>();
 
-    for (const orgUnitId of [...new Set(managedScope.orgUnitIds)]) {
+    for (const orgUnitId of authority.orgUnitIds) {
       const orgProfiles =
         await this.employmentProfileReadonlyAccess.listByOrgUnitId(
           orgUnitId,
@@ -942,7 +990,7 @@ export class WorkScheduleRequestBatchAdminService {
       }
     }
 
-    for (const talentGroupId of [...new Set(managedScope.talentGroupIds)]) {
+    for (const talentGroupId of authority.talentGroupIds) {
       const resolutions =
         await this.employmentProfileReadonlyAccess.listTalentGroupMemberEmploymentProfileResolutions(
           talentGroupId,
@@ -961,7 +1009,98 @@ export class WorkScheduleRequestBatchAdminService {
       }
     }
 
-    return { profiles, orgUnitProfileIds, talentGroupProfileIds };
+    return { profiles, orgUnitProfileIds, talentGroupProfileIds, authority };
+  }
+
+  private async isBatchWithinManagedScope(
+    batchId: string,
+    scope: ManagedScopeResolution,
+    session?: ClientSession,
+  ): Promise<boolean> {
+    const lines = await this.batchRepository.listLinesByBatchId(
+      batchId,
+      session,
+    );
+    try {
+      await this.assertLinesWithinManagedScope(lines, scope, session);
+      return true;
+    } catch (error) {
+      if (error instanceof WorkSchedulePermissionScopeError) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  private async assertBatchWithinManagedScope(
+    batchId: string,
+    scope: ManagedScopeResolution,
+    session?: ClientSession,
+  ): Promise<void> {
+    const lines = await this.batchRepository.listLinesByBatchId(
+      batchId,
+      session,
+    );
+    await this.assertLinesWithinManagedScope(lines, scope, session);
+  }
+
+  private async assertLinesWithinManagedScope(
+    lines: readonly WorkScheduleRequestLineRecord[],
+    scope: ManagedScopeResolution,
+    session?: ClientSession,
+  ): Promise<void> {
+    if (
+      lines.length === 0 ||
+      lines.some((line) => !scope.profiles.has(line.memberEmploymentProfileId))
+    ) {
+      throw new WorkSchedulePermissionScopeError(
+        "Matching exact Manager responsibility and structured WorkSchedule scope are required for every request line",
+      );
+    }
+
+    await Promise.all(
+      lines.map((line) =>
+        this.assertLineRosterTargetWithinManagedScope(line, scope, session),
+      ),
+    );
+  }
+
+  private async assertLineRosterTargetWithinManagedScope(
+    line: WorkScheduleRequestLineRecord,
+    scope: ManagedScopeResolution,
+    session?: ClientSession,
+  ): Promise<void> {
+    if (line.workShiftId === null) {
+      return;
+    }
+
+    const shift = await this.workShiftRepository.findById(
+      line.workShiftId,
+      session,
+    );
+    if (!shift) {
+      throw new WorkSchedulePermissionScopeError(
+        "Referenced WorkShift cannot be resolved for Manager request authority",
+      );
+    }
+
+    this.assertShiftTargetWithinManagedScope(shift, scope);
+  }
+
+  private assertShiftTargetWithinManagedScope(
+    shift: WorkShiftRecord,
+    scope: ManagedScopeResolution,
+  ): void {
+    if (shift.sourceType !== "ROSTER_GENERATED") {
+      return;
+    }
+    const target = readExactRosterGeneratedTarget(shift);
+    if (!target) {
+      throw new WorkSchedulePermissionScopeError(
+        "Roster-generated request target metadata is incomplete or unsupported",
+      );
+    }
+    assertManagerWorkScheduleTarget(scope.authority, target.kind, target.id);
   }
 
   private async updateDerivedBatchState(

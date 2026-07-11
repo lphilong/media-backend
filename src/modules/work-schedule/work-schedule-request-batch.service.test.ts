@@ -8,6 +8,13 @@ import type {
 } from "@core/application/authoritative-admin-mutation.bridge";
 import type { AuditGuard } from "@core/audit/audit.guard";
 import { Permission } from "@core/permission/permission.enum";
+import type { ResponsibilityManagedScopeReader } from "@modules/responsibility/domain/responsibility-managed-scope";
+import {
+  StructuredScopeAuthorityAssignment,
+  StructuredScopeAuthorityReader,
+  StructuredScopeAuthorityService,
+} from "@modules/role/domain/structured-scope-authority";
+import type { UserRoleAssignmentRecord } from "@modules/role/domain/role.types";
 import { bindTraceId } from "@core/trace/trace.context";
 import { WorkScheduleRequestBatchAdminService } from "@modules/work-schedule/admin/admin.work-schedule-request-batch.service";
 import {
@@ -360,16 +367,20 @@ function createService(params?: {
   readonly batchRepository?: MemoryBatchRepository;
   readonly workShiftRepository?: MemoryWorkShiftRepository;
   readonly audit?: AuditCapture;
+  readonly structuredAuthority?: StructuredScopeAuthorityService;
+  readonly employmentProfileAccess?: WorkScheduleEmploymentProfileReadonlyAccess;
+  readonly managedScope?: ResponsibilityManagedScopeReader;
 }): WorkScheduleRequestBatchAdminService {
   return new WorkScheduleRequestBatchAdminService(
     params?.batchRepository ?? new MemoryBatchRepository(),
     params?.workShiftRepository ?? new MemoryWorkShiftRepository(),
     new MemoryCodeSequenceRepository(),
-    employmentProfileReadonlyAccess,
+    params?.employmentProfileAccess ?? employmentProfileReadonlyAccess,
     studioResourceReadonlyAccess,
-    managedScopeReader,
+    params?.managedScope ?? managedScopeReader,
     (params?.audit ?? new AuditCapture()) as unknown as AuditGuard,
     mutationBridge,
+    params?.structuredAuthority ?? defaultStructuredAuthority(),
     () => NOW,
   );
 }
@@ -482,12 +493,171 @@ const managedScopeReader = {
   },
 };
 
+function sharedMemberManagedScope(
+  targetType: "ORG_UNIT" | "TALENT_GROUP",
+  targetIds: readonly string[],
+): ResponsibilityManagedScopeReader {
+  return {
+    async resolveManagedScopeByResponsibleEmploymentProfile() {
+      return {
+        orgUnitIds: targetType === "ORG_UNIT" ? [...targetIds] : [],
+        talentGroupIds: targetType === "TALENT_GROUP" ? [...targetIds] : [],
+        orgUnitScopes:
+          targetType === "ORG_UNIT"
+            ? targetIds.map((orgUnitId) => ({
+                orgUnitId,
+                role: "UNIT_MANAGER",
+                includeDescendants: false,
+                actionMask: [],
+                isPrimary: true,
+              }))
+            : [],
+      };
+    },
+  };
+}
+
+function sharedMemberStructuredAuthority(
+  targetType: "ORG_UNIT" | "TALENT_GROUP",
+  targetIds: readonly string[],
+): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService(
+    {
+      async listByUserId(userId: string) {
+        return [
+          structuredRecord({
+            userId: "manager-user",
+            permissions: [Permission.WORK_SCHEDULE_READ],
+            structuredScopeGrants: targetIds.map((targetId) => ({
+              scopeType:
+                targetType === "ORG_UNIT"
+                  ? "managedOrgUnit"
+                  : "managedTalentGroup",
+              targetId,
+            })),
+          }),
+        ].filter((record) => record.assignment.userId === userId);
+      },
+    } satisfies StructuredScopeAuthorityReader,
+    () => NOW,
+  );
+}
+
+function sharedMemberEmploymentAccess(
+  targetType: "ORG_UNIT" | "TALENT_GROUP",
+  targetIds: readonly string[],
+): WorkScheduleEmploymentProfileReadonlyAccess {
+  const manager = {
+    id: "ep-manager",
+    employmentStatus: "ACTIVE" as const,
+    orgUnitId: "org-manager",
+    linkedUserId: "manager-user",
+    ref: { id: "ep-manager", code: "EP-MANAGER", displayName: "Manager" },
+  };
+  const shared = {
+    id: "ep-shared",
+    employmentStatus: "ACTIVE" as const,
+    orgUnitId: "org-a",
+    linkedUserId: null,
+    ref: { id: "ep-shared", code: "EP-SHARED", displayName: "Shared Member" },
+  };
+
+  return {
+    async findById(id: string) {
+      return id === manager.id ? manager : id === shared.id ? shared : null;
+    },
+    async findByLinkedUserId(linkedUserId: string) {
+      return linkedUserId === manager.linkedUserId ? manager : null;
+    },
+    async listIdsByActiveTalentGroupIds() {
+      return targetType === "TALENT_GROUP" ? [shared.id] : [];
+    },
+    async listIdsByOrgUnitId(orgUnitId: string) {
+      return targetType === "ORG_UNIT" && targetIds.includes(orgUnitId)
+        ? [shared.id]
+        : [];
+    },
+    async listByOrgUnitId(orgUnitId: string) {
+      return targetType === "ORG_UNIT" && targetIds.includes(orgUnitId)
+        ? [shared]
+        : [];
+    },
+    async listTalentGroupMemberEmploymentProfileResolutions(groupId: string) {
+      return targetType === "TALENT_GROUP" && targetIds.includes(groupId)
+        ? [
+            {
+              memberId: "shared-member",
+              groupId,
+              talentId: "shared-talent",
+              membershipStatus: "ACTIVE" as const,
+              talentOperationalStatus: "ACTIVE" as const,
+              linkedEmploymentProfileId: shared.id,
+              employmentProfile: shared,
+            },
+          ]
+        : [];
+    },
+  };
+}
+
+function defaultStructuredAuthority(): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService(
+    {
+      async listByUserId(userId: string) {
+        return [
+          structuredRecord({
+            userId: "manager-user",
+            permissions: [Permission.WORK_SCHEDULE_READ],
+            structuredScopeGrants: [
+              { scopeType: "managedOrgUnit", targetId: "org-managed" },
+              {
+                scopeType: "managedTalentGroup",
+                targetId: "group-managed",
+              },
+            ],
+          }),
+        ].filter((record) => record.assignment.userId === userId);
+      },
+    } satisfies StructuredScopeAuthorityReader,
+    () => NOW,
+  );
+}
+
+function structuredRecord(input: {
+  readonly userId: string;
+  readonly permissions: readonly Permission[];
+  readonly structuredScopeGrants: UserRoleAssignmentRecord["structuredScopeGrants"];
+}): StructuredScopeAuthorityAssignment {
+  return {
+    assignment: {
+      assignmentId: `${input.userId}-assignment`,
+      roleId: `${input.userId}-role`,
+      userId: input.userId,
+      structuredScopeGrants: input.structuredScopeGrants,
+      state: "ACTIVE",
+      effectiveAt: NOW - 1,
+      expiresAt: null,
+      revokedAt: null,
+      origin: "DIRECT",
+      bundleOrigin: null,
+      reason: null,
+      createdAt: NOW - 1,
+      updatedAt: NOW - 1,
+    },
+    role: {
+      id: `${input.userId}-role`,
+      state: "ACTIVE",
+      permissions: input.permissions,
+    },
+  };
+}
+
 function managerActor(id = "manager-user"): Actor {
   return new Actor({
     id,
     type: "admin",
     context: "ADMIN",
-    accountContexts: ["ADMIN_CONSOLE"],
+    accountContexts: ["MANAGER_CONSOLE"],
     roles: ["TEAM_MANAGER"],
     permissions: [Permission.WORK_SCHEDULE_READ],
     scopeGrants: { workSchedule: ["team"] },
@@ -541,6 +711,10 @@ function seedShift(params?: {
   readonly memberEmploymentProfileId?: string;
   readonly startAt?: number;
   readonly status?: WorkShiftRecord["status"];
+  readonly rosterTarget?: {
+    readonly type: "ORG_UNIT" | "TALENT_GROUP";
+    readonly id: string;
+  };
 }): WorkShiftRecord {
   const startAt = params?.startAt ?? JUNE_START;
   return {
@@ -560,19 +734,19 @@ function seedShift(params?: {
     shiftEndAt: startAt + 60 * 60 * 1000,
     description: null,
     externalRef: null,
-    sourceType: "MANUAL",
-    sourceRosterId: null,
+    sourceType: params?.rosterTarget ? "ROSTER_GENERATED" : "MANUAL",
+    sourceRosterId: params?.rosterTarget ? "roster-1" : null,
     sourcePatternId: null,
     sourceExceptionId: null,
     sourceGenerationRunId: null,
-    sourceRosterMonth: null,
+    sourceRosterMonth: params?.rosterTarget ? "2026-06" : null,
     sourceDepartmentOrgUnitId: null,
-    sourceRosterTargetType: null,
-    sourceRosterTargetId: null,
-    sourceRosterTargetMode: null,
+    sourceRosterTargetType: params?.rosterTarget?.type ?? null,
+    sourceRosterTargetId: params?.rosterTarget?.id ?? null,
+    sourceRosterTargetMode: params?.rosterTarget ? "EXACT_ONLY" : null,
     sourceMemberIdentityType: null,
-    sourceRosterLocalDate: null,
-    sourceRosterSlotKey: null,
+    sourceRosterLocalDate: params?.rosterTarget ? "2026-06-12" : null,
+    sourceRosterSlotKey: params?.rosterTarget ? "STANDARD" : null,
     createdAt: 1,
     updatedAt: 1,
   };
@@ -774,6 +948,197 @@ test("manager cancels own pending line and batch but cannot cancel another manag
   );
   assert.equal(cancelled.status, "CANCELLED");
   assert.equal(cancelled.lineCounts.cancelled, 1);
+});
+
+test("unauthorized Manager request submission and cancellation perform no repository mutation", async () => {
+  const batchRepository = new MemoryBatchRepository();
+  const authorized = createService({ batchRepository });
+  const batch = await withTrace(() =>
+    authorized.submitManagerBatch(
+      managerActor(),
+      submitPayload([createLine()]),
+    ),
+  );
+  const beforeBatches = structuredClone(batchRepository.batches);
+  const beforeLines = structuredClone(batchRepository.lines);
+  const unauthorized = createService({
+    batchRepository,
+    structuredAuthority: new StructuredScopeAuthorityService(
+      { async listByUserId() { return []; } },
+      () => NOW,
+    ),
+  });
+
+  await assert.rejects(
+    withTrace(() =>
+      unauthorized.submitManagerBatch(
+        managerActor(),
+        submitPayload([createLine()]),
+      ),
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+  await assert.rejects(
+    withTrace(() =>
+      unauthorized.cancelManagerBatch(managerActor(), {
+        batchId: batch.id,
+        cancellationReason: "Authority was removed before cancellation",
+      }),
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+  assert.deepEqual(batchRepository.batches, beforeBatches);
+  assert.deepEqual(batchRepository.lines, beforeLines);
+});
+
+test("shared members cannot bridge Manager request history or cancellation to an unauthorized roster target", async () => {
+  for (const scenario of [
+    { type: "ORG_UNIT" as const, authorizedTarget: "org-b", retainedTarget: "org-a" },
+    { type: "TALENT_GROUP" as const, authorizedTarget: "group-b", retainedTarget: "group-a" },
+  ]) {
+    const batchRepository = new MemoryBatchRepository();
+    const workShiftRepository = new MemoryWorkShiftRepository([
+      seedShift({
+        id: `shift-${scenario.type}`,
+        memberEmploymentProfileId: "ep-shared",
+        rosterTarget: { type: scenario.type, id: scenario.authorizedTarget },
+      }),
+    ]);
+    const authorized = createService({
+      batchRepository,
+      workShiftRepository,
+      employmentProfileAccess: sharedMemberEmploymentAccess(
+        scenario.type,
+        [scenario.authorizedTarget],
+      ),
+      managedScope: sharedMemberManagedScope(
+        scenario.type,
+        [scenario.authorizedTarget],
+      ),
+      structuredAuthority: sharedMemberStructuredAuthority(
+        scenario.type,
+        [scenario.authorizedTarget],
+      ),
+    });
+    const batch = await withTrace(() =>
+      authorized.submitManagerBatch(
+        managerActor(),
+        submitPayload([
+          {
+            requestType: "CANCEL_SHIFT",
+            memberEmploymentProfileId: "ep-shared",
+            workShiftId: `shift-${scenario.type}`,
+            reason: "Cancel because the roster coverage is no longer needed",
+          },
+        ]),
+      ),
+    );
+
+    assert.equal(
+      (await authorized.listManagerBatches(managerActor(), {})).items.length,
+      1,
+      `${scenario.type} exact target remains visible while authorized`,
+    );
+    await assert.doesNotReject(() =>
+      authorized.getManagerBatchDetail(managerActor(), { batchId: batch.id }),
+    );
+
+    const afterTargetBLoss = createService({
+      batchRepository,
+      workShiftRepository,
+      employmentProfileAccess: sharedMemberEmploymentAccess(
+        scenario.type,
+        [scenario.retainedTarget],
+      ),
+      managedScope: sharedMemberManagedScope(
+        scenario.type,
+        [scenario.retainedTarget],
+      ),
+      structuredAuthority: sharedMemberStructuredAuthority(
+        scenario.type,
+        [scenario.retainedTarget],
+      ),
+    });
+    const beforeBatches = structuredClone(batchRepository.batches);
+    const beforeLines = structuredClone(batchRepository.lines);
+
+    assert.deepEqual(
+      (await afterTargetBLoss.listManagerBatches(managerActor(), {})).items,
+      [],
+      `${scenario.type} shared member does not expose Target B history after scope loss`,
+    );
+    await assert.rejects(
+      () =>
+        afterTargetBLoss.getManagerBatchDetail(managerActor(), {
+          batchId: batch.id,
+        }),
+      WorkSchedulePermissionScopeError,
+    );
+    await assert.rejects(
+      withTrace(() =>
+        afterTargetBLoss.cancelManagerBatch(managerActor(), {
+          batchId: batch.id,
+          cancellationReason: "Target B authority was removed",
+        }),
+      ),
+      WorkSchedulePermissionScopeError,
+    );
+    await assert.rejects(
+      withTrace(() =>
+        afterTargetBLoss.cancelManagerLine(managerActor(), {
+          batchId: batch.id,
+          lineId: batch.lines[0]!.id,
+          cancellationReason: "Target B authority was removed",
+        }),
+      ),
+      WorkSchedulePermissionScopeError,
+    );
+    assert.deepEqual(batchRepository.batches, beforeBatches);
+    assert.deepEqual(batchRepository.lines, beforeLines);
+
+    const exactTargetService = createService({
+      batchRepository: new MemoryBatchRepository(),
+      workShiftRepository: new MemoryWorkShiftRepository([
+        seedShift({
+          id: `shift-authorized-${scenario.type}`,
+          memberEmploymentProfileId: "ep-shared",
+          rosterTarget: { type: scenario.type, id: scenario.authorizedTarget },
+        }),
+      ]),
+      employmentProfileAccess: sharedMemberEmploymentAccess(
+        scenario.type,
+        [scenario.authorizedTarget],
+      ),
+      managedScope: sharedMemberManagedScope(
+        scenario.type,
+        [scenario.authorizedTarget],
+      ),
+      structuredAuthority: sharedMemberStructuredAuthority(
+        scenario.type,
+        [scenario.authorizedTarget],
+      ),
+    });
+    const authorizedBatch = await withTrace(() =>
+      exactTargetService.submitManagerBatch(
+        managerActor(),
+        submitPayload([
+          {
+            requestType: "CANCEL_SHIFT",
+            memberEmploymentProfileId: "ep-shared",
+            workShiftId: `shift-authorized-${scenario.type}`,
+            reason: "Cancel with exact roster-target authority",
+          },
+        ]),
+      ),
+    );
+    const cancelled = await withTrace(() =>
+      exactTargetService.cancelManagerBatch(managerActor(), {
+        batchId: authorizedBatch.id,
+        cancellationReason: "Exact Target B authority remains active",
+      }),
+    );
+    assert.equal(cancelled.status, "CANCELLED");
+  }
 });
 
 test("admin approves create, reschedule, and cancel lines with derived partial and approved statuses", async () => {

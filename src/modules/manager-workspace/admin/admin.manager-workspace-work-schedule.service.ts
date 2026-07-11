@@ -1,7 +1,5 @@
 import { Actor } from "@core/actor/actor";
 import { Permission } from "@core/permission/permission.enum";
-import { PermissionGuard } from "@core/permission/permission.guard";
-import { PermissionResolver } from "@core/permission/permission.resolver";
 import { EmploymentProfileRepository } from "@modules/employment-profile/domain/employment-profile.repository";
 import { ResponsibilityManagedScopeReader } from "@modules/responsibility/domain/responsibility-managed-scope";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
@@ -10,8 +8,15 @@ import {
   WorkScheduleEmploymentProfileReadonlyAccess,
   WorkScheduleReferencedEmploymentProfile,
 } from "@modules/work-schedule/domain/work-schedule-employment-profile-readonly-access";
+import { readExactRosterGeneratedTarget } from "@modules/work-schedule/domain/work-schedule-roster-target";
 import { WorkShiftSourceType } from "@modules/work-schedule/domain/work-schedule.types";
 import { WorkShiftReadRepository } from "@modules/work-schedule/read/work-schedule.read-repository";
+import {
+  assertManagerWorkSchedulePermission,
+  hasManagerWorkScheduleTarget,
+  hasManagerWorkScheduleTargets,
+  resolveManagerWorkScheduleTargetAuthority,
+} from "@modules/work-schedule/admin/manager-work-schedule-authority";
 
 const DEFAULT_LIMIT = 100;
 const TIMEZONE = "Asia/Ho_Chi_Minh" as const;
@@ -71,7 +76,10 @@ export class ManagerWorkspaceWorkScheduleAdminService {
     actor: Actor,
     query: ManagerWorkShiftListQuery,
   ): Promise<ManagerWorkShiftListView> {
-    this.assertReadAuthority(actor);
+    assertManagerWorkSchedulePermission(
+      actor,
+      Permission.WORK_SCHEDULE_READ,
+    );
     const managerProfile =
       await this.employmentProfileRepository.findNonArchivedByLinkedUserId(actor.id);
 
@@ -82,25 +90,16 @@ export class ManagerWorkspaceWorkScheduleAdminService {
     }
 
     const asOf = this.clock();
-    const managedScope =
-      await this.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
-        {
-          responsibleEmploymentProfileId: managerProfile.id,
-          asOf,
-        },
-      );
-    const [orgUnitIds, talentGroupIds] = await Promise.all([
-      filterManagedOrgUnitIds(
-        this.structuredAuthority,
-        actor,
-        managedScope.orgUnitIds,
-      ),
-      filterManagedTalentGroupIds(
-        this.structuredAuthority,
-        actor,
-        managedScope.talentGroupIds,
-      ),
-    ]);
+    const targetAuthority = await resolveManagerWorkScheduleTargetAuthority({
+      actor,
+      managerEmploymentProfileId: managerProfile.id,
+      permission: Permission.WORK_SCHEDULE_READ,
+      managedScopeReader: this.managedScopeReader,
+      structuredAuthority: this.structuredAuthority,
+      asOf,
+    });
+    const orgUnitIds = [...targetAuthority.orgUnitIds];
+    const talentGroupIds = [...targetAuthority.talentGroupIds];
     const managedProfiles = await this.resolveManagedProfiles(
       orgUnitIds,
       talentGroupIds,
@@ -108,7 +107,7 @@ export class ManagerWorkspaceWorkScheduleAdminService {
     const month = parseMonth(query.month, asOf);
     const window = monthWindow(month);
 
-    if (managedProfiles.size === 0) {
+    if (!hasManagerWorkScheduleTargets(targetAuthority) || managedProfiles.size === 0) {
       return {
         items: [],
         meta: {
@@ -140,6 +139,19 @@ export class ManagerWorkspaceWorkScheduleAdminService {
 
       if (!employmentProfileId || !profile || shift.status !== "ACTIVE") {
         return [];
+      }
+      if (shift.sourceType === "ROSTER_GENERATED") {
+        const target = readExactRosterGeneratedTarget(shift);
+        if (
+          !target ||
+          !hasManagerWorkScheduleTarget(
+            targetAuthority,
+            target.kind,
+            target.id,
+          )
+        ) {
+          return [];
+        }
       }
 
       return [
@@ -217,55 +229,6 @@ export class ManagerWorkspaceWorkScheduleAdminService {
     return profiles;
   }
 
-  private assertReadAuthority(actor: Actor): void {
-    if (!actor.accountContexts.includes("MANAGER_CONSOLE")) {
-      throw new WorkSchedulePermissionScopeError(
-        "Manager Workspace WorkSchedule requires MANAGER_CONSOLE account context",
-      );
-    }
-    PermissionGuard.assert(
-      actor,
-      PermissionResolver.resolve(Permission.WORK_SCHEDULE_READ),
-    );
-  }
-}
-
-async function filterManagedOrgUnitIds(
-  service: StructuredScopeAuthorityService,
-  actor: Actor,
-  orgUnitIds: readonly string[],
-): Promise<readonly string[]> {
-  const authorized = await Promise.all(
-    [...new Set(orgUnitIds)].map(async (orgUnitId) =>
-      (await service.hasAuthority({
-        userId: actor.id,
-        permission: Permission.WORK_SCHEDULE_READ,
-        scope: { scopeType: "managedOrgUnit", targetId: orgUnitId },
-      }))
-        ? orgUnitId
-        : null,
-    ),
-  );
-  return authorized.filter((id): id is string => id !== null).sort();
-}
-
-async function filterManagedTalentGroupIds(
-  service: StructuredScopeAuthorityService,
-  actor: Actor,
-  talentGroupIds: readonly string[],
-): Promise<readonly string[]> {
-  const authorized = await Promise.all(
-    [...new Set(talentGroupIds)].map(async (talentGroupId) =>
-      (await service.hasAuthority({
-        userId: actor.id,
-        permission: Permission.WORK_SCHEDULE_READ,
-        scope: { scopeType: "managedTalentGroup", targetId: talentGroupId },
-      }))
-        ? talentGroupId
-        : null,
-    ),
-  );
-  return authorized.filter((id): id is string => id !== null).sort();
 }
 
 function isManagerReady(status: string): boolean {

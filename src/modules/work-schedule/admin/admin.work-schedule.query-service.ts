@@ -11,6 +11,7 @@ import {
   WorkScheduleValidationError,
 } from "@modules/work-schedule/domain/work-schedule.errors";
 import { WorkScheduleEmploymentProfileReadonlyAccess } from "@modules/work-schedule/domain/work-schedule-employment-profile-readonly-access";
+import { readPersistedRosterTarget } from "@modules/work-schedule/domain/work-schedule-roster-target";
 import {
   WORK_SHIFT_SCOPES,
   WORK_SHIFT_SOURCE_TYPES,
@@ -57,11 +58,6 @@ interface ParsedExactSubject {
 interface ParsedWindowFilter {
   readonly windowStartAt?: number;
   readonly windowEndAt?: number;
-}
-
-interface SupportedRosterTarget {
-  readonly kind: "ORG_UNIT" | "TALENT_GROUP";
-  readonly id: string;
 }
 
 export class WorkScheduleAdminQueryService {
@@ -302,7 +298,7 @@ export class WorkScheduleAdminQueryService {
           return item.sourceType === "MANUAL" ? item : null;
         }
 
-        const target = readSupportedRosterTarget(item);
+        const target = readPersistedRosterTarget(item);
         if (!target) {
           return null;
         }
@@ -355,7 +351,7 @@ export class WorkScheduleAdminQueryService {
     const actorProfile = await this.requireActorLinkedEmploymentProfile(actor.id);
     if (detail) {
       if (detail.sourceType === "ROSTER_GENERATED") {
-        const target = readSupportedRosterTarget(detail);
+        const target = readPersistedRosterTarget(detail);
         if (!target) {
           throw new WorkSchedulePermissionScopeError(
             "Roster-generated WorkShift target metadata is incomplete or unsupported",
@@ -898,33 +894,6 @@ async function resolveScopedEmploymentProfileIds(params: {
     );
 
   return [...new Set(sourceIds)].sort();
-}
-
-function readSupportedRosterTarget(input: {
-  readonly sourceRosterTargetType?: unknown;
-  readonly sourceRosterTargetId?: unknown;
-}): SupportedRosterTarget | null {
-  const targetType = input.sourceRosterTargetType;
-  if (
-    targetType !== "ORG_UNIT" &&
-    targetType !== "TALENT_GROUP"
-  ) {
-    return null;
-  }
-
-  if (typeof input.sourceRosterTargetId !== "string") {
-    return null;
-  }
-
-  const targetId = input.sourceRosterTargetId.trim();
-  if (!targetId) {
-    return null;
-  }
-
-  return {
-    kind: targetType,
-    id: targetId,
-  };
 }
 
 function normalizeRequiredText(

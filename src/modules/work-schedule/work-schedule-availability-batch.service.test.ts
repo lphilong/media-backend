@@ -529,6 +529,15 @@ function createService(
 function defaultStructuredAuthority(): StructuredScopeAuthorityService {
   return structuredAuthorityWith([
     structuredRecord({
+      userId: "manager-user",
+      permissions: [Permission.WORK_SCHEDULE_READ],
+      structuredScopeGrants: [
+        { scopeType: "managedOrgUnit", targetId: "org-managed" },
+        { scopeType: "managedOrgUnit", targetId: "org-empty" },
+        { scopeType: "managedTalentGroup", targetId: "group-managed" },
+      ],
+    }),
+    structuredRecord({
       userId: "ops-user",
       permissions: [
         Permission.WORK_SCHEDULE_READ,
@@ -596,7 +605,7 @@ function managerActor(id = "manager-user"): Actor {
     id,
     type: "admin",
     context: "ADMIN",
-    accountContexts: ["ADMIN_CONSOLE"],
+    accountContexts: ["MANAGER_CONSOLE"],
     roles: ["TEAM_MANAGER"],
     permissions: [Permission.WORK_SCHEDULE_READ],
     scopeGrants: { workSchedule: ["team"] },
@@ -1242,6 +1251,38 @@ test("manager cancels own pending line and batch but cannot cancel another manag
   assert.equal(cancelled.status, "CANCELLED");
 });
 
+test("unauthorized Manager availability submission and cancellation perform no repository mutation", async () => {
+  const repository = new MemoryAvailabilityRepository();
+  const authorized = createService(repository).service;
+  const batch = await withTrace(() =>
+    authorized.submitManagerBatch(managerActor(), payload()),
+  );
+  const beforeBatch = structuredClone(repository.batches);
+  const beforeLines = structuredClone(repository.lines);
+  const unauthorized = createService(
+    repository,
+    structuredAuthorityWith([]),
+  ).service;
+
+  await assert.rejects(
+    withTrace(() =>
+      unauthorized.submitManagerBatch(managerActor(), payload()),
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+  await assert.rejects(
+    withTrace(() =>
+      unauthorized.cancelManagerBatch(managerActor(), {
+        batchId: batch.id,
+        cancellationReason: "Authority was removed before cancellation",
+      }),
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+  assert.deepEqual(repository.batches, beforeBatch);
+  assert.deepEqual(repository.lines, beforeLines);
+});
+
 test("manager and Admin decisions reject every requested terminal availability transition", async () => {
   const { service } = createService();
 
@@ -1358,6 +1399,13 @@ test("manager and Admin decisions reject every requested terminal availability t
 
 test("Admin availability detail and decisions require permission plus matching structured object scope", async () => {
   const authority = structuredAuthorityWith([
+    structuredRecord({
+      userId: "manager-user",
+      permissions: [Permission.WORK_SCHEDULE_READ],
+      structuredScopeGrants: [
+        { scopeType: "managedOrgUnit", targetId: "org-managed" },
+      ],
+    }),
     structuredRecord({
       userId: "structured-read-user",
       permissions: [Permission.WORK_SCHEDULE_READ],
@@ -1619,7 +1667,7 @@ test("Admin availability detail and decisions require permission plus matching s
   );
   await assert.rejects(
     service.listAdminBatches(managerActor(), {}),
-    WorkSchedulePermissionScopeError,
+    SystemInvariantError,
   );
 });
 

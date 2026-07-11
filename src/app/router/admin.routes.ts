@@ -769,6 +769,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       responsibilityAssignmentRepository,
       authoritativeAuditGuard,
       adminMutationBridge,
+      structuredScopeAuthority,
     );
   const workScheduleRequestBatchController =
     new WorkScheduleRequestBatchAdminController(

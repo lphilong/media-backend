@@ -57,6 +57,13 @@ import {
   SubmitWorkScheduleAvailabilityBatchCommand,
   WorkScheduleAvailabilityBatchMutationResult,
 } from "../shared/work-schedule-availability.contracts";
+import {
+  assertManagerWorkSchedulePermission,
+  assertManagerWorkScheduleTarget,
+  hasManagerWorkScheduleTargets,
+  ManagerWorkScheduleTargetAuthority,
+  resolveManagerWorkScheduleTargetAuthority,
+} from "./manager-work-schedule-authority";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -128,11 +135,11 @@ export class WorkScheduleAvailabilityBatchAdminService {
     actor: Actor,
     query: ListManagerAvailabilityTargetMembersQuery,
   ): Promise<ManagerAvailabilityTargetMembersView> {
-    this.assertPermission(actor, Permission.WORK_SCHEDULE_READ);
+    assertManagerWorkSchedulePermission(actor, Permission.WORK_SCHEDULE_READ);
     const targetType = normalizeTargetType(query.targetType);
     const targetId = normalizeRequiredText(query.targetId, "targetId");
     const manager = await this.requireManagerProfile(actor.id);
-    const target = await this.resolveAssignedTarget(manager.id, {
+    const target = await this.resolveAssignedTarget(actor, manager.id, {
       targetType,
       targetOrgUnitId: targetType === "ORG_UNIT" ? targetId : null,
       targetTalentGroupId:
@@ -179,7 +186,10 @@ export class WorkScheduleAvailabilityBatchAdminService {
     actor: Actor,
     command: SubmitWorkScheduleAvailabilityBatchCommand,
   ): Promise<WorkScheduleAvailabilityBatchMutationResult> {
-    const permission = this.assertPermission(actor, Permission.WORK_SCHEDULE_READ);
+    const permission = assertManagerWorkSchedulePermission(
+      actor,
+      Permission.WORK_SCHEDULE_READ,
+    );
     const input = normalizeSubmitCommand(command, this.clock());
 
     return this.executeMutation(
@@ -189,6 +199,12 @@ export class WorkScheduleAvailabilityBatchAdminService {
       { periodMonth: input.periodMonth, lineCount: input.lines.length },
       async (session) => {
         const manager = await this.requireManagerProfile(actor.id, session);
+        const target = await this.resolveAssignedTarget(
+          actor,
+          manager.id,
+          input,
+          session,
+        );
         const existing = await this.repository.findBatchByClientToken(
           manager.id,
           input.clientToken,
@@ -198,11 +214,6 @@ export class WorkScheduleAvailabilityBatchAdminService {
           return this.toBatchView(existing, session);
         }
 
-        const target = await this.resolveAssignedTarget(
-          manager.id,
-          input,
-          session,
-        );
         assertNoDuplicatePayloadLines(input.lines);
 
         const now = this.clock();
@@ -330,14 +341,22 @@ export class WorkScheduleAvailabilityBatchAdminService {
     actor: Actor,
     query: ListWorkScheduleAvailabilityBatchesQuery,
   ): Promise<ListWorkScheduleAvailabilityBatchesResult> {
-    this.assertPermission(actor, Permission.WORK_SCHEDULE_READ);
+    assertManagerWorkSchedulePermission(actor, Permission.WORK_SCHEDULE_READ);
     const manager = await this.requireManagerProfile(actor.id);
+    const authority = await this.resolveManagerAuthority(actor, manager.id);
+    if (!hasManagerWorkScheduleTargets(authority)) {
+      return { items: [], nextCursor: undefined };
+    }
     const result = await this.repository.listBatches({
       ...normalizeListQuery(query),
       submittedByEmploymentProfileId: manager.id,
     });
     return {
-      items: await Promise.all(result.items.map((item) => this.toListItem(item))),
+      items: await Promise.all(
+        result.items
+          .filter((item) => this.isBatchAuthorized(authority, item))
+          .map((item) => this.toListItem(item)),
+      ),
       nextCursor: result.nextCursor,
     };
   }
@@ -346,9 +365,11 @@ export class WorkScheduleAvailabilityBatchAdminService {
     actor: Actor,
     query: GetWorkScheduleAvailabilityBatchDetailQuery,
   ): Promise<WorkScheduleAvailabilityBatchView> {
-    this.assertPermission(actor, Permission.WORK_SCHEDULE_READ);
+    assertManagerWorkSchedulePermission(actor, Permission.WORK_SCHEDULE_READ);
     const manager = await this.requireManagerProfile(actor.id);
+    const authority = await this.resolveManagerAuthority(actor, manager.id);
     const batch = await this.requireBatch(query.batchId);
+    this.assertBatchAuthorized(authority, batch);
     this.assertOwnedBy(batch, manager.id, "access");
     return this.toBatchView(batch);
   }
@@ -357,7 +378,10 @@ export class WorkScheduleAvailabilityBatchAdminService {
     actor: Actor,
     command: CancelWorkScheduleAvailabilityBatchCommand,
   ): Promise<WorkScheduleAvailabilityBatchMutationResult> {
-    const permission = this.assertPermission(actor, Permission.WORK_SCHEDULE_READ);
+    const permission = assertManagerWorkSchedulePermission(
+      actor,
+      Permission.WORK_SCHEDULE_READ,
+    );
     const reason = normalizeReason(command.cancellationReason, "cancellationReason");
     const manager = await this.requireManagerProfile(actor.id);
     return this.executeMutation(
@@ -366,7 +390,13 @@ export class WorkScheduleAvailabilityBatchAdminService {
       "work-schedule.request.cancel",
       { batchId: command.batchId },
       async (session) => {
+        const authority = await this.resolveManagerAuthority(
+          actor,
+          manager.id,
+          session,
+        );
         const batch = await this.requireBatch(command.batchId, session);
+        this.assertBatchAuthorized(authority, batch);
         this.assertOwnedBy(batch, manager.id, "cancel");
         if (batch.status !== "PENDING") {
           throw new WorkScheduleStateError(
@@ -410,7 +440,10 @@ export class WorkScheduleAvailabilityBatchAdminService {
     actor: Actor,
     command: CancelWorkScheduleAvailabilityLineCommand,
   ): Promise<WorkScheduleAvailabilityBatchMutationResult> {
-    const permission = this.assertPermission(actor, Permission.WORK_SCHEDULE_READ);
+    const permission = assertManagerWorkSchedulePermission(
+      actor,
+      Permission.WORK_SCHEDULE_READ,
+    );
     const reason = normalizeReason(command.cancellationReason, "cancellationReason");
     const manager = await this.requireManagerProfile(actor.id);
     return this.executeMutation(
@@ -419,7 +452,13 @@ export class WorkScheduleAvailabilityBatchAdminService {
       "work-schedule.request.cancel",
       { batchId: command.batchId, lineId: command.lineId },
       async (session) => {
+        const authority = await this.resolveManagerAuthority(
+          actor,
+          manager.id,
+          session,
+        );
         const batch = await this.requireBatch(command.batchId, session);
+        this.assertBatchAuthorized(authority, batch);
         this.assertOwnedBy(batch, manager.id, "cancel");
         const line = await this.requireLine(batch.id, command.lineId, session);
         assertPendingLine(line);
@@ -590,6 +629,7 @@ export class WorkScheduleAvailabilityBatchAdminService {
   }
 
   private async resolveAssignedTarget(
+    actor: Actor,
     managerEmploymentProfileId: string,
     input: Pick<
       NormalizedSubmitCommand,
@@ -597,22 +637,17 @@ export class WorkScheduleAvailabilityBatchAdminService {
     >,
     session?: ClientSession,
   ): Promise<TargetResolution> {
-    const managedScope =
-      await this.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
-        {
-          responsibleEmploymentProfileId: managerEmploymentProfileId,
-          asOf: this.clock(),
-        },
-        session,
-      );
+    const authority = await this.resolveManagerAuthority(
+      actor,
+      managerEmploymentProfileId,
+      session,
+    );
     if (input.targetType === "ORG_UNIT") {
-      if (
-        !managedScope.orgUnitIds.includes(input.targetOrgUnitId as string)
-      ) {
-        throw new WorkSchedulePermissionScopeError(
-          "Selected OrgUnit is not an active assigned manager target",
-        );
-      }
+      assertManagerWorkScheduleTarget(
+        authority,
+        "ORG_UNIT",
+        input.targetOrgUnitId as string,
+      );
       const target = await this.orgUnitReadonlyAccess.findById(
         input.targetOrgUnitId as string,
         session,
@@ -636,13 +671,11 @@ export class WorkScheduleAvailabilityBatchAdminService {
       };
     }
 
-    if (
-      !managedScope.talentGroupIds.includes(input.targetTalentGroupId as string)
-    ) {
-      throw new WorkSchedulePermissionScopeError(
-        "Selected TalentGroup is not an active assigned manager target",
-      );
-    }
+    assertManagerWorkScheduleTarget(
+      authority,
+      "TALENT_GROUP",
+      input.targetTalentGroupId as string,
+    );
     const target = await this.talentGroupReadonlyAccess.findById(
       input.targetTalentGroupId as string,
       session,
@@ -674,6 +707,50 @@ export class WorkScheduleAvailabilityBatchAdminService {
       targetRef: target.ref ?? { id: target.id, status: target.status },
       profiles,
     };
+  }
+
+  private resolveManagerAuthority(
+    actor: Actor,
+    managerEmploymentProfileId: string,
+    session?: ClientSession,
+  ): Promise<ManagerWorkScheduleTargetAuthority> {
+    return resolveManagerWorkScheduleTargetAuthority({
+      actor,
+      managerEmploymentProfileId,
+      permission: Permission.WORK_SCHEDULE_READ,
+      managedScopeReader: this.managedScopeReader,
+      structuredAuthority: this.structuredAuthority,
+      asOf: this.clock(),
+      session,
+    });
+  }
+
+  private isBatchAuthorized(
+    authority: ManagerWorkScheduleTargetAuthority,
+    batch: Pick<
+      WorkScheduleAvailabilityBatchRecord,
+      "targetType" | "targetOrgUnitId" | "targetTalentGroupId"
+    >,
+  ): boolean {
+    return batch.targetType === "ORG_UNIT"
+      ? batch.targetOrgUnitId !== null &&
+          authority.orgUnitIds.has(batch.targetOrgUnitId)
+      : batch.targetTalentGroupId !== null &&
+          authority.talentGroupIds.has(batch.targetTalentGroupId);
+  }
+
+  private assertBatchAuthorized(
+    authority: ManagerWorkScheduleTargetAuthority,
+    batch: Pick<
+      WorkScheduleAvailabilityBatchRecord,
+      "targetType" | "targetOrgUnitId" | "targetTalentGroupId"
+    >,
+  ): void {
+    if (!this.isBatchAuthorized(authority, batch)) {
+      throw new WorkSchedulePermissionScopeError(
+        "Matching exact Manager responsibility and structured WorkSchedule scope are required for this availability batch",
+      );
+    }
   }
 
   private async updateDerivedBatch(

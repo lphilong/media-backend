@@ -442,6 +442,117 @@ test("manager WorkSchedule unions exact OrgUnit and eligible TalentGroup members
   assert.equal(result.meta.representedMemberCount, 3);
 });
 
+test("manager WorkSchedule requires exact persisted roster-target authority in addition to shared-member eligibility", async () => {
+  for (const scenario of [
+    {
+      targetType: "ORG_UNIT" as const,
+      authorizedTarget: "ou-a",
+      unauthorizedTarget: "ou-b",
+      input: {
+        orgUnitAssignments: [orgUnitAssignment("ou-a", "UNIT_MANAGER")],
+        orgUnitProfiles: [managedProfile("ep-shared")],
+      },
+    },
+    {
+      targetType: "TALENT_GROUP" as const,
+      authorizedTarget: "tg-a",
+      unauthorizedTarget: "tg-b",
+      input: {
+        talentGroupAssignments: [talentGroupAssignment("tg-a")],
+        talentGroupProfiles: [
+          managedTalentGroupResolution(managedProfile("ep-shared")),
+        ],
+      },
+    },
+  ]) {
+    const service = createWorkScheduleService({
+      ...scenario.input,
+      structuredAuthority: structuredAuthority([
+        structuredAssignment({
+          permission: "workSchedule.read",
+          scopeType:
+            scenario.targetType === "ORG_UNIT"
+              ? "managedOrgUnit"
+              : "managedTalentGroup",
+          targetId: scenario.authorizedTarget,
+        }),
+      ]),
+      onList() {
+        return [
+          managerShift(
+            `shift-${scenario.targetType}-unauthorized`,
+            "ep-shared",
+            "ROSTER_GENERATED",
+            { type: scenario.targetType, id: scenario.unauthorizedTarget },
+          ),
+          managerShift(
+            `shift-${scenario.targetType}-authorized`,
+            "ep-shared",
+            "ROSTER_GENERATED",
+            { type: scenario.targetType, id: scenario.authorizedTarget },
+          ),
+          managerShift(`shift-${scenario.targetType}-manual`, "ep-shared"),
+        ];
+      },
+    });
+
+    const result = await service.listWorkShifts(
+      managerActor({ permissions: ["workSchedule.read"], scopeGrants: {} }),
+      { month: "2026-06" },
+    );
+    assert.deepEqual(
+      result.items.map((item) => item.workShiftId),
+      [
+        `shift-${scenario.targetType}-authorized`,
+        `shift-${scenario.targetType}-manual`,
+      ],
+      `${scenario.targetType} shared member cannot bridge to its unauthorized roster target`,
+    );
+  }
+});
+
+test("manager WorkSchedule does not treat descendant-expanded access as exact roster-target authority", async () => {
+  let repositoryCalled = false;
+  const service = createWorkScheduleService({
+    managedScope: {
+      async resolveManagedScopeByResponsibleEmploymentProfile() {
+        return {
+          orgUnitIds: ["ou-parent", "ou-child"],
+          talentGroupIds: [],
+          orgUnitScopes: [
+            {
+              orgUnitId: "ou-parent",
+              role: "UNIT_MANAGER",
+              includeDescendants: true,
+              actionMask: [],
+              isPrimary: true,
+            },
+          ],
+        };
+      },
+    },
+    structuredAuthority: structuredAuthority([
+      structuredAssignment({
+        permission: "workSchedule.read",
+        scopeType: "managedOrgUnit",
+        targetId: "ou-child",
+      }),
+    ]),
+    onList() {
+      repositoryCalled = true;
+      return [];
+    },
+  });
+
+  const result = await service.listWorkShifts(
+    managerActor({ permissions: ["workSchedule.read"], scopeGrants: {} }),
+    { month: "2026-06" },
+  );
+
+  assert.equal(repositoryCalled, false);
+  assert.deepEqual(result.items, []);
+});
+
 test("manager WorkSchedule reporting-manager relationship alone grants no access and no mutations", async () => {
   let repositoryCalled = false;
   const service = createWorkScheduleService({
@@ -690,6 +801,7 @@ function createWorkScheduleService(input: {
   readonly talentGroupProfiles?: readonly ReturnType<typeof managedTalentGroupResolution>[];
   readonly onList?: (input: WorkShiftListReadInput) => ReturnType<typeof managerShift>[];
   readonly structuredAuthority?: StructuredScopeAuthorityService;
+  readonly managedScope?: ReturnType<typeof managedScopeReader>;
 }): ManagerWorkspaceWorkScheduleAdminService {
   return new ManagerWorkspaceWorkScheduleAdminService(
     {
@@ -705,7 +817,7 @@ function createWorkScheduleService(input: {
         return input.talentGroupProfiles ?? [];
       },
     },
-    managedScopeReader(input),
+    input.managedScope ?? managedScopeReader(input),
     {
       async listWorkShifts(readInput) {
         return { items: input.onList?.(readInput) ?? [] };
@@ -871,6 +983,10 @@ function managerShift(
   id: string,
   employmentProfileId: string,
   sourceType: "MANUAL" | "ROSTER_GENERATED" = "MANUAL",
+  rosterTarget: { readonly type: "ORG_UNIT" | "TALENT_GROUP"; readonly id: string } = {
+    type: "TALENT_GROUP",
+    id: "tg-live",
+  },
 ) {
   return {
     id,
@@ -886,8 +1002,8 @@ function managerShift(
     sourceType,
     sourceRosterId: sourceType === "ROSTER_GENERATED" ? "roster-1" : null,
     sourceRosterMonth: sourceType === "ROSTER_GENERATED" ? "2026-06" : null,
-    sourceRosterTargetType: sourceType === "ROSTER_GENERATED" ? ("TALENT_GROUP" as const) : null,
-    sourceRosterTargetId: sourceType === "ROSTER_GENERATED" ? "tg-live" : null,
+    sourceRosterTargetType: sourceType === "ROSTER_GENERATED" ? rosterTarget.type : null,
+    sourceRosterTargetId: sourceType === "ROSTER_GENERATED" ? rosterTarget.id : null,
     sourceRosterTargetMode: sourceType === "ROSTER_GENERATED" ? ("EXACT_ONLY" as const) : null,
     sourceRosterLocalDate: sourceType === "ROSTER_GENERATED" ? "2026-06-06" : null,
     sourceRosterSlotKey: sourceType === "ROSTER_GENERATED" ? "slot-1" : null,
