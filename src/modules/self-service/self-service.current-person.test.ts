@@ -529,7 +529,7 @@ test("GET /self-service/work-shifts returns only current actor official Employme
     assert.match(rejected.error.message, /Invalid self-service request/);
 
     const safeResponse = await fetch(
-      `${baseUrl}/self-service/work-shifts?limit=10&windowStartAt=1000&windowEndAt=4000`,
+      `${baseUrl}/self-service/work-shifts?limit=10&windowStartAt=1000&windowEndAt=4000&cursor=cursor-own-only`,
     );
     const body = await safeResponse.json();
     const serialized = JSON.stringify(body);
@@ -560,8 +560,8 @@ test("GET /self-service/work-shifts returns only current actor official Employme
         status: undefined,
         windowStartAt: 1_000,
         windowEndAt: 4_000,
+        cursor: "cursor-own-only",
         limit: 10,
-        cursor: undefined,
         sortField: "shiftStartAt",
         sortDirection: "ASC",
       },

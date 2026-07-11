@@ -1247,14 +1247,12 @@ function createService(params: {
         id: "emp-1",
         employmentStatus: "ACTIVE",
         orgUnitId: "dept-1",
-        managerEmploymentProfileId: null,
         linkedUserId: null,
       },
       {
         id: "actor-profile",
         employmentStatus: "ACTIVE",
         orgUnitId: "dept-1",
-        managerEmploymentProfileId: null,
         linkedUserId: "admin-user-1",
       },
     ];
@@ -1302,7 +1300,6 @@ function createService(params: {
           (profile) =>
             profile.linkedUserId === linkedUserId,
         ) ?? null,
-      listIdsByManagerEmploymentProfileId: async () => [],
       listIdsByActiveTalentGroupIds: async () => [],
       listIdsByOrgUnitId: async () => [],
       listByOrgUnitId: async (orgUnitId: string) =>
@@ -1410,14 +1407,12 @@ function expectedPreviewHash(params: {
         id: "emp-1",
         employmentStatus: "ACTIVE",
         orgUnitId: "dept-1",
-        managerEmploymentProfileId: null,
         linkedUserId: null,
       },
       {
         id: "actor-profile",
         employmentStatus: "ACTIVE",
         orgUnitId: "dept-1",
-        managerEmploymentProfileId: null,
         linkedUserId: "admin-user-1",
       },
     ];
@@ -1495,7 +1490,6 @@ test("Monthly Roster accepts Talent Group target and blocks zero eligible Talent
       id: "emp-linked",
       employmentStatus: "ACTIVE" as const,
       orgUnitId: "dept-1",
-      managerEmploymentProfileId: null,
       linkedUserId: null,
     };
     const created =
@@ -1606,7 +1600,6 @@ test("Monthly Roster create generates rosterCode when omitted, null, or blank an
             id: "emp-2",
             employmentStatus: "ACTIVE",
             orgUnitId: "dept-2",
-            managerEmploymentProfileId: null,
             linkedUserId: null,
           },
         ],
@@ -1695,7 +1688,6 @@ test("Monthly Roster enforces target, pattern, calendar, month, duplicate, and c
             id: "emp-team",
             employmentStatus: "ACTIVE",
             orgUnitId: "team-1",
-            managerEmploymentProfileId: null,
             linkedUserId: null,
           },
         ],
@@ -2264,14 +2256,12 @@ test("Roster exceptions enforce date/profile/status and standard-candidate valid
               id: "emp-1",
               employmentStatus: "ACTIVE",
               orgUnitId: "other-dept",
-              managerEmploymentProfileId: null,
               linkedUserId: null,
             },
             {
               id: "actor-profile",
               employmentStatus: "ACTIVE",
               orgUnitId: "dept-1",
-              managerEmploymentProfileId: null,
               linkedUserId: "admin-user-1",
             },
           ],
@@ -2292,14 +2282,12 @@ test("Roster exceptions enforce date/profile/status and standard-candidate valid
               id: "emp-1",
               employmentStatus: "ON_LEAVE",
               orgUnitId: "dept-1",
-              managerEmploymentProfileId: null,
               linkedUserId: null,
             },
             {
               id: "actor-profile",
               employmentStatus: "ACTIVE",
               orgUnitId: "dept-1",
-              managerEmploymentProfileId: null,
               linkedUserId: "admin-user-1",
             },
           ],
@@ -2712,7 +2700,6 @@ test("Monthly Roster read query normalizes filters and enforces read permission"
       {
         findById: async () => null,
         findByLinkedUserId: async () => null,
-        listIdsByManagerEmploymentProfileId: async () => [],
         listIdsByActiveTalentGroupIds: async () => [],
         listIdsByOrgUnitId: async () => [],
         listByOrgUnitId: async () => [],

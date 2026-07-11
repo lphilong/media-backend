@@ -237,7 +237,6 @@ function createService(params: {
         id: "actor-profile",
         employmentStatus: "ACTIVE",
         orgUnitId: "dept-1",
-        managerEmploymentProfileId: null,
         linkedUserId: "admin-user-1",
       },
     ];
@@ -263,7 +262,6 @@ function createService(params: {
           (profile) =>
             profile.linkedUserId === linkedUserId,
         ) ?? null,
-      listIdsByManagerEmploymentProfileId: async () => [],
       listIdsByActiveTalentGroupIds: async () => [],
       listIdsByOrgUnitId: async (orgUnitId: string) =>
         profiles
@@ -1214,7 +1212,6 @@ function seedProfile(
     id,
     employmentStatus,
     orgUnitId,
-    managerEmploymentProfileId: null,
     linkedUserId: null,
   };
 }
