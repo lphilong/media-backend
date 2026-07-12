@@ -240,6 +240,21 @@ test("OrgUnit-only manager context exposes Unit KPI only", async () => {
   assert.equal(context.modules.workShifts.visible, false);
 });
 
+test("manager KPI stays unavailable without the shared operation's kpi.managedGroup prerequisite", async () => {
+  const service = createService({
+    profile: activeProfile(),
+    orgUnitAssignments: [orgUnitAssignment("ou-production", "UNIT_MANAGER")],
+  });
+
+  const context = await service.getContext(
+    managerActor({ scopeGrants: {} }),
+  );
+
+  assert.equal(context.scopes.orgUnits[0]?.capabilities.kpi.read, true);
+  assert.equal(context.modules.kpi.visible, false);
+  assert.equal(context.modules.kpi.unitKpiVisible, false);
+});
+
 test("managed Work is visible only with assignment and WorkSchedule read capability", async () => {
   const service = createService({
     profile: activeProfile(),

@@ -3,7 +3,10 @@ import { SystemInvariantError } from "@core/error/system-error";
 import { Permission } from "@core/permission/permission.enum";
 import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionResolver } from "@core/permission/permission.resolver";
-import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import {
+  requireAdminGlobalOrObjectScopeAuthority,
+  requireAdminObjectScopeAuthority,
+} from "@modules/role/domain/admin-object-scope-authority";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import {
   buildMonthlyRosterPreview,
@@ -135,7 +138,7 @@ export class MonthlyRosterAdminQueryService {
       );
     }
 
-    await this.requireStructuredRosterReadAuthority(
+    await this.requireStructuredRosterDetailReadAuthority(
       actor,
       detail,
       parseRequestedScope(query.scope),
@@ -305,6 +308,29 @@ export class MonthlyRosterAdminQueryService {
       authority: this.structuredAuthority,
       error: new WorkSchedulePermissionScopeError(
         `Monthly Roster read requires matching ${scope.scopeType} authority for target ${scope.targetId}`,
+      ),
+    });
+  }
+
+  private async requireStructuredRosterDetailReadAuthority(
+    actor: Actor,
+    roster: MonthlyRosterView,
+    requestedScope: "global" | undefined,
+  ): Promise<void> {
+    if (requestedScope !== undefined && requestedScope !== "global") {
+      throw new WorkSchedulePermissionScopeError(
+        "Admin Monthly Roster reads accept only the legacy global request context",
+      );
+    }
+
+    const scope = buildStructuredRosterScope(roster);
+    await requireAdminGlobalOrObjectScopeAuthority({
+      actor,
+      permission: Permission.WORK_SCHEDULE_READ,
+      scope,
+      authority: this.structuredAuthority,
+      error: new WorkSchedulePermissionScopeError(
+        `Monthly Roster read requires global or matching ${scope.scopeType} authority for target ${scope.targetId}`,
       ),
     });
   }

@@ -38,7 +38,10 @@ import {
   ListEventsQuery,
   ListEventsResult,
 } from "@modules/event-assignment/shared/event-assignment.contracts";
-import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import {
+  requireAdminGlobalOrObjectScopeAuthority,
+  requireAdminObjectScopeAuthority,
+} from "@modules/role/domain/admin-object-scope-authority";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 const DEFAULT_LIMIT = 20;
@@ -319,7 +322,7 @@ export class EventAssignmentAdminQueryService {
     actor: Actor,
     eventId: string,
   ): Promise<void> {
-    await requireAdminObjectScopeAuthority({
+    await requireAdminGlobalOrObjectScopeAuthority({
       actor,
       permission: Permission.EVENT_READ,
       scope: { scopeType: "assignedEvent", targetId: eventId },

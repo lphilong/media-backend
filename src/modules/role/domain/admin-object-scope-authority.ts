@@ -38,3 +38,35 @@ export async function requireAdminGlobalScopeAuthority(
     scope: { scopeType: "global" },
   });
 }
+
+/**
+ * Read-detail continuity: a global structured grant authorizes every object
+ * available from the corresponding global list; an assigned grant remains
+ * exact to its object or target.
+ */
+export async function requireAdminGlobalOrObjectScopeAuthority(
+  input: RequireAdminObjectScopeAuthorityInput,
+): Promise<void> {
+  if (!input.actor.isActive) {
+    throw input.error;
+  }
+
+  const [hasGlobalAuthority, hasObjectAuthority] = await Promise.all([
+    input.authority.hasAuthority({
+      userId: input.actor.id,
+      permission: input.permission,
+      scope: { scopeType: "global" },
+      mode: "STRUCTURED_SCOPE_REQUIRED",
+    }),
+    input.authority.hasAuthority({
+      userId: input.actor.id,
+      permission: input.permission,
+      scope: input.scope,
+      mode: "STRUCTURED_SCOPE_REQUIRED",
+    }),
+  ]);
+
+  if (!hasGlobalAuthority && !hasObjectAuthority) {
+    throw input.error;
+  }
+}

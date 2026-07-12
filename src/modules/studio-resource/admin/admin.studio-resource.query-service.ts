@@ -28,7 +28,7 @@ import {
   ListStudioResourcesQuery,
   ListStudioResourcesResult,
 } from "@modules/studio-resource/shared/studio-resource.contracts";
-import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { requireAdminGlobalOrObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 const DEFAULT_LIMIT = 20;
@@ -124,7 +124,7 @@ export class StudioResourceAdminQueryService {
     actor: Actor,
     studioResourceId: string,
   ): Promise<void> {
-    await requireAdminObjectScopeAuthority({
+    await requireAdminGlobalOrObjectScopeAuthority({
       actor,
       permission: Permission.STUDIO_RESOURCE_READ,
       scope: {

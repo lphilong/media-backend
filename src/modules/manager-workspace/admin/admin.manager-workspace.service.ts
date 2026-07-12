@@ -1,5 +1,6 @@
 import { Actor } from "@core/actor/actor";
 import { Permission } from "@core/permission/permission.enum";
+import { PermissionGuard } from "@core/permission/permission.guard";
 import { EmploymentProfileRepository } from "@modules/employment-profile/domain/employment-profile.repository";
 import { EmploymentProfileRecord } from "@modules/employment-profile/domain/employment-profile.types";
 import { KpiSubjectReadonlyAccess } from "@modules/kpi/domain/kpi-subject-readonly-access";
@@ -158,12 +159,18 @@ export class ManagerWorkspaceAdminService {
         this.toTalentGroupScope(assignment, refs, actor),
       ),
     );
-    const unitKpiVisible = orgUnits.some(
-      (scope) => scope.capabilities.kpi.read,
-    );
-    const talentGroupKpiVisible = talentGroups.some(
-      (scope) => scope.capabilities.kpi.read,
-    );
+    // The manager surface calls the compatibility-shared KPI plan operation.
+    // Its visibility must include the operation's managed-group prerequisite
+    // and an exact effective target authority.
+    const hasKpiManagedGroupScope =
+      actor.isActive &&
+      PermissionGuard.hasKpiScopeGrant(actor, "managedGroup");
+    const unitKpiVisible =
+      hasKpiManagedGroupScope &&
+      orgUnits.some((scope) => scope.capabilities.kpi.read);
+    const talentGroupKpiVisible =
+      hasKpiManagedGroupScope &&
+      talentGroups.some((scope) => scope.capabilities.kpi.read);
     const visible = unitKpiVisible || talentGroupKpiVisible;
     const hasManagedAssignment = orgUnits.length + talentGroups.length > 0;
     const [workShiftsVisible, eventsVisible, revenueSourceVisible] =
@@ -311,7 +318,7 @@ export class ManagerWorkspaceAdminService {
       this.structuredAuthority,
       actor,
       assignment.orgUnitId,
-      [Permission.KPI_READ, Permission.KPI_READ_PROGRESS],
+      [Permission.KPI_READ],
     );
     const canEnterActual =
       directUnitManager &&
@@ -360,7 +367,7 @@ export class ManagerWorkspaceAdminService {
       this.structuredAuthority,
       actor,
       groupId,
-      [Permission.KPI_READ, Permission.KPI_READ_PROGRESS],
+      [Permission.KPI_READ],
     );
     const canEnterActual = await hasManagedTalentGroupAuthority(
       this.structuredAuthority,

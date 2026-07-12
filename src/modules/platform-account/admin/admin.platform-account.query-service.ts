@@ -28,7 +28,7 @@ import {
   ListPlatformAccountsQuery,
   ListPlatformAccountsResult,
 } from "@modules/platform-account/shared/platform-account.contracts";
-import { requireAdminObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
+import { requireAdminGlobalOrObjectScopeAuthority } from "@modules/role/domain/admin-object-scope-authority";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import { SystemInvariantError } from "@core/error/system-error";
 
@@ -124,7 +124,7 @@ export class PlatformAccountAdminQueryService {
     actor: Actor,
     platformAccountId: string,
   ): Promise<void> {
-    await requireAdminObjectScopeAuthority({
+    await requireAdminGlobalOrObjectScopeAuthority({
       actor,
       permission: Permission.PLATFORM_ACCOUNT_READ,
       scope: {

@@ -492,15 +492,20 @@ export class KpiAdminService {
   ): Promise<KpiPlanDetailView> {
     this.assertContextPermission(actor, Permission.KPI_READ);
     const plan = await this.requirePlan(query.kpiPlanId);
+    if (this.hasKpiGlobalScope(actor)) {
+      await this.requireKpiGlobalStructuredAuthority(
+        actor,
+        Permission.KPI_READ,
+        "read KPI plan detail",
+      );
+      return this.loadPlanDetail(plan.id);
+    }
     await this.requireKpiSubjectStructuredAuthority(
       actor,
       Permission.KPI_READ,
       plan,
       "read KPI plan detail",
     );
-    if (this.hasKpiGlobalScope(actor)) {
-      return this.loadPlanDetail(plan.id);
-    }
     if (!this.hasKpiManagedGroupScope(actor)) {
       return this.loadPlanDetail(plan.id);
     }

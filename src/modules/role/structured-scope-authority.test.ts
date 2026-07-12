@@ -6,6 +6,7 @@ import {
   hasFinanceGlobalAuthority,
   requireFinancePeriodAuthority,
 } from "./domain/finance-scope-authority";
+import { requireAdminGlobalOrObjectScopeAuthority } from "./domain/admin-object-scope-authority";
 import {
   StructuredScopeAuthorityAssignment,
   StructuredScopeAuthorityReader,
@@ -161,14 +162,10 @@ test("legacy compatibility mode is explicit and does not affect structured check
 });
 
 test("finance authority helper allows exact financePeriod or financeGlobal only", async () => {
-  const actor = actorWith([
-    Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
-  ]);
+  const actor = actorWith([Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE]);
   const exactPeriod = serviceWith([
     record({
-      permissions: [
-        Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
-      ],
+      permissions: [Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE],
       structuredScopeGrants: [
         {
           scopeType: "financePeriod",
@@ -198,9 +195,7 @@ test("finance authority helper allows exact financePeriod or financeGlobal only"
 
   const global = serviceWith([
     record({
-      permissions: [
-        Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
-      ],
+      permissions: [Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE],
       structuredScopeGrants: [{ scopeType: "financeGlobal" }],
     }),
   ]);
@@ -224,19 +219,13 @@ test("finance authority helper allows exact financePeriod or financeGlobal only"
 test("finance authority helper fails closed for malformed periodMonth", async () => {
   await assert.rejects(
     requireFinancePeriodAuthority({
-      actor: actorWith([
-        Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
-      ]),
+      actor: actorWith([Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE]),
       permission: Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
       periodMonth: "June-2026",
       authority: serviceWith([
         record({
-          permissions: [
-            Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE,
-          ],
-          structuredScopeGrants: [
-            { scopeType: "financeGlobal" },
-          ],
+          permissions: [Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE],
+          structuredScopeGrants: [{ scopeType: "financeGlobal" }],
         }),
       ]),
       error: new Error("denied"),
@@ -245,16 +234,57 @@ test("finance authority helper fails closed for malformed periodMonth", async ()
   );
 });
 
+test("global-or-object detail authority preserves exact grants while accepting global reads", async () => {
+  const actor = actorWith([Permission.EVENT_READ]);
+  const exact = serviceWith([
+    record({
+      permissions: [Permission.EVENT_READ],
+      structuredScopeGrants: [
+        { scopeType: "assignedEvent", targetId: "event-1" },
+      ],
+    }),
+  ]);
+
+  await requireAdminGlobalOrObjectScopeAuthority({
+    actor,
+    permission: Permission.EVENT_READ,
+    scope: { scopeType: "assignedEvent", targetId: "event-1" },
+    authority: exact,
+    error: new Error("denied"),
+  });
+  await assert.rejects(
+    requireAdminGlobalOrObjectScopeAuthority({
+      actor,
+      permission: Permission.EVENT_READ,
+      scope: { scopeType: "assignedEvent", targetId: "event-2" },
+      authority: exact,
+      error: new Error("denied"),
+    }),
+    /denied/u,
+  );
+
+  await requireAdminGlobalOrObjectScopeAuthority({
+    actor,
+    permission: Permission.EVENT_READ,
+    scope: { scopeType: "assignedEvent", targetId: "event-2" },
+    authority: serviceWith([
+      record({
+        permissions: [Permission.EVENT_READ],
+        structuredScopeGrants: [{ scopeType: "global" }],
+      }),
+    ]),
+    error: new Error("denied"),
+  });
+});
+
 function serviceWith(
   records: readonly StructuredScopeAuthorityAssignment[],
 ): StructuredScopeAuthorityService {
-  return new StructuredScopeAuthorityService(
-    {
-      async listByUserId(userId: string) {
-        return records.filter((record) => record.assignment.userId === userId);
-      },
-    } satisfies StructuredScopeAuthorityReader,
-  );
+  return new StructuredScopeAuthorityService({
+    async listByUserId(userId: string) {
+      return records.filter((record) => record.assignment.userId === userId);
+    },
+  } satisfies StructuredScopeAuthorityReader);
 }
 
 function actorWith(permissions: readonly Permission[]): Actor {
