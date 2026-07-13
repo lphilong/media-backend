@@ -85,7 +85,7 @@ export class OrgUnitResponsibilityAdminController extends SecureController {
       case "ORG_UNIT_RESPONSIBILITY_REVOKE":
         assertNoUnexpectedFields(
           requireRecord(req.body),
-          [],
+          ["reason"],
           "revokeOrgUnitResponsibility",
         );
         return this.service.revokeResponsibility(
@@ -174,6 +174,7 @@ function parseRevokeResponsibilityCommand(
   return {
     orgUnitId: req.params.orgUnitId,
     assignmentId: req.params.assignmentId,
+    reason: requireRecord(req.body).reason as string,
   };
 }
 

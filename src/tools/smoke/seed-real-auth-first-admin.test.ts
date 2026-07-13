@@ -588,13 +588,13 @@ test("help output does not include raw secret-looking env values or service URLs
   assert.doesNotMatch(output, /user:pass/u);
 });
 
-test("first-admin bootstrap creates seven runtime roles when missing", async () => {
+test("first-admin bootstrap creates every active runtime role when missing", async () => {
   const fixture = createFirstAdminFixture();
 
   const summary = await fixture.run();
 
-  assert.equal(summary.roles.created, 7);
-  assert.equal(fixture.roles.records.size, 7);
+  assert.equal(summary.roles.created, ROLE_TEMPLATE_CODES.length);
+  assert.equal(fixture.roles.records.size, ROLE_TEMPLATE_CODES.length);
   assert.deepEqual(
     [...fixture.roles.records.keys()].sort(),
     [...ROLE_TEMPLATE_CODES].sort(),
@@ -608,7 +608,7 @@ test("first-admin bootstrap reuses existing runtime roles", async () => {
   const summary = await fixture.run();
 
   assert.equal(summary.roles.created, 0);
-  assert.equal(summary.roles.reused, 7);
+  assert.equal(summary.roles.reused, ROLE_TEMPLATE_CODES.length);
 });
 
 test("first-admin bootstrap fails if Auth0 email is missing or ambiguous", async () => {
@@ -698,11 +698,11 @@ test("first-admin bootstrap fails on same-email different-subject conflict", asy
   );
 });
 
-test("first-admin bootstrap fails closed on duplicate active ADMIN_FULL assignments", async () => {
+test("first-admin bootstrap fails closed on duplicate active OWNER_ADMIN assignments", async () => {
   const fixture = createFirstAdminFixture();
   fixture.roles.addRuntimeRoles();
   fixture.users.records.push(makeBootstrapUser({ id: "existing-user" }));
-  const adminRole = fixture.roles.records.get("ADMIN_FULL");
+  const adminRole = fixture.roles.records.get("OWNER_ADMIN");
   assert.ok(adminRole);
   fixture.assignments.records.push(
     makeBootstrapAssignment({
@@ -725,12 +725,12 @@ test("first-admin bootstrap fails closed on duplicate active ADMIN_FULL assignme
   assert.equal(fixture.assignments.updateScopeGrantsCalls, 0);
 });
 
-test("first-admin bootstrap assigns ADMIN_FULL and scope grants", async () => {
+test("first-admin bootstrap assigns OWNER_ADMIN and scope grants", async () => {
   const fixture = createFirstAdminFixture();
 
   await fixture.run();
 
-  const adminRole = fixture.roles.records.get("ADMIN_FULL");
+  const adminRole = fixture.roles.records.get("OWNER_ADMIN");
   assert.ok(adminRole);
   assert.equal(fixture.assignments.records.length, 1);
   assert.equal(fixture.assignments.records[0]?.roleId, adminRole.id);
@@ -754,7 +754,7 @@ test("first-admin bootstrap repairs missing scopes and preserves existing scopes
   const fixture = createFirstAdminFixture();
   fixture.roles.addRuntimeRoles();
   fixture.users.records.push(makeBootstrapUser({ id: "existing-user" }));
-  const adminRole = fixture.roles.records.get("ADMIN_FULL");
+  const adminRole = fixture.roles.records.get("OWNER_ADMIN");
   assert.ok(adminRole);
   fixture.assignments.records.push({
     assignmentId: "existing-assignment",
@@ -794,12 +794,12 @@ test("first-admin bootstrap rerun is idempotent and creates no six-account set",
   const second = await fixture.run();
 
   assert.equal(second.roles.created, 0);
-  assert.equal(second.roles.reused, 7);
+  assert.equal(second.roles.reused, ROLE_TEMPLATE_CODES.length);
   assert.equal(second.adminUser.action, "reused");
   assert.equal(second.assignment.action, "reused");
   assert.equal(fixture.users.records.length, 1);
   assert.equal(fixture.assignments.records.length, 1);
-  assert.equal(fixture.roles.records.size, 7);
+  assert.equal(fixture.roles.records.size, ROLE_TEMPLATE_CODES.length);
 });
 
 test("first-admin bootstrap repairs safely missing runtime role provenance in write mode", async () => {
@@ -848,7 +848,7 @@ test("first-admin bootstrap fails on conflicting runtime role provenance", async
   assert.ok(role);
   fixture.roles.records.set("HR_OPERATIONS", {
     ...role,
-    templateCode: "ADMIN_FULL",
+    templateCode: "ACCESS_ADMIN",
   });
 
   await assert.rejects(
@@ -860,9 +860,9 @@ test("first-admin bootstrap fails on conflicting runtime role provenance", async
 test("first-admin bootstrap fails on unsafe non-admin delegation metadata", async () => {
   const fixture = createFirstAdminFixture();
   fixture.roles.addRuntimeRoles();
-  const role = fixture.roles.records.get("TEAM_MANAGER");
+  const role = fixture.roles.records.get("TALENT_GROUP_MANAGER");
   assert.ok(role);
-  fixture.roles.records.set("TEAM_MANAGER", {
+  fixture.roles.records.set("TALENT_GROUP_MANAGER", {
     ...role,
     maxDelegatableBand: "PRIVILEGED",
   });
@@ -909,7 +909,7 @@ test("first-admin bootstrap does not delete existing SMOKE_REAL_AUTH_ADMIN role"
   await fixture.run();
 
   assert.ok(fixture.roles.records.get("SMOKE_REAL_AUTH_ADMIN"));
-  assert.equal(fixture.roles.records.size, 8);
+  assert.equal(fixture.roles.records.size, ROLE_TEMPLATE_CODES.length + 1);
 });
 
 test("first-admin bootstrap safe output omits subject and secret terms", async () => {
@@ -962,7 +962,7 @@ test("first-admin bootstrap dry-run does not call write repository methods", asy
   const summary = await fixture.run("dry-run");
 
   assert.equal(summary.mode, "dry-run");
-  assert.equal(summary.roles.wouldCreate, 7);
+  assert.equal(summary.roles.wouldCreate, ROLE_TEMPLATE_CODES.length);
   assert.equal(fixture.roles.insertCalls, 0);
   assert.equal(fixture.roles.templateMetadataUpdateCalls, 0);
   assert.equal(fixture.users.insertCalls, 0);
@@ -1085,8 +1085,8 @@ class BootstrapFakeRoleRepository implements FirstAdminBootstrapRoleRepository {
         description: template.description,
         state: "ACTIVE",
         permissions: [...template.permissions],
-        delegationBand: code === "ADMIN_FULL" ? "PRIVILEGED" : "LIMITED",
-        maxDelegatableBand: code === "ADMIN_FULL" ? "PRIVILEGED" : "NONE",
+        delegationBand: code === "OWNER_ADMIN" ? "PRIVILEGED" : "LIMITED",
+        maxDelegatableBand: code === "OWNER_ADMIN" ? "PRIVILEGED" : "NONE",
         templateCode: template.code,
         templateVersion: template.version,
         templateAppliedAt: 1,

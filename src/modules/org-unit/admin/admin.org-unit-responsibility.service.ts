@@ -258,6 +258,7 @@ export class OrgUnitResponsibilityAdminService {
           actor,
           {
             assignmentId,
+            reason: command.reason,
           },
         );
 
@@ -273,6 +274,7 @@ export class OrgUnitResponsibilityAdminService {
             managerEmploymentProfileId: revoked.responsibleEmploymentProfileId,
             previousStatus: current.status,
             nextStatus: revoked.status,
+            reason: revoked.revokedReason,
           },
           session,
         );

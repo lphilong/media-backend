@@ -122,7 +122,7 @@ function parseRevoke(req: Request): RevokeResponsibilityAssignmentCommand {
   const body = requireRecord(req.body);
   return {
     assignmentId: req.params.assignmentId,
-    reason: body.reason as string | null | undefined,
+    reason: body.reason as string,
   };
 }
 

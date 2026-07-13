@@ -646,7 +646,7 @@ class FakeRuntimeRoleCleanupRepository {
 }
 
 function makeTeamManagerRoleWithStaleWorkSchedulePermissions(): FakeRole {
-  const template = getRoleTemplate("TEAM_MANAGER");
+  const template = getRoleTemplate("TALENT_GROUP_MANAGER");
   assert.ok(template);
 
   return {

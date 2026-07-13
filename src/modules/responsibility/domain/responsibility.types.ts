@@ -95,7 +95,7 @@ export interface UpdateResponsibilityAssignmentCommand {
 
 export interface RevokeResponsibilityAssignmentCommand {
   readonly assignmentId: string;
-  readonly reason?: string | null;
+  readonly reason: string;
 }
 
 export interface ResponsibilitySummaryResult {

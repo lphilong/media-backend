@@ -5,7 +5,6 @@ import { ActorScopeGrants } from "@core/actor/actor";
 import { Permission } from "@core/permission/permission.enum";
 import { clearEnvCacheForTests, getEnv } from "@config/env";
 import {
-  getRoleTemplate,
   normalizeRoleTemplateCode,
   RoleTemplateCode,
 } from "@modules/role/domain/role-template.catalog";
@@ -24,7 +23,6 @@ const STALE_WORK_SCHEDULE_SCOPE_ALLOWLIST = Object.freeze([
   "department",
   "global",
 ]);
-const ACCEPTED_WORK_SCHEDULE_SCOPES = Object.freeze(["self", "team"]);
 const SCOPE_MODULES = [
   "workSchedule",
   "eventAssignment",
@@ -135,7 +133,6 @@ export class RuntimeRoleCleanupService {
     assertApprovedPermissionRemovalAllowlist(
       this.permissionRemovalAllowlist,
     );
-    assertAcceptedTeamManagerWorkScheduleScopes();
 
     const role = await this.deps.roleRepository.findByCode(roleCode);
     if (!role) {
@@ -463,53 +460,14 @@ function assertApprovedPermissionRemovalAllowlist(
   permissionRemovalAllowlist: readonly string[],
 ): void {
   const approved = new Set(STALE_PERMISSION_ALLOWLIST);
-  const template = getRoleTemplate(TARGET_ROLE_CODE);
-  if (!template) {
-    throw new RuntimeRoleCleanupError(
-      "RUNTIME_ROLE_CLEANUP_TEMPLATE_MISSING",
-      `Runtime role cleanup template is missing: ${TARGET_ROLE_CODE}`,
-    );
-  }
-
-  const sourcePermissions = new Set<string>(template.permissions);
   for (const permission of permissionRemovalAllowlist) {
-    if (!approved.has(permission) || sourcePermissions.has(permission)) {
+    if (!approved.has(permission)) {
       throw new RuntimeRoleCleanupError(
         "RUNTIME_ROLE_CLEANUP_UNAPPROVED_PERMISSION_REMOVAL",
         `Runtime role cleanup is not approved to remove permission: ${permission}`,
       );
     }
   }
-}
-
-function assertAcceptedTeamManagerWorkScheduleScopes(): void {
-  const template = getRoleTemplate(TARGET_ROLE_CODE);
-  if (!template) {
-    throw new RuntimeRoleCleanupError(
-      "RUNTIME_ROLE_CLEANUP_TEMPLATE_MISSING",
-      `Runtime role cleanup template is missing: ${TARGET_ROLE_CODE}`,
-    );
-  }
-
-  const actual = template.recommendedScopeGrants.workSchedule ?? [];
-  if (!sameStringSet(actual, ACCEPTED_WORK_SCHEDULE_SCOPES)) {
-    throw new RuntimeRoleCleanupError(
-      "RUNTIME_ROLE_CLEANUP_SCOPE_TEMPLATE_DRIFT",
-      "TEAM_MANAGER source WorkSchedule scope is no longer exactly self/team",
-    );
-  }
-}
-
-function sameStringSet(
-  left: readonly string[],
-  right: readonly string[],
-): boolean {
-  const leftSet = new Set(left);
-  const rightSet = new Set(right);
-  return (
-    leftSet.size === rightSet.size &&
-    [...leftSet].every((value) => rightSet.has(value))
-  );
 }
 
 function normalizeCleanupRoleCode(value: string): "TEAM_MANAGER" {

@@ -636,6 +636,15 @@ function toDomain(doc: ResponsibilityAssignmentDocument): ResponsibilityAssignme
 function buildCentralFilter(
   filters: ResponsibilityAssignmentFilters,
 ): Record<string, unknown> {
+  const authorityFilter = buildAuthorizedSubjectFilter(filters);
+  const activeExpiryFilter =
+    filters.active === true
+      ? { $or: [{ expiresAt: null }, { expiresAt: { $gte: filters.asOf } }] }
+      : undefined;
+  const combinedFilters = [activeExpiryFilter, authorityFilter].filter(
+    (filter): filter is Record<string, unknown> => filter !== undefined,
+  );
+
   return {
     ...(filters.responsibleEmploymentProfileId
       ? { responsibleEmploymentProfileId: filters.responsibleEmploymentProfileId }
@@ -650,9 +659,26 @@ function buildCentralFilter(
       ? {
           status: "ACTIVE",
           effectiveAt: { $lte: filters.asOf },
-          $or: [{ expiresAt: null }, { expiresAt: { $gte: filters.asOf } }],
         }
       : {}),
+    ...(combinedFilters.length > 0 ? { $and: combinedFilters } : {}),
+  };
+}
+
+function buildAuthorizedSubjectFilter(
+  filters: ResponsibilityAssignmentFilters,
+): Record<string, unknown> | undefined {
+  if (filters.authorizedSubjects === undefined) {
+    return undefined;
+  }
+  if (filters.authorizedSubjects.length === 0) {
+    return { _id: { $in: [] } };
+  }
+  return {
+    $or: filters.authorizedSubjects.map((subject) => ({
+      subjectType: subject.subjectType,
+      ...(subject.subjectId ? { subjectId: subject.subjectId } : {}),
+    })),
   };
 }
 

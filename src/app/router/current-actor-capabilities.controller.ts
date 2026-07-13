@@ -8,6 +8,7 @@ import {
 import { Actor, ActorScopeGrants } from "@core/actor/actor";
 import { ContextType } from "@core/context/context.types";
 import { SystemInvariantError } from "@core/error/system-error";
+import { Permission } from "@core/permission/permission.enum";
 import { AccountContext } from "@modules/account-context/domain/account-context.types";
 import {
   WorkspaceAvailability,
@@ -55,7 +56,11 @@ export class CurrentActorCapabilitiesController extends SecureController {
       accountContexts: [...actor.accountContexts],
       workspaceAvailability: buildWorkspaceAvailability({
         accountContexts: actor.accountContexts,
-        effectiveAccessTraceAvailable: true,
+        effectiveAccessTraceAvailable:
+          actor.isActive &&
+          actor.type === "admin" &&
+          actor.accountContexts.includes("ADMIN_CONSOLE") &&
+          actor.permissions.includes(Permission.ROLE_ASSIGNMENT_VIEW),
       }),
       generatedAt: new Date().toISOString(),
     };

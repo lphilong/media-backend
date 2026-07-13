@@ -518,6 +518,7 @@ function createActor(): Actor {
     scopeGrants: {
       commission: ["global"],
     },
+    accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
   });
 }

@@ -70,18 +70,27 @@ export interface ManagerWorkspaceContextView {
     };
     readonly workShifts: {
       readonly visible: boolean;
-      readonly reason?: "NO_MANAGED_SCOPE_ASSIGNED" | "MISSING_WORK_SCHEDULE_READ_CAPABILITY";
+      readonly reason?:
+        | "NO_MANAGED_SCOPE_ASSIGNED"
+        | "NO_MANAGER_RESPONSIBILITY_ASSIGNED"
+        | "NO_STRUCTURED_SCOPE_ASSIGNED"
+        | "MISSING_WORK_SCHEDULE_READ_CAPABILITY";
     };
     readonly events: {
       readonly visible: boolean;
       readonly reason?:
         | "NO_MANAGED_SCOPE_ASSIGNED"
+        | "NO_MANAGER_RESPONSIBILITY_ASSIGNED"
+        | "NO_STRUCTURED_SCOPE_ASSIGNED"
         | "MISSING_EVENT_READ_CAPABILITY";
     };
     readonly revenueSource: {
       readonly visible: boolean;
       readonly reason?:
         | "NO_MANAGED_SCOPE_ASSIGNED"
+        | "NO_MANAGER_RESPONSIBILITY_ASSIGNED"
+        | "NO_STRUCTURED_SCOPE_ASSIGNED"
+        | "MISSING_TALENT_GROUP_PREREQUISITE"
         | "MISSING_REVENUE_SOURCE_SUBMIT_CAPABILITY";
     };
     readonly members: {
@@ -145,6 +154,8 @@ export class ManagerWorkspaceAdminService {
         this.filterOrgUnitAssignments(actor, managedScope.orgUnitScopes),
         this.filterTalentGroupIds(actor, managedScope.talentGroupIds),
       ]);
+    const hasManagedResponsibility =
+      managedScope.orgUnitScopes.length + managedScope.talentGroupIds.length > 0;
     const refs = await this.loadScopeRefs(
       authorizedOrgUnitAssignments,
       authorizedTalentGroupAssignments,
@@ -173,6 +184,9 @@ export class ManagerWorkspaceAdminService {
       talentGroups.some((scope) => scope.capabilities.kpi.read);
     const visible = unitKpiVisible || talentGroupKpiVisible;
     const hasManagedAssignment = orgUnits.length + talentGroups.length > 0;
+    const missingAuthorityReason = !hasManagedResponsibility
+      ? "NO_MANAGER_RESPONSIBILITY_ASSIGNED"
+      : "NO_STRUCTURED_SCOPE_ASSIGNED";
     const [workShiftsVisible, eventsVisible, revenueSourceVisible] =
       await Promise.all([
         hasStructuredModuleScope(
@@ -199,8 +213,8 @@ export class ManagerWorkspaceAdminService {
     const reasons = visible
       ? []
       : [
-          orgUnits.length + talentGroups.length === 0
-            ? "NO_MANAGED_SCOPE_ASSIGNED"
+          !hasManagedAssignment
+            ? missingAuthorityReason
             : "MISSING_KPI_MANAGER_CAPABILITY",
         ];
 
@@ -227,7 +241,7 @@ export class ManagerWorkspaceAdminService {
               visible: false,
               reason: hasManagedAssignment
                 ? "MISSING_WORK_SCHEDULE_READ_CAPABILITY"
-                : "NO_MANAGED_SCOPE_ASSIGNED",
+                : missingAuthorityReason,
             },
         events: eventsVisible
           ? { visible: true }
@@ -235,7 +249,7 @@ export class ManagerWorkspaceAdminService {
               visible: false,
               reason: hasManagedAssignment
                 ? "MISSING_EVENT_READ_CAPABILITY"
-                : "NO_MANAGED_SCOPE_ASSIGNED",
+                : missingAuthorityReason,
             },
         revenueSource: revenueSourceVisible
           ? { visible: true }
@@ -244,7 +258,9 @@ export class ManagerWorkspaceAdminService {
               reason:
                 talentGroups.length > 0
                   ? "MISSING_REVENUE_SOURCE_SUBMIT_CAPABILITY"
-                  : "NO_MANAGED_SCOPE_ASSIGNED",
+                  : hasManagedAssignment
+                    ? "MISSING_TALENT_GROUP_PREREQUISITE"
+                    : missingAuthorityReason,
             },
         members: disabledModule(),
       },

@@ -28,3 +28,9 @@ export class ResponsibilityStateError extends BaseAppError {
     super("RESPONSIBILITY_STATE_ERROR", message, message, 409);
   }
 }
+
+export class ResponsibilityPermissionScopeError extends BaseAppError {
+  constructor(message = "Responsibility assignment is outside the actor's structured scope") {
+    super("RESPONSIBILITY_PERMISSION_SCOPE_ERROR", message, "Permission denied", 403);
+  }
+}

@@ -16,6 +16,10 @@ export interface ResponsibilityAssignmentFilters {
   readonly active?: boolean;
   readonly asOf: number;
   readonly limit?: number;
+  readonly authorizedSubjects?: readonly {
+    readonly subjectType: ResponsibilitySubjectType;
+    readonly subjectId?: string;
+  }[];
 }
 
 export interface UpdateResponsibilityAssignmentInput {
@@ -35,7 +39,7 @@ export interface RevokeResponsibilityAssignmentInput {
   readonly assignmentId: string;
   readonly revokedAt: number;
   readonly revokedBy: string;
-  readonly revokedReason: string | null;
+  readonly revokedReason: string;
 }
 
 export interface ResponsibilityAssignmentRepository {

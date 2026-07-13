@@ -492,6 +492,11 @@ export class KpiAdminService {
   ): Promise<KpiPlanDetailView> {
     this.assertContextPermission(actor, Permission.KPI_READ);
     const plan = await this.requirePlan(query.kpiPlanId);
+    if (plan.subjectType === "TALENT") {
+      throw new KpiPermissionScopeError(
+        "KPI plan detail does not support retired TALENT subjects",
+      );
+    }
     if (this.hasKpiGlobalScope(actor)) {
       await this.requireKpiGlobalStructuredAuthority(
         actor,

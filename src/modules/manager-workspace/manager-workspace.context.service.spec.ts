@@ -78,7 +78,7 @@ test("manager Event detail returns completion evidence as read-only summary", as
           status: "COMPLETED",
           eventStartAt: now,
           eventEndAt: now + 3_600_000,
-          owner: { id: "ep-owner", displayName: "Owner" },
+          owner: { id: "ep-owner", displayName: "Owner", status: "ACTIVE" },
           participants: [],
           completionEvidence: {
             completedAt: now + 3_600_000,
@@ -107,6 +107,7 @@ test("manager Event detail returns completion evidence as read-only summary", as
   );
 
   assert.equal(result.completionEvidence?.evidenceNote, "Delivered recap package.");
+  assert.equal(result.owner?.status, "ACTIVE");
   assert.equal("completeEvent" in service, false);
   assert.equal("updateCompletionEvidence" in service, false);
 });
@@ -219,10 +220,16 @@ test("manager workspace context shows readiness empty state with active profile 
 
   assert.equal(context.employmentProfile?.id, "ep-manager");
   assert.equal(context.readiness.canUseManagerWorkspace, true);
-  assert.deepEqual(context.readiness.reasons, ["NO_MANAGED_SCOPE_ASSIGNED"]);
+  assert.deepEqual(context.readiness.reasons, [
+    "NO_MANAGER_RESPONSIBILITY_ASSIGNED",
+  ]);
   assert.equal(context.scopes.orgUnits.length, 0);
   assert.equal(context.scopes.talentGroups.length, 0);
   assert.equal(context.modules.kpi.visible, false);
+  assert.deepEqual(context.modules.events, {
+    visible: false,
+    reason: "NO_MANAGER_RESPONSIBILITY_ASSIGNED",
+  });
 });
 
 test("OrgUnit-only manager context exposes Unit KPI only", async () => {
@@ -352,7 +359,9 @@ test("role/capability without assignment does not expose module data", async () 
   assert.equal(context.modules.kpi.visible, false);
   assert.equal(context.scopes.orgUnits.length, 0);
   assert.equal(context.scopes.talentGroups.length, 0);
-  assert.deepEqual(context.readiness.reasons, ["NO_MANAGED_SCOPE_ASSIGNED"]);
+  assert.deepEqual(context.readiness.reasons, [
+    "NO_MANAGER_RESPONSIBILITY_ASSIGNED",
+  ]);
 });
 
 test("business assignment without matching structured scope does not expose manager context authority", async () => {
@@ -378,7 +387,11 @@ test("business assignment without matching structured scope does not expose mana
   assert.equal(context.modules.kpi.visible, false);
   assert.equal(context.scopes.orgUnits.length, 0);
   assert.equal(context.scopes.talentGroups.length, 0);
-  assert.deepEqual(context.readiness.reasons, ["NO_MANAGED_SCOPE_ASSIGNED"]);
+  assert.deepEqual(context.readiness.reasons, ["NO_STRUCTURED_SCOPE_ASSIGNED"]);
+  assert.deepEqual(context.modules.events, {
+    visible: false,
+    reason: "NO_STRUCTURED_SCOPE_ASSIGNED",
+  });
 });
 
 test("inactive actor does not gain manager context authority from role name or assignments", async () => {
@@ -394,7 +407,7 @@ test("inactive actor does not gain manager context authority from role name or a
   assert.equal(context.modules.kpi.visible, false);
   assert.equal(context.scopes.orgUnits.length, 0);
   assert.equal(context.scopes.talentGroups.length, 0);
-  assert.deepEqual(context.readiness.reasons, ["NO_MANAGED_SCOPE_ASSIGNED"]);
+  assert.deepEqual(context.readiness.reasons, ["NO_STRUCTURED_SCOPE_ASSIGNED"]);
 });
 
 test("terminated linked EmploymentProfile fail-closes manager workspace context", async () => {

@@ -298,7 +298,7 @@ test("master-data Org Unit parent refs enrich list/detail without dropping raw I
   });
 });
 
-test("master-data Employment Profile refs enrich org, manager, attribution, and linked user safely", async () => {
+test("master-data Employment Profile refs enrich org, attribution, and linked user safely", async () => {
   const calls: FindCall[] = [];
   const repository = new NativeMongoEmploymentProfileReadRepository({
     collection(name: string) {
@@ -325,8 +325,7 @@ test("master-data Employment Profile refs enrich org, manager, attribution, and 
     name: "Sales",
     status: "ACTIVE",
   });
-  assert.equal(list.items[0].managerEmploymentProfileId, "ep-manager");
-  assert.deepEqual(list.items[0].managerEmploymentProfileRef, {
+  assert.deepEqual(list.items[0].recruiterEmploymentProfileRef, {
     id: "ep-manager",
     code: "EP-1",
     displayName: "Alice",
@@ -334,10 +333,6 @@ test("master-data Employment Profile refs enrich org, manager, attribution, and 
     status: "ACTIVE",
   });
   assert.equal(list.items[0].recruiterEmploymentProfileId, "ep-manager");
-  assert.deepEqual(
-    list.items[0].recruiterEmploymentProfileRef,
-    list.items[0].managerEmploymentProfileRef,
-  );
   assert.equal(
     list.items[0].recruiterEmploymentProfileRef?.displayName,
     "Alice",
@@ -348,19 +343,15 @@ test("master-data Employment Profile refs enrich org, manager, attribution, and 
   );
   assert.deepEqual(
     detail?.hrOwnerEmploymentProfileRef,
-    list.items[0].managerEmploymentProfileRef,
+    list.items[0].recruiterEmploymentProfileRef,
   );
   assert.deepEqual(
     detail?.onboardingOwnerEmploymentProfileRef,
-    list.items[0].managerEmploymentProfileRef,
+    list.items[0].recruiterEmploymentProfileRef,
   );
   assert.equal(detail?.sourcedByEmploymentProfileRef, null);
   assert.equal(list.items[0].linkedUserId, "missing-user");
   assert.equal(list.items[0].linkedUserRef, null);
-  assert.deepEqual(
-    detail?.managerEmploymentProfileRef,
-    list.items[0].managerEmploymentProfileRef,
-  );
   assert.equal(
     EmploymentProfileAdminDetailExposure.expose(detail!).linkedUserRef !==
       undefined,
@@ -373,7 +364,7 @@ test("master-data Employment Profile refs enrich org, manager, attribution, and 
   assert.equal(calls.filter((call) => call.collection === "users").length, 2);
 });
 
-test("master-data Talent refs enrich manager and linked employment profile in one batch", async () => {
+test("master-data Talent refs enrich linked employment profile in one batch", async () => {
   const calls: FindCall[] = [];
   const repository = new NativeMongoTalentReadRepository({
     collection(name: string) {
@@ -390,9 +381,7 @@ test("master-data Talent refs enrich manager and linked employment profile in on
   const list = await repository.listTalents({ limit: 10 });
   const detail = await repository.getTalentDetail("talent-1");
 
-  assert.equal(list.items[0].managerEmploymentProfileId, "ep-manager");
   assert.equal(list.items[0].linkedEmploymentProfileId, "ep-child");
-  assert.equal(list.items[0].managerEmploymentProfileRef?.code, "EP-1");
   assert.equal(list.items[0].linkedEmploymentProfileRef?.code, "EP-2");
   assert.equal(list.items[0].displayName, "Bao");
   assert.equal(list.items[0].performanceAlias, "Mina Performance Alias");

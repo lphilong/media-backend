@@ -19,6 +19,13 @@ import { Permission } from "@core/permission/permission.enum";
 import { bindTraceId } from "@core/trace/trace.context";
 import { NativeMongoResponsibilityAssignmentRepository } from "@infra/mongo/responsibility/responsibility.repository";
 import { ReferenceSummary } from "@modules/reference-summary";
+import { RoleAssignmentScopeGrant } from "@modules/role/domain/role-assignment-scope";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
+import {
+  ResponsibilityNotFoundError,
+  ResponsibilityPermissionScopeError,
+  ResponsibilityValidationError,
+} from "@modules/responsibility/domain/responsibility.errors";
 import {
   ResponsibilityAssignmentFilters,
   ResponsibilityAssignmentRepository,
@@ -43,6 +50,10 @@ test("central responsibility create writes only responsibility assignment state"
     repository,
     audit as unknown as AuditGuard,
     mutationBridge,
+    createStructuredAuthority(
+      Permission.EMPLOYMENT_PROFILE_MANAGE_MANAGER_ASSIGNMENT,
+      [{ scopeType: "global" }],
+    ),
     () => NOW,
   );
 
@@ -151,6 +162,147 @@ test("central responsibility managed scope resolves groups and descendant org un
   ]);
 });
 
+test("generic responsibility list filters in the repository to exact structured subjects", async () => {
+  const repository = new InMemoryResponsibilityRepository();
+  repository.records.push(
+    responsibilityRecord("group-allowed", "TALENT_GROUP"),
+    responsibilityRecord("group-hidden", "TALENT_GROUP"),
+  );
+  const service = createResponsibilityService(
+    repository,
+    Permission.TALENT_GROUP_READ,
+    [{ scopeType: "managedTalentGroup", targetId: "group-allowed" }],
+  );
+
+  const result = await service.listAssignments(
+    createActor([Permission.TALENT_GROUP_READ]),
+    { subjectType: "TALENT_GROUP" },
+  );
+
+  assert.deepEqual(result.items.map((item) => item.subjectId), ["group-allowed"]);
+  assert.deepEqual(repository.lastListFilters?.authorizedSubjects, [
+    { subjectType: "TALENT_GROUP", subjectId: "group-allowed" },
+  ]);
+});
+
+test("generic responsibility detail conceals records outside exact structured scope", async () => {
+  const repository = new InMemoryResponsibilityRepository();
+  const allowed = responsibilityRecord("group-allowed", "TALENT_GROUP");
+  const hidden = responsibilityRecord("group-hidden", "TALENT_GROUP");
+  repository.records.push(allowed, hidden);
+  const service = createResponsibilityService(
+    repository,
+    Permission.TALENT_GROUP_READ,
+    [{ scopeType: "managedTalentGroup", targetId: "group-allowed" }],
+  );
+  const actor = createActor([Permission.TALENT_GROUP_READ]);
+
+  assert.equal((await service.getAssignment(actor, allowed.id)).subjectId, "group-allowed");
+  await assert.rejects(service.getAssignment(actor, hidden.id), ResponsibilityNotFoundError);
+});
+
+test("generic responsibility create requires permission and the same active structured assignment", async () => {
+  const repository = new InMemoryResponsibilityRepository();
+  const command = {
+    subjectType: "TALENT_GROUP",
+    subjectId: "group-allowed",
+    responsibleEmploymentProfileId: "ep-manager",
+    responsibilityType: "TALENT_GROUP_MANAGER",
+  };
+  const permissionOnly = createResponsibilityService(
+    repository,
+    Permission.TALENT_GROUP_UPDATE,
+    [],
+  );
+  await assert.rejects(
+    bindTraceId("trace-responsibility-permission-only", () =>
+      permissionOnly.createAssignment(
+        createActor([Permission.TALENT_GROUP_UPDATE]),
+        command,
+      ),
+    ),
+    ResponsibilityPermissionScopeError,
+  );
+
+  const scopeWithoutPermission = createResponsibilityService(
+    repository,
+    Permission.TALENT_GROUP_UPDATE,
+    [{ scopeType: "managedTalentGroup", targetId: "group-allowed" }],
+  );
+  await assert.rejects(
+    bindTraceId("trace-responsibility-scope-only", () =>
+      scopeWithoutPermission.createAssignment(createActor([]), command),
+    ),
+  );
+});
+
+test("generic responsibility rejects inactive role and future, expired, or revoked assignments", async () => {
+  const command = {
+    subjectType: "TALENT_GROUP",
+    subjectId: "group-allowed",
+    responsibleEmploymentProfileId: "ep-manager",
+    responsibilityType: "TALENT_GROUP_MANAGER",
+  };
+  const invalidAuthorities = [
+    { roleState: "INACTIVE", effectiveAt: 0, expiresAt: null, state: "ACTIVE", revokedAt: null },
+    { roleState: "ACTIVE", effectiveAt: NOW + 1, expiresAt: null, state: "ACTIVE", revokedAt: null },
+    { roleState: "ACTIVE", effectiveAt: 0, expiresAt: NOW - 1, state: "ACTIVE", revokedAt: null },
+    { roleState: "ACTIVE", effectiveAt: 0, expiresAt: null, state: "REVOKED", revokedAt: NOW - 1 },
+  ] as const;
+
+  for (const authorityOptions of invalidAuthorities) {
+    const service = createResponsibilityService(
+      new InMemoryResponsibilityRepository(),
+      Permission.TALENT_GROUP_UPDATE,
+      [{ scopeType: "managedTalentGroup", targetId: "group-allowed" }],
+      authorityOptions,
+    );
+    await assert.rejects(
+      bindTraceId(`trace-responsibility-${authorityOptions.roleState}-${authorityOptions.state}`, () =>
+        service.createAssignment(createActor([Permission.TALENT_GROUP_UPDATE]), command),
+      ),
+      ResponsibilityPermissionScopeError,
+    );
+  }
+});
+
+test("generic responsibility update and revoke enforce exact scope and audit a trimmed required reason", async () => {
+  const repository = new InMemoryResponsibilityRepository();
+  repository.records.push(responsibilityRecord("group-allowed", "TALENT_GROUP"));
+  const audit = new RecordingAudit();
+  const service = createResponsibilityService(
+    repository,
+    Permission.TALENT_GROUP_UPDATE,
+    [{ scopeType: "managedTalentGroup", targetId: "group-allowed" }],
+    {},
+    audit,
+  );
+  const actor = createActor([Permission.TALENT_GROUP_UPDATE]);
+  const assignmentId = repository.records[0]!.id;
+
+  await bindTraceId("trace-responsibility-update", () =>
+    service.updateAssignment(actor, { assignmentId, responsibilityRole: "LEAD" }),
+  );
+  await assert.rejects(
+    bindTraceId("trace-responsibility-revoke-blank", () =>
+      service.revokeAssignment(actor, { assignmentId, reason: "   " }),
+    ),
+    ResponsibilityValidationError,
+  );
+  const revoked = await bindTraceId("trace-responsibility-revoke", () =>
+    service.revokeAssignment(actor, {
+      assignmentId,
+      reason: "  responsibility ended  ",
+    }),
+  );
+
+  assert.equal(revoked.revokedReason, "responsibility ended");
+  assert.equal(
+    audit.records[audit.records.length - 1]?.metadata.reason,
+    "responsibility ended",
+  );
+});
+
 function createActor(permissions: readonly Permission[]): Actor {
   return new Actor({
     id: "admin-user",
@@ -162,6 +314,102 @@ function createActor(permissions: readonly Permission[]): Actor {
     accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
   });
+}
+
+function createStructuredAuthority(
+  permission: Permission,
+  grants: readonly RoleAssignmentScopeGrant[],
+  options: {
+    readonly state?: "ACTIVE" | "REVOKED";
+    readonly effectiveAt?: number;
+    readonly expiresAt?: number | null;
+    readonly revokedAt?: number | null;
+    readonly roleState?: string;
+  } = {},
+): StructuredScopeAuthorityService {
+  return new StructuredScopeAuthorityService(
+    {
+      async listByUserId(userId) {
+        return [
+          {
+            assignment: {
+              assignmentId: `assignment-${userId}`,
+              roleId: "role-responsibility-test",
+              userId,
+              structuredScopeGrants: grants,
+              state: options.state ?? "ACTIVE",
+              effectiveAt: options.effectiveAt ?? 0,
+              expiresAt: options.expiresAt ?? null,
+              revokedAt: options.revokedAt ?? null,
+              reason: "test authority",
+              createdAt: 0,
+              updatedAt: 0,
+            },
+            role: {
+              id: "role-responsibility-test",
+              state: options.roleState ?? "ACTIVE",
+              permissions: [permission],
+            },
+          },
+        ];
+      },
+    },
+    () => NOW,
+  );
+}
+
+function createResponsibilityService(
+  repository: InMemoryResponsibilityRepository,
+  permission: Permission,
+  grants: readonly RoleAssignmentScopeGrant[],
+  authorityOptions: Parameters<typeof createStructuredAuthority>[2] = {},
+  audit: RecordingAudit = new RecordingAudit(),
+): ResponsibilityAdminService {
+  return new ResponsibilityAdminService(
+    repository,
+    audit as unknown as AuditGuard,
+    new RecordingMutationBridge(),
+    createStructuredAuthority(permission, grants, authorityOptions),
+    () => NOW,
+  );
+}
+
+function responsibilityRecord(
+  subjectId: string,
+  subjectType: ResponsibilitySubjectType,
+): ResponsibilityAssignmentRecord {
+  const responsibilityType: ResponsibilityType =
+    subjectType === "TALENT_GROUP"
+      ? "TALENT_GROUP_MANAGER"
+      : subjectType === "ORG_UNIT"
+        ? "ORG_UNIT_MANAGER"
+        : subjectType === "TALENT"
+          ? "TALENT_DIRECT_MANAGER"
+          : "EMPLOYMENT_REPORTING_MANAGER";
+  return {
+    id: `responsibility-${subjectType}-${subjectId}`,
+    subjectType,
+    subjectId,
+    responsibleEmploymentProfileId: "ep-manager",
+    responsibilityType,
+    responsibilityRole: "MANAGER",
+    includeDescendants: false,
+    actionMask: [],
+    isPrimary: false,
+    status: "ACTIVE",
+    effectiveAt: 0,
+    expiresAt: null,
+    revokedAt: null,
+    reason: null,
+    createdBy: "seed",
+    createdAt: 0,
+    updatedBy: "seed",
+    updatedAt: 0,
+    revokedBy: null,
+    revokedReason: null,
+    reviewNeeded: false,
+    reviewReason: null,
+  };
 }
 
 class RecordingMutationBridge implements AuthoritativeAdminMutationBridge {
@@ -203,8 +451,27 @@ class RecordingAudit {
 
 class InMemoryResponsibilityRepository implements ResponsibilityAssignmentRepository {
   readonly records: ResponsibilityAssignmentRecord[] = [];
+  lastListFilters: ResponsibilityAssignmentFilters | undefined;
 
   private readonly refs = new Map<string, ReferenceSummary>([
+    [
+      "TALENT_GROUP:group-allowed",
+      {
+        id: "group-allowed",
+        code: "TG-000001",
+        name: "Allowed Group",
+        status: "ACTIVE",
+      },
+    ],
+    [
+      "TALENT_GROUP:group-hidden",
+      {
+        id: "group-hidden",
+        code: "TG-000002",
+        name: "Hidden Group",
+        status: "ACTIVE",
+      },
+    ],
     [
       "EMPLOYMENT_PROFILE:ep-target",
       {
@@ -235,6 +502,7 @@ class InMemoryResponsibilityRepository implements ResponsibilityAssignmentReposi
   async listNormalized(
     filters: ResponsibilityAssignmentFilters,
   ): Promise<readonly ResponsibilityAssignmentView[]> {
+    this.lastListFilters = filters;
     return Promise.all(
       this.records
         .filter((record) => matchesAssignmentFilter(record, filters))
@@ -270,15 +538,33 @@ class InMemoryResponsibilityRepository implements ResponsibilityAssignmentReposi
   }
 
   async update(
-    _input: UpdateResponsibilityAssignmentInput,
+    input: UpdateResponsibilityAssignmentInput,
   ): Promise<ResponsibilityAssignmentRecord | null> {
-    throw new Error("Not implemented");
+    const index = this.records.findIndex((record) => record.id === input.assignmentId);
+    if (index < 0) return null;
+    const updated = { ...this.records[index]!, ...input };
+    this.records[index] = updated;
+    return updated;
   }
 
   async revoke(
-    _input: RevokeResponsibilityAssignmentInput,
+    input: RevokeResponsibilityAssignmentInput,
   ): Promise<ResponsibilityAssignmentRecord | null> {
-    throw new Error("Not implemented");
+    const index = this.records.findIndex(
+      (record) => record.id === input.assignmentId && record.status === "ACTIVE",
+    );
+    if (index < 0) return null;
+    const revoked: ResponsibilityAssignmentRecord = {
+      ...this.records[index]!,
+      status: "REVOKED",
+      revokedAt: input.revokedAt,
+      revokedBy: input.revokedBy,
+      revokedReason: input.revokedReason,
+      updatedAt: input.revokedAt,
+      updatedBy: input.revokedBy,
+    };
+    this.records[index] = revoked;
+    return revoked;
   }
 
   async listInheritedForTalent(): Promise<readonly ResponsibilityAssignmentView[]> {
@@ -327,6 +613,12 @@ function matchesAssignmentFilter(
     (!filters.responsibleEmploymentProfileId ||
       record.responsibleEmploymentProfileId === filters.responsibleEmploymentProfileId) &&
     (!filters.status || record.status === filters.status) &&
+    (filters.authorizedSubjects === undefined ||
+      filters.authorizedSubjects.some(
+        (subject) =>
+          subject.subjectType === record.subjectType &&
+          (subject.subjectId === undefined || subject.subjectId === record.subjectId),
+      )) &&
     (filters.active !== true ||
       (record.status === "ACTIVE" &&
         record.effectiveAt <= filters.asOf &&

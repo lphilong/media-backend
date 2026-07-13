@@ -17,6 +17,7 @@ function createActor(permissions: readonly Permission[]): Actor {
     id: "user-manager",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: ["TEAM_MANAGER"],
     permissions,
     scopeGrants: {
@@ -44,9 +45,13 @@ function createManagedScopeDependencies(params?: {
           : null;
       },
     },
-    managerAssignmentRepository: {
-      async listActiveAssignmentsByManagerEmploymentProfile() {
-        return groupIds.map((groupId) => ({ groupId }));
+    managedScopeReader: {
+      async resolveManagedScopeByResponsibleEmploymentProfile() {
+        return {
+          talentGroupIds: groupIds,
+          orgUnitIds: [],
+          orgUnitScopes: [],
+        };
       },
     },
   } as never;

@@ -783,7 +783,6 @@ function userDetail(params: {
 }): UserDetailView {
   return {
     id: params.id,
-    actorKind: "STAFF",
     accountStatus: "ACTIVE",
     authLinkage: {
       provider: "auth0",

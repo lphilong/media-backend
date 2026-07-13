@@ -18,6 +18,7 @@ import type {
 import { parseGeneratedBusinessCodeSequence } from "@core/business-code/business-code-sequence.repository";
 import { Permission } from "@core/permission/permission.enum";
 import { bindTraceId } from "@core/trace/trace.context";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import { ContractRegistryAdminService } from "@modules/contract-registry/admin/admin.contract-registry.service";
 import { CONTRACT_RECORD_CONTRACT_CODE_UNIQ_INDEX_NAME } from "@infra/mongo/contract-registry/contract-registry.index";
 import { ContractRegistryConflictError } from "@modules/contract-registry/domain/contract-registry.errors";
@@ -61,6 +62,18 @@ const logger = {
   error() {},
   debug() {},
 } as never;
+
+class AllowAllStructuredAuthorityService extends StructuredScopeAuthorityService {
+  constructor() {
+    super({ async listByUserId() { return []; } });
+  }
+
+  override async hasAuthority(): Promise<boolean> {
+    return true;
+  }
+}
+
+const structuredAuthority = new AllowAllStructuredAuthorityService();
 
 class MemoryBusinessCodeSequenceRepository
   implements BusinessCodeSequenceRepository
@@ -134,6 +147,7 @@ test("Phase 2B modules generate, trim, preserve, retry, and keep business codes 
         { async findById() { return { id: "platform-1", operationalStatus: "ACTIVE", livestreamEnabled: true, contentPublishingEnabled: true }; } } as never,
         audit,
         mutationBridge,
+        structuredAuthority,
         logger,
       );
 
@@ -321,6 +335,7 @@ test("Phase 2B modules generate, trim, preserve, retry, and keep business codes 
         { async findFinalizedSettlementReferenceByRevenueEntryId() { return null; } } as never,
         audit,
         mutationBridge,
+        structuredAuthority,
         logger,
       );
 
@@ -407,6 +422,7 @@ function createActor(): Actor {
     id: "admin-user-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [
       Permission.EVENT_CREATE,
@@ -970,9 +986,18 @@ function createBaseRevenueEntry(
     normalizedTitle: "revenue",
     subjectTalentId: "talent-1",
     attributionPlatformAccountId: "platform-1",
+    attributionTalentGroupId: null,
+    attributionEmploymentProfileId: null,
     attributionEventId: "event-1",
     revenueKind: "PLATFORM_CONTENT",
     entrySource: "MANUAL",
+    sourceBatchIds: [],
+    sourceSummaryRef: null,
+    sourceLineCount: null,
+    sourceSummarySnapshot: null,
+    conversionSnapshot: null,
+    platformCutSnapshot: null,
+    commissionableBasisSnapshot: null,
     status: "DRAFT",
     currencyCode: "USD",
     recognizedAmount: 123.45,

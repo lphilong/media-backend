@@ -19,6 +19,7 @@ import {
 import {
   ResponsibilityConflictError,
   ResponsibilityNotFoundError,
+  ResponsibilityPermissionScopeError,
   ResponsibilityStateError,
   ResponsibilityValidationError,
 } from "@modules/responsibility/domain/responsibility.errors";
@@ -37,12 +38,15 @@ import {
   RevokeResponsibilityAssignmentCommand,
   UpdateResponsibilityAssignmentCommand,
 } from "@modules/responsibility/domain/responsibility.types";
+import { RoleAssignmentScopeGrant } from "@modules/role/domain/role-assignment-scope";
+import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
 export class ResponsibilityAdminService {
   constructor(
     private readonly repository: ResponsibilityAssignmentRepository,
     private readonly audit: AuditGuard,
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
+    private readonly structuredAuthority: StructuredScopeAuthorityService,
     private readonly clock: () => number = Date.now,
   ) {}
 
@@ -50,9 +54,29 @@ export class ResponsibilityAdminService {
     actor: Actor,
     query: ResponsibilityAssignmentListQuery,
   ): Promise<ResponsibilityAssignmentListResult> {
-    this.assertPermission(actor, Permission.EMPLOYMENT_PROFILE_READ);
+    PermissionGuard.assertAdminActor(actor);
+    const normalizedQuery = normalizeListQuery(query, this.clock());
+    if (normalizedQuery.subjectType) {
+      this.assertPermission(
+        actor,
+        readPermissionForSubject(normalizedQuery.subjectType),
+      );
+    } else if (
+      !RESPONSIBILITY_SUBJECT_TYPES.some((subjectType) =>
+        actor.permissions.includes(readPermissionForSubject(subjectType)),
+      )
+    ) {
+      this.assertPermission(actor, Permission.EMPLOYMENT_PROFILE_READ);
+    }
+    const authorizedSubjects = await this.listAuthorizedSubjects(
+      actor,
+      normalizedQuery.subjectType,
+    );
     return {
-      items: await this.repository.listNormalized(normalizeListQuery(query, this.clock())),
+      items: await this.repository.listNormalized({
+        ...normalizedQuery,
+        authorizedSubjects,
+      }),
     };
   }
 
@@ -60,13 +84,19 @@ export class ResponsibilityAdminService {
     actor: Actor,
     assignmentId: string,
   ): Promise<ResponsibilityAssignmentView> {
-    this.assertPermission(actor, Permission.EMPLOYMENT_PROFILE_READ);
     const assignment = await this.repository.findNormalizedById(
       normalizeRequiredText(assignmentId, "assignmentId"),
     );
     if (!assignment) {
       throw new ResponsibilityNotFoundError(assignmentId);
     }
+    this.assertPermission(actor, readPermissionForSubject(assignment.subjectType));
+    await this.requireSubjectAuthority(
+      actor,
+      assignment,
+      readPermissionForSubject(assignment.subjectType),
+      true,
+    );
     return assignment;
   }
 
@@ -77,6 +107,11 @@ export class ResponsibilityAdminService {
     const normalized = normalizeCreateCommand(command, this.clock());
     const permission = this.assertPermission(
       actor,
+      permissionForWrite(normalized.subjectType, normalized.responsibilityType),
+    );
+    await this.requireSubjectAuthority(
+      actor,
+      normalized,
       permissionForWrite(normalized.subjectType, normalized.responsibilityType),
     );
 
@@ -142,6 +177,11 @@ export class ResponsibilityAdminService {
       actor,
       permissionForWrite(current.subjectType, current.responsibilityType),
     );
+    await this.requireSubjectAuthority(
+      actor,
+      current,
+      permissionForWrite(current.subjectType, current.responsibilityType),
+    );
     const patch = normalizeUpdateCommand(command);
 
     return this.executeMutation(
@@ -196,7 +236,12 @@ export class ResponsibilityAdminService {
       actor,
       permissionForWrite(current.subjectType, current.responsibilityType),
     );
-    const reason = normalizeNullableText(command.reason, "reason");
+    await this.requireSubjectAuthority(
+      actor,
+      current,
+      permissionForWrite(current.subjectType, current.responsibilityType),
+    );
+    const reason = normalizeRequiredText(command.reason, "reason");
 
     return this.executeMutation(
       actor,
@@ -244,6 +289,12 @@ export class ResponsibilityAdminService {
     subjectId: string,
   ): Promise<ResponsibilitySummaryResult> {
     this.assertPermission(actor, readPermissionForSubject(subjectType));
+    await this.requireSubjectAuthority(
+      actor,
+      { subjectType, subjectId },
+      readPermissionForSubject(subjectType),
+      true,
+    );
     const asOf = this.clock();
     const items = await this.repository.listNormalized({
       subjectType,
@@ -419,6 +470,55 @@ export class ResponsibilityAdminService {
     return permission;
   }
 
+  private async listAuthorizedSubjects(
+    actor: Actor,
+    requestedSubjectType?: ResponsibilitySubjectType,
+  ): Promise<readonly AuthorizedResponsibilitySubject[]> {
+    if (!actor.isActive) {
+      return [];
+    }
+    const subjectTypes = requestedSubjectType
+      ? [requestedSubjectType]
+      : [...RESPONSIBILITY_SUBJECT_TYPES];
+    const authorized = await Promise.all(
+      subjectTypes.map(async (subjectType) => {
+        const permission = readPermissionForSubject(subjectType);
+        if (!actor.permissions.includes(permission)) {
+          return [];
+        }
+        const grants = await this.structuredAuthority.listAuthorizedScopeGrants({
+          userId: actor.id,
+          permission,
+        });
+        return authorizedSubjectsFor(subjectType, grants);
+      }),
+    );
+    return authorized.flat();
+  }
+
+  private async requireSubjectAuthority(
+    actor: Actor,
+    subject: Pick<ResponsibilityAssignmentView, "subjectType" | "subjectId">,
+    permission: Permission,
+    concealExistence = false,
+  ): Promise<void> {
+    const grants = await this.structuredAuthority.listAuthorizedScopeGrants({
+      userId: actor.id,
+      permission,
+    });
+    const authorized = authorizedSubjectsFor(subject.subjectType, grants).some(
+      (candidate) =>
+        candidate.subjectType === subject.subjectType &&
+        (candidate.subjectId === undefined || candidate.subjectId === subject.subjectId),
+    );
+    if (!actor.isActive || !authorized) {
+      if (concealExistence) {
+        throw new ResponsibilityNotFoundError(subject.subjectId);
+      }
+      throw new ResponsibilityPermissionScopeError();
+    }
+  }
+
   private async executeMutation<T>(
     actor: Actor,
     permission: PermissionContract,
@@ -464,6 +564,34 @@ interface NormalizedUpdateResponsibility {
   readonly effectiveAt?: number;
   readonly expiresAt?: number | null;
   readonly reason?: string | null;
+}
+
+interface AuthorizedResponsibilitySubject {
+  readonly subjectType: ResponsibilitySubjectType;
+  readonly subjectId?: string;
+}
+
+function authorizedSubjectsFor(
+  subjectType: ResponsibilitySubjectType,
+  grants: readonly RoleAssignmentScopeGrant[],
+): readonly AuthorizedResponsibilitySubject[] {
+  if (grants.some((grant) => grant.scopeType === "global")) {
+    return [{ subjectType }];
+  }
+  const expectedScope =
+    subjectType === "TALENT_GROUP"
+      ? "managedTalentGroup"
+      : subjectType === "ORG_UNIT"
+        ? "managedOrgUnit"
+        : null;
+  if (!expectedScope) {
+    return [];
+  }
+  return grants
+    .filter(
+      (grant) => grant.scopeType === expectedScope && Boolean(grant.targetId),
+    )
+    .map((grant) => ({ subjectType, subjectId: grant.targetId! }));
 }
 
 function normalizeListQuery(

@@ -211,11 +211,16 @@ test("Org Unit responsibility update edits safe metadata and revoke deactivates"
     harness.service.revokeResponsibility(createActor(), {
       orgUnitId: "org-1",
       assignmentId: "assignment-1",
+      reason: "responsibility no longer applies",
     }),
   );
 
   assert.equal(revoked.status, "INACTIVE");
   assert.equal(revoked.effectiveTo, NOW);
+  assert.equal(
+    harness.audit.records[harness.audit.records.length - 1]?.metadata.reason,
+    "responsibility no longer applies",
+  );
 });
 
 test("Org Unit responsibility is visible to managed unit authority, while role template and reporting manager alone are not", async () => {
@@ -867,6 +872,8 @@ class InMemoryOrgUnitManagerAssignmentRepository
 }
 
 class FakeResponsibilityService {
+  private readonly revokedReasons = new Map<string, string>();
+
   constructor(private readonly repository: InMemoryOrgUnitManagerAssignmentRepository) {}
 
   async getSummaryForSubject(
@@ -977,8 +984,9 @@ class FakeResponsibilityService {
 
   async revokeAssignment(
     _actor: Actor,
-    command: { readonly assignmentId: string },
+    command: { readonly assignmentId: string; readonly reason: string },
   ): Promise<ResponsibilityAssignmentView> {
+    this.revokedReasons.set(command.assignmentId, command.reason);
     const revoked = await this.repository.revokeAssignment({
       assignmentId: command.assignmentId,
       effectiveTo: NOW,
@@ -988,11 +996,12 @@ class FakeResponsibilityService {
     if (!revoked) {
       throw new OrgUnitNotFoundError(command.assignmentId);
     }
-    return this.toView(revoked);
+    return this.toView(revoked, this.revokedReasons.get(command.assignmentId));
   }
 
   private toView(
     assignment: OrgUnitManagerAssignment,
+    revokedReason: string | undefined = undefined,
   ): ResponsibilityAssignmentView {
     const candidate = this.repository.readCandidate(
       assignment.managerEmploymentProfileId,
@@ -1017,7 +1026,7 @@ class FakeResponsibilityService {
       updatedBy: assignment.updatedByActorId,
       updatedAt: assignment.updatedAt,
       revokedBy: assignment.status === "ACTIVE" ? null : assignment.updatedByActorId,
-      revokedReason: null,
+      revokedReason: revokedReason ?? null,
       reviewNeeded: false,
       reviewReason: null,
       subjectRef: {

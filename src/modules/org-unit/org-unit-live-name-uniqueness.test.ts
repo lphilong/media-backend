@@ -235,6 +235,7 @@ function createActor(): Actor {
     id: "admin-user-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: [],
     permissions: [
       Permission.ORG_UNIT_CREATE,

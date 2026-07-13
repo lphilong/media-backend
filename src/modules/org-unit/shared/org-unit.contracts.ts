@@ -71,6 +71,7 @@ export interface UpdateOrgUnitResponsibilityCommand {
 export interface RevokeOrgUnitResponsibilityCommand {
   readonly orgUnitId: string;
   readonly assignmentId: string;
+  readonly reason: string;
 }
 
 export interface GetOrgUnitDetailQuery {

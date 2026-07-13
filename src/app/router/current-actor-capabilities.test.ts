@@ -182,6 +182,10 @@ test("GET /admin/me/capabilities returns the current materialized admin actor sn
     });
     assert.deepEqual(body.data.accountContexts, ["ADMIN_CONSOLE"]);
     assert.equal(
+      body.data.workspaceAvailability.effectiveAccessTraceAvailable,
+      false,
+    );
+    assert.equal(
       body.data.workspaceAvailability.primaryWorkspace,
       "ADMIN_CONSOLE",
     );
@@ -333,7 +337,7 @@ test("GET /admin/me/capabilities does not mutate the bound actor", async () => {
     type: "admin",
     context: "ADMIN",
     roles: ["role-admin"],
-    permissions: [Permission.USER_VIEW],
+    permissions: [Permission.USER_VIEW, Permission.ROLE_ASSIGNMENT_VIEW],
     scopeGrants: { commission: ["global"] },
     accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
@@ -356,14 +360,18 @@ test("GET /admin/me/capabilities does not mutate the bound actor", async () => {
     const response = await fetch(
       `${baseUrl}/admin/me/capabilities`,
     );
-    await response.json();
+    const body = await response.json();
 
     assert.equal(response.status, 200);
     assert.deepEqual(actor.roles, ["role-admin"]);
-    assert.deepEqual(actor.permissions, ["user:view"]);
+    assert.deepEqual(actor.permissions, ["user:view", "role:assignment:view"]);
     assert.deepEqual(actor.scopeGrants, {
       commission: ["global"],
     });
+    assert.equal(
+      body.data.workspaceAvailability.effectiveAccessTraceAvailable,
+      true,
+    );
   } finally {
     await close(server);
   }

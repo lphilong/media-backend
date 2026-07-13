@@ -133,6 +133,7 @@ function createActor(permissions: readonly string[]): Actor {
     roles: [],
     permissions,
     scopeGrants: {},
+    accountContexts: ["ADMIN_CONSOLE"],
     isActive: true,
   });
 }

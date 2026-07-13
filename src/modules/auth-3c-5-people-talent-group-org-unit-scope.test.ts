@@ -710,6 +710,7 @@ test("OrgUnit lifecycle and responsibilities deny mismatched scope while create 
       deniedResponsibility.revokeResponsibility(actor, {
         orgUnitId: org.id,
         assignmentId: "assignment-1",
+        reason: "Scope authority regression proof",
       }),
     ),
     OrgUnitPermissionScopeError,

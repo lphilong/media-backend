@@ -57,8 +57,7 @@ test("WorkShift read separates self, managed targets, roster targets, and direct
   const service = new WorkScheduleAdminQueryService(
     readRepository as never,
     profiles as never,
-    { async listActiveAssignmentsByManagerEmploymentProfile() { return [{ groupId: "group-1" }]; } } as never,
-    { async listActiveByManagerEmploymentProfileId() { return [{ orgUnitId: "org-1" }]; } } as never,
+    managedScopeReader(["group-1"], ["org-1"]),
     authority([
       grant(Permission.WORK_SCHEDULE_READ, { scopeType: "self" }),
       grant(Permission.WORK_SCHEDULE_READ, { scopeType: "managedOrgUnit", targetId: "org-1" }),
@@ -77,8 +76,7 @@ test("WorkShift read separates self, managed targets, roster targets, and direct
     new WorkScheduleAdminQueryService(
       readRepository as never,
       profiles as never,
-      { async listActiveAssignmentsByManagerEmploymentProfile() { return []; } } as never,
-      { async listActiveByManagerEmploymentProfileId() { return []; } } as never,
+      managedScopeReader([], []),
       authority([grant(Permission.WORK_SCHEDULE_READ, { scopeType: "managedOrgUnit", targetId: "org-other" })]),
     ).getWorkShiftDetail(actor(), { workShiftId: "org" }),
     WorkSchedulePermissionScopeError,
@@ -120,8 +118,7 @@ test("WorkShift subject list excludes persisted roster targets outside OrgUnit m
       async findByLinkedUserId() { return profile("ep-manager", "org-manager"); },
       async findById(id: string) { return id === "ep-org" ? profile(id, "org-1") : null; },
     } as never,
-    { async listActiveAssignmentsByManagerEmploymentProfile() { return []; } } as never,
-    { async listActiveByManagerEmploymentProfileId() { return [{ orgUnitId: "org-1" }]; } } as never,
+    managedScopeReader([], ["org-1"]),
     authority([
       grant(Permission.WORK_SCHEDULE_READ, {
         scopeType: "managedOrgUnit",
@@ -170,12 +167,7 @@ test("WorkShift subject list requires matching persisted TalentGroup roster auth
     {
       async findByLinkedUserId() { return profile("ep-manager", "org-manager"); },
     } as never,
-    {
-      async listActiveAssignmentsByManagerEmploymentProfile() {
-        return [{ groupId: "group-a" }];
-      },
-    } as never,
-    { async listActiveByManagerEmploymentProfileId() { return []; } } as never,
+    managedScopeReader(["group-a"], []),
     authority([
       grant(Permission.WORK_SCHEDULE_READ, {
         scopeType: "managedTalentGroup",
@@ -231,8 +223,7 @@ test("WorkShift subject list fails closed for malformed roster-generated source 
       async findByLinkedUserId() { return profile("ep-manager", "org-manager"); },
       async findById(id: string) { return id === "ep-org" ? profile(id, "org-1") : null; },
     } as never,
-    { async listActiveAssignmentsByManagerEmploymentProfile() { return []; } } as never,
-    { async listActiveByManagerEmploymentProfileId() { return [{ orgUnitId: "org-1" }]; } } as never,
+    managedScopeReader([], ["org-1"]),
     authority([
       grant(Permission.WORK_SCHEDULE_READ, {
         scopeType: "managedOrgUnit",
@@ -330,8 +321,7 @@ test("WorkShift detail fails closed for roster-generated rows with missing or pa
       async findByLinkedUserId() { return profile("ep-manager", "org-manager"); },
       async findById(id: string) { return id === "ep-org" ? profile(id, "org-1") : null; },
     } as never,
-    { async listActiveAssignmentsByManagerEmploymentProfile() { return []; } } as never,
-    { async listActiveByManagerEmploymentProfileId() { return [{ orgUnitId: "org-1" }]; } } as never,
+    managedScopeReader([], ["org-1"]),
     authority([
       grant(Permission.WORK_SCHEDULE_READ, {
         scopeType: "managedOrgUnit",
@@ -421,7 +411,6 @@ test("WorkShift subject list denies direct Talent for scoped actors and preserve
       async findByLinkedUserId() { return profile("ep-manager", "org-manager"); },
     } as never,
     undefined,
-    undefined,
     authority([
       grant(Permission.WORK_SCHEDULE_READ, {
         scopeType: "managedTalentGroup",
@@ -459,7 +448,6 @@ test("WorkShift subject list denies direct Talent for scoped actors and preserve
     } as never,
     {} as never,
     undefined,
-    undefined,
     authority([
       grant(Permission.WORK_SCHEDULE_READ, { scopeType: "global" }),
     ]),
@@ -484,7 +472,7 @@ test("TalentGroup and OrgUnit broad lists intersect structured grants with activ
     } as never,
     {
       subjectReadonlyAccess: { async findActiveEmploymentProfileByLinkedUserId() { return { employmentProfileId: "ep-manager" }; } },
-      managerAssignmentRepository: { async listActiveAssignmentsByManagerEmploymentProfile() { return [{ groupId: "group-1" }, { groupId: "group-ungranted" }]; } },
+      managedScopeReader: managedScopeReader(["group-1", "group-ungranted"], []),
     } as never,
     authority([grant(Permission.TALENT_GROUP_READ, { scopeType: "managedTalentGroup", targetId: "group-1" })]),
   );
@@ -499,7 +487,7 @@ test("TalentGroup and OrgUnit broad lists intersect structured grants with activ
     authority([grant(Permission.ORG_UNIT_READ, { scopeType: "managedOrgUnit", targetId: "org-1" })]),
     {
       subjectReadonlyAccess: { async findActiveEmploymentProfileByLinkedUserId() { return { employmentProfileId: "ep-manager" }; } },
-      managerAssignmentRepository: { async listActiveByManagerEmploymentProfileId() { return [{ orgUnitId: "org-1" }, { orgUnitId: "org-ungranted" }]; } },
+      managedScopeReader: managedScopeReader([], ["org-1", "org-ungranted"]),
     } as never,
   );
   await orgService.listOrgUnits(actor(), {});
@@ -582,6 +570,7 @@ function actor(): Actor {
     id: "admin-1",
     type: "admin",
     context: "ADMIN",
+    accountContexts: ["ADMIN_CONSOLE"],
     roles: ["MANAGER"],
     permissions: Object.values(Permission),
     scopeGrants: { workSchedule: ["global"], eventAssignment: ["global"], kpi: ["managedGroup"] },
@@ -739,16 +728,7 @@ function scopedWorkShiftService(
         return id === "ep-org" ? profile(id, "org-1") : null;
       },
     } as never,
-    {
-      async listActiveAssignmentsByManagerEmploymentProfile() {
-        return [];
-      },
-    } as never,
-    {
-      async listActiveByManagerEmploymentProfileId() {
-        return [{ orgUnitId: "org-1" }];
-      },
-    } as never,
+    managedScopeReader([], ["org-1"]),
     authority([
       grant(Permission.WORK_SCHEDULE_READ, {
         scopeType: "managedOrgUnit",
@@ -756,4 +736,15 @@ function scopedWorkShiftService(
       }),
     ]),
   );
+}
+
+function managedScopeReader(
+  talentGroupIds: readonly string[],
+  orgUnitIds: readonly string[],
+) {
+  return {
+    async resolveManagedScopeByResponsibleEmploymentProfile() {
+      return { talentGroupIds, orgUnitIds, orgUnitScopes: [] };
+    },
+  } as never;
 }
