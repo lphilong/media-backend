@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ClientSession } from "mongodb";
 import { Actor } from "@core/actor/actor";
-import { AuditGuard } from "@core/audit/audit.guard";
-import { AuthoritativeAdminMutationBridge } from "@core/application/authoritative-admin-mutation.bridge";
-import { bindTraceId } from "@core/trace/trace.context";
 import { EmploymentProfileRecord } from "@modules/employment-profile/domain/employment-profile.types";
 import { TalentGroupManagerAssignment } from "@modules/kpi/domain/kpi.types";
 import { PlatformAccountRecord } from "@modules/platform-account/domain/platform-account.types";
@@ -19,15 +15,41 @@ import {
 } from "@modules/revenue-ledger/domain/platform-earning.repository";
 import {
   RevenueLedgerInvalidPlatformAttributionError,
-  RevenueLedgerNotFoundError,
   RevenueLedgerPermissionScopeError,
 } from "@modules/revenue-ledger/domain/revenue-ledger.errors";
 import { ManagerWorkspaceRevenueAdminService } from "./admin/admin.manager-workspace-revenue.service";
+import { adminManagerWorkspaceRoutes } from "./admin/admin.manager-workspace.routes";
+import { ManagerWorkspaceAdminController } from "./admin/admin.manager-workspace.controller";
 
 const now = Date.UTC(2026, 5, 18);
-const session = {} as ClientSession;
 
-test("manager revenue lists only actor-owned batches in the assigned TalentGroup", async () => {
+test("manager Daily Source router exposes GET-only contracts", () => {
+  const router = adminManagerWorkspaceRoutes({
+    execute: (_request: unknown, _response: unknown, next: () => void) => next(),
+  } as unknown as ManagerWorkspaceAdminController);
+  const revenueRoutes = (
+    router as unknown as {
+      stack: readonly {
+        route?: { path: string; methods: Record<string, boolean> };
+      }[];
+    }
+  ).stack
+    .map((layer) => layer.route)
+    .filter(
+      (route): route is { path: string; methods: Record<string, boolean> } =>
+        Boolean(route?.path.startsWith("/revenue/")),
+    );
+
+  assert.equal(revenueRoutes.length, 4);
+  assert.equal(
+    revenueRoutes.every(
+      (route) => route.methods.get === true && Object.keys(route.methods).length === 1,
+    ),
+    true,
+  );
+});
+
+test("manager revenue lists official batches in the assigned TalentGroup", async () => {
   const harness = createHarness();
   harness.repository.batches.set(
     "owned",
@@ -46,10 +68,13 @@ test("manager revenue lists only actor-owned batches in the assigned TalentGroup
     talentGroupId: "tg-managed",
   });
 
-  assert.deepEqual(result.items.map((item) => item.id), ["owned"]);
-  await assert.rejects(
-    harness.service.getBatch(managerActor(), "other-actor"),
-    RevenueLedgerNotFoundError,
+  assert.deepEqual(
+    result.items.map((item) => item.id),
+    ["other-actor", "owned"],
+  );
+  assert.equal(
+    (await harness.service.getBatch(managerActor(), "other-actor")).id,
+    "other-actor",
   );
   await assert.rejects(
     harness.service.listBatches(managerActor(), {
@@ -59,60 +84,135 @@ test("manager revenue lists only actor-owned batches in the assigned TalentGroup
   );
 });
 
-test("manager creates drafts only for currently assigned eligible Platform Accounts", async () => {
-  const harness = createHarness();
-
-  const created = await withTrace(() =>
-    harness.service.createBatch(managerActor(), {
-      platform: "TIKTOK",
-      platformAccountId: "pa-managed",
-      talentGroupId: "tg-managed",
-      sourceType: "TIKTOK_LIVESTREAM_DIAMOND",
-      periodMonth: "2026-06",
-      sourceDateFrom: now,
-      sourceDateTo: now,
+test("manager batch list constrains mixed-account pagination before cursor creation", async () => {
+  const authority = structuredAuthority([
+    structuredAssignment({
+      permission: "revenueLedger.platformEarning.read",
+      scopeType: "managedTalentGroup",
+      targetId: "tg-managed",
     }),
+    structuredAssignment({
+      permission: "revenueLedger.platformEarning.read",
+      scopeType: "assignedPlatformAccount",
+      targetId: "pa-managed",
+    }),
+    structuredAssignment({
+      permission: "revenueLedger.platformEarning.read",
+      scopeType: "assignedPlatformAccount",
+      targetId: "pa-managed-2",
+    }),
+  ]);
+  const harness = createHarness({ structuredAuthority: authority });
+  harness.additionalAccounts.push(
+    platformAccount({ id: "pa-unassigned", accountCode: "PA-002" }),
+    platformAccount({ id: "pa-managed-2", accountCode: "PA-003" }),
   );
-  assert.equal(created.status, "DRAFT");
+  harness.repository.batches.set(
+    "a-ineligible",
+    batch({ id: "a-ineligible", platformAccountId: "pa-unassigned" }),
+  );
+  harness.repository.batches.set(
+    "b-eligible",
+    batch({ id: "b-eligible", platformAccountId: "pa-managed" }),
+  );
+  harness.repository.batches.set(
+    "c-eligible",
+    batch({ id: "c-eligible", platformAccountId: "pa-managed-2" }),
+  );
+  const actor = managerActor();
 
+  const first = await harness.service.listBatches(actor, {
+    talentGroupId: "tg-managed",
+    limit: 1,
+  });
+  assert.deepEqual(first.items.map((item) => item.id), ["b-eligible"]);
+  assert.equal(first.nextCursor, "b-eligible");
+  assert.deepEqual(harness.repository.lastBatchFilters?.platformAccountIds, [
+    "pa-managed",
+    "pa-managed-2",
+  ]);
+
+  const second = await harness.service.listBatches(actor, {
+    talentGroupId: "tg-managed",
+    limit: 1,
+    cursor: first.nextCursor,
+  });
+  assert.deepEqual(second.items.map((item) => item.id), ["c-eligible"]);
+  assert.equal(second.nextCursor, undefined);
+  assert.equal(
+    [...first.items, ...second.items].some((item) => item.id === "a-ineligible"),
+    false,
+  );
+});
+
+test("manager batch list accepts only an explicitly eligible assigned Platform Account", async () => {
+  const harness = createHarness();
+  harness.additionalAccounts.push(
+    platformAccount({ id: "pa-unassigned", accountCode: "PA-002" }),
+  );
+  harness.repository.batches.set("eligible", batch({ id: "eligible" }));
+  harness.repository.batches.set(
+    "unassigned",
+    batch({ id: "unassigned", platformAccountId: "pa-unassigned" }),
+  );
+
+  assert.deepEqual(
+    (
+      await harness.service.listBatches(managerActor(), {
+        talentGroupId: "tg-managed",
+        platformAccountId: "pa-managed",
+      })
+    ).items.map((item) => item.id),
+    ["eligible"],
+  );
+  await assert.rejects(
+    harness.service.listBatches(managerActor(), {
+      talentGroupId: "tg-managed",
+      platformAccountId: "pa-unassigned",
+    }),
+    RevenueLedgerPermissionScopeError,
+  );
+});
+
+test("manager batch list rejects revoked or inactive account eligibility without repository leakage", async () => {
+  const harness = createHarness();
   harness.account = platformAccount({ operationalStatus: "INACTIVE" });
-  await assert.rejects(
-    withTrace(() =>
-      harness.service.createBatch(managerActor(), {
-        platform: "TIKTOK",
-        platformAccountId: "pa-managed",
-        talentGroupId: "tg-managed",
-        sourceType: "TIKTOK_LIVESTREAM_DIAMOND",
-        periodMonth: "2026-06",
-        sourceDateFrom: now,
-        sourceDateTo: now,
-      }),
-    ),
-    RevenueLedgerInvalidPlatformAttributionError,
-  );
+  harness.repository.batches.set("hidden", batch({ id: "hidden" }));
 
-  harness.account = platformAccount({ ownerTalentGroupId: "tg-other" });
+  const omitted = await harness.service.listBatches(managerActor(), {
+    talentGroupId: "tg-managed",
+  });
+  assert.deepEqual(omitted, { items: [] });
+  assert.equal(harness.repository.lastBatchFilters, undefined);
   await assert.rejects(
-    withTrace(() =>
-      harness.service.createBatch(managerActor(), {
-        platform: "TIKTOK",
-        platformAccountId: "pa-managed",
-        talentGroupId: "tg-managed",
-        sourceType: "TIKTOK_LIVESTREAM_DIAMOND",
-        periodMonth: "2026-06",
-        sourceDateFrom: now,
-        sourceDateTo: now,
-      }),
-    ),
-    RevenueLedgerInvalidPlatformAttributionError,
+    harness.service.listBatches(managerActor(), {
+      talentGroupId: "tg-managed",
+      platformAccountId: "pa-managed",
+    }),
+    RevenueLedgerPermissionScopeError,
   );
+  assert.equal(harness.repository.lastBatchFilters, undefined);
+});
+
+test("manager Daily Source service exposes no mutation methods", () => {
+  const harness = createHarness();
+  for (const method of [
+    "createBatch",
+    "updateBatch",
+    "addLine",
+    "updateLine",
+    "submitBatch",
+  ]) {
+    assert.equal(method in harness.service, false);
+  }
+  assert.equal(harness.repository.batches.size, 0);
 });
 
 test("manager revenue requires matching structured TalentGroup and Platform Account scope", async () => {
   const missingTalentGroupScope = createHarness({
     structuredAuthority: structuredAuthority([
       structuredAssignment({
-        permission: "revenueLedger.platformEarning.submit",
+        permission: "revenueLedger.platformEarning.read",
         scopeType: "assignedPlatformAccount",
         targetId: "pa-managed",
       }),
@@ -128,12 +228,12 @@ test("manager revenue requires matching structured TalentGroup and Platform Acco
   const missingPlatformAccountScope = createHarness({
     structuredAuthority: structuredAuthority([
       structuredAssignment({
-        permission: "revenueLedger.platformEarning.submit",
+        permission: "revenueLedger.platformEarning.read",
         scopeType: "managedTalentGroup",
         targetId: "tg-managed",
       }),
       structuredAssignment({
-        permission: "revenueLedger.platformEarning.submit",
+        permission: "revenueLedger.platformEarning.read",
         scopeType: "assignedPlatformAccount",
         targetId: "pa-other",
       }),
@@ -144,38 +244,26 @@ test("manager revenue requires matching structured TalentGroup and Platform Acco
       .platformAccounts,
     [],
   );
+  const official = batch();
+  missingPlatformAccountScope.repository.batches.set(official.id, official);
   await assert.rejects(
-    withTrace(() =>
-      missingPlatformAccountScope.service.createBatch(managerActor(), {
-        platform: "TIKTOK",
-        platformAccountId: "pa-managed",
-        talentGroupId: "tg-managed",
-        sourceType: "TIKTOK_LIVESTREAM_DIAMOND",
-        periodMonth: "2026-06",
-        sourceDateFrom: now,
-        sourceDateTo: now,
-      }),
-    ),
+    missingPlatformAccountScope.service.getBatch(managerActor(), official.id),
     RevenueLedgerPermissionScopeError,
   );
 });
 
-test("manager detail, line mutations, and submit fail closed after Platform Account eligibility drifts", async () => {
+test("manager reads fail closed after Platform Account eligibility drifts", async () => {
   const harness = createHarness();
   const draft = batch();
   harness.repository.batches.set(draft.id, draft);
+  const sourceLine = line({ batchId: draft.id });
+  harness.repository.lines.set(sourceLine.id, sourceLine);
 
-  await withTrace(() =>
-    harness.service.addLine(managerActor(), {
-      batchId: draft.id,
-      sourceDate: now,
-      memberTalentId: "talent-member",
-      memberEmploymentProfileId: "ep-member",
-      rawQuantity: 100,
-    }),
+  assert.equal((await harness.service.getBatch(managerActor(), draft.id)).id, draft.id);
+  assert.equal(
+    (await harness.service.listLines(managerActor(), { batchId: draft.id })).items.length,
+    1,
   );
-  const line = [...harness.repository.lines.values()][0];
-  assert.ok(line);
 
   harness.account = platformAccount({ operationalStatus: "INACTIVE" });
   await assert.rejects(
@@ -184,35 +272,6 @@ test("manager detail, line mutations, and submit fail closed after Platform Acco
   );
   await assert.rejects(
     harness.service.listLines(managerActor(), { batchId: draft.id }),
-    RevenueLedgerInvalidPlatformAttributionError,
-  );
-  await assert.rejects(
-    withTrace(() =>
-      harness.service.addLine(managerActor(), {
-        batchId: draft.id,
-        sourceDate: now,
-        memberTalentId: "talent-member",
-        memberEmploymentProfileId: "ep-member",
-        rawQuantity: 200,
-        externalSourceRef: "second",
-      }),
-    ),
-    RevenueLedgerInvalidPlatformAttributionError,
-  );
-  await assert.rejects(
-    withTrace(() =>
-      harness.service.updateLine(managerActor(), {
-        batchId: draft.id,
-        lineId: line.id,
-        rawQuantity: 200,
-      }),
-    ),
-    RevenueLedgerInvalidPlatformAttributionError,
-  );
-  await assert.rejects(
-    withTrace(() =>
-      harness.service.submitBatch(managerActor(), { batchId: draft.id }),
-    ),
     RevenueLedgerInvalidPlatformAttributionError,
   );
 });
@@ -275,10 +334,12 @@ function createHarness(input: {
   readonly service: ManagerWorkspaceRevenueAdminService;
   readonly repository: InMemoryPlatformEarningRepository;
   account: PlatformAccountRecord;
+  readonly additionalAccounts: PlatformAccountRecord[];
 } {
   const repository = new InMemoryPlatformEarningRepository();
   const harness = {
     account: platformAccount(),
+    additionalAccounts: [] as PlatformAccountRecord[],
     repository,
     service: undefined as unknown as ManagerWorkspaceRevenueAdminService,
   };
@@ -299,13 +360,38 @@ function createHarness(input: {
       },
     },
     {
-      async findById() {
-        return harness.account;
+      async findById(platformAccountId) {
+        return [harness.account, ...harness.additionalAccounts].find(
+          (account) => account.id === platformAccountId,
+        ) ?? null;
       },
     },
     {
-      async listPlatformAccounts() {
-        return { items: [harness.account] };
+      async listPlatformAccounts(query) {
+        const items = [harness.account, ...harness.additionalAccounts]
+          .filter(
+            (account) =>
+              (!query.ownerTalentGroupId ||
+                account.ownerTalentGroupId === query.ownerTalentGroupId) &&
+              (!query.operationalStatus ||
+                account.operationalStatus === query.operationalStatus) &&
+              (query.livestreamEnabled === undefined ||
+                account.livestreamEnabled === query.livestreamEnabled) &&
+              (query.monetizationEnabled === undefined ||
+                account.monetizationEnabled === query.monetizationEnabled),
+          )
+          .sort((left, right) => left.id.localeCompare(right.id));
+        const afterCursor = query.cursor
+          ? items.filter((account) => account.id > query.cursor!)
+          : items;
+        const page = afterCursor.slice(0, query.limit);
+        return {
+          items: page,
+          nextCursor:
+            afterCursor.length > query.limit
+              ? page[page.length - 1]?.id
+              : undefined,
+        };
       },
     },
     {
@@ -336,28 +422,6 @@ function createHarness(input: {
       },
     },
     repository,
-    {
-      async allocateNext() {
-        return 1;
-      },
-    } as never,
-    {
-      async record() {
-        return undefined;
-      },
-    } as unknown as AuditGuard,
-    {
-      async execute(_params, mutate) {
-        return mutate(session, {
-          markAuthSecurityTruthChanged() {
-            return undefined;
-          },
-          markExplicitNoOpSuccess() {
-            return undefined;
-          },
-        });
-      },
-    } satisfies AuthoritativeAdminMutationBridge,
     input.structuredAuthority ?? structuredAuthority(),
     () => now,
   );
@@ -367,6 +431,9 @@ function createHarness(input: {
 class InMemoryPlatformEarningRepository implements PlatformEarningRepository {
   readonly batches = new Map<string, PlatformEarningBatch>();
   readonly lines = new Map<string, PlatformEarningLine>();
+  lastBatchFilters:
+    | Parameters<PlatformEarningRepository["listBatches"]>[0]
+    | undefined;
 
   async insertBatch(input: Parameters<PlatformEarningRepository["insertBatch"]>[0]) {
     const created = batch({
@@ -382,13 +449,29 @@ class InMemoryPlatformEarningRepository implements PlatformEarningRepository {
   }
 
   async listBatches(filters: Parameters<PlatformEarningRepository["listBatches"]>[0]) {
-    return {
-      items: [...this.batches.values()].filter(
+    this.lastBatchFilters = filters;
+    const items = [...this.batches.values()]
+      .filter(
         (item) =>
           (!filters.talentGroupId || item.talentGroupId === filters.talentGroupId) &&
+          (!filters.platformAccountId ||
+            item.platformAccountId === filters.platformAccountId) &&
+          (!filters.platformAccountIds ||
+            filters.platformAccountIds.includes(item.platformAccountId)) &&
           (!filters.createdByActorId ||
             item.createdByActorId === filters.createdByActorId),
-      ),
+      )
+      .sort((left, right) => left.id.localeCompare(right.id));
+    const afterCursor = filters.cursor
+      ? items.filter((item) => item.id > filters.cursor!)
+      : items;
+    const page = afterCursor.slice(0, filters.limit);
+    return {
+      items: page,
+      nextCursor:
+        afterCursor.length > filters.limit
+          ? page[page.length - 1]?.id
+          : undefined,
     };
   }
 
@@ -502,6 +585,37 @@ function batch(overrides: Partial<PlatformEarningBatch> = {}): PlatformEarningBa
   };
 }
 
+function line(overrides: Partial<PlatformEarningLine> = {}): PlatformEarningLine {
+  return {
+    id: "line-managed",
+    batchId: "batch-managed",
+    batchStatus: "DRAFT",
+    sourceDate: now,
+    periodMonth: "2026-06",
+    platform: "TIKTOK",
+    platformAccountId: "pa-managed",
+    talentGroupId: "tg-managed",
+    memberTalentId: "talent-member",
+    memberEmploymentProfileId: "ep-member",
+    eventId: null,
+    sourceType: "TIKTOK_LIVESTREAM_DIAMOND",
+    sourceUnit: "DIAMOND",
+    rawQuantity: 100,
+    externalSourceRef: null,
+    notes: null,
+    duplicateDetectionKey: "managed-line-key",
+    correctionOfLineId: null,
+    replacementLineId: null,
+    enteredByActorId: "admin-source",
+    enteredAt: now,
+    submittedByActorId: null,
+    submittedAt: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
 function platformAccount(
   overrides: Partial<PlatformAccountRecord> = {},
 ): PlatformAccountRecord {
@@ -586,7 +700,7 @@ function managerActor(): Actor {
     type: "admin",
     context: "ADMIN",
     roles: ["TEAM_MANAGER"],
-    permissions: ["revenueLedger.platformEarning.submit"],
+    permissions: ["revenueLedger.platformEarning.read"],
     scopeGrants: {},
     accountContexts: ["MANAGER_CONSOLE"],
     isActive: true,
@@ -596,12 +710,12 @@ function managerActor(): Actor {
 function structuredAuthority(
   assignments: readonly StructuredScopeAuthorityAssignment[] = [
     structuredAssignment({
-      permission: "revenueLedger.platformEarning.submit",
+      permission: "revenueLedger.platformEarning.read",
       scopeType: "managedTalentGroup",
       targetId: "tg-managed",
     }),
     structuredAssignment({
-      permission: "revenueLedger.platformEarning.submit",
+      permission: "revenueLedger.platformEarning.read",
       scopeType: "assignedPlatformAccount",
       targetId: "pa-managed",
     }),
@@ -654,8 +768,4 @@ function structuredAssignment(input: {
       permissions: [input.permission],
     },
   };
-}
-
-function withTrace<T>(fn: () => Promise<T>): Promise<T> {
-  return bindTraceId(`manager-revenue-${Math.random()}`, fn);
 }

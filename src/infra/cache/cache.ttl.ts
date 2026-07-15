@@ -2,13 +2,8 @@
  * TTL POLICY (SECONDS)
  * Centralized – no magic numbers elsewhere
  */
-const ACTOR_SNAPSHOT_VERSION_TTL_SECONDS =
-  30 * 24 * 60 * 60;
-
 export const CacheTTL = {
   ACTOR_SNAPSHOT: 60,
-  ACTOR_SNAPSHOT_VERSION:
-    ACTOR_SNAPSHOT_VERSION_TTL_SECONDS,
 
   DASHBOARD_SNAPSHOT: 60, // 30s–1m SLA
   CMS_PUBLIC_CONTENT: 300, // 5 min

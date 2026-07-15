@@ -49,7 +49,10 @@ export function requiresManagedUnitAuthority(actor: Actor): boolean {
     return false;
   }
 
-  return PermissionGuard.hasKpiScopeGrant(actor, "managedGroup");
+  return (
+    actor.context === "ADMIN" &&
+    (actor.type === "admin" || actor.type === "staff")
+  );
 }
 
 export async function resolveManagedUnitAuthority(

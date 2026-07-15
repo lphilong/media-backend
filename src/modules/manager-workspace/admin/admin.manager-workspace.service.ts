@@ -1,9 +1,13 @@
 import { Actor } from "@core/actor/actor";
 import { Permission } from "@core/permission/permission.enum";
-import { PermissionGuard } from "@core/permission/permission.guard";
 import { EmploymentProfileRepository } from "@modules/employment-profile/domain/employment-profile.repository";
 import { EmploymentProfileRecord } from "@modules/employment-profile/domain/employment-profile.types";
 import { KpiSubjectReadonlyAccess } from "@modules/kpi/domain/kpi-subject-readonly-access";
+import {
+  MANAGER_KPI_CAPABILITY_PERMISSIONS,
+  ManagerKpiCapabilities,
+  projectManagerKpiCapabilities,
+} from "@modules/kpi/domain/manager-kpi-capability-policy";
 import { ReferenceSummary } from "@modules/reference-summary";
 import {
   ResponsibilityManagedOrgUnitScope,
@@ -11,13 +15,7 @@ import {
 } from "@modules/responsibility/domain/responsibility-managed-scope";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
-type ManagerWorkspaceKpiCapabilities = {
-  readonly read: boolean;
-  readonly manageAllocation: boolean;
-  readonly enterActual: boolean;
-  readonly correctActual: boolean;
-  readonly finalize: false;
-};
+type ManagerWorkspaceKpiCapabilities = ManagerKpiCapabilities;
 
 export interface ManagerWorkspaceOrgUnitScope {
   readonly orgUnitId: string;
@@ -91,7 +89,7 @@ export interface ManagerWorkspaceContextView {
         | "NO_MANAGER_RESPONSIBILITY_ASSIGNED"
         | "NO_STRUCTURED_SCOPE_ASSIGNED"
         | "MISSING_TALENT_GROUP_PREREQUISITE"
-        | "MISSING_REVENUE_SOURCE_SUBMIT_CAPABILITY";
+        | "MISSING_REVENUE_SOURCE_READ_CAPABILITY";
     };
     readonly groups: {
       readonly visible: boolean;
@@ -184,16 +182,9 @@ export class ManagerWorkspaceAdminService {
         this.toTalentGroupScope(assignment, refs, actor),
       ),
     );
-    // The manager surface calls the compatibility-shared KPI plan operation.
-    // Its visibility must include the operation's managed-group prerequisite
-    // and an exact effective target authority.
-    const hasKpiManagedGroupScope =
-      actor.isActive && PermissionGuard.hasKpiScopeGrant(actor, "managedGroup");
     const unitKpiVisible =
-      hasKpiManagedGroupScope &&
       orgUnits.some((scope) => scope.capabilities.kpi.read);
     const talentGroupKpiVisible =
-      hasKpiManagedGroupScope &&
       talentGroups.some((scope) => scope.capabilities.kpi.read);
     const visible = unitKpiVisible || talentGroupKpiVisible;
     const hasManagedAssignment = orgUnits.length + talentGroups.length > 0;
@@ -225,7 +216,7 @@ export class ManagerWorkspaceAdminService {
         this.structuredAuthority,
         actor,
         talentGroups.map((scope) => scope.talentGroupId),
-        [Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT],
+        [Permission.REVENUE_LEDGER_PLATFORM_EARNING_READ],
       ),
       hasStructuredModuleScope(
         this.structuredAuthority,
@@ -289,7 +280,7 @@ export class ManagerWorkspaceAdminService {
               visible: false,
               reason:
                 talentGroups.length > 0
-                  ? "MISSING_REVENUE_SOURCE_SUBMIT_CAPABILITY"
+                  ? "MISSING_REVENUE_SOURCE_READ_CAPABILITY"
                   : hasManagedAssignment
                     ? "MISSING_TALENT_GROUP_PREREQUISITE"
                     : missingAuthorityReason,
@@ -381,28 +372,20 @@ export class ManagerWorkspaceAdminService {
     const ref = refs.get(`ORG_UNIT:${assignment.orgUnitId}`);
     const directUnitManager =
       assignment.role === "UNIT_MANAGER" && !assignment.includeDescendants;
-    const canRead = await hasAnyManagedOrgUnitAuthority(
-      this.structuredAuthority,
-      actor,
-      assignment.orgUnitId,
-      [Permission.KPI_READ],
+    const capabilities = await resolveManagerKpiCapabilities(
+      MANAGER_KPI_CAPABILITY_PERMISSIONS,
+      (permission) =>
+        directUnitManager ||
+        permission === Permission.KPI_READ ||
+        permission === Permission.KPI_READ_PROGRESS
+          ? hasManagedOrgUnitAuthority(
+              this.structuredAuthority,
+              actor,
+              permission,
+              assignment.orgUnitId,
+            )
+          : Promise.resolve(false),
     );
-    const canEnterActual =
-      directUnitManager &&
-      (await hasManagedOrgUnitAuthority(
-        this.structuredAuthority,
-        actor,
-        Permission.KPI_ENTER_ACTUAL,
-        assignment.orgUnitId,
-      ));
-    const canCorrectActual =
-      directUnitManager &&
-      (await hasManagedOrgUnitAuthority(
-        this.structuredAuthority,
-        actor,
-        Permission.KPI_CORRECT_ACTUAL,
-        assignment.orgUnitId,
-      ));
 
     return {
       orgUnitId: assignment.orgUnitId,
@@ -413,13 +396,7 @@ export class ManagerWorkspaceAdminService {
       includeDescendants: assignment.includeDescendants,
       ...(assignment.isPrimary ? { isPrimary: true } : {}),
       capabilities: {
-        kpi: {
-          read: canRead,
-          manageAllocation: canEnterActual,
-          enterActual: canEnterActual,
-          correctActual: canCorrectActual,
-          finalize: false,
-        },
+        kpi: capabilities,
       },
     };
   }
@@ -430,23 +407,15 @@ export class ManagerWorkspaceAdminService {
     actor: Actor,
   ): Promise<ManagerWorkspaceTalentGroupScope> {
     const ref = refs.get(`TALENT_GROUP:${groupId}`);
-    const canRead = await hasAnyManagedTalentGroupAuthority(
-      this.structuredAuthority,
-      actor,
-      groupId,
-      [Permission.KPI_READ],
-    );
-    const canEnterActual = await hasManagedTalentGroupAuthority(
-      this.structuredAuthority,
-      actor,
-      Permission.KPI_ENTER_ACTUAL,
-      groupId,
-    );
-    const canCorrectActual = await hasManagedTalentGroupAuthority(
-      this.structuredAuthority,
-      actor,
-      Permission.KPI_CORRECT_ACTUAL,
-      groupId,
+    const capabilities = await resolveManagerKpiCapabilities(
+      MANAGER_KPI_CAPABILITY_PERMISSIONS,
+      (permission) =>
+        hasManagedTalentGroupAuthority(
+          this.structuredAuthority,
+          actor,
+          permission,
+          groupId,
+        ),
     );
 
     return {
@@ -455,13 +424,7 @@ export class ManagerWorkspaceAdminService {
       name: ref?.name ?? ref?.displayName ?? groupId,
       ...(ref?.displayName ? { displayName: ref.displayName } : {}),
       capabilities: {
-        kpi: {
-          read: canRead,
-          manageAllocation: canEnterActual,
-          enterActual: canEnterActual,
-          correctActual: canCorrectActual,
-          finalize: false,
-        },
+        kpi: capabilities,
       },
     };
   }
@@ -553,8 +516,10 @@ async function hasAnyManagedOrgUnitAuthority(
   permissions: readonly Permission[] = [
     Permission.KPI_READ,
     Permission.KPI_READ_PROGRESS,
+    Permission.KPI_MANAGE_ALLOCATION,
     Permission.KPI_ENTER_ACTUAL,
     Permission.KPI_CORRECT_ACTUAL,
+    Permission.KPI_APPROVE_ALLOCATION,
     Permission.WORK_SCHEDULE_READ,
     Permission.EVENT_READ,
     Permission.MANAGER_GROUP_READ,
@@ -581,11 +546,13 @@ async function hasAnyManagedTalentGroupAuthority(
   permissions: readonly Permission[] = [
     Permission.KPI_READ,
     Permission.KPI_READ_PROGRESS,
+    Permission.KPI_MANAGE_ALLOCATION,
     Permission.KPI_ENTER_ACTUAL,
     Permission.KPI_CORRECT_ACTUAL,
+    Permission.KPI_APPROVE_ALLOCATION,
     Permission.WORK_SCHEDULE_READ,
     Permission.EVENT_READ,
-    Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+    Permission.REVENUE_LEDGER_PLATFORM_EARNING_READ,
     Permission.MANAGER_GROUP_READ,
     Permission.MANAGER_MEMBER_READ,
   ],
@@ -661,4 +628,16 @@ function hasManagedTalentGroupAuthority(
     permission,
     scope: { scopeType: "managedTalentGroup", targetId: talentGroupId },
   });
+}
+
+async function resolveManagerKpiCapabilities(
+  permissions: readonly Permission[],
+  hasAuthority: (permission: Permission) => Promise<boolean>,
+): Promise<ManagerKpiCapabilities> {
+  const decisions = await Promise.all(
+    permissions.map(async (permission) => [permission, await hasAuthority(permission)] as const),
+  );
+  return projectManagerKpiCapabilities(
+    new Set(decisions.filter(([, allowed]) => allowed).map(([permission]) => permission)),
+  );
 }

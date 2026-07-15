@@ -41,6 +41,15 @@ import {
 import { RoleAssignmentScopeGrant } from "@modules/role/domain/role-assignment-scope";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 
+export const RESPONSIBILITY_AUTHORITY_FIELDS = [
+  "responsibilityRole",
+  "includeDescendants",
+  "actionMask",
+  "isPrimary",
+  "effectiveAt",
+  "expiresAt",
+] as const;
+
 export class ResponsibilityAdminService {
   constructor(
     private readonly repository: ResponsibilityAssignmentRepository,
@@ -120,7 +129,7 @@ export class ResponsibilityAdminService {
       permission,
       mutationIdentityFor("create", normalized.subjectType),
       `responsibility:create:${normalized.subjectType}:${normalized.subjectId}:${normalized.responsibleEmploymentProfileId}:${normalized.responsibilityType}`,
-      async (session) => {
+      async (session, controls) => {
         await this.assertReferencesAssignable(normalized, session);
         await this.assertNoDuplicatePrimary(normalized, session);
 
@@ -158,6 +167,7 @@ export class ResponsibilityAdminService {
           },
           session,
         );
+        controls.markAuthSecurityTruthChanged();
 
         return this.requireView(created.id, session);
       },
@@ -189,7 +199,18 @@ export class ResponsibilityAdminService {
       permission,
       mutationIdentityFor("update", current.subjectType),
       `responsibility:update:${assignmentId}`,
-      async (session) => {
+      async (session, controls) => {
+        const transactionalCurrent =
+          await this.repository.findNormalizedById(assignmentId, session);
+        if (!transactionalCurrent) {
+          throw new ResponsibilityConflictError(
+            `Responsibility assignment update conflict: ${assignmentId}`,
+          );
+        }
+        const authorityChanged = hasResponsibilityAuthorityFieldChange(
+          transactionalCurrent,
+          patch,
+        );
         const updated = await this.repository.update(
           {
             assignmentId,
@@ -218,6 +239,9 @@ export class ResponsibilityAdminService {
           },
           session,
         );
+        if (authorityChanged) {
+          controls.markAuthSecurityTruthChanged();
+        }
         return this.requireView(updated.id, session);
       },
     );
@@ -248,7 +272,7 @@ export class ResponsibilityAdminService {
       permission,
       mutationIdentityFor("revoke", current.subjectType),
       `responsibility:revoke:${assignmentId}`,
-      async (session) => {
+      async (session, controls) => {
         const revoked = await this.repository.revoke(
           {
             assignmentId,
@@ -278,6 +302,7 @@ export class ResponsibilityAdminService {
           },
           session,
         );
+        controls.markAuthSecurityTruthChanged();
         return this.requireView(revoked.id, session);
       },
     );
@@ -569,6 +594,33 @@ interface NormalizedUpdateResponsibility {
 interface AuthorizedResponsibilitySubject {
   readonly subjectType: ResponsibilitySubjectType;
   readonly subjectId?: string;
+}
+
+function hasResponsibilityAuthorityFieldChange(
+  current: ResponsibilityAssignmentView,
+  patch: NormalizedUpdateResponsibility,
+): boolean {
+  return (
+    (patch.responsibilityRole !== undefined &&
+      patch.responsibilityRole !== current.responsibilityRole) ||
+    (patch.includeDescendants !== undefined &&
+      patch.includeDescendants !== current.includeDescendants) ||
+    (patch.actionMask !== undefined &&
+      !sameAuthorityStringSet(patch.actionMask, current.actionMask)) ||
+    (patch.isPrimary !== undefined && patch.isPrimary !== current.isPrimary) ||
+    (patch.effectiveAt !== undefined &&
+      patch.effectiveAt !== current.effectiveAt) ||
+    (patch.expiresAt !== undefined && patch.expiresAt !== current.expiresAt)
+  );
+}
+
+function sameAuthorityStringSet(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  const normalize = (values: readonly string[]) =>
+    [...new Set(values)].sort().join("\n");
+  return normalize(left) === normalize(right);
 }
 
 function authorizedSubjectsFor(

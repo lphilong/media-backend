@@ -1,12 +1,4 @@
-import crypto from "crypto";
 import { SystemInvariantError } from "@core/error/system-error";
-import {
-  createStructuredLogger,
-  StructuredLogger,
-} from "@infra/logger.adapter";
-import { CacheAdapter } from "./cache.adapter";
-import { CacheKey } from "./cache.key";
-import { CacheTTL } from "./cache.ttl";
 
 export interface ActorSnapshotEnvelope<T> {
   readonly version: string;
@@ -45,55 +37,16 @@ export function isActorSnapshotEnvelope<T>(
 }
 
 export class ActorSnapshotCacheInvalidator {
-  private readonly logger: StructuredLogger;
-
-  constructor(
-    private readonly cache: CacheAdapter,
-    logger: StructuredLogger = createStructuredLogger(),
-  ) {
-    this.logger = logger;
-  }
-
-  async invalidateAll(params: {
+  async invalidateAll(_params: {
     readonly traceId: string;
     readonly actorId: string;
     readonly context: string;
     readonly operation: string;
   }): Promise<void> {
-    const versionKey =
-      CacheKey.actorSnapshotVersion();
-    const nextVersion =
-      createActorSnapshotVersionToken();
-
-    try {
-      await this.cache.set(versionKey, nextVersion, {
-        ttlSeconds: CacheTTL.ACTOR_SNAPSHOT_VERSION,
-      });
-    } catch (error) {
-      this.logger.warn({
-        traceId: params.traceId,
-        actorId: params.actorId,
-        context: params.context,
-        operation: `${params.operation}.actor-snapshot.invalidate`,
-        status: "FAILED_NON_AUTHORITATIVE",
-        timestamp: Date.now(),
-        metadata: {
-          error:
-            error instanceof Error
-              ? error.message
-              : String(error),
-          retryHint:
-            "Actor snapshot freshness self-heals on next authoritative actor resolution",
-        },
-      });
-    }
+    // The authoritative mutation bridge changes the DB auth security version
+    // atomically. Cached envelopes are trusted only when that DB version
+    // matches, so no independent Redis invalidation/version write is needed.
   }
-}
-
-function createActorSnapshotVersionToken(): string {
-  const token = crypto.randomUUID();
-  assertVersion(token);
-  return token;
 }
 
 function assertVersion(version: string): void {

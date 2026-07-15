@@ -430,12 +430,6 @@ export class KpiAdminService {
       return { items: await this.withAllocationWorkflowSummaries(items) };
     }
 
-    if (!this.hasKpiManagedGroupScope(actor)) {
-      throw new KpiPermissionScopeError(
-        "Cannot list KPI plans: kpi.global or kpi.managedGroup scope is required",
-      );
-    }
-
     return this.listManagedUnitKpiPlans(actor, input);
   }
 
@@ -552,10 +546,9 @@ export class KpiAdminService {
       plan,
       "read KPI plan detail",
     );
-    if (!this.hasKpiManagedGroupScope(actor)) {
+    if (!this.isKpiManagerAuthorityActor(actor)) {
       return this.loadPlanDetail(plan.id);
     }
-
     if (
       plan.status !== "PUBLISHED" &&
       !(plan.subjectType === "ORG_UNIT" && plan.status === "FINALIZED")
@@ -859,19 +852,14 @@ export class KpiAdminService {
       if (groupId && groupId !== plan.subjectId) {
         return { items: [] };
       }
-      if (
-        !this.hasKpiGlobalScope(actor) &&
-        !this.hasKpiManagedGroupScope(actor)
-      ) {
+      if (!this.isKpiManagerAuthorityActor(actor)) {
         const items = await this.repository.listAllocations({
           status,
           kpiPlanId: plan.id,
           groupId: plan.subjectId,
           limit,
         });
-        return {
-          items: items.filter(isTalentGroupCompatibleAllocation),
-        };
+        return { items: items.filter(isTalentGroupCompatibleAllocation) };
       }
     }
 
@@ -885,12 +873,6 @@ export class KpiAdminService {
       return {
         items: items.filter(isTalentGroupCompatibleAllocation),
       };
-    }
-
-    if (!this.hasKpiManagedGroupScope(actor)) {
-      throw new KpiPermissionScopeError(
-        "Cannot list KPI allocations: kpi.global or kpi.managedGroup scope is required",
-      );
     }
 
     const managedGroupIds = await this.filterStructuredManagedTargetIds(
@@ -964,7 +946,7 @@ export class KpiAdminService {
     actor: Actor,
     query: ListKpiManagedMembersQuery,
   ): Promise<ListKpiManagedMembersResult> {
-    this.assertContextPermission(actor, Permission.KPI_ENTER_ACTUAL);
+    this.assertContextPermission(actor, Permission.KPI_MANAGE_ALLOCATION);
     const plan = await this.requirePlan(query.kpiPlanId);
     if (plan.subjectType !== "TALENT_GROUP") {
       throw new KpiInvalidAllocationError(
@@ -973,7 +955,7 @@ export class KpiAdminService {
     }
     await this.requireKpiSubjectStructuredAuthority(
       actor,
-      Permission.KPI_ENTER_ACTUAL,
+      Permission.KPI_MANAGE_ALLOCATION,
       plan,
       "list KPI managed members",
     );
@@ -993,7 +975,7 @@ export class KpiAdminService {
     actor: Actor,
     query: ListKpiManagedMembersQuery,
   ): Promise<ListKpiOrgUnitManagedMembersResult> {
-    this.assertContextPermission(actor, Permission.KPI_ENTER_ACTUAL);
+    this.assertContextPermission(actor, Permission.KPI_MANAGE_ALLOCATION);
     const plan = await this.requirePlan(query.kpiPlanId);
     if (plan.subjectType !== "ORG_UNIT") {
       throw new KpiInvalidAllocationError(
@@ -1002,7 +984,7 @@ export class KpiAdminService {
     }
     await this.requireKpiSubjectStructuredAuthority(
       actor,
-      Permission.KPI_ENTER_ACTUAL,
+      Permission.KPI_MANAGE_ALLOCATION,
       plan,
       "list KPI Org Unit managed members",
     );
@@ -1098,7 +1080,7 @@ export class KpiAdminService {
   ): Promise<KpiPlanMutationView> {
     const permission = this.assertContextPermission(
       actor,
-      Permission.KPI_ENTER_ACTUAL,
+      Permission.KPI_MANAGE_ALLOCATION,
     );
     const operation: AuthoritativeAdminMutationIdentity =
       "kpi.allocation-draft.upsert";
@@ -1132,7 +1114,7 @@ export class KpiAdminService {
         );
         await this.requireKpiSubjectStructuredAuthority(
           actor,
-          Permission.KPI_ENTER_ACTUAL,
+          Permission.KPI_MANAGE_ALLOCATION,
           plan,
           "upsert KPI allocation draft",
         );
@@ -1241,7 +1223,7 @@ export class KpiAdminService {
   ): Promise<KpiPlanMutationView> {
     const permission = this.assertContextPermission(
       actor,
-      Permission.KPI_ENTER_ACTUAL,
+      Permission.KPI_MANAGE_ALLOCATION,
     );
     const operation: AuthoritativeAdminMutationIdentity =
       "kpi.allocation.submit";
@@ -1275,7 +1257,7 @@ export class KpiAdminService {
         );
         await this.requireKpiSubjectStructuredAuthority(
           actor,
-          Permission.KPI_ENTER_ACTUAL,
+          Permission.KPI_MANAGE_ALLOCATION,
           plan,
           "submit KPI allocation draft",
         );
@@ -1379,7 +1361,7 @@ export class KpiAdminService {
   ): Promise<KpiPlanMutationView> {
     return this.transitionAdminAllocationApproval(actor, command.kpiPlanId, {
       operation: "kpi.allocation.approve",
-      permissionCode: Permission.KPI_MANAGE_ALLOCATION,
+      permissionCode: Permission.KPI_APPROVE_ALLOCATION,
       fromStatus: "PENDING_APPROVAL",
       toStatus: "APPROVED",
       approvalNote: normalizeNullableText(command.approvalNote) ?? null,
@@ -1397,7 +1379,7 @@ export class KpiAdminService {
   ): Promise<KpiPlanMutationView> {
     return this.transitionAdminAllocationApproval(actor, command.kpiPlanId, {
       operation: "kpi.allocation.reject",
-      permissionCode: Permission.KPI_MANAGE_ALLOCATION,
+      permissionCode: Permission.KPI_APPROVE_ALLOCATION,
       fromStatus: "PENDING_APPROVAL",
       toStatus: "REJECTED",
       rejectionReason: normalizeRequiredText(
@@ -2414,7 +2396,10 @@ export class KpiAdminService {
     this.assertContextPermission(actor, Permission.KPI_READ_PROGRESS);
     const plan = await this.requirePlan(query.kpiPlanId);
     assertExecutableSubjectType(plan.subjectType);
-    if (this.hasKpiGlobalScope(actor) || this.hasKpiManagedGroupScope(actor)) {
+    if (
+      this.hasKpiGlobalScope(actor) ||
+      actor.accountContexts.includes("MANAGER_CONSOLE")
+    ) {
       await this.requireKpiSubjectStructuredAuthority(
         actor,
         Permission.KPI_READ_PROGRESS,
@@ -2707,18 +2692,8 @@ export class KpiAdminService {
       return;
     }
     if (plan.subjectType === "ORG_UNIT") {
-      if (!this.hasKpiManagedGroupScope(actor)) {
-        throw new KpiPermissionScopeError(
-          "KPI actual correction requires kpi.global or kpi.managedGroup scope",
-        );
-      }
       await this.assertDirectUnitManagerActualWrite(actor, plan, session);
       return;
-    }
-    if (!this.hasKpiManagedGroupScope(actor)) {
-      throw new KpiPermissionScopeError(
-        "KPI actual correction requires kpi.global or kpi.managedGroup scope",
-      );
     }
     await this.assertManagedGroupActualAuthority(
       actor,
@@ -2742,11 +2717,6 @@ export class KpiAdminService {
     ) {
       throw new KpiPermissionScopeError(
         `${operation} requires ADMIN manager authority`,
-      );
-    }
-    if (!this.hasKpiManagedGroupScope(actor)) {
-      throw new KpiPermissionScopeError(
-        `${operation} requires kpi.managedGroup scope`,
       );
     }
     if (plan.status !== "PUBLISHED") {
@@ -2803,14 +2773,14 @@ export class KpiAdminService {
     if (this.hasKpiGlobalScope(actor)) {
       return undefined;
     }
-    const hasManagedGroupScope = this.hasKpiManagedGroupScope(actor);
     const hasSelfScope = this.hasKpiSelfScope(actor);
-    if (!hasManagedGroupScope && !hasSelfScope) {
+    const isManagerContext = actor.context === "ADMIN";
+    if (!isManagerContext && !hasSelfScope) {
       throw new KpiPermissionScopeError(
-        "KPI progress read requires kpi.global, kpi.managedGroup, or kpi.self scope",
+        "KPI progress read requires exact structured manager authority or kpi.self scope",
       );
     }
-    if (hasManagedGroupScope) {
+    if (isManagerContext) {
       await this.assertActorCanReadManagedGroupProgress(actor, plan);
       return undefined;
     }
@@ -2854,11 +2824,6 @@ export class KpiAdminService {
     ) {
       throw new KpiPermissionScopeError(
         "KPI managed-group progress read requires ADMIN manager authority",
-      );
-    }
-    if (!this.hasKpiManagedGroupScope(actor)) {
-      throw new KpiPermissionScopeError(
-        "KPI managed-group progress read requires kpi.managedGroup scope",
       );
     }
     if (plan.status !== "PUBLISHED") {
@@ -2916,11 +2881,6 @@ export class KpiAdminService {
     if (this.hasKpiGlobalScope(actor)) {
       return;
     }
-    if (!this.hasKpiManagedGroupScope(actor)) {
-      throw new KpiPermissionScopeError(
-        "KPI actual grid read requires kpi.global or kpi.managedGroup scope",
-      );
-    }
     if (
       actor.context !== "ADMIN" ||
       (actor.type !== "admin" && actor.type !== "staff")
@@ -2969,11 +2929,6 @@ export class KpiAdminService {
   ): Promise<void> {
     if (this.hasKpiGlobalScope(actor)) {
       return;
-    }
-    if (!this.hasKpiManagedGroupScope(actor)) {
-      throw new KpiPermissionScopeError(
-        "KPI correction history read requires kpi.global or kpi.managedGroup scope",
-      );
     }
     assertActualDateWithinPlan(plan, entry.actualDate);
     const allocation = await this.requireActiveAllocation(
@@ -3350,8 +3305,17 @@ export class KpiAdminService {
     return PermissionGuard.hasKpiScopeGrant(actor, "global");
   }
 
-  private hasKpiManagedGroupScope(actor: Actor): boolean {
-    return PermissionGuard.hasKpiScopeGrant(actor, "managedGroup");
+  private isKpiManagerAuthorityActor(actor: Actor): boolean {
+    return (
+      actor.accountContexts.includes("MANAGER_CONSOLE") ||
+      actor.roles.some((role) =>
+        [
+          "TEAM_MANAGER",
+          "TALENT_GROUP_MANAGER",
+          "ORG_UNIT_MANAGER",
+        ].includes(role),
+      )
+    );
   }
 
   private hasKpiSelfScope(actor: Actor): boolean {
@@ -3456,16 +3420,16 @@ export class KpiAdminService {
         "KPI actual workspace requires ADMIN manager authority",
       );
     }
-    if (!this.hasKpiManagedGroupScope(actor)) {
-      throw new KpiPermissionScopeError(
-        "KPI actual workspace requires kpi.global or kpi.managedGroup scope",
-      );
-    }
     if (input.subjectType === "ORG_UNIT") {
       return { items: [] };
     }
 
-    const managedGroupIds = await this.resolveManagedTalentGroupIds(actor);
+    const managedGroupIds = await this.filterStructuredManagedTargetIds(
+      actor,
+      Permission.KPI_READ_PROGRESS,
+      "managedTalentGroup",
+      await this.resolveManagedTalentGroupIds(actor),
+    );
     if (managedGroupIds.length === 0) {
       return { items: [] };
     }
@@ -4562,11 +4526,6 @@ export class KpiAdminService {
     if (plan.subjectType === "ORG_UNIT" && this.hasKpiGlobalScope(actor)) {
       return;
     }
-    if (!this.hasKpiManagedGroupScope(actor)) {
-      throw new KpiPermissionScopeError(
-        "KPI allocation draft requires kpi.managedGroup scope",
-      );
-    }
     if (plan.subjectType === "ORG_UNIT") {
       await this.assertDirectUnitManagerAllocationWrite(actor, plan, session);
       return;
@@ -4718,13 +4677,10 @@ export class KpiAdminService {
       if (orgUnitId && plan.subjectId !== orgUnitId) {
         return [];
       }
-      if (
-        !this.hasKpiGlobalScope(actor) &&
-        !this.hasKpiManagedGroupScope(actor)
-      ) {
+      if (this.hasKpiGlobalScope(actor)) {
         return [plan.id];
       }
-      if (this.hasKpiGlobalScope(actor)) {
+      if (!this.isKpiManagerAuthorityActor(actor)) {
         return [plan.id];
       }
       if (plan.status !== "PUBLISHED") {

@@ -250,7 +250,7 @@ test("OrgUnit-only manager context exposes Unit KPI only", async () => {
   assert.equal(context.modules.workShifts.visible, false);
 });
 
-test("manager KPI stays unavailable without the shared operation's kpi.managedGroup prerequisite", async () => {
+test("exact structured Manager KPI authority works without the coarse kpi.managedGroup scope", async () => {
   const service = createService({
     profile: activeProfile(),
     orgUnitAssignments: [orgUnitAssignment("ou-production", "UNIT_MANAGER")],
@@ -259,8 +259,8 @@ test("manager KPI stays unavailable without the shared operation's kpi.managedGr
   const context = await service.getContext(managerActor({ scopeGrants: {} }));
 
   assert.equal(context.scopes.orgUnits[0]?.capabilities.kpi.read, true);
-  assert.equal(context.modules.kpi.visible, false);
-  assert.equal(context.modules.kpi.unitKpiVisible, false);
+  assert.equal(context.modules.kpi.visible, true);
+  assert.equal(context.modules.kpi.unitKpiVisible, true);
 });
 
 test("managed Work is visible only with assignment and WorkSchedule read capability", async () => {
@@ -321,23 +321,27 @@ test("DEPARTMENT_OWNER and UNIT_OPERATOR OrgUnit scopes are read-only for KPI v1
     [
       {
         read: true,
+        readProgress: true,
         manageAllocation: false,
         enterActual: false,
         correctActual: false,
+        approveAllocation: false,
         finalize: false,
       },
       {
         read: true,
+        readProgress: true,
         manageAllocation: false,
         enterActual: false,
         correctActual: false,
+        approveAllocation: false,
         finalize: false,
       },
     ],
   );
 });
 
-test("direct UNIT_MANAGER assignment exposes current KPI write capabilities when permissions allow", async () => {
+test("Actual permission does not project Allocation capability", async () => {
   const service = createService({
     profile: activeProfile(),
     orgUnitAssignments: [orgUnitAssignment("ou-production", "UNIT_MANAGER")],
@@ -346,9 +350,37 @@ test("direct UNIT_MANAGER assignment exposes current KPI write capabilities when
 
   assert.deepEqual(context.scopes.orgUnits[0]?.capabilities.kpi, {
     read: true,
-    manageAllocation: true,
+    readProgress: true,
+    manageAllocation: false,
     enterActual: true,
     correctActual: true,
+    approveAllocation: false,
+    finalize: false,
+  });
+});
+
+test("Allocation permission does not project Actual capability", async () => {
+  const service = createService({
+    profile: activeProfile(),
+    orgUnitAssignments: [orgUnitAssignment("ou-production", "UNIT_MANAGER")],
+    structuredAuthority: structuredAuthority([
+      structuredAssignment({
+        permission: "kpi.manageAllocation",
+        scopeType: "managedOrgUnit",
+        targetId: "ou-production",
+      }),
+    ]),
+  });
+  const context = await service.getContext(
+    managerActor({ permissions: ["kpi.manageAllocation"] }),
+  );
+  assert.deepEqual(context.scopes.orgUnits[0]?.capabilities.kpi, {
+    read: false,
+    readProgress: false,
+    manageAllocation: true,
+    enterActual: false,
+    correctActual: false,
+    approveAllocation: false,
     finalize: false,
   });
 });

@@ -19,7 +19,8 @@
     "smoke:seed:fixtures": "ts-node -r tsconfig-paths/register src/tools/smoke/seed-smoke-fixtures.ts",
     "kpi:allocation-data-smoke": "ts-node -r tsconfig-paths/register src/tools/diagnostics/kpi-allocation-data-smoke.ts",
     "kpi:monthly-cycle-uat-seed": "ts-node -r tsconfig-paths/register src/tools/smoke/kpi-monthly-cycle-uat-seed.ts",
-    "docs:anchor-guard": "bash tools/ci/docs-anchor-guard.sh"
+    "docs:anchor-guard": "bash tools/ci/docs-anchor-guard.sh",
+    "risk:001:dry-run": "ts-node -r tsconfig-paths/register src/tools/migration/risk-001-dry-run.ts"
   },
   "keywords": [],
   "author": "",

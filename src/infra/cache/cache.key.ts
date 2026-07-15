@@ -33,19 +33,12 @@ function base(
     .join(":");
 }
 
-function actorSnapshotVersionKey(): string {
-  return base("auth", "actor-snapshot-version");
-}
-
 export const CacheKey = {
   rateLimit: (identifier: string) =>
     base("rate-limit", "counter", identifier),
 
   actorSnapshot: (context: string, sub: string) =>
     base(context, "actor-snapshot", sub),
-
-  actorSnapshotVersion: () =>
-    actorSnapshotVersionKey(),
 
   idempotency: (key: string) =>
     base("idempotency", "key", key),

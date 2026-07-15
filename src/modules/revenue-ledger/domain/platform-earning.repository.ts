@@ -81,6 +81,7 @@ export interface PlatformEarningBatchListFilters {
   readonly status?: PlatformEarningBatchStatus;
   readonly platform?: string;
   readonly platformAccountId?: string;
+  readonly platformAccountIds?: readonly string[];
   readonly talentGroupId?: string;
   readonly createdByActorId?: string;
   readonly sourceType?: PlatformEarningSourceType;

@@ -38,7 +38,10 @@ import {
   ResponsibilitySubjectType,
   ResponsibilityType,
 } from "@modules/responsibility/domain/responsibility.types";
-import { ResponsibilityAdminService } from "./admin.responsibility.service";
+import {
+  RESPONSIBILITY_AUTHORITY_FIELDS,
+  ResponsibilityAdminService,
+} from "./admin.responsibility.service";
 
 const NOW = 1_800_000_000_000;
 
@@ -74,7 +77,100 @@ test("central responsibility create writes only responsibility assignment state"
   assert.equal(repository.records.length, 1);
   assert.equal(audit.records.length, 1);
   assert.equal(mutationBridge.calls.length, 1);
-  assert.equal(mutationBridge.authSecurityTruthChanges, 0);
+  assert.equal(mutationBridge.authSecurityTruthChanges, 1);
+});
+
+test("responsibility authority fields advance canonical freshness once while descriptive and no-op updates do not", async () => {
+  assert.deepEqual(RESPONSIBILITY_AUTHORITY_FIELDS, [
+    "responsibilityRole",
+    "includeDescendants",
+    "actionMask",
+    "isPrimary",
+    "effectiveAt",
+    "expiresAt",
+  ]);
+  const repository = new InMemoryResponsibilityRepository();
+  repository.records.push(responsibilityRecord("group-allowed", "TALENT_GROUP"));
+  const audit = new RecordingAudit();
+  const bridge = new RecordingMutationBridge();
+  const service = new ResponsibilityAdminService(
+    repository,
+    audit as unknown as AuditGuard,
+    bridge,
+    createStructuredAuthority(Permission.TALENT_GROUP_UPDATE, [
+      { scopeType: "managedTalentGroup", targetId: "group-allowed" },
+    ]),
+    () => NOW,
+  );
+  const actor = createActor([Permission.TALENT_GROUP_UPDATE]);
+  const assignmentId = repository.records[0]!.id;
+
+  await bindTraceId("trace-responsibility-authority-update", () =>
+    service.updateAssignment(actor, {
+      assignmentId,
+      actionMask: ["APPROVE", "EDIT"],
+    }),
+  );
+  assert.equal(bridge.authSecurityTruthChanges, 1);
+
+  await bindTraceId("trace-responsibility-description-update", () =>
+    service.updateAssignment(actor, {
+      assignmentId,
+      reason: "description only",
+    }),
+  );
+  assert.equal(bridge.authSecurityTruthChanges, 1);
+
+  await bindTraceId("trace-responsibility-noop-update", () =>
+    service.updateAssignment(actor, {
+      assignmentId,
+      actionMask: ["EDIT", "APPROVE", "EDIT"],
+    }),
+  );
+  assert.equal(bridge.authSecurityTruthChanges, 1);
+
+  await bindTraceId("trace-responsibility-authority-revoke", () =>
+    service.revokeAssignment(actor, {
+      assignmentId,
+      reason: "authority ended",
+    }),
+  );
+  assert.equal(bridge.authSecurityTruthChanges, 2);
+  assert.equal(audit.records.length, 4);
+});
+
+test("responsibility transaction failure commits neither canonical freshness nor successful audit evidence", async () => {
+  const repository = new InMemoryResponsibilityRepository();
+  const bridge = new RecordingMutationBridge();
+  const failingAudit = {
+    async record(): Promise<void> {
+      throw new Error("audit transaction failure");
+    },
+  };
+  const service = new ResponsibilityAdminService(
+    repository,
+    failingAudit as unknown as AuditGuard,
+    bridge,
+    createStructuredAuthority(
+      Permission.EMPLOYMENT_PROFILE_MANAGE_MANAGER_ASSIGNMENT,
+      [{ scopeType: "global" }],
+    ),
+    () => NOW,
+  );
+
+  await assert.rejects(
+    bindTraceId("trace-responsibility-rollback", () =>
+      service.createEmploymentReportingManager(
+        createActor([Permission.EMPLOYMENT_PROFILE_MANAGE_MANAGER_ASSIGNMENT]),
+        {
+          employmentProfileId: "ep-target",
+          managerEmploymentProfileId: "ep-manager",
+        },
+      ),
+    ),
+    /audit transaction failure/,
+  );
+  assert.equal(bridge.authSecurityTruthChanges, 0);
 });
 
 test("responsibility read model ignores old direct manager fields", async () => {
@@ -424,12 +520,15 @@ class RecordingMutationBridge implements AuthoritativeAdminMutationBridge {
     ) => Promise<T>,
   ): Promise<T> {
     this.calls.push(params);
-    return fn(undefined as unknown as ClientSession, {
+    let truthChanged = false;
+    const result = await fn(undefined as unknown as ClientSession, {
       markAuthSecurityTruthChanged: () => {
-        this.authSecurityTruthChanges += 1;
+        truthChanged = true;
       },
       markExplicitNoOpSuccess: () => undefined,
     });
+    if (truthChanged) this.authSecurityTruthChanges += 1;
+    return result;
   }
 }
 

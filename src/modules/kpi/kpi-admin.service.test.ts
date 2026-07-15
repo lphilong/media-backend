@@ -121,6 +121,7 @@ function createActor(): Actor {
       Permission.KPI_UPDATE_DRAFT,
       Permission.KPI_PUBLISH,
       Permission.KPI_MANAGE_ALLOCATION,
+      Permission.KPI_APPROVE_ALLOCATION,
       Permission.KPI_ARCHIVE,
       Permission.KPI_ENTER_ACTUAL,
       Permission.KPI_CORRECT_ACTUAL,
@@ -157,6 +158,7 @@ function createAllocationReviewManagerActor(id = "manager-user"): Actor {
     roles: ["TEAM_MANAGER"],
     permissions: [
       Permission.KPI_MANAGE_ALLOCATION,
+      Permission.KPI_APPROVE_ALLOCATION,
       Permission.KPI_ENTER_ACTUAL,
     ],
     scopeGrants: { kpi: ["managedGroup"] },
@@ -169,9 +171,11 @@ function createManagerActor(): Actor {
     id: "manager-user",
     type: "staff",
     context: "ADMIN",
-    roles: [],
+    accountContexts: ["MANAGER_CONSOLE"],
+    roles: ["TALENT_GROUP_MANAGER", "ORG_UNIT_MANAGER"],
     permissions: [
       Permission.KPI_READ,
+      Permission.KPI_MANAGE_ALLOCATION,
       Permission.KPI_ENTER_ACTUAL,
       Permission.KPI_CORRECT_ACTUAL,
       Permission.KPI_READ_PROGRESS,
@@ -189,9 +193,10 @@ function createBackofficeTeamManagerActor(): Actor {
     type: "admin",
     context: "ADMIN",
     accountContexts: ["ADMIN_CONSOLE"],
-    roles: [],
+    roles: ["TALENT_GROUP_MANAGER", "ORG_UNIT_MANAGER"],
     permissions: [
       Permission.KPI_READ,
+      Permission.KPI_MANAGE_ALLOCATION,
       Permission.KPI_ENTER_ACTUAL,
       Permission.KPI_CORRECT_ACTUAL,
       Permission.KPI_READ_PROGRESS,
@@ -206,8 +211,10 @@ function createBackofficeTeamManagerActor(): Actor {
 function createBackofficeTeamManagerActorWithoutKpiScope(): Actor {
   return createScopedActor({
     id: "manager-user",
+    roles: ["TALENT_GROUP_MANAGER", "ORG_UNIT_MANAGER"],
     permissions: [
       Permission.KPI_READ,
+      Permission.KPI_MANAGE_ALLOCATION,
       Permission.KPI_ENTER_ACTUAL,
       Permission.KPI_CORRECT_ACTUAL,
       Permission.KPI_READ_PROGRESS,
@@ -243,9 +250,11 @@ function createManagerActorWithoutKpiScope(): Actor {
     id: "manager-user",
     type: "staff",
     context: "ADMIN",
-    roles: [],
+    accountContexts: ["MANAGER_CONSOLE"],
+    roles: ["TALENT_GROUP_MANAGER", "ORG_UNIT_MANAGER"],
     permissions: [
       Permission.KPI_READ,
+      Permission.KPI_MANAGE_ALLOCATION,
       Permission.KPI_ENTER_ACTUAL,
       Permission.KPI_CORRECT_ACTUAL,
       Permission.KPI_READ_PROGRESS,
@@ -306,13 +315,14 @@ function createScopedActor(params: {
   readonly type?: "admin" | "staff";
   readonly permissions: readonly Permission[];
   readonly kpiScopes?: readonly ("global" | "managedGroup" | "self")[];
+  readonly roles?: readonly string[];
 }): Actor {
   return new Actor({
     id: params.id,
     type: params.type ?? "admin",
     context: "ADMIN",
     accountContexts: ["ADMIN_CONSOLE"],
-    roles: [],
+    roles: params.roles ?? [],
     permissions: params.permissions,
     scopeGrants: params.kpiScopes ? { kpi: params.kpiScopes } : {},
     isActive: true,
@@ -325,6 +335,7 @@ const ALL_KPI_ADMIN_PERMISSIONS: readonly Permission[] = [
   Permission.KPI_UPDATE_DRAFT,
   Permission.KPI_PUBLISH,
   Permission.KPI_MANAGE_ALLOCATION,
+  Permission.KPI_APPROVE_ALLOCATION,
   Permission.KPI_ARCHIVE,
   Permission.KPI_ENTER_ACTUAL,
   Permission.KPI_CORRECT_ACTUAL,
@@ -565,6 +576,7 @@ function createDefaultKpiStructuredAuthority(
         permissions: [
           Permission.KPI_READ,
           Permission.KPI_MANAGE_ALLOCATION,
+          Permission.KPI_APPROVE_ALLOCATION,
           Permission.KPI_ENTER_ACTUAL,
           Permission.KPI_CORRECT_ACTUAL,
           Permission.KPI_READ_PROGRESS,
@@ -572,7 +584,10 @@ function createDefaultKpiStructuredAuthority(
       }),
       kpiStructuredRecord({
         userId: "superior-user",
-        permissions: [Permission.KPI_MANAGE_ALLOCATION],
+        permissions: [
+          Permission.KPI_MANAGE_ALLOCATION,
+          Permission.KPI_APPROVE_ALLOCATION,
+        ],
       }),
       kpiStructuredRecord({
         userId: "read-only-user",
@@ -1353,7 +1368,7 @@ test("KPI managed unit authority adapter resolves active TalentGroup and OrgUnit
     },
   ]);
   assert.equal(authority?.actorEmploymentProfileId, "manager-profile-1");
-  assert.equal(unscopedAuthority, null);
+  assert.deepEqual(unscopedAuthority, authority);
   assert.equal(orgUnitAssignments[0]?.includeDescendants, true);
   assert.deepEqual(orgUnitAssignments[0]?.actionMask, ["READ_PROGRESS"]);
   assert.deepEqual(
@@ -1605,7 +1620,7 @@ test("KPI managed unit authority adapter preserves active central TalentGroup re
   assert.deepEqual(authority?.scope.talentGroupIds, ["group-1", "group-2"]);
   assert.deepEqual(authority?.scope.orgUnitIds, []);
   assert.equal(authority?.actorEmploymentProfileId, "manager-profile-1");
-  assert.equal(unscopedAuthority, null);
+  assert.deepEqual(unscopedAuthority, authority);
 });
 
 test("KPI managed unit authority adapter ignores missing profile and inactive or expired TalentGroup assignments", async () => {
@@ -3429,11 +3444,13 @@ test("KPI V2 manager-scoped ORG_UNIT read shows only assigned published plans", 
     }),
     KpiPermissionScopeError,
   );
-  await assert.rejects(
-    service.listKpiPlans(createManagerActorWithoutKpiScope(), {
-      subjectType: "ORG_UNIT",
-    }),
-    KpiPermissionScopeError,
+  const exactOnlyList = await service.listKpiPlans(
+    createManagerActorWithoutKpiScope(),
+    { subjectType: "ORG_UNIT" },
+  );
+  assert.deepEqual(
+    exactOnlyList.items.map((item) => item.id),
+    [direct.id],
   );
   const progress = await service.getKpiProgress(
     createBackofficeTeamManagerActor(),
@@ -4390,18 +4407,15 @@ test("KPI UNIT_MANAGER ORG_UNIT allocation write requires exact direct active as
   }
 });
 
-test("KPI ORG_UNIT allocation write denies missing managed scope or linked manager profile", async () => {
+test("KPI ORG_UNIT allocation write denies a missing linked manager profile", async () => {
   const denialCases = [
-    {
-      name: "missing kpi.managedGroup",
-      actor: createBackofficeTeamManagerActorWithoutKpiScope(),
-    },
     {
       name: "missing linked active EmploymentProfile",
       actor: createScopedActor({
         id: "unlinked-manager-user",
         permissions: [
           Permission.KPI_READ,
+          Permission.KPI_MANAGE_ALLOCATION,
           Permission.KPI_ENTER_ACTUAL,
           Permission.KPI_CORRECT_ACTUAL,
           Permission.KPI_READ_PROGRESS,
@@ -5129,7 +5143,7 @@ test("KPI managed member picker lists only active managed group members with saf
   );
 });
 
-test("KPI managed member picker denies unmanaged, non-group, non-published, and unscoped callers", async () => {
+test("KPI managed member picker denies invalid callers while exact authority works without coarse scope", async () => {
   const { service, repository, managerRepository } = createHarness();
   const published = await createPublishedGroupPlan(service);
   seedManagerAssignment(managerRepository, "group-1", 0);
@@ -5149,13 +5163,11 @@ test("KPI managed member picker denies unmanaged, non-group, non-published, and 
     talentPlan,
   );
 
-  await assert.rejects(
-    service.listKpiManagedMembers(createManagerActorWithoutKpiScope(), {
-      kpiPlanId: published.id,
-      limit: 20,
-    }),
-    KpiPermissionScopeError,
+  const exactOnlyMembers = await service.listKpiManagedMembers(
+    createManagerActorWithoutKpiScope(),
+    { kpiPlanId: published.id, limit: 20 },
   );
+  assert.ok(exactOnlyMembers.items.length > 0);
   await assert.rejects(
     service.listKpiManagedMembers(createActor(), {
       kpiPlanId: published.id,
@@ -5174,13 +5186,17 @@ test("KPI managed member picker denies unmanaged, non-group, non-published, and 
         limit: 20,
       },
     ),
-    KpiPermissionScopeError,
+    /Missing permission kpi.manageAllocation/u,
   );
   await assert.rejects(
     service.listKpiManagedMembers(
       createScopedActor({
         id: "unlinked-manager-user",
-        permissions: [Permission.KPI_READ, Permission.KPI_ENTER_ACTUAL],
+        permissions: [
+          Permission.KPI_READ,
+          Permission.KPI_MANAGE_ALLOCATION,
+          Permission.KPI_ENTER_ACTUAL,
+        ],
         kpiScopes: ["managedGroup"],
       }),
       {
@@ -6076,18 +6092,6 @@ test("KPI actual excuses validate authority, slot shape, lifecycle, and body fie
 
   seedManagerAssignment(managerRepository);
   await assert.rejects(
-    service.markKpiActualExcuse(createManagerActorWithoutKpiScope(), {
-      kpiPlanId: published.id,
-      allocationId: allocation.id,
-      metricCode: "REVENUE_VND",
-      actualDate: "2026-05-05",
-      status: "EXCUSED",
-      reasonCode: "MEMBER_LEAVE",
-      reasonText: "No scope",
-    }),
-    KpiPermissionScopeError,
-  );
-  await assert.rejects(
     service.markKpiActualExcuse(createActor(), {
       kpiPlanId: published.id,
       allocationId: allocation.id,
@@ -6230,20 +6234,18 @@ test("KPI V2 backoffice TEAM_MANAGER may read actual grid for managed published 
   ]);
 });
 
-test("KPI V2 manager needs managedGroup scope in addition to group mapping", async () => {
+test("KPI V2 manager exact structured authority works without managedGroup scope", async () => {
   const { service, managerRepository } = createHarness(
     () => MAY_5_2026_NOON_HCM,
   );
   const published = await createPublishedGroupPlan(service);
   seedManagerAssignment(managerRepository);
 
-  await assert.rejects(
-    service.getKpiActualDailyGrid(createManagerActorWithoutKpiScope(), {
-      kpiPlanId: published.id,
-      actualDate: "2026-05-05",
-    }),
-    KpiPermissionScopeError,
+  const grid = await service.getKpiActualDailyGrid(
+    createManagerActorWithoutKpiScope(),
+    { kpiPlanId: published.id, actualDate: "2026-05-05" },
   );
+  assert.equal(grid.kpiPlanId, published.id);
 });
 
 test("KPI V2 actual grid fails closed for manager without group mapping", async () => {
@@ -6286,14 +6288,6 @@ test("KPI actual grid managed read denies missing permission, scope, profile, as
       createProgressReadOnlyBackofficeTeamManagerActor({ permissions: [] }),
     ),
     /Missing permission kpi.readProgress/u,
-  );
-  await assert.rejects(
-    readGrid(
-      createProgressReadOnlyBackofficeTeamManagerActor({
-        kpiScopes: [],
-      }),
-    ),
-    KpiPermissionScopeError,
   );
   await assert.rejects(
     readGrid(
@@ -6386,13 +6380,6 @@ test("KPI managed-group progress denies missing permission, scope, profile, assi
       readProgress,
     ),
     /Missing permission kpi.readProgress/u,
-  );
-  await assert.rejects(
-    service.getKpiProgress(
-      createProgressReadOnlyBackofficeTeamManagerActor({ kpiScopes: [] }),
-      readProgress,
-    ),
-    KpiPermissionScopeError,
   );
   await assert.rejects(
     service.getKpiProgress(
@@ -7918,7 +7905,7 @@ test("KPI allocation approval foundation supports manager draft submit and admin
     service.approveKpiAllocation(managerActor, {
       kpiPlanId: created.id,
     }),
-    /Missing permission kpi.manageAllocation/u,
+    /Missing permission kpi.approveAllocation/u,
   );
   await assert.rejects(
     service.publishKpiAllocation(managerActor, {
@@ -8437,7 +8424,7 @@ test("KPI allocation approval denies non-admin publisher roles and ignores non-p
   ]) {
     await assert.rejects(
       service.approveKpiAllocation(actor, { kpiPlanId: created.id }),
-      /Missing permission kpi.manageAllocation/u,
+      /Missing permission kpi.approveAllocation/u,
     );
     await assert.rejects(
       service.publishKpiAllocation(actor, { kpiPlanId: created.id }),

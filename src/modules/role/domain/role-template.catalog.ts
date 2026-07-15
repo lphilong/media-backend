@@ -2,6 +2,10 @@ import { ActorScopeGrants } from "@core/actor/actor";
 import { Permission } from "@core/permission/permission.enum";
 import { AccountContext } from "@modules/account-context/domain/account-context.types";
 import { RoleAssignmentScopeType } from "./role-assignment-scope";
+import {
+  buildPermissionFingerprint,
+  ROLE_TEMPLATE_CATALOG_PROVENANCE,
+} from "./role-template-integrity";
 
 export const ROLE_TEMPLATE_CODES = [
   "OWNER_ADMIN",
@@ -88,6 +92,8 @@ export interface RoleTemplateDefinition {
   readonly category: string;
   readonly recommendedAccountContext: AccountContext;
   readonly permissions: readonly Permission[];
+  readonly permissionFingerprint: string;
+  readonly sourceProvenance: typeof ROLE_TEMPLATE_CATALOG_PROVENANCE;
   readonly recommendedScopeGrants: Readonly<ActorScopeGrants>;
   readonly scopePlan: readonly RoleTemplateScopePlanEntry[];
   readonly warnings: readonly string[];
@@ -132,11 +138,28 @@ type RoleTemplateDefinitionInput = Omit<
   | "scopeSelectorSupport"
   | "futureReadinessNote"
   | "legacyVisibility"
+  | "permissionFingerprint"
+  | "sourceProvenance"
 >;
 
-const TEMPLATE_VERSION = "2026-06-26";
+const TEMPLATE_VERSION = "2026-07-15";
 
-const ALL_PERMISSIONS = Object.freeze([...Object.values(Permission)]);
+export const LEGACY_COMPATIBILITY_PERMISSIONS = Object.freeze([
+  Permission.TALENT_KPI_READ,
+  Permission.TALENT_KPI_CREATE,
+  Permission.TALENT_KPI_UPDATE,
+  Permission.TALENT_KPI_MANAGE_METRICS,
+  Permission.TALENT_KPI_MANAGE_LIFECYCLE,
+] as const);
+
+const LEGACY_COMPATIBILITY_PERMISSION_SET = new Set<Permission>(
+  LEGACY_COMPATIBILITY_PERMISSIONS,
+);
+const CURRENT_ASSIGNABLE_PERMISSIONS = Object.freeze(
+  Object.values(Permission).filter(
+    (permission) => !LEGACY_COMPATIBILITY_PERMISSION_SET.has(permission),
+  ),
+);
 
 const OPERATOR_SUPPORTED_SCOPE_SELECTORS = new Set<RoleAssignmentScopeType>([
   "self",
@@ -309,6 +332,7 @@ const KPI_OPERATIONS_PERMISSIONS = Object.freeze([
   Permission.KPI_UPDATE_DRAFT,
   Permission.KPI_PUBLISH,
   Permission.KPI_MANAGE_ALLOCATION,
+  Permission.KPI_APPROVE_ALLOCATION,
   Permission.KPI_ARCHIVE,
   Permission.KPI_ENTER_ACTUAL,
   Permission.KPI_CORRECT_ACTUAL,
@@ -420,7 +444,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       description: "Owner-controlled full administration preset.",
       category: "ADMINISTRATION",
       recommendedAccountContext: "ADMIN_CONSOLE",
-      permissions: ALL_PERMISSIONS,
+      permissions: CURRENT_ASSIGNABLE_PERMISSIONS,
       recommendedScopeGrants: scopeGrants({
         workSchedule: Object.freeze(["global"]),
         eventAssignment: Object.freeze(["global"]),
@@ -433,7 +457,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       }),
       scopePlan: GLOBAL_SCOPE_PLAN,
       warnings: [
-        "Owner Admin is the explicit break-glass role and includes every current permission enum value.",
+        "Owner Admin is the explicit break-glass role and includes every current assignable permission; compatibility-only permissions remain excluded.",
         "Separation-of-duties constraints are not enforced by the template catalog.",
       ],
       implementationNotes: [
@@ -655,20 +679,19 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         Permission.EVENT_READ,
         Permission.TALENT_READ,
         Permission.TALENT_GROUP_READ,
-        Permission.TALENT_KPI_READ,
         Permission.KPI_READ,
         Permission.KPI_READ_PROGRESS,
+        Permission.KPI_MANAGE_ALLOCATION,
         Permission.KPI_ENTER_ACTUAL,
         Permission.KPI_CORRECT_ACTUAL,
+        Permission.REVENUE_LEDGER_PLATFORM_EARNING_READ,
       ],
       recommendedScopeGrants: scopeGrants({
         workSchedule: Object.freeze(["team"]),
         eventAssignment: Object.freeze(["managedGroup"]),
-        kpi: Object.freeze(["managedGroup"]),
       }),
       scopePlan: [
         scopePlan("Talent Group", ["managedTalentGroup"], "READY"),
-        scopePlan("KPI", ["managedGroup"], "READY"),
       ],
       warnings: [
         "Talent KPI object scope remains future policy; role enforcement remains permission-based.",
@@ -699,7 +722,6 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       ],
       recommendedScopeGrants: scopeGrants({
         workSchedule: Object.freeze(["department"]),
-        kpi: Object.freeze(["managedGroup"]),
       }),
       scopePlan: [
         scopePlan("Org Unit", ["managedOrgUnit"], "REQUIRES_FUTURE_SCOPE"),
@@ -1003,6 +1025,8 @@ export function listRoleTemplates(): readonly RoleTemplateListItem[] {
     description: item.description,
     category: item.category,
     recommendedAccountContext: item.recommendedAccountContext,
+    permissionFingerprint: item.permissionFingerprint,
+    sourceProvenance: item.sourceProvenance,
     scopePlan: item.scopePlan,
     recommendedScopeGrants: item.recommendedScopeGrants,
     warnings: item.warnings,
@@ -1192,6 +1216,8 @@ function template(
     ...metadata,
     version: TEMPLATE_VERSION,
     permissions: Object.freeze([...definition.permissions]),
+    permissionFingerprint: buildPermissionFingerprint(definition.permissions),
+    sourceProvenance: ROLE_TEMPLATE_CATALOG_PROVENANCE,
     recommendedScopeGrants: scopeGrants(definition.recommendedScopeGrants),
     scopePlan: Object.freeze([...definition.scopePlan]),
     warnings: Object.freeze([...definition.warnings]),

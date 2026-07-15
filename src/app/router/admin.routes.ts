@@ -242,9 +242,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     new AuditContext(),
   );
 
-  const actorSnapshotCacheInvalidator = new ActorSnapshotCacheInvalidator(
-    infra.cacheAdapter,
-  );
+  const actorSnapshotCacheInvalidator = new ActorSnapshotCacheInvalidator();
 
   const auth0ManagementConfig = resolveAuth0ManagementConfigFromEnv();
   const auth0ManagementClient = auth0ManagementConfig
@@ -1037,9 +1035,6 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       platformAccountReadRepository,
       workScheduleEmploymentProfileReadonlyAccess,
       platformEarningRepository,
-      revenueLedgerBusinessCodeSequenceRepository,
-      authoritativeAuditGuard,
-      adminMutationBridge,
       structuredScopeAuthority,
     ),
     new ManagerWorkspaceGroupAdminService(

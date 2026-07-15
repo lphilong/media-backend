@@ -113,6 +113,9 @@ export class NativeMongoPlatformEarningRepository
     if (filters.platformAccountId) {
       query.platformAccountId = filters.platformAccountId;
     }
+    if (filters.platformAccountIds) {
+      query.platformAccountId = { $in: [...filters.platformAccountIds] };
+    }
     if (filters.talentGroupId) query.talentGroupId = filters.talentGroupId;
     if (filters.createdByActorId) {
       query.createdByActorId = filters.createdByActorId;

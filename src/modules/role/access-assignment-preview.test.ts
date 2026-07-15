@@ -12,6 +12,7 @@ import { Permission } from "@core/permission/permission.enum";
 import { AccessAssignmentPreviewAdminService } from "@modules/role/admin/admin.access-assignment-preview.service";
 import { AdminAccessAssignmentPreviewController } from "@modules/role/admin/admin.access-assignment-preview.controller";
 import { adminAccessAssignmentPreviewRoutes } from "@modules/role/admin/admin.access-assignment-preview.routes";
+import { getRoleTemplate } from "@modules/role/domain/role-template.catalog";
 
 const CANONICAL_ASSIGNMENT_TARGET_CODES = [
   "OWNER_ADMIN",
@@ -71,6 +72,8 @@ test("access assignment preview normalizes scope and computes proposed manager a
       { scopeType: "managedTalentGroup", targetId: "group-a" },
     ],
     reason: "Assigned by owner request",
+    effectiveAt: EFFECTIVE_AT,
+    reviewAt: REVIEW_AT_30_DAYS,
   });
 
   assert.equal(result.canApply, true);
@@ -78,9 +81,10 @@ test("access assignment preview normalizes scope and computes proposed manager a
     result.scopeFingerprint,
     "scope:v1:managedTalentGroup|targetId=group-a",
   );
-  assert.deepEqual(
-    readPath(result, ["effectiveAccessDelta", "addedPermissions"]),
-    [Permission.TALENT_GROUP_READ],
+  assert.equal(
+    (readPath(result, ["effectiveAccessDelta", "addedPermissions"]) as readonly string[])
+      .includes(Permission.TALENT_GROUP_READ),
+    true,
   );
   assert.equal(
     readPath(result, [
@@ -91,6 +95,189 @@ test("access assignment preview normalizes scope and computes proposed manager a
     ]),
     true,
   );
+  assert.equal(db.writeCount, 0);
+});
+
+test("access assignment preview blocks a template-backed Role whose equal version hides permission drift", async () => {
+  const template = getRoleTemplate("TALENT_GROUP_MANAGER");
+  assert.notEqual(template, null);
+  const db = fakeDb({
+    users: [activeUser("target-user", ["MANAGER_CONSOLE"])],
+    employment_profiles: [activeProfile("profile-1", "target-user")],
+    roles: [
+      {
+        ...role(
+          "role-tgm",
+          "TALENT_GROUP_MANAGER",
+          [Permission.TALENT_GROUP_READ],
+          { canonical: false },
+        ),
+        templateCode: "TALENT_GROUP_MANAGER",
+        templateVersion: template?.version,
+      },
+    ],
+    role_assignments: [],
+    responsibility_assignments: [
+      responsibility(
+        "resp-1",
+        "profile-1",
+        "TALENT_GROUP",
+        "group-a",
+        "TALENT_GROUP_MANAGER",
+      ),
+    ],
+  });
+
+  const result = await new AccessAssignmentPreviewAdminService(db).preview({
+    targetUserId: "target-user",
+    assignmentTargetType: "ROLE_TEMPLATE",
+    assignmentTargetCode: "TALENT_GROUP_MANAGER",
+    structuredScopeGrants: [
+      { scopeType: "managedTalentGroup", targetId: "group-a" },
+    ],
+    reason: "Attempt stale assignment",
+  });
+
+  assert.equal(result.canApply, false);
+  assert.equal(
+    (result.blockers as readonly { code: string }[]).some(
+      (item) => item.code === "ROLE_TEMPLATE_DRIFT_STALE",
+    ),
+    true,
+  );
+  assert.equal(db.writeCount, 0);
+});
+
+test("canonical template preview blocks metadata-less missing, extra, mixed, and exact Role states", async () => {
+  const template = getRoleTemplate("STAFF_CONSOLE_USER");
+  assert.ok(template);
+  const cases = [
+    {
+      expected: "STALE_MISSING_PERMISSIONS",
+      permissions: template.permissions.slice(1),
+    },
+    {
+      expected: "STALE_EXTRA_PERMISSIONS",
+      permissions: [...template.permissions, "legacy.extra"],
+    },
+    {
+      expected: "STALE_MIXED",
+      permissions: [...template.permissions.slice(1), "legacy.extra"],
+    },
+    { expected: "UNKNOWN_ORPHAN", permissions: template.permissions },
+  ] as const;
+
+  for (const fixture of cases) {
+    const db = fakeDb({
+      users: [activeUser("target-user", ["STAFF_CONSOLE"])],
+      employment_profiles: [activeProfile("profile-1", "target-user")],
+      roles: [
+        role("role-staff", template.code, fixture.permissions, {
+          canonical: false,
+        }),
+      ],
+      role_assignments: [],
+      responsibility_assignments: [],
+    });
+    const result = await new AccessAssignmentPreviewAdminService(db).preview({
+      targetUserId: "target-user",
+      assignmentTargetType: "ROLE_TEMPLATE",
+      assignmentTargetCode: template.code,
+      structuredScopeGrants: [{ scopeType: "self" }],
+      reason: "canonical provenance verification",
+    });
+
+    assert.equal(result.canApply, false, fixture.expected);
+    assert.equal(
+      readPath(result, ["assignmentTarget", "roleDrift", "classification"]),
+      fixture.expected,
+    );
+    assert.equal(readCodes(result.blockers).includes("ROLE_TEMPLATE_DRIFT_STALE"), true);
+    assert.equal(db.writeCount, 0);
+  }
+});
+
+test("canonical bundle children block metadata-less permission drift and unknown provenance", async () => {
+  const template = getRoleTemplate("STAFF_CONSOLE_USER");
+  assert.ok(template);
+  const cases = [
+    {
+      expected: "STALE_MISSING_PERMISSIONS",
+      permissions: template.permissions.slice(1),
+    },
+    {
+      expected: "STALE_EXTRA_PERMISSIONS",
+      permissions: [...template.permissions, "legacy.extra"],
+    },
+    {
+      expected: "STALE_MIXED",
+      permissions: [...template.permissions.slice(1), "legacy.extra"],
+    },
+    { expected: "UNKNOWN_ORPHAN", permissions: template.permissions },
+  ] as const;
+
+  for (const fixture of cases) {
+    const db = fakeDb({
+      users: [activeUser("target-user", ["STAFF_CONSOLE"])],
+      employment_profiles: [activeProfile("profile-1", "target-user")],
+      roles: [
+        role("role-staff", template.code, fixture.permissions, {
+          canonical: false,
+        }),
+      ],
+      role_assignments: [],
+      responsibility_assignments: [],
+    });
+    const result = await new AccessAssignmentPreviewAdminService(db).preview({
+      targetUserId: "target-user",
+      assignmentTargetType: "BUNDLE",
+      assignmentTargetCode: "STAFF_CONSOLE_BUNDLE",
+      bundleVersion: "2026-06-26",
+      structuredScopeGrants: [{ scopeType: "self" }],
+      reason: "bundle child provenance verification",
+    });
+    const driftBlocker = (result.blockers as readonly Record<string, unknown>[]).find(
+      (item) => item.code === "ROLE_TEMPLATE_DRIFT_STALE",
+    );
+
+    assert.equal(result.canApply, false, fixture.expected);
+    assert.equal(
+      readPath(driftBlocker, ["roleDrift", "classification"]),
+      fixture.expected,
+    );
+    assert.deepEqual(readPath(result, ["proposedAssignments"]), []);
+    assert.equal(db.writeCount, 0);
+  }
+});
+
+test("manual direct Role keeps unknown provenance distinct and performs no template synchronization", async () => {
+  const template = getRoleTemplate("STAFF_CONSOLE_USER");
+  assert.ok(template);
+  const db = fakeDb({
+    users: [activeUser("target-user", ["STAFF_CONSOLE"])],
+    employment_profiles: [activeProfile("profile-1", "target-user")],
+    roles: [
+      role("role-staff", template.code, template.permissions, {
+        canonical: false,
+      }),
+    ],
+    role_assignments: [],
+    responsibility_assignments: [],
+  });
+  const result = await new AccessAssignmentPreviewAdminService(db).preview({
+    targetUserId: "target-user",
+    assignmentTargetType: "ROLE",
+    assignmentTargetId: "role-staff",
+    structuredScopeGrants: [{ scopeType: "self" }],
+    reason: "explicit manual Role assignment",
+  });
+
+  assert.equal(result.canApply, true);
+  assert.equal(
+    readPath(result, ["assignmentTarget", "roleDrift", "classification"]),
+    "UNKNOWN_ORPHAN",
+  );
+  assert.equal(readPath(result, ["assignmentTarget", "templateCode"]), null);
   assert.equal(db.writeCount, 0);
 });
 
@@ -121,6 +308,8 @@ test("access assignment preview proposes missing required AccountContext without
       { scopeType: "managedTalentGroup", targetId: "group-a" },
     ],
     reason: "manager scope setup",
+    effectiveAt: EFFECTIVE_AT,
+    reviewAt: REVIEW_AT_30_DAYS,
   });
 
   assert.equal(result.canApply, true);
@@ -192,6 +381,8 @@ test("access assignment preview blocks missing AccountContext when actor is not 
         { scopeType: "managedTalentGroup", targetId: "group-a" },
       ],
       reason: "manager scope setup",
+      effectiveAt: EFFECTIVE_AT,
+      reviewAt: REVIEW_AT_30_DAYS,
     },
     { actor: previewActor([]) },
   );
@@ -241,6 +432,8 @@ test("access assignment preview blocks missing responsibility and duplicate exac
       { scopeType: "managedTalentGroup", targetId: "group-a" },
     ],
     reason: "review",
+    effectiveAt: EFFECTIVE_AT,
+    reviewAt: REVIEW_AT_30_DAYS,
   });
 
   assert.equal(result.canApply, false);
@@ -260,6 +453,8 @@ test("access assignment preview accepts OrgUnit manager only with central active
       { scopeType: "managedOrgUnit" as const, targetId: "org-a" },
     ],
     reason: "org manager access",
+    effectiveAt: EFFECTIVE_AT,
+    reviewAt: REVIEW_AT_30_DAYS,
   };
 
   const satisfied = await new AccessAssignmentPreviewAdminService(
@@ -333,6 +528,8 @@ test("access assignment preview proposes manager responsibility create when acto
         { scopeType: "managedTalentGroup", targetId: "group-a" },
       ],
       reason: "manager scope setup",
+      effectiveAt: EFFECTIVE_AT,
+      reviewAt: REVIEW_AT_30_DAYS,
     },
     {
       actor: previewActor([
@@ -1108,15 +1305,18 @@ function role(
   id: string,
   code: string,
   permissions: readonly string[],
-  options?: { readonly state?: string },
+  options?: { readonly state?: string; readonly canonical?: boolean },
 ): Record<string, unknown> {
+  const template = options?.canonical === false ? null : getRoleTemplate(code);
   return {
     _id: id,
     code,
     name: code,
     state: options?.state ?? "ACTIVE",
-    permissions,
-    templateCode: code,
+    permissions: template?.permissions ?? permissions,
+    ...(template
+      ? { templateCode: template.code, templateVersion: template.version }
+      : {}),
   };
 }
 

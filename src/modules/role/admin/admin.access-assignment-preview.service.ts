@@ -31,6 +31,7 @@ import {
 } from "@modules/role/domain/role-template.catalog";
 import { RoleValidationError } from "@modules/role/domain/role.errors";
 import { UserRoleAssignmentRecord } from "@modules/role/domain/role.types";
+import { classifyRoleTemplateDrift } from "@modules/role/domain/role-template-integrity";
 
 export type AccessAssignmentTargetType = "ROLE" | "ROLE_TEMPLATE" | "BUNDLE";
 
@@ -93,6 +94,7 @@ interface RoleDocument {
   readonly state: string;
   readonly permissions: readonly string[];
   readonly templateCode?: string;
+  readonly templateVersion?: string;
 }
 
 interface AssignmentDocument {
@@ -684,9 +686,25 @@ export class AccessAssignmentPreviewAdminService {
           );
           continue;
         }
+        const childTemplate = getRoleTemplate(childCode);
         const childTemplateReadiness = evaluateRoleTemplateAssignability(
-          getRoleTemplate(role.templateCode ?? role.code),
+          childTemplate,
         );
+        const childDrift = classifyRoleTemplateDrift({
+          role,
+          template: childTemplate,
+          legacyCodes: LEGACY_ASSIGNMENT_TARGET_CODES,
+        });
+        if (isBlockingCanonicalRoleTemplateState(childDrift.classification)) {
+          blockers.push(
+            blocker(
+              "ROLE_TEMPLATE_DRIFT_STALE",
+              `Persisted Role ${role.code} is not synchronized with its canonical template (${childDrift.classification}). Run the explicit Role sync workflow first.`,
+              { childRoleCode: childCode, roleDrift: childDrift },
+            ),
+          );
+          continue;
+        }
         if (
           role.permissions.length === 0 ||
           !childTemplateReadiness.assignable
@@ -800,8 +818,35 @@ export class AccessAssignmentPreviewAdminService {
         ),
       );
     }
-    const governingCode = role.templateCode ?? role.code;
+    const governingCode =
+      targetType === "ROLE_TEMPLATE"
+        ? requestedCode
+        : role.templateCode ?? role.code;
     const template = getRoleTemplate(governingCode);
+    const roleDrift = classifyRoleTemplateDrift({
+      role,
+      template:
+        targetType === "ROLE_TEMPLATE"
+          ? template
+          : role.templateCode || role.templateVersion
+            ? template
+            : null,
+      legacyCodes: LEGACY_ASSIGNMENT_TARGET_CODES,
+    });
+    if (
+      (targetType === "ROLE_TEMPLATE" &&
+        isBlockingCanonicalRoleTemplateState(roleDrift.classification)) ||
+      (targetType === "ROLE" &&
+        isBlockingRoleTemplateDrift(roleDrift.classification))
+    ) {
+      blockers.push(
+        blocker(
+          "ROLE_TEMPLATE_DRIFT_STALE",
+          `Persisted Role ${role.code} is not synchronized with its canonical template (${roleDrift.classification}). Run the explicit Role sync workflow first.`,
+          { roleDrift },
+        ),
+      );
+    }
     const templateReadiness = evaluateRoleTemplateAssignability(template);
     const roleHasNoPermissions = role.permissions.length === 0;
     if (!templateReadiness.assignable || roleHasNoPermissions) {
@@ -830,6 +875,7 @@ export class AccessAssignmentPreviewAdminService {
         code: role.code,
         templateCode: role.templateCode ?? null,
         name: role.name,
+        roleDrift,
       },
       bundleOrigin: null,
       bundleExpansion: null,
@@ -1152,6 +1198,22 @@ export class AccessAssignmentPreviewAdminService {
       generatedAt: new Date(now).toISOString(),
     };
   }
+}
+
+function isBlockingRoleTemplateDrift(
+  classification: ReturnType<typeof classifyRoleTemplateDrift>["classification"],
+): boolean {
+  return (
+    classification === "STALE_MISSING_PERMISSIONS" ||
+    classification === "STALE_EXTRA_PERMISSIONS" ||
+    classification === "STALE_MIXED"
+  );
+}
+
+function isBlockingCanonicalRoleTemplateState(
+  classification: ReturnType<typeof classifyRoleTemplateDrift>["classification"],
+): boolean {
+  return classification !== "MATCHED";
 }
 
 function emptyTarget(

@@ -24,6 +24,7 @@ import { AdminRoleController } from "@modules/role/admin/admin.role.controller";
 import { adminRoleRoutes } from "@modules/role/admin/admin.role.routes";
 import { AdminRoleBundleController } from "@modules/role/admin/admin.role-bundle.controller";
 import { adminRoleBundleRoutes } from "@modules/role/admin/admin.role-bundle.routes";
+import { getRoleTemplate } from "@modules/role/domain/role-template.catalog";
 
 const CANONICAL_ASSIGNMENT_TARGET_CODES = [
   "HR_OPERATIONS",
@@ -99,11 +100,48 @@ test("access assignment apply creates role assignment with audit trace and effec
   assert.equal(inserted?.assignedBy, "access-admin");
   assert.equal(audit.records.length, 1);
   assert.equal(readPath(result, ["auditTrace", "written"]), true);
-  assert.deepEqual(
-    readPath(result, ["effectiveAccessAfterApply", "permissions"]),
-    [Permission.WORK_SCHEDULE_READ],
+  assert.equal(
+    (readPath(result, ["effectiveAccessAfterApply", "permissions"]) as readonly string[])
+      .includes(Permission.WORK_SCHEDULE_READ),
+    true,
   );
   assert.equal(invalidator.calls.length, 1);
+});
+
+test("access assignment apply re-previews and blocks canonical Role drift introduced after preview", async () => {
+  const template = getRoleTemplate("STAFF_CONSOLE_USER");
+  assert.ok(template);
+  const db = baseApplyDb({
+    targetContexts: ["STAFF_CONSOLE"],
+    targetRoleCode: template.code,
+    targetRolePermissions: template.permissions,
+  });
+  const command = {
+    targetUserId: "target-user",
+    assignmentTargetType: "ROLE_TEMPLATE" as const,
+    assignmentTargetCode: template.code,
+    structuredScopeGrants: [{ scopeType: "self" as const }],
+    reason: "re-preview drift guard",
+  };
+  const preview = await new AccessAssignmentPreviewAdminService(db).preview(command);
+  assert.equal(preview.canApply, true);
+
+  const targetRole = db
+    .rows("roles")
+    .find((row) => row.code === template.code) as Record<string, unknown>;
+  targetRole.permissions = template.permissions.slice(1);
+  delete targetRole.templateCode;
+  delete targetRole.templateVersion;
+
+  const result = await withTrace(() => applyWithFakes(db, command));
+  assert.equal(result.applied, false);
+  assert.equal(readCodes(result.blockers).includes("ROLE_TEMPLATE_DRIFT_STALE"), true);
+  assert.equal(
+    db.rows("role_assignments").filter((row) => row.userId === "target-user").length,
+    0,
+  );
+  assert.deepEqual(targetRole.permissions, template.permissions.slice(1));
+  assert.equal(targetRole.templateCode, undefined);
 });
 
 test("access assignment apply permits canonical target roles through preview classification", async () => {
@@ -324,6 +362,8 @@ test("access assignment apply materializes missing AccountContext before child a
         { scopeType: "managedTalentGroup", targetId: "group-a" },
       ],
       reason: "manager setup",
+      effectiveAt: EFFECTIVE_AT,
+      reviewAt: REVIEW_AT_30_DAYS,
     }),
   );
 
@@ -382,6 +422,8 @@ test("access assignment apply succeeds for Org Unit Manager with valid managedOr
         { scopeType: "managedOrgUnit", targetId: "org-a" },
       ],
       reason: "org unit manager setup",
+      effectiveAt: EFFECTIVE_AT,
+      reviewAt: REVIEW_AT_30_DAYS,
     }),
   );
 
@@ -523,6 +565,8 @@ test("access assignment apply creates required responsibility only when actor is
           { scopeType: "managedTalentGroup", targetId: "group-a" },
         ],
         reason: "manager setup",
+        effectiveAt: EFFECTIVE_AT,
+        reviewAt: REVIEW_AT_30_DAYS,
       },
       actor([Permission.TALENT_GROUP_UPDATE]),
     ),
@@ -568,6 +612,8 @@ test("access assignment apply creates required Org Unit Manager responsibility o
           { scopeType: "managedOrgUnit", targetId: "org-a" },
         ],
         reason: "org manager setup",
+        effectiveAt: EFFECTIVE_AT,
+        reviewAt: REVIEW_AT_30_DAYS,
       },
       actor([Permission.ORG_UNIT_UPDATE]),
     ),
@@ -601,6 +647,8 @@ test("access assignment apply blocks missing responsibility and requires reason 
         { scopeType: "managedTalentGroup", targetId: "group-a" },
       ],
       reason: "manager setup",
+      effectiveAt: EFFECTIVE_AT,
+      reviewAt: REVIEW_AT_30_DAYS,
     }),
   );
   assert.equal(missingResponsibility.applied, false);
@@ -623,6 +671,8 @@ test("access assignment apply blocks missing responsibility and requires reason 
           { scopeType: "managedOrgUnit", targetId: "org-a" },
         ],
         reason: "org manager setup",
+        effectiveAt: EFFECTIVE_AT,
+        reviewAt: REVIEW_AT_30_DAYS,
       },
     ),
   );
@@ -1218,14 +1268,17 @@ function role(
   permissions: readonly string[],
   options?: { readonly maxDelegatableBand?: string; readonly state?: string },
 ): Record<string, unknown> {
+  const template = getRoleTemplate(code);
   return {
     _id: id,
     id,
     code,
     name: code,
     state: options?.state ?? "ACTIVE",
-    permissions,
-    templateCode: code,
+    permissions: template?.permissions ?? permissions,
+    ...(template
+      ? { templateCode: template.code, templateVersion: template.version }
+      : {}),
     delegationBand: "LIMITED",
     maxDelegatableBand: options?.maxDelegatableBand ?? "NONE",
     createdAt: 1,

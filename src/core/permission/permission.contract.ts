@@ -825,6 +825,13 @@ export const PermissionContracts: PermissionContractRegistry = Object.freeze({
     auditAction: "kpi.manage-allocation",
     riskLevel: "CRITICAL",
   },
+  [Permission.KPI_APPROVE_ALLOCATION]: {
+    code: Permission.KPI_APPROVE_ALLOCATION,
+    context: "ADMIN",
+    resource: "KPI",
+    auditAction: "kpi.approve-allocation",
+    riskLevel: "CRITICAL",
+  },
   [Permission.KPI_ARCHIVE]: {
     code: Permission.KPI_ARCHIVE,
     context: "ADMIN",
@@ -979,6 +986,13 @@ export const PermissionContracts: PermissionContractRegistry = Object.freeze({
     resource: "REVENUE_LEDGER",
     auditAction: "revenue-ledger.platform-earning.submit",
     riskLevel: "HIGH",
+  },
+  [Permission.REVENUE_LEDGER_PLATFORM_EARNING_READ]: {
+    code: Permission.REVENUE_LEDGER_PLATFORM_EARNING_READ,
+    context: "ADMIN",
+    resource: "REVENUE_LEDGER",
+    auditAction: "revenue-ledger.platform-earning.read",
+    riskLevel: "LOW",
   },
   [Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW]: {
     code: Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW,

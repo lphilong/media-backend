@@ -20,6 +20,7 @@ import { StructuredLogger } from "@infra/logger.adapter";
 import { runWithDomainEventCollector } from "@system/event-bridge/domain-event.types";
 import {
   LEGACY_ROLE_TEMPLATE_CODES,
+  LEGACY_COMPATIBILITY_PERMISSIONS,
   ROLE_TEMPLATE_CATALOG,
   ROLE_TEMPLATE_CODES,
   getRoleTemplate,
@@ -99,7 +100,13 @@ test("role template catalog contains target templates only with valid unique per
 
   const owner = getRoleTemplate("OWNER_ADMIN");
   assert.notEqual(owner, null);
-  assert.deepEqual(owner?.permissions, ALL_PERMISSION_CODES);
+  assert.deepEqual(
+    owner?.permissions,
+    ALL_PERMISSION_CODES.filter(
+      (permission) =>
+        !new Set<Permission>(LEGACY_COMPATIBILITY_PERMISSIONS).has(permission),
+    ),
+  );
   assert.equal(owner?.assignabilityStatus, "RESTRICTED_SENSITIVE");
   assert.equal(owner?.operatorFlowGroup, "RESTRICTED_SENSITIVE");
 
@@ -295,7 +302,7 @@ test("target role templates align KPI V2 permissions with runtime scope recommen
     manager?.permissions.includes(Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE),
     false,
   );
-  assert.deepEqual(manager?.recommendedScopeGrants.kpi, ["managedGroup"]);
+  assert.equal(manager?.recommendedScopeGrants.kpi, undefined);
   assert.deepEqual(manager?.recommendedScopeGrants.eventAssignment, [
     "managedGroup",
   ]);
@@ -315,6 +322,22 @@ test("target role templates align KPI V2 permissions with runtime scope recommen
   assert.equal(
     manager?.permissions.includes(Permission.KPI_CORRECT_ACTUAL),
     true,
+  );
+  assert.equal(
+    manager?.permissions.includes(Permission.KPI_MANAGE_ALLOCATION),
+    true,
+  );
+  assert.equal(
+    manager?.permissions.includes(Permission.KPI_APPROVE_ALLOCATION),
+    false,
+  );
+  assert.equal(
+    manager?.permissions.includes(Permission.REVENUE_LEDGER_PLATFORM_EARNING_READ),
+    true,
+  );
+  assert.equal(
+    manager?.permissions.includes(Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT),
+    false,
   );
   assert.equal(manager?.permissions.includes(Permission.KPI_PUBLISH), false);
 
@@ -532,7 +555,7 @@ test("role template endpoints return catalog and preview without mutating roles"
     );
     assert.equal(
       previewBody.data.permissions.length,
-      ALL_PERMISSION_CODES.length,
+      ALL_PERMISSION_CODES.length - LEGACY_COMPATIBILITY_PERMISSIONS.length,
     );
     assert.equal(
       previewBody.data.scopePlan.some(
