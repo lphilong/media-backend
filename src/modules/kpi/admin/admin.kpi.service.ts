@@ -45,6 +45,19 @@ import {
 } from "@modules/kpi/domain/kpi.repository";
 import { KpiActualRepository } from "@modules/kpi/domain/kpi-actual.repository";
 import {
+  allocationSourceFingerprint,
+  assertKpiAllocationVersions,
+  validateExactAllocationMetric,
+} from "@modules/kpi/domain/kpi-allocation-lifecycle";
+import {
+  aggregateAcceptedActuals,
+  authorizeActualCapture,
+  createActualCorrectionLineage,
+  DEFAULT_MEMBER_ENTRY_ACTUAL_POLICY,
+  KpiMetricActualPolicy,
+  resolveActualDeadline,
+} from "@modules/kpi/domain/kpi-actual-policy";
+import {
   KpiSubjectReadonlyAccess,
   kpiSubjectRefKey,
 } from "@modules/kpi/domain/kpi-subject-readonly-access";
@@ -92,6 +105,7 @@ import {
   KpiPlanMutationView,
   KpiProgressView,
   KpiPlanStatus,
+  KpiRollupMethod,
   KpiSubjectType,
   KpiTargetMetric,
 } from "@modules/kpi/domain/kpi.types";
@@ -141,13 +155,26 @@ import {
 const DEFAULT_TIMEZONE = "Asia/Ho_Chi_Minh";
 const DEFAULT_TIMEZONE_OFFSET_MS = 7 * 60 * 60 * 1000;
 const HCM_UTC_OFFSET_HOURS = 7;
-const DEFAULT_ACTUAL_POLICY_VERSION = "kpi-actual-policy-v2";
+const DEFAULT_ACTUAL_POLICY_VERSION = "kpi-actual-policy-v3";
 const DEFAULT_ACTUAL_ENTRY_OPEN_LOCAL_TIME = "00:00";
-const DEFAULT_ACTUAL_ENTRY_LOCK_LOCAL_TIME = "10:00";
+const DEFAULT_ACTUAL_ENTRY_LOCK_LOCAL_TIME = "12:00";
 const DEFAULT_MAX_DIRECT_EDITS_PER_ENTRY = 3;
 const MAX_LIST_LIMIT = 100;
 const DEFAULT_LIST_LIMIT = 50;
-const TARGET_METRIC_INPUT_FIELDS = ["metricCode", "targetValue"] as const;
+const TARGET_METRIC_INPUT_FIELDS = [
+  "metricCode",
+  "targetValue",
+  "allocationMode",
+  "groupRemainder",
+  "actualCaptureMode",
+  "actualAggregationMethod",
+  "actualReviewMode",
+  "actualEvidenceMode",
+] as const;
+const ALLOCATION_TARGET_METRIC_INPUT_FIELDS = [
+  "metricCode",
+  "targetValue",
+] as const;
 const ALLOCATION_INPUT_FIELDS = [
   "memberTalentId",
   "membershipId",
@@ -189,6 +216,17 @@ interface NormalizedPlanPeriod {
 interface NormalizedTargetMetric {
   readonly metricCode: KpiMetricCode;
   readonly targetValue: number;
+  readonly targetValueExact: string;
+  readonly allocationMode: "GROUP_ONLY" | "MEMBER_ALLOCATED" | "HYBRID";
+  readonly allocationScale: number;
+  readonly groupRemainderExact: string;
+  readonly actualCaptureMode:
+    "GROUP_ENTRY" | "MEMBER_ENTRY" | "IMPORTED_SOURCE" | "DERIVED";
+  readonly actualAggregationMethod: KpiRollupMethod;
+  readonly actualReviewMode: "NONE" | "MANAGER_REVIEW" | "OPS_REVIEW";
+  readonly actualEvidenceMode:
+    "NONE" | "OPTIONAL" | "REQUIRED" | "SOURCE_CONTROLLED";
+  readonly actualSource: "MANUAL" | "IMPORTED_SOURCE" | "DERIVED";
 }
 
 interface NormalizedAllocationInput {
@@ -204,7 +242,9 @@ interface NormalizedEmploymentAllocationInput {
   readonly employmentProfileId: string;
   readonly allocationStartDate: string;
   readonly allocationEndDate: string | null;
-  readonly targetMetrics: readonly KpiAllocationTargetMetric[];
+  readonly targetMetrics: readonly (KpiAllocationTargetMetric & {
+    readonly targetValueExact: string;
+  })[];
   readonly note: string | null;
 }
 
@@ -321,6 +361,7 @@ export class KpiAdminService {
           subjectType,
           subjectId,
           status: "DRAFT",
+          lifecycleStatus: "DRAFT",
           currencyCode: normalizeCurrency(command.currencyCode ?? "VND"),
           periodMonth: period.periodMonth,
           periodStartAt: period.periodStartAt,
@@ -523,7 +564,10 @@ export class KpiAdminService {
         "KPI manager-scoped detail is supported only for PUBLISHED plans",
       );
     }
-    if (plan.subjectType !== "TALENT_GROUP" && plan.subjectType !== "ORG_UNIT") {
+    if (
+      plan.subjectType !== "TALENT_GROUP" &&
+      plan.subjectType !== "ORG_UNIT"
+    ) {
       throw new KpiPermissionScopeError(
         "KPI manager-scoped detail is supported only for TALENT_GROUP or ORG_UNIT plans",
       );
@@ -815,7 +859,10 @@ export class KpiAdminService {
       if (groupId && groupId !== plan.subjectId) {
         return { items: [] };
       }
-      if (!this.hasKpiGlobalScope(actor) && !this.hasKpiManagedGroupScope(actor)) {
+      if (
+        !this.hasKpiGlobalScope(actor) &&
+        !this.hasKpiManagedGroupScope(actor)
+      ) {
         const items = await this.repository.listAllocations({
           status,
           kpiPlanId: plan.id,
@@ -1062,7 +1109,27 @@ export class KpiAdminService {
       operation,
       `kpi-plan:${command.kpiPlanId}`,
       async (session) => {
+        const idempotencyFingerprint = allocationOperationFingerprint(
+          "DRAFT_UPSERT",
+          command,
+        );
+        const operationClaim = await this.claimAllocationOperation(
+          actor,
+          command.kpiPlanId,
+          operation,
+          command.idempotencyKey,
+          idempotencyFingerprint,
+          session,
+        );
+        if (operationClaim.replay) {
+          return operationClaim.replay;
+        }
         const plan = await this.requirePlan(command.kpiPlanId, session);
+        assertCanonicalPlanLifecycle(
+          plan,
+          ["RELEASED_FOR_ALLOCATION"],
+          "edit allocation draft",
+        );
         await this.requireKpiSubjectStructuredAuthority(
           actor,
           Permission.KPI_ENTER_ACTUAL,
@@ -1088,8 +1155,25 @@ export class KpiAdminService {
           plan.id,
           session,
         );
+        assertCanonicalAllocationLifecycle(
+          existing,
+          ["DRAFT", "CHANGES_REQUESTED"],
+          "edit allocation draft",
+        );
+        assertKpiAllocationVersions({
+          plan,
+          allocations: existing,
+          expectedPlanVersion: command.expectedPlanVersion,
+          expectedAllocationVersion: command.expectedAllocationVersion,
+          expectedMembershipSnapshotVersion:
+            command.expectedMembershipSnapshotVersion,
+        });
         if (
-          existing.some((allocation) => allocation.allocationStatus !== "DRAFT")
+          existing.some(
+            (allocation) =>
+              allocation.allocationStatus !== "DRAFT" &&
+              allocation.allocationStatus !== "REJECTED",
+          )
         ) {
           throw new KpiStateError(
             "KPI allocation draft can be edited only while all rows are DRAFT",
@@ -1103,11 +1187,24 @@ export class KpiAdminService {
           targetMetrics,
           now,
           session,
+          {
+            idempotencyKey: command.idempotencyKey.trim(),
+            idempotencyFingerprint,
+            allocationVersion: nextAllocationVersion(existing),
+          },
+        );
+        await this.validateAllocationsForTransition(
+          plan,
+          targetMetrics,
+          records,
+          "DRAFT",
+          session,
         );
         await this.repository.replaceAllocationsForPlan(
           {
             kpiPlanId: plan.id,
-            allowedCurrentStatuses: ["DRAFT"],
+            allowedCurrentStatuses: ["DRAFT", "REJECTED"],
+            allowedCurrentLifecycleStatuses: ["DRAFT", "CHANGES_REQUESTED"],
             allocations: records,
             updatedAt: now,
             updatedByActorId: actor.id,
@@ -1125,7 +1222,15 @@ export class KpiAdminService {
           },
           session,
         });
-        return this.loadPlanDetail(plan.id, session);
+        const result = await this.loadPlanDetail(plan.id, session);
+        await this.completeAllocationOperation(
+          operationClaim.operationId,
+          operation,
+          idempotencyFingerprint,
+          result,
+          session,
+        );
+        return result;
       },
     );
   }
@@ -1147,7 +1252,27 @@ export class KpiAdminService {
       operation,
       `kpi-plan:${command.kpiPlanId}`,
       async (session) => {
+        const idempotencyFingerprint = allocationOperationFingerprint(
+          "SUBMIT",
+          command,
+        );
+        const operationClaim = await this.claimAllocationOperation(
+          actor,
+          command.kpiPlanId,
+          operation,
+          command.idempotencyKey,
+          idempotencyFingerprint,
+          session,
+        );
+        if (operationClaim.replay) {
+          return operationClaim.replay;
+        }
         const plan = await this.requirePlan(command.kpiPlanId, session);
+        assertCanonicalPlanLifecycle(
+          plan,
+          ["RELEASED_FOR_ALLOCATION"],
+          "submit allocation",
+        );
         await this.requireKpiSubjectStructuredAuthority(
           actor,
           Permission.KPI_ENTER_ACTUAL,
@@ -1155,14 +1280,34 @@ export class KpiAdminService {
           "submit KPI allocation draft",
         );
         await this.assertActorCanDraftAllocation(actor, plan, session);
-        const allocations = await this.repository.listAllocationsByPlanId(
-          plan.id,
-          session,
+        const [targetMetrics, allocations] = await Promise.all([
+          this.repository.listTargetMetricsByPlanId(plan.id, session),
+          this.repository.listAllocationsByPlanId(plan.id, session),
+        ]);
+        assertCanonicalAllocationLifecycle(
+          allocations,
+          ["DRAFT", "CHANGES_REQUESTED", "SUBMITTED"],
+          "submit allocation",
         );
+        assertCanonicalAllocationLifecycle(
+          allocations,
+          ["DRAFT", "CHANGES_REQUESTED"],
+          "submit allocation",
+        );
+        assertKpiAllocationVersions({
+          plan,
+          allocations,
+          expectedPlanVersion: command.expectedPlanVersion,
+          expectedAllocationVersion: command.expectedAllocationVersion,
+          expectedMembershipSnapshotVersion:
+            command.expectedMembershipSnapshotVersion,
+        });
         if (
           allocations.length === 0 ||
           allocations.some(
-            (allocation) => allocation.allocationStatus !== "DRAFT",
+            (allocation) =>
+              allocation.allocationStatus !== "DRAFT" &&
+              allocation.allocationStatus !== "REJECTED",
           )
         ) {
           throw new KpiStateError(
@@ -1175,16 +1320,29 @@ export class KpiAdminService {
           allocations,
           session,
         );
+        await this.validateAllocationsForTransition(
+          plan,
+          targetMetrics,
+          allocations,
+          allocations[0]?.allocationStatus ?? "DRAFT",
+          session,
+        );
         const now = this.clock();
         const modified = await this.repository.transitionAllocationsForPlan(
           {
             kpiPlanId: plan.id,
-            fromStatus: "DRAFT",
+            fromStatuses: ["DRAFT", "REJECTED"],
+            fromLifecycleStatuses: ["DRAFT", "CHANGES_REQUESTED"],
             toStatus: "PENDING_APPROVAL",
+            lifecycleStatus: "SUBMITTED",
             updatedAt: now,
             updatedByActorId: actor.id,
             submittedAt: now,
             submittedByActorId: actor.id,
+            allocationVersion: nextAllocationVersion(allocations),
+            idempotencyKey: command.idempotencyKey.trim(),
+            idempotencyFingerprint,
+            correlationId: crypto.randomUUID(),
           },
           session,
         );
@@ -1202,7 +1360,15 @@ export class KpiAdminService {
           },
           session,
         });
-        return this.loadPlanDetail(plan.id, session);
+        const result = await this.loadPlanDetail(plan.id, session);
+        await this.completeAllocationOperation(
+          operationClaim.operationId,
+          operation,
+          idempotencyFingerprint,
+          result,
+          session,
+        );
+        return result;
       },
     );
   }
@@ -1217,6 +1383,11 @@ export class KpiAdminService {
       fromStatus: "PENDING_APPROVAL",
       toStatus: "APPROVED",
       approvalNote: normalizeNullableText(command.approvalNote) ?? null,
+      expectedPlanVersion: command.expectedPlanVersion,
+      expectedAllocationVersion: command.expectedAllocationVersion,
+      expectedMembershipSnapshotVersion:
+        command.expectedMembershipSnapshotVersion,
+      idempotencyKey: command.idempotencyKey,
     });
   }
 
@@ -1233,6 +1404,11 @@ export class KpiAdminService {
         command.rejectionReason,
         "rejectionReason",
       ),
+      expectedPlanVersion: command.expectedPlanVersion,
+      expectedAllocationVersion: command.expectedAllocationVersion,
+      expectedMembershipSnapshotVersion:
+        command.expectedMembershipSnapshotVersion,
+      idempotencyKey: command.idempotencyKey,
     });
   }
 
@@ -1250,6 +1426,21 @@ export class KpiAdminService {
       operation,
       `kpi-plan:${command.kpiPlanId}`,
       async (session) => {
+        const idempotencyFingerprint = allocationOperationFingerprint(
+          "PUBLISH",
+          command,
+        );
+        const operationClaim = await this.claimAllocationOperation(
+          actor,
+          command.kpiPlanId,
+          operation,
+          command.idempotencyKey,
+          idempotencyFingerprint,
+          session,
+        );
+        if (operationClaim.replay) {
+          return operationClaim.replay;
+        }
         const plan = await this.requirePlan(command.kpiPlanId, session);
         await this.requireKpiSubjectStructuredAuthority(
           actor,
@@ -1258,15 +1449,28 @@ export class KpiAdminService {
           "publish KPI allocation",
         );
         assertAllocatableSubjectType(plan.subjectType);
-        if (plan.status !== "PUBLISHED") {
-          throw new KpiStateError(
-            "KPI allocation can be published only after the KPI plan is PUBLISHED",
-          );
-        }
+        assertCanonicalPlanLifecycle(
+          plan,
+          ["RELEASED_FOR_ALLOCATION"],
+          "publish allocation",
+        );
         const [targetMetrics, allocations] = await Promise.all([
           this.repository.listTargetMetricsByPlanId(plan.id, session),
           this.repository.listAllocationsByPlanId(plan.id, session),
         ]);
+        assertCanonicalAllocationLifecycle(
+          allocations,
+          ["APPROVED", "PUBLISHED"],
+          "publish allocation",
+        );
+        assertKpiAllocationVersions({
+          plan,
+          allocations,
+          expectedPlanVersion: command.expectedPlanVersion,
+          expectedAllocationVersion: command.expectedAllocationVersion,
+          expectedMembershipSnapshotVersion:
+            command.expectedMembershipSnapshotVersion,
+        });
         await this.validateAllocationsForTransition(
           plan,
           targetMetrics,
@@ -1278,18 +1482,36 @@ export class KpiAdminService {
         const modified = await this.repository.transitionAllocationsForPlan(
           {
             kpiPlanId: plan.id,
-            fromStatus: "APPROVED",
+            fromStatuses: ["APPROVED"],
+            fromLifecycleStatuses: ["APPROVED"],
             toStatus: "PUBLISHED",
+            lifecycleStatus: "PUBLISHED",
             updatedAt: now,
             updatedByActorId: actor.id,
             publishedAt: now,
             publishedByActorId: actor.id,
+            allocationVersion: nextAllocationVersion(allocations),
+            idempotencyKey: command.idempotencyKey.trim(),
+            idempotencyFingerprint,
+            correlationId: crypto.randomUUID(),
           },
           session,
         );
         if (modified === 0) {
           throw new KpiStateError("KPI allocation is not publishable");
         }
+        await this.repository.transitionStatus(
+          {
+            kpiPlanId: plan.id,
+            fromStatuses: ["PUBLISHED"],
+            fromLifecycleStatuses: ["RELEASED_FOR_ALLOCATION"],
+            toStatus: "PUBLISHED",
+            lifecycleStatus: "ACTIVE",
+            updatedAt: now,
+            updatedByActorId: actor.id,
+          },
+          session,
+        );
         await this.recordAudit({
           actor,
           permission,
@@ -1298,7 +1520,15 @@ export class KpiAdminService {
           metadata: { nextStatus: "PUBLISHED", allocationCount: modified },
           session,
         });
-        return this.loadPlanDetail(plan.id, session);
+        const result = await this.loadPlanDetail(plan.id, session);
+        await this.completeAllocationOperation(
+          operationClaim.operationId,
+          operation,
+          idempotencyFingerprint,
+          result,
+          session,
+        );
+        return result;
       },
     );
   }
@@ -1347,7 +1577,9 @@ export class KpiAdminService {
           {
             kpiPlanId: current.id,
             fromStatuses: ["DRAFT"],
+            fromLifecycleStatuses: ["DRAFT"],
             toStatus: "PUBLISHED",
+            lifecycleStatus: "RELEASED_FOR_ALLOCATION",
             publishedAt: now,
             publishedByActorId: actor.id,
             actualPolicySnapshot,
@@ -1397,6 +1629,11 @@ export class KpiAdminService {
       `kpi-plan:${command.kpiPlanId}`,
       async (session) => {
         const current = await this.requirePlan(command.kpiPlanId, session);
+        assertCanonicalPlanLifecycle(
+          current,
+          ["DRAFT", "RELEASED_FOR_ALLOCATION", "ACTIVE", "FINALIZED"],
+          "archive",
+        );
         await this.requireKpiSubjectStructuredAuthority(
           actor,
           Permission.KPI_ARCHIVE,
@@ -1417,7 +1654,14 @@ export class KpiAdminService {
           {
             kpiPlanId: current.id,
             fromStatuses: ["DRAFT", "PUBLISHED", "FINALIZED"],
+            fromLifecycleStatuses: [
+              "DRAFT",
+              "RELEASED_FOR_ALLOCATION",
+              "ACTIVE",
+              "FINALIZED",
+            ],
             toStatus: "ARCHIVED",
+            lifecycleStatus: "ARCHIVED",
             archivedAt: now,
             archivedByActorId: actor.id,
             updatedAt: now,
@@ -1527,6 +1771,29 @@ export class KpiAdminService {
           );
         }
 
+        const targetMetric = requireTargetMetricActualPolicySource(
+          await this.repository.listTargetMetricsByPlanId(plan.id, session),
+          metricCode,
+        );
+        const metricPolicy = requireMetricActualPolicy(targetMetric, policy);
+        const captureDecision = authorizeActualCapture(metricPolicy, {
+          actorKind: actor.accountContexts.includes("MANAGER_CONSOLE")
+            ? "MANAGER"
+            : "OPS",
+          targetScope: "MEMBER",
+          hasPublishedAllocation: allocation.allocationStatus === "PUBLISHED",
+          memberEligible: true,
+          hasExactManagerAuthority: true,
+          hasEvidence: Boolean(normalizeOptionalText(command.evidenceRef)),
+          sourceFingerprint: normalizeOptionalText(command.sourceFingerprint),
+          existingManualEntry: false,
+        });
+        if (!captureDecision.allowed) {
+          throw new KpiStateError(
+            `KPI actual capture policy denied entry: ${captureDecision.reason}`,
+          );
+        }
+
         await this.assertNoActiveActualSlotExcuse(
           plan.id,
           allocation.id,
@@ -1549,10 +1816,26 @@ export class KpiAdminService {
           metricCode,
           actualDate,
           actualValue,
-          effectiveValue: actualValue,
+          effectiveValue:
+            captureDecision.lifecycleStatus === "ACCEPTED" ? actualValue : 0,
+          acceptedValue:
+            captureDecision.lifecycleStatus === "ACCEPTED" ? actualValue : null,
+          acceptedVersion:
+            captureDecision.lifecycleStatus === "ACCEPTED" ? 1 : null,
           editCount: 0,
           correctionCount: 0,
           latestCorrectionId: null,
+          lifecycleStatus: captureDecision.lifecycleStatus,
+          entryVersion: 1,
+          captureMode: metricPolicy.captureMode,
+          aggregationMethod: metricPolicy.aggregationMethod,
+          reviewMode: metricPolicy.reviewMode,
+          evidenceMode: metricPolicy.evidenceMode,
+          policyVersion: metricPolicy.policyVersion,
+          sourceFingerprint:
+            normalizeOptionalText(command.sourceFingerprint) ?? null,
+          acceptedInputVersions: [],
+          derivationVersion: null,
           createdAt: now,
           createdByActorId: actor.id,
           updatedAt: now,
@@ -1829,6 +2112,20 @@ export class KpiAdminService {
           entry.metricCode,
           session,
         );
+        const targetMetric = requireTargetMetricActualPolicySource(
+          await this.repository.listTargetMetricsByPlanId(plan.id, session),
+          entry.metricCode,
+        );
+        const metricPolicy = requireMetricActualPolicy(targetMetric, policy);
+        if (
+          metricPolicy.captureMode !== "MEMBER_ENTRY" ||
+          metricPolicy.reviewMode !== "NONE" ||
+          entry.lifecycleStatus !== "ACCEPTED"
+        ) {
+          throw new KpiStateError(
+            "KPI actual direct edit is not allowed by the persisted metric policy",
+          );
+        }
         await this.assertActorCanManageAllocationActual(
           actor,
           plan,
@@ -1873,6 +2170,21 @@ export class KpiAdminService {
       operation,
       `kpi-actual-correction:${command.actualEntryId}`,
       async (session) => {
+        const payloadFingerprint = allocationOperationFingerprint(
+          "ACTUAL_CORRECTION",
+          command,
+        );
+        const operationClaim = await this.claimActualCorrectionOperation(
+          actor,
+          command.kpiPlanId,
+          operation,
+          command.idempotencyKey,
+          payloadFingerprint,
+          session,
+        );
+        if (operationClaim.replay) {
+          return operationClaim.replay;
+        }
         const plan = await this.requirePlan(command.kpiPlanId, session);
         await this.requireKpiSubjectStructuredAuthority(
           actor,
@@ -1885,6 +2197,9 @@ export class KpiAdminService {
           plan.id,
           session,
         );
+        if ((entry.entryVersion ?? 1) !== command.expectedEntryVersion) {
+          throw new KpiConflictError("KPI actual entry version changed");
+        }
         const reason = normalizeRequiredText(command.reason, "reason");
         const correctedValue = normalizeMetricValue(
           command.correctedValue,
@@ -1895,13 +2210,24 @@ export class KpiAdminService {
         this.assertActualMutationPlanOpen(plan, "correct actual");
         const policy = requireActualPolicySnapshot(plan);
         assertActualDateWithinPlan(plan, entry.actualDate);
-        assertCorrectionWindowOpen(policy, entry.actualDate, this.clock());
+        const now = this.clock();
+        const deadline = assertCorrectionWindowOpen(
+          policy,
+          entry.actualDate,
+          plan.periodMonth,
+          now,
+        );
         const allocation = await this.requireActiveAllocation(
           plan,
           entry.allocationId,
           entry.metricCode,
           session,
         );
+        const targetMetric = requireTargetMetricActualPolicySource(
+          await this.repository.listTargetMetricsByPlanId(plan.id, session),
+          entry.metricCode,
+        );
+        const metricPolicy = requireMetricActualPolicy(targetMetric, policy);
         this.assertActualEntryMatchesAllocation(entry, allocation);
         await this.assertNoActiveActualSlotExcuse(
           plan.id,
@@ -1917,9 +2243,16 @@ export class KpiAdminService {
           session,
         );
 
-        const now = this.clock();
+        const requiresReview =
+          deadline.requiresReview || metricPolicy.reviewMode !== "NONE";
+        const lineage = createActualCorrectionLineage({
+          entryId: entry.id,
+          acceptedVersion: entry.entryVersion ?? 1,
+          correctionId: crypto.randomUUID(),
+          requiresReview,
+        });
         const correction: KpiActualCorrection = {
-          id: crypto.randomUUID(),
+          id: lineage.replacementEntryId,
           actualEntryId: entry.id,
           kpiPlanId: plan.id,
           allocationId: entry.allocationId,
@@ -1929,6 +2262,12 @@ export class KpiAdminService {
           actualDate: entry.actualDate,
           previousValue: entry.effectiveValue,
           correctedValue,
+          previousEntryVersion: lineage.previousAcceptedVersion,
+          replacementEntryVersion: lineage.replacementVersion,
+          replacementLifecycleStatus: lineage.replacementLifecycleStatus,
+          requiresReview,
+          idempotencyKey: command.idempotencyKey.trim(),
+          payloadFingerprint,
           reason,
           correctedByActorId: actor.id,
           correctedAt: now,
@@ -1938,6 +2277,8 @@ export class KpiAdminService {
           await this.actualRepository.insertCorrectionAndApply(
             {
               correction,
+              expectedEntryVersion: command.expectedEntryVersion,
+              applyAcceptedProjection: !requiresReview,
               updatedAt: now,
               updatedByActorId: actor.id,
             },
@@ -1969,7 +2310,15 @@ export class KpiAdminService {
           },
           session,
         });
-        return { actualEntry: updatedEntry, correction };
+        const result = { actualEntry: updatedEntry, correction };
+        await this.completeAllocationOperation(
+          operationClaim.operationId,
+          operation,
+          payloadFingerprint,
+          result,
+          session,
+        );
+        return result;
       },
     );
   }
@@ -1998,11 +2347,16 @@ export class KpiAdminService {
           "finalize KPI plan",
         );
         assertExecutableSubjectType(current.subjectType);
-        if (current.status !== "PUBLISHED") {
-          throw new KpiStateError(
-            `KPI plan ${current.id} must be PUBLISHED before finalize`,
-          );
-        }
+        assertCanonicalPlanLifecycle(current, ["ACTIVE"], "finalize");
+        const allocations = await this.repository.listAllocationsByPlanId(
+          current.id,
+          session,
+        );
+        assertCanonicalAllocationLifecycle(
+          allocations,
+          ["PUBLISHED"],
+          "finalize plan",
+        );
         const policy = requireActualPolicySnapshot(current);
         assertFinalizeEligible(current, policy, this.clock());
 
@@ -2016,7 +2370,9 @@ export class KpiAdminService {
           {
             kpiPlanId: current.id,
             fromStatuses: ["PUBLISHED"],
+            fromLifecycleStatuses: ["ACTIVE"],
             toStatus: "FINALIZED",
+            lifecycleStatus: "FINALIZED",
             finalizedAt: now,
             finalizedByActorId: actor.id,
             finalResult,
@@ -2186,6 +2542,7 @@ export class KpiAdminService {
     const updated = await this.actualRepository.updateEntryDirect(
       {
         actualEntryId: entry.id,
+        expectedEntryVersion: entry.entryVersion ?? 1,
         actualValue,
         updatedAt: this.clock(),
         updatedByActorId: actor.id,
@@ -2687,6 +3044,10 @@ export class KpiAdminService {
         timezone: policy.timezone,
         entryOpenLocalTime: policy.entryOpenLocalTime,
         entryLockLocalTime: policy.entryLockLocalTime,
+        ordinaryCorrectionLockLocalTime: policy.ordinaryCorrectionLockLocalTime,
+        ordinaryCorrectionDayOffset: policy.ordinaryCorrectionDayOffset,
+        periodLockDayOfFollowingMonth: policy.periodLockDayOfFollowingMonth,
+        periodLockLocalTime: policy.periodLockLocalTime,
         maxDirectEditsPerEntry: policy.maxDirectEditsPerEntry,
         correctionAllowedUntil: policy.correctionAllowedUntil,
       },
@@ -2695,6 +3056,12 @@ export class KpiAdminService {
         metricCode: metric.metricCode,
         targetValue: metric.targetValue,
         unit: metric.unit,
+        captureMode: metric.actualCaptureMode,
+        aggregationMethod: metric.rollupMethod,
+        reviewMode: metric.actualReviewMode,
+        evidenceMode: metric.actualEvidenceMode,
+        source: metric.actualSource,
+        policyVersion: metric.actualPolicyVersion,
       })),
       rows: allocations.filter(isOfficialKpiAllocation).map((allocation) => ({
         allocationId: allocation.id,
@@ -2773,15 +3140,26 @@ export class KpiAdminService {
       officialAllocations.map((allocation) => allocation.id),
     );
     const relevantAllocations = allowedTalentIds
-      ? officialAllocations.filter((allocation) =>
-          allocation.memberTalentId !== null &&
-          allowedTalentIds.has(allocation.memberTalentId),
+      ? officialAllocations.filter(
+          (allocation) =>
+            allocation.memberTalentId !== null &&
+            allowedTalentIds.has(allocation.memberTalentId),
         )
       : officialAllocations;
     const entryKey = (
       entry: Pick<KpiActualEntry, "allocationId" | "metricCode">,
     ) => `${entry.allocationId}:${entry.metricCode}`;
     const actualByAllocationMetric = new Map<string, number>();
+    const acceptedInputsByKey = new Map<
+      string,
+      Array<{
+        readonly id: string;
+        readonly acceptedVersion: number;
+        readonly scope: "MEMBER";
+        readonly value: string;
+      }>
+    >();
+    const aggregationByKey = new Map<string, KpiRollupMethod>();
     const countByAllocationMetric = new Map<string, number>();
     for (const entry of entries) {
       if (
@@ -2793,13 +3171,42 @@ export class KpiAdminService {
         continue;
       }
       const key = entryKey(entry);
-      actualByAllocationMetric.set(
-        key,
-        (actualByAllocationMetric.get(key) ?? 0) + entry.effectiveValue,
-      );
       countByAllocationMetric.set(
         key,
         (countByAllocationMetric.get(key) ?? 0) + 1,
+      );
+      const acceptedValue = acceptedActualValue(entry);
+      if (acceptedValue === null) {
+        continue;
+      }
+      const aggregationMethod = entry.aggregationMethod ?? "SUM";
+      const currentAggregation = aggregationByKey.get(key);
+      if (
+        currentAggregation !== undefined &&
+        currentAggregation !== aggregationMethod
+      ) {
+        throw new KpiConflictError(
+          `KPI actual aggregation policy changed within allocation metric ${key}`,
+        );
+      }
+      aggregationByKey.set(key, aggregationMethod);
+      const inputs = acceptedInputsByKey.get(key) ?? [];
+      inputs.push({
+        id: entry.id,
+        acceptedVersion: entry.acceptedVersion ?? entry.entryVersion ?? 1,
+        scope: "MEMBER",
+        value: String(acceptedValue),
+      });
+      acceptedInputsByKey.set(key, inputs);
+    }
+    for (const [key, inputs] of acceptedInputsByKey) {
+      const aggregate = aggregateAcceptedActuals(
+        aggregationByKey.get(key) ?? "SUM",
+        inputs,
+      );
+      actualByAllocationMetric.set(
+        key,
+        aggregate.memberValue === null ? 0 : Number(aggregate.memberValue),
       );
     }
     const periodDayCount = countLocalDaysInPlan(plan);
@@ -3212,7 +3619,9 @@ export class KpiAdminService {
       return undefined;
     }
     const requestedGroupId =
-      input.subjectType === "ORG_UNIT" ? undefined : input.groupId ?? input.subjectId;
+      input.subjectType === "ORG_UNIT"
+        ? undefined
+        : (input.groupId ?? input.subjectId);
     const groupIds =
       requestedGroupId !== undefined
         ? [requestedGroupId]
@@ -3747,19 +4156,11 @@ export class KpiAdminService {
   }
 
   private assertActualMutationPlanOpen(plan: KpiPlan, operation: string): void {
-    if (plan.status !== "PUBLISHED") {
-      throw new KpiStateError(
-        `KPI plan ${plan.id} is ${plan.status}; only PUBLISHED plans can ${operation}`,
-      );
-    }
+    assertCanonicalPlanLifecycle(plan, ["ACTIVE"], operation);
   }
 
   private assertDraft(plan: KpiPlan, operation: string): void {
-    if (plan.status !== "DRAFT") {
-      throw new KpiStateError(
-        `KPI plan ${plan.id} is ${plan.status}; only DRAFT plans can ${operation}`,
-      );
-    }
+    assertCanonicalPlanLifecycle(plan, ["DRAFT"], operation);
   }
 
   private async requirePlan(
@@ -4012,13 +4413,21 @@ export class KpiAdminService {
     targetMetrics: readonly KpiTargetMetric[],
     now: number,
     session: ClientSession,
+    operationIdentity: {
+      readonly idempotencyKey: string;
+      readonly idempotencyFingerprint: string;
+      readonly allocationVersion: number;
+    },
   ): Promise<readonly KpiAllocation[]> {
     if (inputs.length === 0) {
       throw new KpiInvalidAllocationError(
         "KPI allocation draft requires at least one member",
       );
     }
-    if (plan.subjectType !== "TALENT_GROUP" && plan.subjectType !== "ORG_UNIT") {
+    if (
+      plan.subjectType !== "TALENT_GROUP" &&
+      plan.subjectType !== "ORG_UNIT"
+    ) {
       throw new KpiInvalidAllocationError(
         "KPI allocation drafts are allowed only for TALENT_GROUP or ORG_UNIT plans",
       );
@@ -4072,6 +4481,19 @@ export class KpiAdminService {
         memberTalentId,
         membershipId,
         allocationStatus: "DRAFT",
+        lifecycleStatus: "DRAFT",
+        sourcePlanVersion: plan.updatedAt,
+        allocationVersion: operationIdentity.allocationVersion,
+        membershipSnapshotVersion: null,
+        eligibleMemberSnapshot: {
+          employmentProfileId: input.employmentProfileId,
+          talentId: memberTalentId,
+          membershipId,
+          membershipStatus: membershipId ? "ACTIVE" : null,
+        },
+        idempotencyKey: operationIdentity.idempotencyKey ?? null,
+        idempotencyFingerprint: operationIdentity.idempotencyFingerprint,
+        correlationId: crypto.randomUUID(),
         allocationStartDate: input.allocationStartDate,
         allocationEndDate: input.allocationEndDate,
         targetMetrics: input.targetMetrics,
@@ -4094,7 +4516,21 @@ export class KpiAdminService {
         closedAt: null,
       });
     }
-    return allocations;
+    const membershipSnapshotVersion = allocationSourceFingerprint({
+      planId: plan.id,
+      sourcePlanVersion: plan.updatedAt,
+      allocationVersion: operationIdentity.allocationVersion,
+      members: allocations.map((allocation) => ({
+        employmentProfileId:
+          allocation.memberEmploymentProfileId ?? "GROUP_ONLY",
+        talentId: allocation.memberTalentId,
+        membershipId: allocation.membershipId,
+      })),
+    });
+    return allocations.map((allocation) => ({
+      ...allocation,
+      membershipSnapshotVersion,
+    }));
   }
 
   private async assertActorCanDraftAllocation(
@@ -4110,7 +4546,10 @@ export class KpiAdminService {
         "KPI allocation draft requires ADMIN manager authority",
       );
     }
-    if (plan.subjectType !== "TALENT_GROUP" && plan.subjectType !== "ORG_UNIT") {
+    if (
+      plan.subjectType !== "TALENT_GROUP" &&
+      plan.subjectType !== "ORG_UNIT"
+    ) {
       throw new KpiInvalidAllocationError(
         "KPI allocation draft is supported only for TALENT_GROUP or ORG_UNIT plans",
       );
@@ -4279,7 +4718,10 @@ export class KpiAdminService {
       if (orgUnitId && plan.subjectId !== orgUnitId) {
         return [];
       }
-      if (!this.hasKpiGlobalScope(actor) && !this.hasKpiManagedGroupScope(actor)) {
+      if (
+        !this.hasKpiGlobalScope(actor) &&
+        !this.hasKpiManagedGroupScope(actor)
+      ) {
         return [plan.id];
       }
       if (this.hasKpiGlobalScope(actor)) {
@@ -4331,6 +4773,142 @@ export class KpiAdminService {
     );
   }
 
+  private async claimAllocationOperation(
+    actor: Actor,
+    kpiPlanId: string,
+    operation: string,
+    idempotencyKeyInput: string,
+    payloadFingerprint: string,
+    session: ClientSession,
+  ): Promise<{
+    readonly operationId: string;
+    readonly replay: KpiPlanMutationView | null;
+  }> {
+    const idempotencyKey = normalizeRequiredText(
+      idempotencyKeyInput,
+      "idempotencyKey",
+    );
+    const claim = await this.repository.claimAllocationOperation(
+      {
+        actorId: actor.id,
+        kpiPlanId,
+        operation,
+        idempotencyKey,
+        payloadFingerprint,
+        now: this.clock(),
+      },
+      session,
+    );
+    if (
+      claim.record.operation !== operation ||
+      claim.record.payloadFingerprint !== payloadFingerprint
+    ) {
+      throw new KpiConflictError(
+        "KPI allocation idempotency key was reused with a different operation or payload",
+      );
+    }
+    if (claim.record.result !== null) {
+      if (
+        typeof claim.record.result !== "object" ||
+        claim.record.result === null ||
+        !("id" in claim.record.result) ||
+        !("targetMetrics" in claim.record.result) ||
+        !("allocations" in claim.record.result)
+      ) {
+        throw new KpiConflictError(
+          "KPI allocation idempotency result is not a valid plan view",
+        );
+      }
+      return {
+        operationId: claim.record.id,
+        replay: claim.record.result as KpiPlanMutationView,
+      };
+    }
+    if (!claim.isNew) {
+      throw new KpiConflictError(
+        "KPI allocation operation is already in progress",
+      );
+    }
+    return { operationId: claim.record.id, replay: null };
+  }
+
+  private async completeAllocationOperation(
+    operationId: string,
+    operation: string,
+    payloadFingerprint: string,
+    result: unknown,
+    session: ClientSession,
+  ): Promise<void> {
+    await this.repository.completeAllocationOperation(
+      {
+        operationId,
+        operation,
+        payloadFingerprint,
+        result,
+        completedAt: this.clock(),
+      },
+      session,
+    );
+  }
+
+  private async claimActualCorrectionOperation(
+    actor: Actor,
+    kpiPlanId: string,
+    operation: string,
+    idempotencyKeyInput: string,
+    payloadFingerprint: string,
+    session: ClientSession,
+  ): Promise<{
+    readonly operationId: string;
+    readonly replay: KpiActualCorrectionResult | null;
+  }> {
+    const idempotencyKey = normalizeRequiredText(
+      idempotencyKeyInput,
+      "idempotencyKey",
+    );
+    const claim = await this.repository.claimAllocationOperation(
+      {
+        actorId: actor.id,
+        kpiPlanId,
+        operation,
+        idempotencyKey,
+        payloadFingerprint,
+        now: this.clock(),
+      },
+      session,
+    );
+    if (
+      claim.record.operation !== operation ||
+      claim.record.payloadFingerprint !== payloadFingerprint
+    ) {
+      throw new KpiConflictError(
+        "KPI actual correction idempotency key was reused with a different operation or payload",
+      );
+    }
+    if (claim.record.result !== null) {
+      if (
+        typeof claim.record.result !== "object" ||
+        claim.record.result === null ||
+        !("actualEntry" in claim.record.result) ||
+        !("correction" in claim.record.result)
+      ) {
+        throw new KpiConflictError(
+          "KPI actual correction idempotency result is invalid",
+        );
+      }
+      return {
+        operationId: claim.record.id,
+        replay: claim.record.result as KpiActualCorrectionResult,
+      };
+    }
+    if (!claim.isNew) {
+      throw new KpiConflictError(
+        "KPI actual correction is already in progress",
+      );
+    }
+    return { operationId: claim.record.id, replay: null };
+  }
+
   private async transitionAdminAllocationApproval(
     actor: Actor,
     kpiPlanId: string,
@@ -4341,15 +4919,36 @@ export class KpiAdminService {
       readonly toStatus: KpiAllocationStatus;
       readonly approvalNote?: string | null;
       readonly rejectionReason?: string | null;
+      readonly expectedPlanVersion: number;
+      readonly expectedAllocationVersion: number;
+      readonly expectedMembershipSnapshotVersion: string;
+      readonly idempotencyKey: string;
     },
   ): Promise<KpiPlanMutationView> {
-    const permission = this.assertPermission(actor, input.permissionCode);
+    const permission = actor.accountContexts.includes("MANAGER_CONSOLE")
+      ? this.assertContextPermission(actor, input.permissionCode)
+      : this.assertPermission(actor, input.permissionCode);
     return this.executeMutation(
       actor,
       permission,
       input.operation,
       `kpi-plan:${kpiPlanId}`,
       async (session) => {
+        const idempotencyFingerprint = allocationOperationFingerprint(
+          input.toStatus === "APPROVED" ? "APPROVE" : "REQUEST_CHANGES",
+          input,
+        );
+        const operationClaim = await this.claimAllocationOperation(
+          actor,
+          kpiPlanId,
+          input.operation,
+          input.idempotencyKey,
+          idempotencyFingerprint,
+          session,
+        );
+        if (operationClaim.replay) {
+          return operationClaim.replay;
+        }
         const plan = await this.requirePlan(kpiPlanId, session);
         await this.requireKpiSubjectStructuredAuthority(
           actor,
@@ -4358,10 +4957,22 @@ export class KpiAdminService {
           "approve or reject KPI allocation",
         );
         assertAllocatableSubjectType(plan.subjectType);
-        this.assertActualMutationPlanOpen(plan, "approve or reject allocation");
-        const allocations = await this.repository.listAllocationsByPlanId(
-          plan.id,
-          session,
+        const [targetMetrics, allocations] = await Promise.all([
+          this.repository.listTargetMetricsByPlanId(plan.id, session),
+          this.repository.listAllocationsByPlanId(plan.id, session),
+        ]);
+        assertCanonicalPlanLifecycle(
+          plan,
+          ["RELEASED_FOR_ALLOCATION"],
+          "review allocation",
+        );
+        assertCanonicalAllocationLifecycle(
+          allocations,
+          [
+            "SUBMITTED",
+            input.toStatus === "APPROVED" ? "APPROVED" : "CHANGES_REQUESTED",
+          ],
+          "review allocation",
         );
         if (
           allocations.length === 0 ||
@@ -4373,12 +4984,40 @@ export class KpiAdminService {
             `KPI allocation requires status ${input.fromStatus}`,
           );
         }
+        assertKpiAllocationVersions({
+          plan,
+          allocations,
+          expectedPlanVersion: input.expectedPlanVersion,
+          expectedAllocationVersion: input.expectedAllocationVersion,
+          expectedMembershipSnapshotVersion:
+            input.expectedMembershipSnapshotVersion,
+        });
+        await this.validateAllocationsForTransition(
+          plan,
+          targetMetrics,
+          allocations,
+          input.fromStatus,
+          session,
+        );
+        await this.assertAllocationCheckerAuthority(actor, plan, session);
+        if (
+          allocations.some(
+            (allocation) => allocation.submittedByActorId === actor.id,
+          )
+        ) {
+          throw new KpiPermissionScopeError(
+            "KPI allocation submitter cannot perform a checker decision on their own submission",
+          );
+        }
         const now = this.clock();
         const modified = await this.repository.transitionAllocationsForPlan(
           {
             kpiPlanId: plan.id,
-            fromStatus: input.fromStatus,
+            fromStatuses: [input.fromStatus],
+            fromLifecycleStatuses: ["SUBMITTED"],
             toStatus: input.toStatus,
+            lifecycleStatus:
+              input.toStatus === "APPROVED" ? "APPROVED" : "CHANGES_REQUESTED",
             updatedAt: now,
             updatedByActorId: actor.id,
             approvedAt: input.toStatus === "APPROVED" ? now : undefined,
@@ -4389,6 +5028,10 @@ export class KpiAdminService {
             rejectedByActorId:
               input.toStatus === "REJECTED" ? actor.id : undefined,
             rejectionReason: input.rejectionReason,
+            allocationVersion: nextAllocationVersion(allocations),
+            idempotencyKey: input.idempotencyKey.trim(),
+            idempotencyFingerprint,
+            correlationId: crypto.randomUUID(),
           },
           session,
         );
@@ -4409,9 +5052,70 @@ export class KpiAdminService {
           },
           session,
         });
-        return this.loadPlanDetail(plan.id, session);
+        const result = await this.loadPlanDetail(plan.id, session);
+        await this.completeAllocationOperation(
+          operationClaim.operationId,
+          input.operation,
+          idempotencyFingerprint,
+          result,
+          session,
+        );
+        return result;
       },
     );
+  }
+
+  private async assertAllocationCheckerAuthority(
+    actor: Actor,
+    plan: KpiPlan,
+    session: ClientSession,
+  ): Promise<void> {
+    if (actor.accountContexts.includes("ADMIN_CONSOLE")) {
+      return;
+    }
+    if (!actor.accountContexts.includes("MANAGER_CONSOLE")) {
+      throw new KpiPermissionScopeError(
+        "KPI allocation review requires Admin/Ops or superior Manager context",
+      );
+    }
+    const profile =
+      await this.subjectReadonlyAccess.findActiveEmploymentProfileByLinkedUserId(
+        actor.id,
+        session,
+      );
+    if (!profile) {
+      throw new KpiPermissionScopeError(
+        "KPI allocation review requires an active linked EmploymentProfile",
+      );
+    }
+    const scope =
+      await this.managedScopeReader.resolveManagedScopeByResponsibleEmploymentProfile(
+        {
+          responsibleEmploymentProfileId: profile.employmentProfileId,
+          asOf: this.clock(),
+        },
+        session,
+      );
+    const hasExactResponsibility =
+      plan.subjectType === "ORG_UNIT"
+        ? scope.orgUnitScopes.some(
+            (item) =>
+              item.orgUnitId === plan.subjectId &&
+              !item.includeDescendants &&
+              item.actionMask.includes("KPI_ALLOCATION_APPROVE"),
+          )
+        : plan.subjectType === "TALENT_GROUP"
+          ? (scope.talentGroupScopes ?? []).some(
+              (item) =>
+                item.talentGroupId === plan.subjectId &&
+                item.actionMask.includes("KPI_ALLOCATION_APPROVE"),
+            )
+          : false;
+    if (!hasExactResponsibility) {
+      throw new KpiPermissionScopeError(
+        "KPI allocation review requires an exact active central approval responsibility",
+      );
+    }
   }
 
   private async validateAllocationsForTransition(
@@ -4434,6 +5138,13 @@ export class KpiAdminService {
       throw new KpiStateError(
         `KPI allocation rows must all be ${expectedStatus}`,
       );
+    }
+    if (
+      allocations.some(
+        (allocation) => allocation.sourcePlanVersion !== plan.updatedAt,
+      )
+    ) {
+      throw new KpiConflictError("KPI allocation source plan version changed");
     }
     if (plan.subjectType === "TALENT_GROUP") {
       await this.validateGroupAllocationsForPublish(
@@ -4472,11 +5183,7 @@ export class KpiAdminService {
         "KPI TALENT_GROUP publish requires allocation rows",
       );
     }
-
-    const totals = new Map<KpiMetricCode, number>();
-    for (const target of targetMetrics) {
-      totals.set(target.metricCode, 0);
-    }
+    const targetCodes = new Set(targetMetrics.map((item) => item.metricCode));
 
     for (const allocation of allocations) {
       if (allocation.allocationStatus !== expectedStatus) {
@@ -4498,32 +5205,32 @@ export class KpiAdminService {
           `KPI allocation memberTalentId must still be an active member at publish: ${memberTalentId}`,
         );
       }
+      if (
+        allocation.membershipId !== member.membershipId ||
+        allocation.memberEmploymentProfileId !== member.employmentProfileId ||
+        allocation.eligibleMemberSnapshot?.membershipId !==
+          member.membershipId ||
+        allocation.eligibleMemberSnapshot?.employmentProfileId !==
+          member.employmentProfileId
+      ) {
+        throw new KpiConflictError(
+          `KPI allocation membership source changed for ${memberTalentId}`,
+        );
+      }
       for (const metric of allocation.targetMetrics) {
         normalizeTargetValue(
           metric.targetValue,
           metric.metricCode,
           `allocations[].targetMetrics[].targetValue`,
         );
-        if (!totals.has(metric.metricCode)) {
+        if (!targetCodes.has(metric.metricCode)) {
           throw new KpiInvalidAllocationError(
             `KPI allocation metricCode ${metric.metricCode} is not in plan target metrics`,
           );
         }
-        totals.set(
-          metric.metricCode,
-          (totals.get(metric.metricCode) ?? 0) + metric.targetValue,
-        );
       }
     }
-
-    for (const target of targetMetrics) {
-      const total = totals.get(target.metricCode) ?? 0;
-      if (!numbersEqual(total, target.targetValue)) {
-        throw new KpiInvalidAllocationError(
-          `KPI allocation total for ${target.metricCode} must equal plan target ${target.targetValue}; received ${total}`,
-        );
-      }
-    }
+    assertExactMemberAllocationTotals(targetMetrics, allocations);
   }
 
   private async validateOrgUnitAllocationsForPublish(
@@ -4538,11 +5245,7 @@ export class KpiAdminService {
         "KPI ORG_UNIT publish requires allocation rows",
       );
     }
-
-    const totals = new Map<KpiMetricCode, number>();
-    for (const target of targetMetrics) {
-      totals.set(target.metricCode, 0);
-    }
+    const targetCodes = new Set(targetMetrics.map((item) => item.metricCode));
 
     for (const allocation of allocations) {
       if (
@@ -4574,37 +5277,104 @@ export class KpiAdminService {
           `KPI allocation memberEmploymentProfileId must still belong to plan org unit at publish: ${memberEmploymentProfileId}`,
         );
       }
+      if (
+        allocation.eligibleMemberSnapshot?.employmentProfileId !==
+        member.employmentProfileId
+      ) {
+        throw new KpiConflictError(
+          `KPI allocation membership source changed for ${memberEmploymentProfileId}`,
+        );
+      }
       for (const metric of allocation.targetMetrics) {
         normalizeTargetValue(
           metric.targetValue,
           metric.metricCode,
           `allocations[].targetMetrics[].targetValue`,
         );
-        if (!totals.has(metric.metricCode)) {
+        if (!targetCodes.has(metric.metricCode)) {
           throw new KpiInvalidAllocationError(
             `KPI allocation metricCode ${metric.metricCode} is not in plan target metrics`,
           );
         }
-        totals.set(
-          metric.metricCode,
-          (totals.get(metric.metricCode) ?? 0) + metric.targetValue,
-        );
       }
     }
+    assertExactMemberAllocationTotals(targetMetrics, allocations);
+  }
+}
 
-    for (const target of targetMetrics) {
-      const total = totals.get(target.metricCode) ?? 0;
-      if (!numbersEqual(total, target.targetValue)) {
+function assertExactMemberAllocationTotals(
+  targetMetrics: readonly KpiTargetMetric[],
+  allocations: readonly KpiAllocation[],
+): void {
+  for (const target of targetMetrics) {
+    if (
+      target.targetValueExact === undefined ||
+      target.allocationMode === undefined ||
+      target.allocationScale === undefined ||
+      target.groupRemainderExact === undefined
+    ) {
+      throw new KpiConflictError(
+        `KPI metric ${target.metricCode} requires authoritative allocation-policy migration before allocation writes`,
+      );
+    }
+    const memberTargets = allocations.flatMap((allocation) => {
+      const metric = allocation.targetMetrics.find(
+        (item) => item.metricCode === target.metricCode,
+      );
+      if (target.allocationMode === "GROUP_ONLY") {
+        if (metric) {
+          throw new KpiInvalidAllocationError(
+            `GROUP_ONLY metric ${target.metricCode} cannot appear in member allocation rows`,
+          );
+        }
+        return [];
+      }
+      if (!metric || metric.targetValueExact === undefined) {
         throw new KpiInvalidAllocationError(
-          `KPI allocation total for ${target.metricCode} must equal plan target ${target.targetValue}; received ${total}`,
+          `KPI allocation ${allocation.id} is missing exact metric ${target.metricCode}`,
         );
       }
-    }
+      return [metric.targetValueExact];
+    });
+    validateExactAllocationMetric({
+      metricCode: target.metricCode,
+      groupTarget: target.targetValueExact,
+      memberTargets,
+      mode: target.allocationMode,
+      groupRemainder: target.groupRemainderExact,
+      scale: target.allocationScale,
+    });
   }
 }
 
 function assertAdminActorType(actor: Actor): void {
   PermissionGuard.assertAdminActor(actor);
+}
+
+function nextAllocationVersion(
+  allocations: readonly Pick<
+    KpiAllocation,
+    "allocationVersion" | "updatedAt"
+  >[],
+): number {
+  return (
+    Math.max(
+      0,
+      ...allocations.map(
+        (allocation) => allocation.allocationVersion ?? allocation.updatedAt,
+      ),
+    ) + 1
+  );
+}
+
+function allocationOperationFingerprint(
+  operation: string,
+  payload: object,
+): string {
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify({ operation, payload }))
+    .digest("hex");
 }
 
 function normalizeTargetMetrics(
@@ -4650,13 +5420,47 @@ function normalizeTargetMetrics(
       );
     }
 
+    const normalizedValue = normalizeExactMetricValue(
+      metricRecord.targetValue,
+      metricCode,
+      `targetMetrics[${index}].targetValue`,
+      "target",
+    );
+    const allocationMode = normalizeAllocationMode(metricRecord.allocationMode);
+    const allocationScale = allocationScaleForMetric(metricCode);
+    if (
+      allocationMode !== "HYBRID" &&
+      metricRecord.groupRemainder !== undefined &&
+      metricRecord.groupRemainder !== null
+    ) {
+      throw new KpiValidationError(
+        `KPI metric ${metricCode} accepts groupRemainder only in HYBRID mode`,
+      );
+    }
+    const groupRemainderExact =
+      allocationMode === "HYBRID"
+        ? normalizeExactMetricValue(
+            metricRecord.groupRemainder,
+            metricCode,
+            `targetMetrics[${index}].groupRemainder`,
+            "group remainder",
+          ).exact
+        : allocationMode === "GROUP_ONLY"
+          ? normalizedValue.exact
+          : "0";
+    const actualPolicy = normalizeMetricActualPolicyInput(
+      metricRecord,
+      catalog.rollupMethod,
+    );
+
     return {
       metricCode,
-      targetValue: normalizeTargetValue(
-        metricRecord.targetValue,
-        metricCode,
-        `targetMetrics[${index}].targetValue`,
-      ),
+      targetValue: normalizedValue.value,
+      targetValueExact: normalizedValue.exact,
+      allocationMode,
+      allocationScale,
+      groupRemainderExact,
+      ...actualPolicy,
     };
   });
 }
@@ -4675,6 +5479,39 @@ function assertTargetMetricsAllowedForSubject(
   }
 }
 
+function assertCanonicalPlanLifecycle(
+  plan: KpiPlan,
+  allowed: readonly NonNullable<KpiPlan["lifecycleStatus"]>[],
+  operation: string,
+): void {
+  if (
+    plan.lifecycleStatus === undefined ||
+    !allowed.includes(plan.lifecycleStatus)
+  ) {
+    throw new KpiStateError(
+      `KPI plan ${plan.id} canonical lifecycle ${plan.lifecycleStatus ?? "LEGACY_UNMIGRATED"} cannot ${operation}`,
+    );
+  }
+}
+
+function assertCanonicalAllocationLifecycle(
+  allocations: readonly KpiAllocation[],
+  allowed: readonly NonNullable<KpiAllocation["lifecycleStatus"]>[],
+  operation: string,
+): void {
+  if (
+    allocations.some(
+      (allocation) =>
+        allocation.lifecycleStatus === undefined ||
+        !allowed.includes(allocation.lifecycleStatus),
+    )
+  ) {
+    throw new KpiStateError(
+      `KPI allocation canonical lifecycle cannot ${operation}`,
+    );
+  }
+}
+
 function buildTargetMetricRecords(
   kpiPlanId: string,
   input: readonly NormalizedTargetMetric[],
@@ -4687,9 +5524,17 @@ function buildTargetMetricRecords(
       kpiPlanId,
       metricCode: metric.metricCode,
       targetValue: metric.targetValue,
+      targetValueExact: metric.targetValueExact,
+      allocationMode: metric.allocationMode,
+      allocationScale: metric.allocationScale,
+      groupRemainderExact: metric.groupRemainderExact,
       unit: catalog.unit,
-      rollupMethod: catalog.rollupMethod,
-      actualSource: "MANUAL",
+      actualSource: metric.actualSource,
+      actualCaptureMode: metric.actualCaptureMode,
+      actualReviewMode: metric.actualReviewMode,
+      actualEvidenceMode: metric.actualEvidenceMode,
+      rollupMethod: metric.actualAggregationMethod,
+      actualPolicyVersion: DEFAULT_ACTUAL_POLICY_VERSION,
       createdAt: now,
       updatedAt: now,
     };
@@ -4744,7 +5589,7 @@ function normalizeAllocations(
         );
         assertOnlyFields(
           targetRecord,
-          TARGET_METRIC_INPUT_FIELDS,
+          ALLOCATION_TARGET_METRIC_INPUT_FIELDS,
           `allocations[${allocationIndex}].targetMetrics[${targetIndex}]`,
         );
         const metricCode = normalizeMetricCode(targetRecord.metricCode);
@@ -4759,13 +5604,16 @@ function normalizeAllocations(
           );
         }
         seenMetricCodes.add(metricCode);
+        const normalizedValue = normalizeExactMetricValue(
+          targetRecord.targetValue,
+          metricCode,
+          `allocations[${allocationIndex}].targetMetrics[${targetIndex}].targetValue`,
+          "target",
+        );
         return {
           metricCode,
-          targetValue: normalizeTargetValue(
-            targetRecord.targetValue,
-            metricCode,
-            `allocations[${allocationIndex}].targetMetrics[${targetIndex}].targetValue`,
-          ),
+          targetValue: normalizedValue.value,
+          targetValueExact: normalizedValue.exact,
         };
       },
     );
@@ -4841,7 +5689,7 @@ function normalizeEmploymentAllocations(
         );
         assertOnlyFields(
           targetRecord,
-          TARGET_METRIC_INPUT_FIELDS,
+          ALLOCATION_TARGET_METRIC_INPUT_FIELDS,
           `allocations[${allocationIndex}].targetMetrics[${targetIndex}]`,
         );
         const metricCode = normalizeMetricCode(targetRecord.metricCode);
@@ -4856,13 +5704,16 @@ function normalizeEmploymentAllocations(
           );
         }
         seenMetricCodes.add(metricCode);
+        const normalizedValue = normalizeExactMetricValue(
+          targetRecord.targetValue,
+          metricCode,
+          `allocations[${allocationIndex}].targetMetrics[${targetIndex}].targetValue`,
+          "target",
+        );
         return {
           metricCode,
-          targetValue: normalizeTargetValue(
-            targetRecord.targetValue,
-            metricCode,
-            `allocations[${allocationIndex}].targetMetrics[${targetIndex}].targetValue`,
-          ),
+          targetValue: normalizedValue.value,
+          targetValueExact: normalizedValue.exact,
         };
       },
     );
@@ -5100,6 +5951,16 @@ function buildActualWorkspaceSlotData(input: {
     officialAllocations.map((allocation) => [allocation.id, allocation]),
   );
   const actualByAllocationMetric = new Map<string, number>();
+  const acceptedInputsByAllocationMetric = new Map<
+    string,
+    Array<{
+      readonly id: string;
+      readonly acceptedVersion: number;
+      readonly scope: "MEMBER";
+      readonly value: string;
+    }>
+  >();
+  const aggregationByAllocationMetric = new Map<string, KpiRollupMethod>();
   const entryCountByAllocationMetric = new Map<string, number>();
   const entriesBySlot = new Map<string, KpiActualEntry>();
   const excusesBySlot = new Map<string, KpiActualSlotExcuse>();
@@ -5121,10 +5982,6 @@ function buildActualWorkspaceSlotData(input: {
       allocation.id,
       entry.metricCode,
     );
-    actualByAllocationMetric.set(
-      key,
-      (actualByAllocationMetric.get(key) ?? 0) + entry.effectiveValue,
-    );
     entryCountByAllocationMetric.set(
       key,
       (entryCountByAllocationMetric.get(key) ?? 0) + 1,
@@ -5132,6 +5989,40 @@ function buildActualWorkspaceSlotData(input: {
     entriesBySlot.set(
       actualWorkspaceSlotKey(allocation.id, entry.metricCode, entry.actualDate),
       entry,
+    );
+    const acceptedValue = acceptedActualValue(entry);
+    if (acceptedValue === null) {
+      continue;
+    }
+    const aggregationMethod = entry.aggregationMethod ?? "SUM";
+    const existingAggregation = aggregationByAllocationMetric.get(key);
+    if (
+      existingAggregation !== undefined &&
+      existingAggregation !== aggregationMethod
+    ) {
+      throw new KpiConflictError(
+        `KPI actual aggregation policy changed within allocation metric ${key}`,
+      );
+    }
+    aggregationByAllocationMetric.set(key, aggregationMethod);
+    const inputs = acceptedInputsByAllocationMetric.get(key) ?? [];
+    inputs.push({
+      id: entry.id,
+      acceptedVersion: entry.acceptedVersion ?? entry.entryVersion ?? 1,
+      scope: "MEMBER",
+      value: String(acceptedValue),
+    });
+    acceptedInputsByAllocationMetric.set(key, inputs);
+  }
+
+  for (const [key, inputs] of acceptedInputsByAllocationMetric) {
+    const aggregate = aggregateAcceptedActuals(
+      aggregationByAllocationMetric.get(key) ?? "SUM",
+      inputs,
+    );
+    actualByAllocationMetric.set(
+      key,
+      aggregate.memberValue === null ? 0 : Number(aggregate.memberValue),
     );
   }
 
@@ -5181,6 +6072,21 @@ function buildActualWorkspaceStatusSummary(input: {
     excusesBySlot: slotData.excusesBySlot,
     now: input.now,
   });
+}
+
+function acceptedActualValue(entry: KpiActualEntry): number | null {
+  if (entry.acceptedValue !== undefined) {
+    return entry.acceptedValue;
+  }
+  if (
+    entry.lifecycleStatus === undefined ||
+    entry.lifecycleStatus === "ACCEPTED" ||
+    entry.lifecycleStatus === "CORRECTED" ||
+    entry.lifecycleStatus === "LOCKED"
+  ) {
+    return entry.effectiveValue;
+  }
+  return null;
 }
 
 function buildActualWorkspaceAggregate(input: {
@@ -5406,7 +6312,9 @@ function createActualWorkspaceMissingSignal(
 }
 
 type MutableKpiActualEntryStatusSummary = {
-  -readonly [Key in keyof KpiActualEntryStatusSummary]: KpiActualEntryStatusSummary[Key];
+  -readonly [
+    Key in keyof KpiActualEntryStatusSummary
+  ]: KpiActualEntryStatusSummary[Key];
 };
 
 function summarizeDailyActualStatuses(input: {
@@ -6017,9 +6925,7 @@ function isOfficialKpiAllocation(allocation: KpiAllocation): boolean {
   return allocation.allocationStatus === "PUBLISHED";
 }
 
-function isTalentGroupCompatibleAllocation(
-  allocation: KpiAllocation,
-): boolean {
+function isTalentGroupCompatibleAllocation(allocation: KpiAllocation): boolean {
   return (
     allocation.subjectType === "TALENT_GROUP" &&
     typeof allocation.groupId === "string" &&
@@ -6073,8 +6979,7 @@ function actualEntryMatchesAllocationIdentity(
   );
   return (
     entry.memberTalentId === memberIdentity.memberTalentId &&
-    entry.memberEmploymentProfileId ===
-      memberIdentity.memberEmploymentProfileId
+    entry.memberEmploymentProfileId === memberIdentity.memberEmploymentProfileId
   );
 }
 
@@ -6117,6 +7022,15 @@ function toOrgUnitAllocationItem(
     memberTalentId: allocation.memberTalentId,
     groupId: allocation.groupId,
     allocationStatus: allocation.allocationStatus,
+    lifecycleStatus: allocation.lifecycleStatus,
+    allocationMode: allocation.allocationMode,
+    sourcePlanVersion: allocation.sourcePlanVersion,
+    allocationVersion: allocation.allocationVersion,
+    membershipSnapshotVersion: allocation.membershipSnapshotVersion,
+    eligibleMemberSnapshot: allocation.eligibleMemberSnapshot,
+    correlationId: allocation.correlationId,
+    supersedesAllocationId: allocation.supersedesAllocationId,
+    correctsAllocationId: allocation.correctsAllocationId,
     allocationStartDate: allocation.allocationStartDate,
     allocationEndDate: allocation.allocationEndDate,
     targetMetrics: allocation.targetMetrics,
@@ -6354,6 +7268,164 @@ function normalizeTargetValue(
   return normalizeMetricValue(value, metricCode, field, "target");
 }
 
+function normalizeAllocationMode(
+  value: unknown,
+): "GROUP_ONLY" | "MEMBER_ALLOCATED" | "HYBRID" {
+  if (value === undefined) {
+    return "MEMBER_ALLOCATED";
+  }
+  const normalized = normalizeRequiredText(
+    value,
+    "allocationMode",
+  ).toUpperCase();
+  if (
+    normalized !== "GROUP_ONLY" &&
+    normalized !== "MEMBER_ALLOCATED" &&
+    normalized !== "HYBRID"
+  ) {
+    throw new KpiValidationError(
+      `KPI allocationMode is unsupported: ${normalized}`,
+    );
+  }
+  return normalized;
+}
+
+function normalizeMetricActualPolicyInput(
+  record: Record<string, unknown>,
+  defaultAggregationMethod: KpiRollupMethod,
+): Pick<
+  NormalizedTargetMetric,
+  | "actualCaptureMode"
+  | "actualAggregationMethod"
+  | "actualReviewMode"
+  | "actualEvidenceMode"
+  | "actualSource"
+> {
+  const captureMode = String(
+    record.actualCaptureMode ?? "MEMBER_ENTRY",
+  ).toUpperCase();
+  if (
+    captureMode !== "GROUP_ENTRY" &&
+    captureMode !== "MEMBER_ENTRY" &&
+    captureMode !== "IMPORTED_SOURCE" &&
+    captureMode !== "DERIVED"
+  ) {
+    throw new KpiValidationError(
+      `KPI actualCaptureMode is unsupported: ${captureMode}`,
+    );
+  }
+  const aggregationMethod = String(
+    record.actualAggregationMethod ?? defaultAggregationMethod,
+  ).toUpperCase();
+  if (
+    aggregationMethod !== "SUM" &&
+    aggregationMethod !== "AVERAGE" &&
+    aggregationMethod !== "WEIGHTED" &&
+    aggregationMethod !== "MAX" &&
+    aggregationMethod !== "MANUAL" &&
+    aggregationMethod !== "NONE"
+  ) {
+    throw new KpiValidationError(
+      `KPI actualAggregationMethod is unsupported: ${aggregationMethod}`,
+    );
+  }
+  const reviewMode = String(record.actualReviewMode ?? "NONE").toUpperCase();
+  if (
+    reviewMode !== "NONE" &&
+    reviewMode !== "MANAGER_REVIEW" &&
+    reviewMode !== "OPS_REVIEW"
+  ) {
+    throw new KpiValidationError(
+      `KPI actualReviewMode is unsupported: ${reviewMode}`,
+    );
+  }
+  const evidenceMode = String(
+    record.actualEvidenceMode ?? "NONE",
+  ).toUpperCase();
+  if (
+    evidenceMode !== "NONE" &&
+    evidenceMode !== "OPTIONAL" &&
+    evidenceMode !== "REQUIRED" &&
+    evidenceMode !== "SOURCE_CONTROLLED"
+  ) {
+    throw new KpiValidationError(
+      `KPI actualEvidenceMode is unsupported: ${evidenceMode}`,
+    );
+  }
+  return {
+    actualCaptureMode: captureMode,
+    actualAggregationMethod: aggregationMethod,
+    actualReviewMode: reviewMode,
+    actualEvidenceMode: evidenceMode,
+    actualSource:
+      captureMode === "IMPORTED_SOURCE"
+        ? "IMPORTED_SOURCE"
+        : captureMode === "DERIVED"
+          ? "DERIVED"
+          : "MANUAL",
+  };
+}
+
+function allocationScaleForMetric(metricCode: KpiMetricCode): number {
+  if (INTEGER_TARGET_METRIC_CODES.has(metricCode)) {
+    return 0;
+  }
+  if (metricCode === "LIVE_HOURS") {
+    return 2;
+  }
+  return 6;
+}
+
+function normalizeExactMetricValue(
+  value: unknown,
+  metricCode: KpiMetricCode,
+  field: string,
+  valueKind: string,
+): { readonly value: number; readonly exact: string } {
+  const scale = allocationScaleForMetric(metricCode);
+  const text =
+    typeof value === "number"
+      ? Number.isFinite(value)
+        ? String(value)
+        : ""
+      : typeof value === "string"
+        ? value.trim()
+        : "";
+  const pattern =
+    scale === 0
+      ? /^(?:0|[1-9]\d*)$/u
+      : new RegExp(`^(?:0|[1-9]\\d*)(?:\\.\\d{1,${scale}})?$`, "u");
+  if (!pattern.test(text)) {
+    if (
+      typeof value === "number" &&
+      INTEGER_TARGET_METRIC_CODES.has(metricCode)
+    ) {
+      throw new KpiValidationError(
+        `${metricCode} requires an integer ${valueKind} value.`,
+      );
+    }
+    if (typeof value === "number" && metricCode === "LIVE_HOURS") {
+      throw new KpiValidationError(
+        "LIVE_HOURS supports at most 2 decimal places.",
+      );
+    }
+    throw new KpiValidationError(
+      `KPI ${metricCode} requires a non-negative canonical ${valueKind} value with at most ${scale} decimal places at ${field}.`,
+    );
+  }
+  const [whole, fraction = ""] = text.split(".");
+  const canonicalFraction = fraction.replace(/0+$/u, "");
+  const exact = canonicalFraction ? `${whole}.${canonicalFraction}` : whole;
+  const numeric = Number(exact);
+  if (!Number.isSafeInteger(numeric * 10 ** scale)) {
+    throw new KpiValidationError(
+      `KPI ${metricCode} ${valueKind} value exceeds fixed-scale safe range at ${field}.`,
+    );
+  }
+  normalizeMetricValue(numeric, metricCode, field, valueKind);
+  return { value: numeric, exact };
+}
+
 function normalizeMetricValue(
   value: unknown,
   metricCode: KpiMetricCode,
@@ -6385,6 +7457,16 @@ function createDefaultActualPolicySnapshot(
     timezone: DEFAULT_TIMEZONE,
     entryOpenLocalTime: DEFAULT_ACTUAL_ENTRY_OPEN_LOCAL_TIME,
     entryLockLocalTime: DEFAULT_ACTUAL_ENTRY_LOCK_LOCAL_TIME,
+    ordinaryCorrectionLockLocalTime: "18:00",
+    ordinaryCorrectionDayOffset: 2,
+    periodLockDayOfFollowingMonth: 3,
+    periodLockLocalTime: "18:00",
+    controlledReopenUntil: null,
+    defaultCaptureMode: DEFAULT_MEMBER_ENTRY_ACTUAL_POLICY.captureMode,
+    defaultAggregationMethod:
+      DEFAULT_MEMBER_ENTRY_ACTUAL_POLICY.aggregationMethod,
+    defaultReviewMode: DEFAULT_MEMBER_ENTRY_ACTUAL_POLICY.reviewMode,
+    defaultEvidenceMode: DEFAULT_MEMBER_ENTRY_ACTUAL_POLICY.evidenceMode,
     maxDirectEditsPerEntry: DEFAULT_MAX_DIRECT_EDITS_PER_ENTRY,
     correctionAllowedUntil: "PLAN_FINALIZED",
     policyVersion: DEFAULT_ACTUAL_POLICY_VERSION,
@@ -6402,15 +7484,60 @@ function requireActualPolicySnapshot(plan: KpiPlan): KpiActualPolicySnapshot {
   return effectiveActualPolicySnapshot(plan.actualPolicySnapshot);
 }
 
+function requireTargetMetricActualPolicySource(
+  targetMetrics: readonly KpiTargetMetric[],
+  metricCode: KpiMetricCode,
+): KpiTargetMetric {
+  const target = targetMetrics.find((item) => item.metricCode === metricCode);
+  if (!target) {
+    throw new KpiInvalidAllocationError(
+      `KPI metric ${metricCode} is not configured on the plan`,
+    );
+  }
+  return target;
+}
+
+function requireMetricActualPolicy(
+  metric: KpiTargetMetric,
+  periodPolicy: KpiActualPolicySnapshot,
+): KpiMetricActualPolicy {
+  if (
+    metric.actualCaptureMode === undefined ||
+    metric.actualReviewMode === undefined ||
+    metric.actualEvidenceMode === undefined ||
+    metric.actualPolicyVersion === undefined
+  ) {
+    throw new KpiStateError(
+      `KPI metric ${metric.metricCode} requires actual-policy migration before actual writes`,
+    );
+  }
+  return {
+    policyVersion: metric.actualPolicyVersion,
+    captureMode: metric.actualCaptureMode,
+    aggregationMethod: metric.rollupMethod,
+    reviewMode: metric.actualReviewMode,
+    evidenceMode: metric.actualEvidenceMode,
+    directEntryDayOffset: 1,
+    directEntryLockLocalTime: periodPolicy.entryLockLocalTime,
+    ordinaryCorrectionDayOffset: periodPolicy.ordinaryCorrectionDayOffset ?? 2,
+    ordinaryCorrectionLockLocalTime:
+      periodPolicy.ordinaryCorrectionLockLocalTime ?? "18:00",
+    periodLockDayOfFollowingMonth:
+      periodPolicy.periodLockDayOfFollowingMonth ?? 3,
+    periodLockLocalTime: periodPolicy.periodLockLocalTime ?? "18:00",
+    sourceOwner:
+      metric.actualCaptureMode === "IMPORTED_SOURCE"
+        ? "INTEGRATION"
+        : metric.actualCaptureMode === "DERIVED"
+          ? "SYSTEM"
+          : "MANAGER",
+  };
+}
+
 function effectiveActualPolicySnapshot(
   policy: KpiActualPolicySnapshot,
 ): KpiActualPolicySnapshot {
-  return {
-    ...policy,
-    entryOpenLocalTime: DEFAULT_ACTUAL_ENTRY_OPEN_LOCAL_TIME,
-    entryLockLocalTime: DEFAULT_ACTUAL_ENTRY_LOCK_LOCAL_TIME,
-    policyVersion: DEFAULT_ACTUAL_POLICY_VERSION,
-  };
+  return policy;
 }
 
 function assertActualDateWithinPlan(plan: KpiPlan, actualDate: string): void {
@@ -6439,19 +7566,31 @@ function assertDirectEditWindowOpen(
 function assertCorrectionWindowOpen(
   policy: KpiActualPolicySnapshot,
   actualDate: string,
+  periodMonth: string,
   now: number,
-): void {
-  const directEditWindowEnd = localDateTimeToUtcMs(
+): { readonly requiresReview: boolean } {
+  const deadline = resolveActualDeadline({
     actualDate,
-    policy.entryLockLocalTime,
-    1,
-  );
-  if (now > directEditWindowEnd) {
-    return;
+    periodMonth,
+    now,
+    policy: {
+      ...DEFAULT_MEMBER_ENTRY_ACTUAL_POLICY,
+      policyVersion: policy.policyVersion,
+      directEntryLockLocalTime: policy.entryLockLocalTime,
+    },
+    controlledReopenUntil: policy.controlledReopenUntil,
+  });
+  if (deadline.stage === "DIRECT_ENTRY") {
+    throw new KpiStateError(
+      "KPI actual correction is allowed only after the direct edit window closes; use direct edit before cutoff",
+    );
   }
-  throw new KpiStateError(
-    "KPI actual correction is allowed only after the direct edit window closes; use direct edit before cutoff",
-  );
+  if (deadline.stage === "LOCKED") {
+    throw new KpiStateError(
+      "KPI actual period is locked; a controlled reopen or governed adjustment is required",
+    );
+  }
+  return { requiresReview: deadline.requiresReview };
 }
 
 function isDirectEditWindowOpen(

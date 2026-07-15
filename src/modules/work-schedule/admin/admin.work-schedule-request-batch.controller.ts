@@ -28,21 +28,21 @@ type WorkScheduleRequestBatchCommand =
 
 const APPROVE_LINES_BODY_FIELDS = Object.freeze([
   "lineIds",
+  "expectedRequestVersions",
+  "expectedWorkShiftVersions",
+  "expectedSourceGenerationRunIds",
+  "idempotencyKey",
+  "emergencyOverrideReason",
   "approvalNote",
 ]);
-const REJECT_LINES_BODY_FIELDS = Object.freeze([
-  "lineIds",
-  "rejectionReason",
-]);
+const REJECT_LINES_BODY_FIELDS = Object.freeze(["lineIds", "rejectionReason"]);
 const CANCEL_LINES_BODY_FIELDS = Object.freeze([
   "lineIds",
   "cancellationReason",
 ]);
 
 export class WorkScheduleRequestBatchAdminController extends SecureController {
-  constructor(
-    private readonly service: WorkScheduleRequestBatchAdminService,
-  ) {
+  constructor(private readonly service: WorkScheduleRequestBatchAdminService) {
     super();
   }
 
@@ -105,14 +105,16 @@ function parseListQuery(req: Request): ListWorkScheduleRequestBatchesQuery {
   return {
     status: req.query.status as string | undefined,
     periodMonth: req.query.periodMonth as string | undefined,
-    submittedByEmploymentProfileId:
-      req.query.submittedByEmploymentProfileId as string | undefined,
+    submittedByEmploymentProfileId: req.query.submittedByEmploymentProfileId as
+      string | undefined,
     limit: req.query.limit as string | undefined,
     cursor: req.query.cursor as string | undefined,
   };
 }
 
-function parseDetailQuery(req: Request): GetWorkScheduleRequestBatchDetailQuery {
+function parseDetailQuery(
+  req: Request,
+): GetWorkScheduleRequestBatchDetailQuery {
   return { batchId: req.params.batchId };
 }
 
@@ -128,6 +130,19 @@ function parseApproveLinesCommand(
   return {
     batchId: req.params.batchId,
     lineIds: body.lineIds as readonly string[],
+    expectedRequestVersions: body.expectedRequestVersions as Readonly<
+      Record<string, number>
+    >,
+    expectedWorkShiftVersions: body.expectedWorkShiftVersions as Readonly<
+      Record<string, number | null>
+    >,
+    expectedSourceGenerationRunIds:
+      body.expectedSourceGenerationRunIds as Readonly<
+        Record<string, string | null>
+      >,
+    idempotencyKey: body.idempotencyKey as string,
+    emergencyOverrideReason: body.emergencyOverrideReason as
+      string | null | undefined,
     approvalNote: body.approvalNote as string | null | undefined,
   };
 }
@@ -144,6 +159,8 @@ function parseRejectLinesCommand(
   return {
     batchId: req.params.batchId,
     lineIds: body.lineIds as readonly string[],
+    expectedRequestVersions: {},
+    idempotencyKey: "not-applicable-reject",
     rejectionReason: body.rejectionReason as string,
   };
 }
@@ -160,6 +177,8 @@ function parseCancelLinesCommand(
   return {
     batchId: req.params.batchId,
     lineIds: body.lineIds as readonly string[],
+    expectedRequestVersions: {},
+    idempotencyKey: "not-applicable-cancel",
     cancellationReason: body.cancellationReason as string,
   };
 }
@@ -168,11 +187,7 @@ function requireRecord(value: unknown): Record<string, unknown> {
   if (value === undefined) {
     return {};
   }
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value)
-  ) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new WorkScheduleValidationError(
       "Request body must be a plain object",
     );

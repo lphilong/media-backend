@@ -22,12 +22,19 @@ import {
 
 export interface KpiTargetMetricInput {
   readonly metricCode: KpiMetricCode | string;
-  readonly targetValue: number;
+  readonly targetValue: number | string;
+  readonly allocationMode?:
+    "GROUP_ONLY" | "MEMBER_ALLOCATED" | "HYBRID" | string;
+  readonly groupRemainder?: number | string | null;
+  readonly actualCaptureMode?: string;
+  readonly actualAggregationMethod?: string;
+  readonly actualReviewMode?: string;
+  readonly actualEvidenceMode?: string;
 }
 
 export interface KpiAllocationTargetMetricInput {
   readonly metricCode: KpiMetricCode | string;
-  readonly targetValue: number;
+  readonly targetValue: number | string;
 }
 
 export interface KpiAllocationInput {
@@ -86,28 +93,50 @@ export interface ReplaceKpiAllocationsCommand {
 export interface UpsertKpiAllocationDraftCommand {
   readonly kpiPlanId: string;
   readonly allocations: readonly KpiAllocationDraftMemberInput[];
+  readonly expectedPlanVersion: number;
+  readonly expectedAllocationVersion: number;
+  readonly expectedMembershipSnapshotVersion: string;
+  readonly idempotencyKey: string;
 }
 
 export interface SubmitKpiAllocationDraftCommand {
   readonly kpiPlanId: string;
+  readonly expectedPlanVersion: number;
+  readonly expectedAllocationVersion: number;
+  readonly expectedMembershipSnapshotVersion: string;
+  readonly idempotencyKey: string;
+  readonly reason?: string;
 }
 
 export interface ApproveKpiAllocationCommand {
   readonly kpiPlanId: string;
   readonly approvalNote?: string | null;
+  readonly expectedPlanVersion: number;
+  readonly expectedAllocationVersion: number;
+  readonly expectedMembershipSnapshotVersion: string;
+  readonly idempotencyKey: string;
 }
 
 export interface RejectKpiAllocationCommand {
   readonly kpiPlanId: string;
   readonly rejectionReason: string;
+  readonly expectedPlanVersion: number;
+  readonly expectedAllocationVersion: number;
+  readonly expectedMembershipSnapshotVersion: string;
+  readonly idempotencyKey: string;
 }
 
 export interface PublishKpiAllocationCommand {
   readonly kpiPlanId: string;
+  readonly expectedPlanVersion: number;
+  readonly expectedAllocationVersion: number;
+  readonly expectedMembershipSnapshotVersion: string;
+  readonly idempotencyKey: string;
 }
 
 export interface ListKpiAllocationsQuery {
-  readonly subjectType?: Extract<KpiSubjectType, "TALENT_GROUP" | "ORG_UNIT"> | string;
+  readonly subjectType?:
+    Extract<KpiSubjectType, "TALENT_GROUP" | "ORG_UNIT"> | string;
   readonly status?: KpiAllocationStatus | string;
   readonly kpiPlanId?: string;
   readonly groupId?: string;
@@ -135,6 +164,8 @@ export interface CreateKpiActualCommand {
   readonly metricCode: KpiMetricCode | string;
   readonly actualDate: string;
   readonly actualValue: number;
+  readonly evidenceRef?: string | null;
+  readonly sourceFingerprint?: string | null;
 }
 
 export interface UpdateKpiActualCommand {
@@ -148,6 +179,8 @@ export interface CorrectKpiActualCommand {
   readonly actualEntryId: string;
   readonly correctedValue: number;
   readonly reason: string;
+  readonly expectedEntryVersion: number;
+  readonly idempotencyKey: string;
 }
 
 export interface MarkKpiActualExcuseCommand {
@@ -187,7 +220,8 @@ export interface GetKpiPlanDetailQuery {
 }
 
 export interface ListKpiActualWorkspacePlansQuery {
-  readonly subjectType?: Extract<KpiSubjectType, "TALENT_GROUP" | "ORG_UNIT"> | string;
+  readonly subjectType?:
+    Extract<KpiSubjectType, "TALENT_GROUP" | "ORG_UNIT"> | string;
   readonly periodMonth?: string;
   readonly groupId?: string;
   readonly subjectId?: string;
@@ -302,6 +336,15 @@ export interface KpiOrgUnitAllocationItem {
   readonly memberTalentId: string | null;
   readonly groupId: string | null;
   readonly allocationStatus: KpiAllocationStatus;
+  readonly lifecycleStatus?: KpiAllocation["lifecycleStatus"];
+  readonly allocationMode?: KpiAllocation["allocationMode"];
+  readonly sourcePlanVersion?: number;
+  readonly allocationVersion?: number;
+  readonly membershipSnapshotVersion?: string | null;
+  readonly eligibleMemberSnapshot?: KpiAllocation["eligibleMemberSnapshot"];
+  readonly correlationId?: string | null;
+  readonly supersedesAllocationId?: string | null;
+  readonly correctsAllocationId?: string | null;
   readonly allocationStartDate: string;
   readonly allocationEndDate: string | null;
   readonly targetMetrics: readonly {

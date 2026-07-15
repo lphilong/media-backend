@@ -42,6 +42,8 @@ interface MonthlyRosterReadDocument {
   readonly publishedAt: number | null;
   readonly publishedByUserId: string | null;
   readonly publishGenerationRunId: string | null;
+  readonly publicationVersion?: number;
+  readonly sourceSnapshot?: MonthlyRosterView["sourceSnapshot"];
   readonly description: string | null;
   readonly externalRef: string | null;
   readonly exceptions: readonly RosterExceptionRecord[];
@@ -113,25 +115,17 @@ export class NativeMongoMonthlyRosterReadRepository
   constructor(db: Db) {
     super(db, "work_monthly_rosters");
     this.orgUnitCollection =
-      db.collection<OrgUnitReferenceReadDocument>(
-        "org_units",
-      );
+      db.collection<OrgUnitReferenceReadDocument>("org_units");
     this.talentGroupCollection =
-      db.collection<TalentGroupReferenceReadDocument>(
-        "talent_groups",
-      );
+      db.collection<TalentGroupReferenceReadDocument>("talent_groups");
     this.employmentProfileCollection =
       db.collection<EmploymentProfileReferenceReadDocument>(
         "employment_profiles",
       );
     this.studioResourceCollection =
-      db.collection<StudioResourceReferenceReadDocument>(
-        "studio_resources",
-      );
+      db.collection<StudioResourceReferenceReadDocument>("studio_resources");
     this.workPatternCollection =
-      db.collection<WorkPatternReferenceReadDocument>(
-        "work_patterns",
-      );
+      db.collection<WorkPatternReferenceReadDocument>("work_patterns");
     this.holidayCalendarCollection =
       db.collection<HolidayCalendarReferenceReadDocument>(
         "work_holiday_calendars",
@@ -141,53 +135,29 @@ export class NativeMongoMonthlyRosterReadRepository
   async listMonthlyRosters(
     input: MonthlyRosterListReadInput,
   ): Promise<MonthlyRosterListReadResult> {
-    const queryShapeSignature =
-      buildCursorQueryShapeSignature(input);
+    const queryShapeSignature = buildCursorQueryShapeSignature(input);
     const cursor =
       input.cursor === undefined
         ? undefined
-        : decodeCursor(
-            input.cursor,
-            queryShapeSignature,
-          );
+        : decodeCursor(input.cursor, queryShapeSignature);
     const filters: Array<Record<string, unknown>> = [];
 
     applyStatusFilter(filters, input.status);
-    applyEqualsFilter(
-      filters,
-      "rosterMonth",
-      input.rosterMonth,
-    );
+    applyEqualsFilter(filters, "rosterMonth", input.rosterMonth);
     applyEqualsFilter(
       filters,
       "departmentOrgUnitId",
       input.departmentOrgUnitId,
     );
-    applyEqualsFilter(
-      filters,
-      "targetType",
-      input.targetType,
-    );
-    applyEqualsFilter(
-      filters,
-      "targetOrgUnitId",
-      input.targetOrgUnitId,
-    );
+    applyEqualsFilter(filters, "targetType", input.targetType);
+    applyEqualsFilter(filters, "targetOrgUnitId", input.targetOrgUnitId);
     applyEqualsFilter(
       filters,
       "targetTalentGroupId",
       input.targetTalentGroupId,
     );
-    applyEqualsFilter(
-      filters,
-      "workPatternId",
-      input.workPatternId,
-    );
-    applyEqualsFilter(
-      filters,
-      "holidayCalendarId",
-      input.holidayCalendarId,
-    );
+    applyEqualsFilter(filters, "workPatternId", input.workPatternId);
+    applyEqualsFilter(filters, "holidayCalendarId", input.holidayCalendarId);
     applySearchFilter(filters, input.search);
 
     if (cursor) {
@@ -214,29 +184,19 @@ export class NativeMongoMonthlyRosterReadRepository
       .limit(input.limit + 1)
       .toArray();
     const hasNext = docs.length > input.limit;
-    const page = hasNext
-      ? docs.slice(0, input.limit)
-      : docs;
+    const page = hasNext ? docs.slice(0, input.limit) : docs;
 
-    const items =
-      await enrichMonthlyRosterReferenceSummaries(
-        page.map((document) =>
-          toMonthlyRosterListItemView(document),
-        ),
-        {
-          orgUnitCollection: this.orgUnitCollection,
-          talentGroupCollection:
-            this.talentGroupCollection,
-          employmentProfileCollection:
-            this.employmentProfileCollection,
-          studioResourceCollection:
-            this.studioResourceCollection,
-          workPatternCollection:
-            this.workPatternCollection,
-          holidayCalendarCollection:
-            this.holidayCalendarCollection,
-        },
-      );
+    const items = await enrichMonthlyRosterReferenceSummaries(
+      page.map((document) => toMonthlyRosterListItemView(document)),
+      {
+        orgUnitCollection: this.orgUnitCollection,
+        talentGroupCollection: this.talentGroupCollection,
+        employmentProfileCollection: this.employmentProfileCollection,
+        studioResourceCollection: this.studioResourceCollection,
+        workPatternCollection: this.workPatternCollection,
+        holidayCalendarCollection: this.holidayCalendarCollection,
+      },
+    );
 
     return {
       items,
@@ -262,23 +222,17 @@ export class NativeMongoMonthlyRosterReadRepository
       return null;
     }
 
-    const [detail] =
-      await enrichMonthlyRosterReferenceSummaries(
-        [toMonthlyRosterView(doc)],
-        {
-          orgUnitCollection: this.orgUnitCollection,
-          talentGroupCollection:
-            this.talentGroupCollection,
-          employmentProfileCollection:
-            this.employmentProfileCollection,
-          studioResourceCollection:
-            this.studioResourceCollection,
-          workPatternCollection:
-            this.workPatternCollection,
-          holidayCalendarCollection:
-            this.holidayCalendarCollection,
-        },
-      );
+    const [detail] = await enrichMonthlyRosterReferenceSummaries(
+      [toMonthlyRosterView(doc)],
+      {
+        orgUnitCollection: this.orgUnitCollection,
+        talentGroupCollection: this.talentGroupCollection,
+        employmentProfileCollection: this.employmentProfileCollection,
+        studioResourceCollection: this.studioResourceCollection,
+        workPatternCollection: this.workPatternCollection,
+        holidayCalendarCollection: this.holidayCalendarCollection,
+      },
+    );
 
     return detail ?? null;
   }
@@ -344,14 +298,10 @@ function toMonthlyRosterListItemView(
   document: MonthlyRosterReadDocument,
 ): MonthlyRosterListItemView {
   const targetType = document.targetType ?? "ORG_UNIT";
-  const targetMode =
-    document.targetMode ?? document.targetOrgUnitMode;
+  const targetMode = document.targetMode ?? document.targetOrgUnitMode;
   const targetOrgUnitId =
-    document.targetOrgUnitId ??
-    document.departmentOrgUnitId ??
-    null;
-  const targetTalentGroupId =
-    document.targetTalentGroupId ?? null;
+    document.targetOrgUnitId ?? document.departmentOrgUnitId ?? null;
+  const targetTalentGroupId = document.targetTalentGroupId ?? null;
   const departmentOrgUnitId =
     document.departmentOrgUnitId ??
     (targetType === "ORG_UNIT" ? targetOrgUnitId : null);
@@ -392,13 +342,12 @@ function toMonthlyRosterView(
     lastPreviewedAt: document.lastPreviewedAt,
     publishedAt: document.publishedAt,
     publishedByUserId: document.publishedByUserId,
-    publishGenerationRunId:
-      document.publishGenerationRunId,
+    publishGenerationRunId: document.publishGenerationRunId,
+    publicationVersion: document.publicationVersion,
+    sourceSnapshot: document.sourceSnapshot,
     exceptions: document.exceptions.map((exception) => ({
       ...exception,
-      studioResourceIds: [
-        ...exception.studioResourceIds,
-      ],
+      studioResourceIds: [...exception.studioResourceIds],
     })),
   };
 }
@@ -438,10 +387,7 @@ async function enrichMonthlyRosterReferenceSummaries<
   for (const item of items) {
     addOptionalReferenceId(orgUnitIds, item.departmentOrgUnitId ?? null);
     addOptionalReferenceId(orgUnitIds, item.targetOrgUnitId ?? null);
-    addOptionalReferenceId(
-      talentGroupIds,
-      item.targetTalentGroupId ?? null,
-    );
+    addOptionalReferenceId(talentGroupIds, item.targetTalentGroupId ?? null);
     addRequiredReferenceId(workPatternIds, item.workPatternId);
     addRequiredReferenceId(holidayCalendarIds, item.holidayCalendarId);
 
@@ -493,8 +439,7 @@ async function enrichMonthlyRosterReferenceSummaries<
       ? (orgUnitRefMap.get(item.targetOrgUnitId) ?? null)
       : null;
     const targetTalentGroupRef = item.targetTalentGroupId
-      ? (talentGroupRefMap.get(item.targetTalentGroupId) ??
-        null)
+      ? (talentGroupRefMap.get(item.targetTalentGroupId) ?? null)
       : null;
 
     return {
@@ -506,14 +451,11 @@ async function enrichMonthlyRosterReferenceSummaries<
           ? targetTalentGroupRef
           : targetOrgUnitRef,
       departmentOrgUnitRef: item.departmentOrgUnitId
-        ? (orgUnitRefMap.get(item.departmentOrgUnitId) ??
-          null)
+        ? (orgUnitRefMap.get(item.departmentOrgUnitId) ?? null)
         : null,
-      workPatternRef:
-        workPatternRefMap.get(item.workPatternId) ?? null,
+      workPatternRef: workPatternRefMap.get(item.workPatternId) ?? null,
       holidayCalendarRef:
-        holidayCalendarRefMap.get(item.holidayCalendarId) ??
-        null,
+        holidayCalendarRefMap.get(item.holidayCalendarId) ?? null,
       ...(item.exceptions
         ? {
             exceptions: item.exceptions.map((exception) => ({
@@ -716,10 +658,7 @@ function addRequiredReferenceId(ids: Set<string>, value: string): void {
   }
 }
 
-function addOptionalReferenceId(
-  ids: Set<string>,
-  value: string | null,
-): void {
+function addOptionalReferenceId(ids: Set<string>, value: string | null): void {
   if (value === null) {
     return;
   }
@@ -799,10 +738,7 @@ function toHolidayCalendarReferenceSummary(
 }
 
 function encodeCursor(cursor: EncodedCursor): string {
-  return Buffer.from(
-    JSON.stringify(cursor),
-    "utf8",
-  ).toString("base64url");
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
 
 function decodeCursor(
@@ -818,10 +754,7 @@ function decodeCursor(
   let decodedText: string;
 
   try {
-    decodedText = Buffer.from(
-      normalized,
-      "base64url",
-    ).toString("utf8");
+    decodedText = Buffer.from(normalized, "base64url").toString("utf8");
   } catch {
     throw invalidCursorError();
   }
@@ -845,8 +778,7 @@ function decodeCursor(
   const candidate = payload as Record<string, unknown>;
 
   if (
-    candidate.queryShapeSignature !==
-      expectedQueryShapeSignature ||
+    candidate.queryShapeSignature !== expectedQueryShapeSignature ||
     typeof candidate.createdAt !== "number" ||
     !Number.isInteger(candidate.createdAt) ||
     typeof candidate.monthlyRosterId !== "string" ||
@@ -858,8 +790,7 @@ function decodeCursor(
   return {
     queryShapeSignature: expectedQueryShapeSignature,
     createdAt: candidate.createdAt,
-    monthlyRosterId:
-      candidate.monthlyRosterId.trim(),
+    monthlyRosterId: candidate.monthlyRosterId.trim(),
   };
 }
 
@@ -871,19 +802,14 @@ function buildCursorQueryShapeSignature(
     rosterMonth: input.rosterMonth ?? null,
     targetType: input.targetType ?? null,
     targetOrgUnitId: input.targetOrgUnitId ?? null,
-    targetTalentGroupId:
-      input.targetTalentGroupId ?? null,
-    departmentOrgUnitId:
-      input.departmentOrgUnitId ?? null,
+    targetTalentGroupId: input.targetTalentGroupId ?? null,
+    departmentOrgUnitId: input.departmentOrgUnitId ?? null,
     workPatternId: input.workPatternId ?? null,
-    holidayCalendarId:
-      input.holidayCalendarId ?? null,
+    holidayCalendarId: input.holidayCalendarId ?? null,
     search: input.search ?? null,
   });
 }
 
 function invalidCursorError(): WorkScheduleValidationError {
-  return new WorkScheduleValidationError(
-    "cursor is invalid",
-  );
+  return new WorkScheduleValidationError("cursor is invalid");
 }

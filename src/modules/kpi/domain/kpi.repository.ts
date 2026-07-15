@@ -16,6 +16,40 @@ import {
   KpiTargetMetric,
 } from "./kpi.types";
 
+export interface KpiAllocationOperationRecord {
+  readonly id: string;
+  readonly actorId: string;
+  readonly kpiPlanId: string;
+  readonly operation: string;
+  readonly idempotencyKey: string;
+  readonly payloadFingerprint: string;
+  readonly result: unknown | null;
+  readonly createdAt: number;
+  readonly completedAt: number | null;
+}
+
+export interface ClaimKpiAllocationOperationInput {
+  readonly actorId: string;
+  readonly kpiPlanId: string;
+  readonly operation: string;
+  readonly idempotencyKey: string;
+  readonly payloadFingerprint: string;
+  readonly now: number;
+}
+
+export interface CompleteKpiAllocationOperationInput {
+  readonly operationId: string;
+  readonly operation: string;
+  readonly payloadFingerprint: string;
+  readonly result: unknown;
+  readonly completedAt: number;
+}
+
+export interface KpiAllocationOperationClaim {
+  readonly isNew: boolean;
+  readonly record: KpiAllocationOperationRecord;
+}
+
 export interface UpdateKpiDraftCoreInput {
   readonly kpiPlanId: string;
   readonly title?: string;
@@ -34,7 +68,11 @@ export interface UpdateKpiDraftCoreInput {
 export interface TransitionKpiPlanStatusInput {
   readonly kpiPlanId: string;
   readonly fromStatuses: readonly KpiPlanStatus[];
+  readonly fromLifecycleStatuses: readonly NonNullable<
+    KpiPlan["lifecycleStatus"]
+  >[];
   readonly toStatus: KpiPlanStatus;
+  readonly lifecycleStatus?: KpiPlan["lifecycleStatus"];
   readonly publishedAt?: number | null;
   readonly publishedByActorId?: string | null;
   readonly actualPolicySnapshot?: KpiActualPolicySnapshot | null;
@@ -73,8 +111,7 @@ export interface KpiPlanListCursor {
 }
 
 export type KpiActualWorkspaceDerivedSortBy =
-  | "revenueActual"
-  | "achievementPercent";
+  "revenueActual" | "achievementPercent";
 
 export interface KpiActualWorkspaceDerivedCursor {
   readonly sortBy: KpiActualWorkspaceDerivedSortBy;
@@ -115,6 +152,9 @@ export interface KpiActualWorkspaceDerivedPlanSortRow {
 export interface ReplaceKpiAllocationsForPlanInput {
   readonly kpiPlanId: string;
   readonly allowedCurrentStatuses: readonly KpiAllocationStatus[];
+  readonly allowedCurrentLifecycleStatuses: readonly NonNullable<
+    KpiAllocation["lifecycleStatus"]
+  >[];
   readonly allocations: readonly KpiAllocation[];
   readonly updatedAt: number;
   readonly updatedByActorId: string;
@@ -122,8 +162,12 @@ export interface ReplaceKpiAllocationsForPlanInput {
 
 export interface TransitionKpiAllocationsForPlanInput {
   readonly kpiPlanId: string;
-  readonly fromStatus: KpiAllocationStatus;
+  readonly fromStatuses: readonly KpiAllocationStatus[];
+  readonly fromLifecycleStatuses: readonly NonNullable<
+    KpiAllocation["lifecycleStatus"]
+  >[];
   readonly toStatus: KpiAllocationStatus;
+  readonly lifecycleStatus?: KpiAllocation["lifecycleStatus"];
   readonly updatedAt: number;
   readonly updatedByActorId: string;
   readonly submittedAt?: number | null;
@@ -136,6 +180,10 @@ export interface TransitionKpiAllocationsForPlanInput {
   readonly rejectionReason?: string | null;
   readonly publishedAt?: number | null;
   readonly publishedByActorId?: string | null;
+  readonly allocationVersion?: number;
+  readonly idempotencyKey?: string | null;
+  readonly idempotencyFingerprint?: string | null;
+  readonly correlationId?: string | null;
 }
 
 export interface KpiActualSlotExcuseIdentityInput {
@@ -145,8 +193,7 @@ export interface KpiActualSlotExcuseIdentityInput {
   readonly actualDate: string;
 }
 
-export interface SetKpiActualSlotExcuseInput
-  extends KpiActualSlotExcuseIdentityInput {
+export interface SetKpiActualSlotExcuseInput extends KpiActualSlotExcuseIdentityInput {
   readonly status: KpiActualSlotExcuseStatus;
   readonly reasonCode: KpiActualSlotExcuseReasonCode;
   readonly reasonText: string;
@@ -162,6 +209,16 @@ export interface RemoveKpiActualSlotExcuseInput {
 }
 
 export interface KpiPlanRepository {
+  claimAllocationOperation(
+    input: ClaimKpiAllocationOperationInput,
+    session: ClientSession,
+  ): Promise<KpiAllocationOperationClaim>;
+
+  completeAllocationOperation(
+    input: CompleteKpiAllocationOperationInput,
+    session: ClientSession,
+  ): Promise<KpiAllocationOperationRecord>;
+
   insertPlan(plan: KpiPlan, session: ClientSession): Promise<KpiPlan>;
 
   findPlanById(

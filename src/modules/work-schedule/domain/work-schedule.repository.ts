@@ -46,8 +46,7 @@ export interface RescheduleWorkShiftInput {
   readonly updatedAt: number;
 }
 
-export interface ReassignWorkShiftSubjectInput
-  extends WorkShiftSubjectReferenceInput {
+export interface ReassignWorkShiftSubjectInput extends WorkShiftSubjectReferenceInput {
   readonly workShiftId: string;
   readonly updatedAt: number;
 }
@@ -65,8 +64,7 @@ export interface TransitionWorkShiftStatusInput {
   readonly updatedAt: number;
 }
 
-export interface WorkShiftOverlapSubjectCheckInput
-  extends WorkShiftSubjectReferenceInput {
+export interface WorkShiftOverlapSubjectCheckInput extends WorkShiftSubjectReferenceInput {
   readonly shiftStartAt: number;
   readonly shiftEndAt: number;
   readonly excludeWorkShiftId?: string;
@@ -161,9 +159,7 @@ export interface WorkShiftRepository {
   listActiveEmploymentProfileShiftsForWindow(
     input: ActiveEmploymentProfileWorkShiftLookupInput,
     session?: ClientSession,
-  ): Promise<
-    readonly ActiveEmploymentProfileWorkShiftConflictRecord[]
-  >;
+  ): Promise<readonly ActiveEmploymentProfileWorkShiftConflictRecord[]>;
 
   summarizeGeneratedByRoster(
     monthlyRosterId: string,
@@ -171,8 +167,7 @@ export interface WorkShiftRepository {
   ): Promise<GeneratedWorkShiftRosterSummary>;
 }
 
-export interface InsertWorkPatternInput
-  extends WorkPatternRecord {}
+export interface InsertWorkPatternInput extends WorkPatternRecord {}
 
 export interface UpdateWorkPatternInput {
   readonly workPatternId: string;
@@ -224,8 +219,7 @@ export interface WorkPatternRepository {
   ): Promise<WorkPatternRecord | null>;
 }
 
-export interface InsertHolidayCalendarInput
-  extends HolidayCalendarRecord {}
+export interface InsertHolidayCalendarInput extends HolidayCalendarRecord {}
 
 export interface UpdateHolidayCalendarInput {
   readonly holidayCalendarId: string;
@@ -311,8 +305,7 @@ export interface HolidayCalendarRepository {
   ): Promise<HolidayCalendarRecord | null>;
 }
 
-export interface InsertMonthlyRosterInput
-  extends MonthlyRosterRecord {}
+export interface InsertMonthlyRosterInput extends MonthlyRosterRecord {}
 
 export interface UpdateMonthlyRosterDraftInput {
   readonly monthlyRosterId: string;
@@ -346,6 +339,8 @@ export interface PublishMonthlyRosterInput {
   readonly publishGenerationRunId: string;
   readonly previewHash: string;
   readonly lastPreviewedAt: number;
+  readonly publicationVersion?: number;
+  readonly sourceSnapshot?: MonthlyRosterRecord["sourceSnapshot"];
 }
 
 export interface AddRosterExceptionInput {
@@ -469,10 +464,7 @@ export interface WorkScheduleRequestListResult {
 export interface TransitionWorkScheduleRequestInput {
   readonly requestId: string;
   readonly fromStatus: "PENDING";
-  readonly toStatus: Exclude<
-    WorkScheduleRequestStatus,
-    "PENDING"
-  >;
+  readonly toStatus: Exclude<WorkScheduleRequestStatus, "PENDING">;
   readonly updatedAt: number;
   readonly approvedByUserId?: string | null;
   readonly approvedAt?: number | null;
@@ -536,16 +528,18 @@ export interface TransitionWorkScheduleRequestLineInput {
   readonly batchId: string;
   readonly lineId: string;
   readonly fromStatus: "PENDING";
-  readonly toStatus: Exclude<
-    WorkScheduleRequestLineStatus,
-    "PENDING"
-  >;
+  readonly toStatus: Exclude<WorkScheduleRequestLineStatus, "PENDING">;
   readonly updatedAt: number;
   readonly approvalNote?: string | null;
   readonly rejectionReason?: string | null;
   readonly cancellationReason?: string | null;
   readonly failureReason?: string | null;
   readonly appliedWorkShiftId?: string | null;
+  readonly applicationState?: WorkScheduleRequestLineRecord["applicationState"];
+  readonly applicationLineage?: WorkScheduleRequestLineRecord["applicationLineage"];
+  readonly applicationIdempotencyKey?: string | null;
+  readonly applicationPayloadFingerprint?: string | null;
+  readonly emergencyOverrideReason?: string | null;
   readonly approvedAt?: number | null;
   readonly approvedByActorId?: string | null;
   readonly rejectedAt?: number | null;

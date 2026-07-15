@@ -72,18 +72,14 @@ import type {
 import { MonthlyRosterAdminExposure } from "@modules/work-schedule/shared/work-schedule.exposure";
 import { NativeMongoMonthlyRosterReadRepository } from "@infra/mongo/work-schedule/monthly-roster.read-repository";
 
-class MemoryMonthlyRosterRepository
-  implements MonthlyRosterRepository
-{
+class MemoryMonthlyRosterRepository implements MonthlyRosterRepository {
   readonly records: MonthlyRosterRecord[] = [];
 
   constructor(seed: readonly MonthlyRosterRecord[] = []) {
     this.records.push(...seed);
   }
 
-  async insert(
-    roster: InsertMonthlyRosterInput,
-  ): Promise<MonthlyRosterRecord> {
+  async insert(roster: InsertMonthlyRosterInput): Promise<MonthlyRosterRecord> {
     if (
       this.records.some(
         (record) =>
@@ -91,10 +87,8 @@ class MemoryMonthlyRosterRepository
           (record.status !== "ARCHIVED" &&
             record.rosterMonth === roster.rosterMonth &&
             record.targetType === roster.targetType &&
-            record.targetOrgUnitId ===
-              roster.targetOrgUnitId &&
-            record.targetTalentGroupId ===
-              roster.targetTalentGroupId),
+            record.targetOrgUnitId === roster.targetOrgUnitId &&
+            record.targetTalentGroupId === roster.targetTalentGroupId),
       )
     ) {
       throw new MongoServerError({
@@ -107,13 +101,10 @@ class MemoryMonthlyRosterRepository
     return roster;
   }
 
-  async findById(
-    monthlyRosterId: string,
-  ): Promise<MonthlyRosterRecord | null> {
+  async findById(monthlyRosterId: string): Promise<MonthlyRosterRecord | null> {
     return (
       this.records.find(
-        (record) =>
-          record.monthlyRosterId === monthlyRosterId,
+        (record) => record.monthlyRosterId === monthlyRosterId,
       ) ?? null
     );
   }
@@ -122,10 +113,7 @@ class MemoryMonthlyRosterRepository
     rosterCode: string,
   ): Promise<MonthlyRosterRecord | null> {
     return (
-      this.records.find(
-        (record) =>
-          record.rosterCode === rosterCode,
-      ) ?? null
+      this.records.find((record) => record.rosterCode === rosterCode) ?? null
     );
   }
 
@@ -142,10 +130,8 @@ class MemoryMonthlyRosterRepository
         (record) =>
           record.status !== "ARCHIVED" &&
           record.targetType === target.targetType &&
-          record.targetOrgUnitId ===
-            target.targetOrgUnitId &&
-          record.targetTalentGroupId ===
-            target.targetTalentGroupId &&
+          record.targetOrgUnitId === target.targetOrgUnitId &&
+          record.targetTalentGroupId === target.targetTalentGroupId &&
           record.rosterMonth === rosterMonth,
       ) ?? null
     );
@@ -154,9 +140,7 @@ class MemoryMonthlyRosterRepository
   async updateDraft(
     input: UpdateMonthlyRosterDraftInput,
   ): Promise<MonthlyRosterRecord | null> {
-    const current = await this.findById(
-      input.monthlyRosterId,
-    );
+    const current = await this.findById(input.monthlyRosterId);
 
     if (!current || current.status !== "DRAFT") {
       return null;
@@ -164,8 +148,7 @@ class MemoryMonthlyRosterRepository
 
     const updated: MonthlyRosterRecord = {
       ...current,
-      rosterMonth:
-        input.rosterMonth ?? current.rosterMonth,
+      rosterMonth: input.rosterMonth ?? current.rosterMonth,
       targetType: input.targetType ?? current.targetType,
       targetMode: input.targetMode ?? current.targetMode,
       targetOrgUnitId:
@@ -180,11 +163,8 @@ class MemoryMonthlyRosterRepository
         input.departmentOrgUnitId === undefined
           ? current.departmentOrgUnitId
           : input.departmentOrgUnitId,
-      workPatternId:
-        input.workPatternId ?? current.workPatternId,
-      holidayCalendarId:
-        input.holidayCalendarId ??
-        current.holidayCalendarId,
+      workPatternId: input.workPatternId ?? current.workPatternId,
+      holidayCalendarId: input.holidayCalendarId ?? current.holidayCalendarId,
       description:
         input.description === undefined
           ? current.description
@@ -203,14 +183,9 @@ class MemoryMonthlyRosterRepository
   async transitionStatus(
     input: TransitionMonthlyRosterStatusInput,
   ): Promise<MonthlyRosterRecord | null> {
-    const current = await this.findById(
-      input.monthlyRosterId,
-    );
+    const current = await this.findById(input.monthlyRosterId);
 
-    if (
-      !current ||
-      !input.fromStatuses.includes(current.status)
-    ) {
+    if (!current || !input.fromStatuses.includes(current.status)) {
       return null;
     }
 
@@ -218,9 +193,7 @@ class MemoryMonthlyRosterRepository
       ...current,
       status: input.toStatus,
       archivedAt:
-        input.archivedAt === undefined
-          ? current.archivedAt
-          : input.archivedAt,
+        input.archivedAt === undefined ? current.archivedAt : input.archivedAt,
       draftVersion: current.draftVersion + 1,
       updatedAt: input.updatedAt,
     };
@@ -231,9 +204,7 @@ class MemoryMonthlyRosterRepository
   async publish(
     input: PublishMonthlyRosterInput,
   ): Promise<MonthlyRosterRecord | null> {
-    const current = await this.findById(
-      input.monthlyRosterId,
-    );
+    const current = await this.findById(input.monthlyRosterId);
 
     if (!current || current.status !== input.fromStatus) {
       return null;
@@ -246,8 +217,9 @@ class MemoryMonthlyRosterRepository
       lastPreviewedAt: input.lastPreviewedAt,
       publishedAt: input.publishedAt,
       publishedByUserId: input.publishedByUserId,
-      publishGenerationRunId:
-        input.publishGenerationRunId,
+      publishGenerationRunId: input.publishGenerationRunId,
+      publicationVersion: input.publicationVersion,
+      sourceSnapshot: input.sourceSnapshot,
       updatedAt: input.updatedAt,
     };
     this.replace(updated);
@@ -257,9 +229,7 @@ class MemoryMonthlyRosterRepository
   async addException(
     input: AddRosterExceptionInput,
   ): Promise<MonthlyRosterRecord | null> {
-    const current = await this.findById(
-      input.monthlyRosterId,
-    );
+    const current = await this.findById(input.monthlyRosterId);
 
     if (!current || current.status !== "DRAFT") {
       return null;
@@ -267,10 +237,7 @@ class MemoryMonthlyRosterRepository
 
     const updated: MonthlyRosterRecord = {
       ...current,
-      exceptions: [
-        ...current.exceptions,
-        input.exception,
-      ],
+      exceptions: [...current.exceptions, input.exception],
       draftVersion: current.draftVersion + 1,
       updatedAt: input.updatedAt,
     };
@@ -281,18 +248,14 @@ class MemoryMonthlyRosterRepository
   async updateException(
     input: UpdateRosterExceptionInput,
   ): Promise<MonthlyRosterRecord | null> {
-    const current = await this.findById(
-      input.monthlyRosterId,
-    );
+    const current = await this.findById(input.monthlyRosterId);
 
     if (!current || current.status !== "DRAFT") {
       return null;
     }
 
     const target = current.exceptions.find(
-      (exception) =>
-        exception.rosterExceptionId ===
-        input.rosterExceptionId,
+      (exception) => exception.rosterExceptionId === input.rosterExceptionId,
     );
 
     if (!target || target.status !== "ACTIVE") {
@@ -302,23 +265,15 @@ class MemoryMonthlyRosterRepository
     const updated: MonthlyRosterRecord = {
       ...current,
       exceptions: current.exceptions.map((exception) =>
-        exception.rosterExceptionId ===
-        input.rosterExceptionId
+        exception.rosterExceptionId === input.rosterExceptionId
           ? {
               ...exception,
-              exceptionType:
-                input.exceptionType ??
-                exception.exceptionType,
-              exceptionDate:
-                input.exceptionDate ??
-                exception.exceptionDate,
+              exceptionType: input.exceptionType ?? exception.exceptionType,
+              exceptionDate: input.exceptionDate ?? exception.exceptionDate,
               subjectEmploymentProfileId:
                 input.subjectEmploymentProfileId ??
                 exception.subjectEmploymentProfileId,
-              title:
-                input.title === undefined
-                  ? exception.title
-                  : input.title,
+              title: input.title === undefined ? exception.title : input.title,
               startLocalTime:
                 input.startLocalTime === undefined
                   ? exception.startLocalTime
@@ -340,9 +295,7 @@ class MemoryMonthlyRosterRepository
                   ? exception.studioResourceIds
                   : [...input.studioResourceIds],
               reason:
-                input.reason === undefined
-                  ? exception.reason
-                  : input.reason,
+                input.reason === undefined ? exception.reason : input.reason,
               sourceNote:
                 input.sourceNote === undefined
                   ? exception.sourceNote
@@ -369,9 +322,7 @@ class MemoryMonthlyRosterRepository
   async removeException(
     input: RemoveRosterExceptionInput,
   ): Promise<MonthlyRosterRecord | null> {
-    const current = await this.findById(
-      input.monthlyRosterId,
-    );
+    const current = await this.findById(input.monthlyRosterId);
 
     if (!current || current.status !== "DRAFT") {
       return null;
@@ -380,8 +331,7 @@ class MemoryMonthlyRosterRepository
     const updated: MonthlyRosterRecord = {
       ...current,
       exceptions: current.exceptions.map((exception) =>
-        exception.rosterExceptionId ===
-          input.rosterExceptionId &&
+        exception.rosterExceptionId === input.rosterExceptionId &&
         exception.status === "ACTIVE"
           ? {
               ...exception,
@@ -400,9 +350,7 @@ class MemoryMonthlyRosterRepository
 
   private replace(updated: MonthlyRosterRecord): void {
     const index = this.records.findIndex(
-      (record) =>
-        record.monthlyRosterId ===
-        updated.monthlyRosterId,
+      (record) => record.monthlyRosterId === updated.monthlyRosterId,
     );
 
     if (index >= 0) {
@@ -411,12 +359,8 @@ class MemoryMonthlyRosterRepository
   }
 }
 
-class MemoryWorkPatternRepository
-  implements WorkPatternRepository
-{
-  constructor(
-    private readonly records: readonly WorkPatternRecord[],
-  ) {}
+class MemoryWorkPatternRepository implements WorkPatternRepository {
+  constructor(private readonly records: readonly WorkPatternRecord[]) {}
 
   async insert(
     workPattern: InsertWorkPatternInput,
@@ -424,14 +368,10 @@ class MemoryWorkPatternRepository
     return workPattern;
   }
 
-  async findById(
-    workPatternId: string,
-  ): Promise<WorkPatternRecord | null> {
+  async findById(workPatternId: string): Promise<WorkPatternRecord | null> {
     return (
-      this.records.find(
-        (record) =>
-          record.workPatternId === workPatternId,
-      ) ?? null
+      this.records.find((record) => record.workPatternId === workPatternId) ??
+      null
     );
   }
 
@@ -452,12 +392,8 @@ class MemoryWorkPatternRepository
   }
 }
 
-class MemoryHolidayCalendarRepository
-  implements HolidayCalendarRepository
-{
-  constructor(
-    private readonly records: readonly HolidayCalendarRecord[],
-  ) {}
+class MemoryHolidayCalendarRepository implements HolidayCalendarRepository {
+  constructor(private readonly records: readonly HolidayCalendarRecord[]) {}
 
   async insert(
     holidayCalendar: InsertHolidayCalendarInput,
@@ -470,9 +406,7 @@ class MemoryHolidayCalendarRepository
   ): Promise<HolidayCalendarRecord | null> {
     return (
       this.records.find(
-        (record) =>
-          record.holidayCalendarId ===
-          holidayCalendarId,
+        (record) => record.holidayCalendarId === holidayCalendarId,
       ) ?? null
     );
   }
@@ -512,29 +446,22 @@ class MemoryHolidayCalendarRepository
   }
 }
 
-class MemoryWorkShiftRepository
-  implements WorkShiftRepository
-{
+class MemoryWorkShiftRepository implements WorkShiftRepository {
   subjectOverlap = false;
   resourceOverlap = false;
   readonly records: WorkShiftRecord[] = [];
 
-  async insert(
-    workShift: WorkShiftRecord,
-  ): Promise<WorkShiftRecord> {
+  async insert(workShift: WorkShiftRecord): Promise<WorkShiftRecord> {
     if (
       this.records.some(
         (record) =>
           record.sourceType === "ROSTER_GENERATED" &&
           workShift.sourceType === "ROSTER_GENERATED" &&
-          record.sourceRosterId ===
-            workShift.sourceRosterId &&
+          record.sourceRosterId === workShift.sourceRosterId &&
           record.subjectEmploymentProfileId ===
             workShift.subjectEmploymentProfileId &&
-          record.sourceRosterLocalDate ===
-            workShift.sourceRosterLocalDate &&
-          record.sourceRosterSlotKey ===
-            workShift.sourceRosterSlotKey,
+          record.sourceRosterLocalDate === workShift.sourceRosterLocalDate &&
+          record.sourceRosterSlotKey === workShift.sourceRosterSlotKey,
       )
     ) {
       throw new MongoServerError({
@@ -608,24 +535,22 @@ class MemoryWorkShiftRepository
       ).length,
       addSpecialShiftCount: generated.filter(
         (record) =>
-          record.sourceRosterSlotKey?.startsWith(
-            "ADD_SPECIAL_SHIFT:",
-          ) ?? false,
+          record.sourceRosterSlotKey?.startsWith("ADD_SPECIAL_SHIFT:") ?? false,
       ).length,
     };
   }
 }
 
-class MemoryAvailabilityRepository
-  implements WorkScheduleAvailabilityBatchRepository
-{
+class MemoryAvailabilityRepository implements WorkScheduleAvailabilityBatchRepository {
   readonly batches: WorkScheduleAvailabilityBatchRecord[] = [];
   readonly lines: WorkScheduleAvailabilityLineRecord[] = [];
 
-  constructor(params: {
-    readonly batches?: readonly WorkScheduleAvailabilityBatchRecord[];
-    readonly lines?: readonly WorkScheduleAvailabilityLineRecord[];
-  } = {}) {
+  constructor(
+    params: {
+      readonly batches?: readonly WorkScheduleAvailabilityBatchRecord[];
+      readonly lines?: readonly WorkScheduleAvailabilityLineRecord[];
+    } = {},
+  ) {
     this.batches.push(...(params.batches ?? []));
     this.lines.push(...(params.lines ?? []));
   }
@@ -672,22 +597,52 @@ class MemoryAvailabilityRepository
     return null;
   }
 
-  async transitionLineStatus() {
-    return null;
+  async transitionLineStatus(
+    input: Parameters<
+      WorkScheduleAvailabilityBatchRepository["transitionLineStatus"]
+    >[0],
+  ) {
+    const index = this.lines.findIndex(
+      (line) =>
+        line.batchId === input.batchId &&
+        line.id === input.lineId &&
+        line.status === input.fromStatus,
+    );
+    if (index < 0) {
+      return null;
+    }
+    const updated = {
+      ...this.lines[index]!,
+      ...input,
+      status: input.toStatus,
+    } as WorkScheduleAvailabilityLineRecord;
+    this.lines[index] = updated;
+    return updated;
   }
 
-  async updateBatchDerived() {
-    return null;
+  async updateBatchDerived(
+    input: Parameters<
+      WorkScheduleAvailabilityBatchRepository["updateBatchDerived"]
+    >[0],
+  ) {
+    const index = this.batches.findIndex((batch) => batch.id === input.batchId);
+    if (index < 0) {
+      return null;
+    }
+    const updated = {
+      ...this.batches[index]!,
+      ...input,
+      id: input.batchId,
+    } as WorkScheduleAvailabilityBatchRecord;
+    this.batches[index] = updated;
+    return updated;
   }
 
   async updateLineApplyState(
     input: UpdateWorkScheduleAvailabilityLineApplyStateInput,
   ) {
     const current = await this.findLineById(input.batchId, input.lineId);
-    if (
-      !current ||
-      !input.fromApplyStatuses.includes(current.applyStatus)
-    ) {
+    if (!current || !input.fromApplyStatuses.includes(current.applyStatus)) {
       return null;
     }
     const updated: WorkScheduleAvailabilityLineRecord = {
@@ -706,34 +661,25 @@ class MemoryAvailabilityRepository
           ? current.appliedRosterExceptionIds
           : [...input.appliedRosterExceptionIds],
       appliedAt:
-        input.appliedAt === undefined
-          ? current.appliedAt
-          : input.appliedAt,
+        input.appliedAt === undefined ? current.appliedAt : input.appliedAt,
       appliedByActorId:
         input.appliedByActorId === undefined
           ? current.appliedByActorId
           : input.appliedByActorId,
       updatedAt: input.updatedAt,
     };
-    const index = this.lines.findIndex(
-      (line) => line.id === updated.id,
-    );
+    const index = this.lines.findIndex((line) => line.id === updated.id);
     this.lines[index] = updated;
     return updated;
   }
 }
 
-class MemoryWorkShiftCodeSequenceRepository
-  implements WorkScheduleCodeSequenceRepository
-{
+class MemoryWorkShiftCodeSequenceRepository implements WorkScheduleCodeSequenceRepository {
   private value = 0;
   private workPatternValue = 0;
   private holidayCalendarValue = 0;
   private workScheduleRequestValue = 0;
-  private readonly monthlyRosterValues = new Map<
-    string,
-    number
-  >();
+  private readonly monthlyRosterValues = new Map<string, number>();
 
   async allocateNext(): Promise<number> {
     this.value += 1;
@@ -753,13 +699,8 @@ class MemoryWorkShiftCodeSequenceRepository
   async allocateNextMonthlyRosterCode(
     rosterMonthBucket: string,
   ): Promise<number> {
-    const next =
-      (this.monthlyRosterValues.get(rosterMonthBucket) ??
-        0) + 1;
-    this.monthlyRosterValues.set(
-      rosterMonthBucket,
-      next,
-    );
+    const next = (this.monthlyRosterValues.get(rosterMonthBucket) ?? 0) + 1;
+    this.monthlyRosterValues.set(rosterMonthBucket, next);
     return next;
   }
 
@@ -808,18 +749,20 @@ function createActor(
   });
 }
 
-function createStructuredAuthority(params: {
-  readonly userId?: string;
-  readonly permissions?: readonly Permission[];
-  readonly scopes?: readonly (
-    | { readonly scopeType: "managedOrgUnit"; readonly targetId: string }
-    | { readonly scopeType: "managedTalentGroup"; readonly targetId: string }
-  )[];
-  readonly state?: "ACTIVE" | "REVOKED";
-  readonly roleState?: string;
-  readonly effectiveAt?: number | null;
-  readonly expiresAt?: number | null;
-} = {}): StructuredScopeAuthorityService {
+function createStructuredAuthority(
+  params: {
+    readonly userId?: string;
+    readonly permissions?: readonly Permission[];
+    readonly scopes?: readonly (
+      | { readonly scopeType: "managedOrgUnit"; readonly targetId: string }
+      | { readonly scopeType: "managedTalentGroup"; readonly targetId: string }
+    )[];
+    readonly state?: "ACTIVE" | "REVOKED";
+    readonly roleState?: string;
+    readonly effectiveAt?: number | null;
+    readonly expiresAt?: number | null;
+  } = {},
+): StructuredScopeAuthorityService {
   const userId = params.userId ?? "admin-user-1";
   return new StructuredScopeAuthorityService({
     async listByUserId(candidateUserId) {
@@ -832,16 +775,15 @@ function createStructuredAuthority(params: {
             assignmentId: "monthly-roster-assignment",
             roleId: "monthly-roster-role",
             userId,
-            structuredScopeGrants:
-              params.scopes ?? [
-                { scopeType: "managedOrgUnit", targetId: "dept-1" },
-                { scopeType: "managedOrgUnit", targetId: "dept-2" },
-                { scopeType: "managedOrgUnit", targetId: "team-1" },
-                {
-                  scopeType: "managedTalentGroup",
-                  targetId: "group-1",
-                },
-              ],
+            structuredScopeGrants: params.scopes ?? [
+              { scopeType: "managedOrgUnit", targetId: "dept-1" },
+              { scopeType: "managedOrgUnit", targetId: "dept-2" },
+              { scopeType: "managedOrgUnit", targetId: "team-1" },
+              {
+                scopeType: "managedTalentGroup",
+                targetId: "group-1",
+              },
+            ],
             state: params.state ?? "ACTIVE",
             effectiveAt: params.effectiveAt ?? 0,
             expiresAt: params.expiresAt ?? null,
@@ -853,13 +795,12 @@ function createStructuredAuthority(params: {
           role: {
             id: "monthly-roster-role",
             state: params.roleState ?? "ACTIVE",
-            permissions:
-              params.permissions ?? [
-                Permission.WORK_SCHEDULE_CREATE,
-                Permission.WORK_SCHEDULE_READ,
-                Permission.WORK_SCHEDULE_UPDATE,
-                Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
-              ],
+            permissions: params.permissions ?? [
+              Permission.WORK_SCHEDULE_CREATE,
+              Permission.WORK_SCHEDULE_READ,
+              Permission.WORK_SCHEDULE_UPDATE,
+              Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+            ],
           },
         },
       ];
@@ -867,11 +808,13 @@ function createStructuredAuthority(params: {
   });
 }
 
-function seedPattern(params: {
-  readonly workPatternId?: string;
-  readonly status?: WorkPatternStatus;
-  readonly workingDays?: readonly WorkPatternRecord["workingDays"][number][];
-} = {}): WorkPatternRecord {
+function seedPattern(
+  params: {
+    readonly workPatternId?: string;
+    readonly status?: WorkPatternStatus;
+    readonly workingDays?: readonly WorkPatternRecord["workingDays"][number][];
+  } = {},
+): WorkPatternRecord {
   return {
     workPatternId: params.workPatternId ?? "pattern-1",
     patternCode: "PAT-1",
@@ -884,14 +827,7 @@ function seedPattern(params: {
     endLocalTime: "17:00",
     workingMinutes: 480,
     breakMinutes: 60,
-    workingDays:
-      params.workingDays ?? [
-        "MON",
-        "TUE",
-        "WED",
-        "THU",
-        "FRI",
-      ],
+    workingDays: params.workingDays ?? ["MON", "TUE", "WED", "THU", "FRI"],
     description: null,
     externalRef: null,
     activatedAt: 1,
@@ -901,11 +837,13 @@ function seedPattern(params: {
   };
 }
 
-function seedCalendar(params: {
-  readonly holidayCalendarId?: string;
-  readonly status?: HolidayCalendarStatus;
-  readonly activeHolidayDate?: string;
-} = {}): HolidayCalendarRecord {
+function seedCalendar(
+  params: {
+    readonly holidayCalendarId?: string;
+    readonly status?: HolidayCalendarStatus;
+    readonly activeHolidayDate?: string;
+  } = {},
+): HolidayCalendarRecord {
   const entries = params.activeHolidayDate
     ? [
         {
@@ -924,8 +862,7 @@ function seedCalendar(params: {
     : [];
 
   return {
-    holidayCalendarId:
-      params.holidayCalendarId ?? "calendar-1",
+    holidayCalendarId: params.holidayCalendarId ?? "calendar-1",
     calendarCode: "CAL-1",
     normalizedCalendarCode: "cal-1",
     name: "Vietnam",
@@ -943,24 +880,24 @@ function seedCalendar(params: {
   };
 }
 
-function seedRoster(params: {
-  readonly monthlyRosterId?: string;
-  readonly rosterMonth?: string;
-  readonly targetType?: MonthlyRosterRecord["targetType"];
-  readonly targetOrgUnitId?: string | null;
-  readonly targetTalentGroupId?: string | null;
-  readonly departmentOrgUnitId?: string;
-  readonly workPatternId?: string;
-  readonly holidayCalendarId?: string;
-  readonly status?: MonthlyRosterStatus;
-  readonly exceptions?: readonly RosterExceptionRecord[];
-} = {}): MonthlyRosterRecord {
+function seedRoster(
+  params: {
+    readonly monthlyRosterId?: string;
+    readonly rosterMonth?: string;
+    readonly targetType?: MonthlyRosterRecord["targetType"];
+    readonly targetOrgUnitId?: string | null;
+    readonly targetTalentGroupId?: string | null;
+    readonly departmentOrgUnitId?: string;
+    readonly workPatternId?: string;
+    readonly holidayCalendarId?: string;
+    readonly status?: MonthlyRosterStatus;
+    readonly exceptions?: readonly RosterExceptionRecord[];
+  } = {},
+): MonthlyRosterRecord {
   const targetType = params.targetType ?? "ORG_UNIT";
   const targetOrgUnitId =
     targetType === "ORG_UNIT"
-      ? (params.targetOrgUnitId ??
-        params.departmentOrgUnitId ??
-        "dept-1")
+      ? (params.targetOrgUnitId ?? params.departmentOrgUnitId ?? "dept-1")
       : null;
   const targetTalentGroupId =
     targetType === "TALENT_GROUP"
@@ -968,8 +905,7 @@ function seedRoster(params: {
       : null;
 
   return {
-    monthlyRosterId:
-      params.monthlyRosterId ?? "roster-1",
+    monthlyRosterId: params.monthlyRosterId ?? "roster-1",
     rosterCode: "MR-2026-05-HR",
     normalizedRosterCode: "mr-2026-05-hr",
     rosterMonth: params.rosterMonth ?? "2026-05",
@@ -985,8 +921,7 @@ function seedRoster(params: {
         ? (params.departmentOrgUnitId ?? targetOrgUnitId)
         : null,
     workPatternId: params.workPatternId ?? "pattern-1",
-    holidayCalendarId:
-      params.holidayCalendarId ?? "calendar-1",
+    holidayCalendarId: params.holidayCalendarId ?? "calendar-1",
     status: params.status ?? "DRAFT",
     draftVersion: 1,
     previewHash: null,
@@ -997,51 +932,41 @@ function seedRoster(params: {
     description: null,
     externalRef: null,
     exceptions: params.exceptions ?? [],
-    archivedAt:
-      params.status === "ARCHIVED" ? 2 : null,
+    archivedAt: params.status === "ARCHIVED" ? 2 : null,
     createdAt: 1,
     updatedAt: 1,
   };
 }
 
-function seedRosterException(params: {
-  readonly rosterExceptionId?: string;
-  readonly monthlyRosterId?: string;
-  readonly exceptionType?: RosterExceptionRecord["exceptionType"];
-  readonly exceptionDate?: string;
-  readonly subjectEmploymentProfileId?: string;
-  readonly status?: RosterExceptionRecord["status"];
-  readonly startLocalTime?: string;
-  readonly workingMinutes?: number;
-  readonly breakMinutes?: number;
-  readonly sourceAvailabilityLineId?: string | null;
-} = {}): RosterExceptionRecord {
-  const exceptionType =
-    params.exceptionType ?? "WORKING_TO_OFF";
+function seedRosterException(
+  params: {
+    readonly rosterExceptionId?: string;
+    readonly monthlyRosterId?: string;
+    readonly exceptionType?: RosterExceptionRecord["exceptionType"];
+    readonly exceptionDate?: string;
+    readonly subjectEmploymentProfileId?: string;
+    readonly status?: RosterExceptionRecord["status"];
+    readonly startLocalTime?: string;
+    readonly workingMinutes?: number;
+    readonly breakMinutes?: number;
+    readonly sourceAvailabilityLineId?: string | null;
+  } = {},
+): RosterExceptionRecord {
+  const exceptionType = params.exceptionType ?? "WORKING_TO_OFF";
 
   return {
-    rosterExceptionId:
-      params.rosterExceptionId ?? "exception-1",
-    monthlyRosterId:
-      params.monthlyRosterId ?? "roster-1",
+    rosterExceptionId: params.rosterExceptionId ?? "exception-1",
+    monthlyRosterId: params.monthlyRosterId ?? "roster-1",
     exceptionType,
-    exceptionDate:
-      params.exceptionDate ?? "2026-05-04",
-    subjectEmploymentProfileId:
-      params.subjectEmploymentProfileId ?? "emp-1",
+    exceptionDate: params.exceptionDate ?? "2026-05-04",
+    subjectEmploymentProfileId: params.subjectEmploymentProfileId ?? "emp-1",
     status: params.status ?? "ACTIVE",
-    title:
-      exceptionType === "ADD_SPECIAL_SHIFT"
-        ? "Special shift"
-        : null,
+    title: exceptionType === "ADD_SPECIAL_SHIFT" ? "Special shift" : null,
     startLocalTime:
       exceptionType === "WORKING_TO_OFF"
         ? null
         : (params.startLocalTime ?? "09:00"),
-    endLocalTime:
-      exceptionType === "WORKING_TO_OFF"
-        ? null
-        : "18:00",
+    endLocalTime: exceptionType === "WORKING_TO_OFF" ? null : "18:00",
     workingMinutes:
       exceptionType === "ADD_SPECIAL_SHIFT"
         ? (params.workingMinutes ?? 120)
@@ -1057,39 +982,34 @@ function seedRosterException(params: {
       params.sourceAvailabilityLineId === undefined
         ? null
         : "availability-batch-1",
-    sourceAvailabilityLineId:
-      params.sourceAvailabilityLineId ?? null,
+    sourceAvailabilityLineId: params.sourceAvailabilityLineId ?? null,
     sourceAvailabilityType:
       params.sourceAvailabilityLineId === undefined
         ? null
         : "UNAVAILABLE_FULL_DAY",
     sourceAvailabilityTaxonomyCode:
-      params.sourceAvailabilityLineId === undefined
-        ? null
-        : "AUTHORIZED_LEAVE",
-    sourceAppliedAt:
-      params.sourceAvailabilityLineId === undefined ? null : 1,
+      params.sourceAvailabilityLineId === undefined ? null : "AUTHORIZED_LEAVE",
+    sourceAppliedAt: params.sourceAvailabilityLineId === undefined ? null : 1,
     sourceAppliedByActorId:
-      params.sourceAvailabilityLineId === undefined
-        ? null
-        : "admin-user-1",
+      params.sourceAvailabilityLineId === undefined ? null : "admin-user-1",
     sourceApplyNote: null,
     description: null,
     externalRef: null,
-    removedAt:
-      params.status === "REMOVED" ? 2 : null,
+    removedAt: params.status === "REMOVED" ? 2 : null,
     createdAt: 1,
     updatedAt: 1,
   };
 }
 
-function seedAvailabilityBatch(params: {
-  readonly id?: string;
-  readonly periodMonth?: string;
-  readonly targetType?: MonthlyRosterRecord["targetType"];
-  readonly targetOrgUnitId?: string | null;
-  readonly targetTalentGroupId?: string | null;
-} = {}): WorkScheduleAvailabilityBatchRecord {
+function seedAvailabilityBatch(
+  params: {
+    readonly id?: string;
+    readonly periodMonth?: string;
+    readonly targetType?: MonthlyRosterRecord["targetType"];
+    readonly targetOrgUnitId?: string | null;
+    readonly targetTalentGroupId?: string | null;
+  } = {},
+): WorkScheduleAvailabilityBatchRecord {
   const targetType = params.targetType ?? "ORG_UNIT";
   return {
     id: params.id ?? "availability-batch-1",
@@ -1100,9 +1020,7 @@ function seedAvailabilityBatch(params: {
     targetType,
     targetMode: "EXACT_ONLY",
     targetOrgUnitId:
-      targetType === "ORG_UNIT"
-        ? (params.targetOrgUnitId ?? "dept-1")
-        : null,
+      targetType === "ORG_UNIT" ? (params.targetOrgUnitId ?? "dept-1") : null,
     targetTalentGroupId:
       targetType === "TALENT_GROUP"
         ? (params.targetTalentGroupId ?? "group-1")
@@ -1151,33 +1069,20 @@ function seedAvailabilityLine(params: {
     batchId: params.batchId ?? "availability-batch-1",
     lineNo: 1,
     pendingDuplicateKey: "pending-key",
-    memberEmploymentProfileId:
-      params.memberEmploymentProfileId ?? "emp-1",
-    availabilityType:
-      params.availabilityType ?? "UNAVAILABLE_FULL_DAY",
-    taxonomyCode:
-      params.taxonomyCode ?? "AUTHORIZED_LEAVE",
-    dateRangeStart:
-      params.dateRangeStart ?? "2026-05-04",
-    dateRangeEnd:
-      params.dateRangeEnd ??
-      params.dateRangeStart ??
-      "2026-05-04",
-    preferredStartLocalTime:
-      params.preferredStartLocalTime ?? null,
-    preferredEndLocalTime:
-      params.preferredEndLocalTime ?? null,
-    reason:
-      "Approved availability planning signal for roster application",
+    memberEmploymentProfileId: params.memberEmploymentProfileId ?? "emp-1",
+    availabilityType: params.availabilityType ?? "UNAVAILABLE_FULL_DAY",
+    taxonomyCode: params.taxonomyCode ?? "AUTHORIZED_LEAVE",
+    dateRangeStart: params.dateRangeStart ?? "2026-05-04",
+    dateRangeEnd: params.dateRangeEnd ?? params.dateRangeStart ?? "2026-05-04",
+    preferredStartLocalTime: params.preferredStartLocalTime ?? null,
+    preferredEndLocalTime: params.preferredEndLocalTime ?? null,
+    reason: "Approved availability planning signal for roster application",
     status: params.status ?? "APPROVED",
     applyStatus: params.applyStatus ?? "NOT_APPLIED",
     policyEvaluationStatus: "NOT_EVALUATED",
     appliedRosterId: params.appliedRosterId ?? null,
-    appliedRosterExceptionId:
-      params.appliedRosterExceptionId ?? null,
-    appliedRosterExceptionIds: [
-      ...(params.appliedRosterExceptionIds ?? []),
-    ],
+    appliedRosterExceptionId: params.appliedRosterExceptionId ?? null,
+    appliedRosterExceptionIds: [...(params.appliedRosterExceptionIds ?? [])],
     appliedAt: null,
     appliedByActorId: null,
     adminDecisionNote: null,
@@ -1195,9 +1100,7 @@ function seedAvailabilityLine(params: {
     periodMonth: "2026-05",
     targetType,
     targetOrgUnitId:
-      targetType === "ORG_UNIT"
-        ? (params.targetOrgUnitId ?? "dept-1")
-        : null,
+      targetType === "ORG_UNIT" ? (params.targetOrgUnitId ?? "dept-1") : null,
     targetTalentGroupId:
       targetType === "TALENT_GROUP"
         ? (params.targetTalentGroupId ?? "group-1")
@@ -1205,86 +1108,73 @@ function seedAvailabilityLine(params: {
   };
 }
 
-function createService(params: {
-  readonly rosters?: readonly MonthlyRosterRecord[];
-  readonly orgUnits?: readonly WorkScheduleReferencedOrgUnit[];
-  readonly talentGroups?: readonly {
-    readonly id: string;
-    readonly status: "ACTIVE" | "ARCHIVED";
-  }[];
-  readonly profiles?: readonly WorkScheduleReferencedEmploymentProfile[];
-  readonly talentGroupMemberResolutions?: readonly {
-    readonly memberId: string;
-    readonly groupId: string;
-    readonly talentId: string;
-    readonly membershipStatus: string;
-    readonly talentOperationalStatus: string | null;
-    readonly linkedEmploymentProfileId: string | null;
-    readonly employmentProfile: WorkScheduleReferencedEmploymentProfile | null;
-  }[];
-  readonly patterns?: readonly WorkPatternRecord[];
-  readonly calendars?: readonly HolidayCalendarRecord[];
-  readonly resources?: readonly WorkScheduleReferencedStudioResource[];
-  readonly workShiftRepository?: MemoryWorkShiftRepository;
-  readonly availabilityRepository?: MemoryAvailabilityRepository;
-  readonly codeSequenceRepository?: WorkScheduleCodeSequenceRepository;
-  readonly now?: () => number;
-  readonly structuredAuthority?: StructuredScopeAuthorityService;
-} = {}): MonthlyRosterAdminService {
-  const orgUnits =
-    params.orgUnits ??
-    [
-      {
-        id: "dept-1",
-        type: "DEPARTMENT",
-        status: "ACTIVE",
-      },
-    ];
-  const profiles =
-    params.profiles ??
-    [
-      {
-        id: "emp-1",
-        employmentStatus: "ACTIVE",
-        orgUnitId: "dept-1",
-        linkedUserId: null,
-      },
-      {
-        id: "actor-profile",
-        employmentStatus: "ACTIVE",
-        orgUnitId: "dept-1",
-        linkedUserId: "admin-user-1",
-      },
-    ];
-  const talentGroups =
-    params.talentGroups ??
-    [
-      {
-        id: "group-1",
-        status: "ACTIVE" as const,
-      },
-    ];
-  const resources =
-    params.resources ??
-    [
-      {
-        id: "studio-1",
-        operationalStatus: "ACTIVE",
-      },
-    ];
+function createService(
+  params: {
+    readonly rosters?: readonly MonthlyRosterRecord[];
+    readonly orgUnits?: readonly WorkScheduleReferencedOrgUnit[];
+    readonly talentGroups?: readonly {
+      readonly id: string;
+      readonly status: "ACTIVE" | "ARCHIVED";
+    }[];
+    readonly profiles?: readonly WorkScheduleReferencedEmploymentProfile[];
+    readonly talentGroupMemberResolutions?: readonly {
+      readonly memberId: string;
+      readonly groupId: string;
+      readonly talentId: string;
+      readonly membershipStatus: string;
+      readonly talentOperationalStatus: string | null;
+      readonly linkedEmploymentProfileId: string | null;
+      readonly employmentProfile: WorkScheduleReferencedEmploymentProfile | null;
+    }[];
+    readonly patterns?: readonly WorkPatternRecord[];
+    readonly calendars?: readonly HolidayCalendarRecord[];
+    readonly resources?: readonly WorkScheduleReferencedStudioResource[];
+    readonly workShiftRepository?: MemoryWorkShiftRepository;
+    readonly availabilityRepository?: MemoryAvailabilityRepository;
+    readonly codeSequenceRepository?: WorkScheduleCodeSequenceRepository;
+    readonly now?: () => number;
+    readonly structuredAuthority?: StructuredScopeAuthorityService;
+  } = {},
+): MonthlyRosterAdminService {
+  const orgUnits = params.orgUnits ?? [
+    {
+      id: "dept-1",
+      type: "DEPARTMENT",
+      status: "ACTIVE",
+    },
+  ];
+  const profiles = params.profiles ?? [
+    {
+      id: "emp-1",
+      employmentStatus: "ACTIVE",
+      orgUnitId: "dept-1",
+      linkedUserId: null,
+    },
+    {
+      id: "actor-profile",
+      employmentStatus: "ACTIVE",
+      orgUnitId: "dept-1",
+      linkedUserId: "admin-user-1",
+    },
+  ];
+  const talentGroups = params.talentGroups ?? [
+    {
+      id: "group-1",
+      status: "ACTIVE" as const,
+    },
+  ];
+  const resources = params.resources ?? [
+    {
+      id: "studio-1",
+      operationalStatus: "ACTIVE",
+    },
+  ];
 
   return new MonthlyRosterAdminService(
-    new MemoryMonthlyRosterRepository(
-      params.rosters,
-    ),
-    new MemoryWorkPatternRepository(
-      params.patterns ?? [seedPattern()],
-    ),
-    new MemoryHolidayCalendarRepository(
-      params.calendars ?? [seedCalendar()],
-    ),
-    params.workShiftRepository ??
-      new MemoryWorkShiftRepository(),
+    new MemoryMonthlyRosterRepository(params.rosters),
+    new MemoryWorkPatternRepository(params.patterns ?? [seedPattern()]),
+    new MemoryHolidayCalendarRepository(params.calendars ?? [seedCalendar()]),
+    params.workShiftRepository ?? new MemoryWorkShiftRepository(),
     params.codeSequenceRepository ??
       new MemoryWorkShiftCodeSequenceRepository(),
     {
@@ -1293,48 +1183,39 @@ function createService(params: {
     },
     {
       findById: async (id: string) =>
-        profiles.find((profile) => profile.id === id) ??
-        null,
+        profiles.find((profile) => profile.id === id) ?? null,
       findByLinkedUserId: async (linkedUserId: string) =>
-        profiles.find(
-          (profile) =>
-            profile.linkedUserId === linkedUserId,
-        ) ?? null,
+        profiles.find((profile) => profile.linkedUserId === linkedUserId) ??
+        null,
       listIdsByActiveTalentGroupIds: async () => [],
       listIdsByOrgUnitId: async () => [],
       listByOrgUnitId: async (orgUnitId: string) =>
-        profiles.filter(
-          (profile) => profile.orgUnitId === orgUnitId,
-        ),
-      listTalentGroupMemberEmploymentProfileResolutions:
-        async (talentGroupId: string) =>
-          (
-            params.talentGroupMemberResolutions ??
-            profiles.map((profile) => ({
-              memberId: `member-${profile.id}`,
-              groupId: talentGroupId,
-              talentId: `talent-${profile.id}`,
-              membershipStatus: "ACTIVE",
-              talentOperationalStatus: "ACTIVE",
-              linkedEmploymentProfileId: profile.id,
-              employmentProfile: profile,
-            }))
-          ).filter(
-            (resolution) =>
-              resolution.groupId === talentGroupId,
-          ),
+        profiles.filter((profile) => profile.orgUnitId === orgUnitId),
+      listTalentGroupMemberEmploymentProfileResolutions: async (
+        talentGroupId: string,
+      ) =>
+        (
+          params.talentGroupMemberResolutions ??
+          profiles.map((profile) => ({
+            memberId: `member-${profile.id}`,
+            groupId: talentGroupId,
+            talentId: `talent-${profile.id}`,
+            membershipStatus: "ACTIVE",
+            talentOperationalStatus: "ACTIVE",
+            linkedEmploymentProfileId: profile.id,
+            employmentProfile: profile,
+          }))
+        ).filter((resolution) => resolution.groupId === talentGroupId),
     },
     {
       findById: async (id: string) =>
-        resources.find((resource) => resource.id === id) ??
-        null,
+        resources.find((resource) => resource.id === id) ?? null,
     },
     audit,
     mutationBridge,
     {
       findById: async (id: string) =>
-        talentGroups.find((group) => group.id === id) ??
-        null,
+        talentGroups.find((group) => group.id === id) ?? null,
     },
     {
       info() {},
@@ -1342,12 +1223,9 @@ function createService(params: {
       error() {},
       debug() {},
     } as never,
-    params.now ??
-      (() => Date.parse("2026-05-15T00:00:00.000Z")),
-    params.availabilityRepository ??
-      new MemoryAvailabilityRepository(),
-    params.structuredAuthority ??
-      createStructuredAuthority(),
+    params.now ?? (() => Date.parse("2026-05-15T00:00:00.000Z")),
+    params.availabilityRepository ?? new MemoryAvailabilityRepository(),
+    params.structuredAuthority ?? createStructuredAuthority(),
   );
 }
 
@@ -1364,19 +1242,14 @@ function createRosterPayload(
   }> = {},
 ) {
   return {
-    rosterCode:
-      "rosterCode" in params
-        ? params.rosterCode
-        : "MR-2026-05-HR",
+    rosterCode: "rosterCode" in params ? params.rosterCode : "MR-2026-05-HR",
     rosterMonth: params.rosterMonth ?? "2026-05",
     targetType: params.targetType ?? "ORG_UNIT",
     targetMode: "EXACT_ONLY",
     targetOrgUnitId:
       params.targetType === "TALENT_GROUP"
         ? null
-        : (params.targetOrgUnitId ??
-          params.departmentOrgUnitId ??
-          "dept-1"),
+        : (params.targetOrgUnitId ?? params.departmentOrgUnitId ?? "dept-1"),
     targetTalentGroupId:
       params.targetType === "TALENT_GROUP"
         ? (params.targetTalentGroupId ?? "group-1")
@@ -1384,38 +1257,35 @@ function createRosterPayload(
     departmentOrgUnitId:
       params.targetType === "TALENT_GROUP"
         ? undefined
-        : (params.departmentOrgUnitId ??
-          params.targetOrgUnitId ??
-          "dept-1"),
+        : (params.departmentOrgUnitId ?? params.targetOrgUnitId ?? "dept-1"),
     workPatternId: params.workPatternId ?? "pattern-1",
-    holidayCalendarId:
-      params.holidayCalendarId ?? "calendar-1",
+    holidayCalendarId: params.holidayCalendarId ?? "calendar-1",
   };
 }
 
-function expectedPreviewHash(params: {
-  readonly roster?: MonthlyRosterRecord;
-  readonly pattern?: WorkPatternRecord;
-  readonly calendar?: HolidayCalendarRecord;
-  readonly profiles?: readonly WorkScheduleReferencedEmploymentProfile[];
-} = {}): string {
+function expectedPreviewHash(
+  params: {
+    readonly roster?: MonthlyRosterRecord;
+    readonly pattern?: WorkPatternRecord;
+    readonly calendar?: HolidayCalendarRecord;
+    readonly profiles?: readonly WorkScheduleReferencedEmploymentProfile[];
+  } = {},
+): string {
   const roster = params.roster ?? seedRoster();
-  const profiles =
-    params.profiles ??
-    [
-      {
-        id: "emp-1",
-        employmentStatus: "ACTIVE",
-        orgUnitId: "dept-1",
-        linkedUserId: null,
-      },
-      {
-        id: "actor-profile",
-        employmentStatus: "ACTIVE",
-        orgUnitId: "dept-1",
-        linkedUserId: "admin-user-1",
-      },
-    ];
+  const profiles = params.profiles ?? [
+    {
+      id: "emp-1",
+      employmentStatus: "ACTIVE",
+      orgUnitId: "dept-1",
+      linkedUserId: null,
+    },
+    {
+      id: "actor-profile",
+      employmentStatus: "ACTIVE",
+      orgUnitId: "dept-1",
+      linkedUserId: "admin-user-1",
+    },
+  ];
 
   return buildMonthlyRosterPreview({
     roster: {
@@ -1425,9 +1295,9 @@ function expectedPreviewHash(params: {
       ).length,
     },
     pattern: params.pattern ?? seedPattern(),
-    activeHolidayEntries: (
-      params.calendar ?? seedCalendar()
-    ).entries.filter((entry) => entry.status === "ACTIVE"),
+    activeHolidayEntries: (params.calendar ?? seedCalendar()).entries.filter(
+      (entry) => entry.status === "ACTIVE",
+    ),
     eligibleProfiles: profiles
       .filter((profile) => profile.employmentStatus === "ACTIVE")
       .filter((profile) =>
@@ -1446,40 +1316,23 @@ function expectedPreviewHash(params: {
 }
 
 function vietnamUtc(date: string, time: string): number {
-  const [year, month, day] = date
-    .split("-")
-    .map(Number);
+  const [year, month, day] = date.split("-").map(Number);
   const [hour, minute] = time.split(":").map(Number);
 
-  return Date.UTC(
-    year,
-    month - 1,
-    day,
-    hour - 7,
-    minute,
-  );
+  return Date.UTC(year, month - 1, day, hour - 7, minute);
 }
 
 test("Monthly Roster creates DRAFT with active department, pattern, and calendar", async () => {
   await bindTraceId("trace-monthly-roster-create", async () => {
-    const created =
-      await createService().createMonthlyRosterDraft(
-        createActor([
-          Permission.WORK_SCHEDULE_CREATE,
-        ]),
-        createRosterPayload(),
-      );
+    const created = await createService().createMonthlyRosterDraft(
+      createActor([Permission.WORK_SCHEDULE_CREATE]),
+      createRosterPayload(),
+    );
 
     assert.equal(created.status, "DRAFT");
     assert.equal(created.timezone, "Asia/Ho_Chi_Minh");
-    assert.equal(
-      created.targetSubjectKind,
-      "EMPLOYMENT_PROFILE",
-    );
-    assert.equal(
-      created.targetOrgUnitMode,
-      "EXACT_ONLY",
-    );
+    assert.equal(created.targetSubjectKind, "EMPLOYMENT_PROFILE");
+    assert.equal(created.targetOrgUnitMode, "EXACT_ONLY");
     assert.equal(created.exceptionCount, 0);
   });
 });
@@ -1492,35 +1345,32 @@ test("Monthly Roster accepts Talent Group target and blocks zero eligible Talent
       orgUnitId: "dept-1",
       linkedUserId: null,
     };
-    const created =
-      await createService({
-        profiles: [linkedProfile],
-        talentGroupMemberResolutions: [
-          {
-            memberId: "member-linked",
-            groupId: "group-1",
-            talentId: "talent-linked",
-            membershipStatus: "ACTIVE",
-            talentOperationalStatus: "ACTIVE",
-            linkedEmploymentProfileId: linkedProfile.id,
-            employmentProfile: linkedProfile,
-          },
-        ],
-      }).createMonthlyRosterDraft(
-        createActor([
-          Permission.WORK_SCHEDULE_CREATE,
-        ]),
+    const created = await createService({
+      profiles: [linkedProfile],
+      talentGroupMemberResolutions: [
         {
-          rosterMonth: "2026-05",
-          timezone: "Asia/Ho_Chi_Minh",
-          targetType: "TALENT_GROUP",
-          targetMode: "EXACT_ONLY",
-          targetTalentGroupId: "group-1",
-          workPatternId: "pattern-1",
-          holidayCalendarId: "calendar-1",
-          scope: "global",
+          memberId: "member-linked",
+          groupId: "group-1",
+          talentId: "talent-linked",
+          membershipStatus: "ACTIVE",
+          talentOperationalStatus: "ACTIVE",
+          linkedEmploymentProfileId: linkedProfile.id,
+          employmentProfile: linkedProfile,
         },
-      );
+      ],
+    }).createMonthlyRosterDraft(
+      createActor([Permission.WORK_SCHEDULE_CREATE]),
+      {
+        rosterMonth: "2026-05",
+        timezone: "Asia/Ho_Chi_Minh",
+        targetType: "TALENT_GROUP",
+        targetMode: "EXACT_ONLY",
+        targetTalentGroupId: "group-1",
+        workPatternId: "pattern-1",
+        holidayCalendarId: "calendar-1",
+        scope: "global",
+      },
+    );
 
     assert.equal(created.targetType, "TALENT_GROUP");
     assert.equal(created.targetMode, "EXACT_ONLY");
@@ -1550,9 +1400,7 @@ test("Monthly Roster accepts Talent Group target and blocks zero eligible Talent
           },
         ],
       }).publishMonthlyRoster(
-        createActor([
-          Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
-        ]),
+        createActor([Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE]),
         {
           monthlyRosterId: "roster-zero-tg",
           expectedPreviewHash: expectedPreviewHash({
@@ -1568,110 +1416,96 @@ test("Monthly Roster accepts Talent Group target and blocks zero eligible Talent
 });
 
 test("Monthly Roster create generates rosterCode when omitted, null, or blank and increments by roster month bucket", async () => {
-  const sequenceRepository =
-    new MemoryWorkShiftCodeSequenceRepository();
-  const actor = createActor([
-    Permission.WORK_SCHEDULE_CREATE,
-  ]);
+  const sequenceRepository = new MemoryWorkShiftCodeSequenceRepository();
+  const actor = createActor([Permission.WORK_SCHEDULE_CREATE]);
 
   await bindTraceId("trace-monthly-roster-code-generation", async () => {
-    const first =
-      await createService({
-        codeSequenceRepository: sequenceRepository,
-      }).createMonthlyRosterDraft(
-        actor,
-        createRosterPayload({
-          rosterCode: undefined,
-          departmentOrgUnitId: "dept-1",
-        }),
-      );
-    const second =
-      await createService({
-        codeSequenceRepository: sequenceRepository,
-        orgUnits: [
-          {
-            id: "dept-2",
-            type: "DEPARTMENT",
-            status: "ACTIVE",
-          },
-        ],
-        profiles: [
-          {
-            id: "emp-2",
-            employmentStatus: "ACTIVE",
-            orgUnitId: "dept-2",
-            linkedUserId: null,
-          },
-        ],
-      }).createMonthlyRosterDraft(
-        actor,
-        createRosterPayload({
-          rosterCode: null,
-          departmentOrgUnitId: "dept-2",
-        }),
-      );
-    const differentMonth =
-      await createService({
-        codeSequenceRepository: sequenceRepository,
-      }).createMonthlyRosterDraft(
-        actor,
-        createRosterPayload({
-          rosterCode: "   ",
-          rosterMonth: "2026-06",
-        }),
-      );
+    const first = await createService({
+      codeSequenceRepository: sequenceRepository,
+    }).createMonthlyRosterDraft(
+      actor,
+      createRosterPayload({
+        rosterCode: undefined,
+        departmentOrgUnitId: "dept-1",
+      }),
+    );
+    const second = await createService({
+      codeSequenceRepository: sequenceRepository,
+      orgUnits: [
+        {
+          id: "dept-2",
+          type: "DEPARTMENT",
+          status: "ACTIVE",
+        },
+      ],
+      profiles: [
+        {
+          id: "emp-2",
+          employmentStatus: "ACTIVE",
+          orgUnitId: "dept-2",
+          linkedUserId: null,
+        },
+      ],
+    }).createMonthlyRosterDraft(
+      actor,
+      createRosterPayload({
+        rosterCode: null,
+        departmentOrgUnitId: "dept-2",
+      }),
+    );
+    const differentMonth = await createService({
+      codeSequenceRepository: sequenceRepository,
+    }).createMonthlyRosterDraft(
+      actor,
+      createRosterPayload({
+        rosterCode: "   ",
+        rosterMonth: "2026-06",
+      }),
+    );
 
     assert.equal(first.rosterCode, "MR-202605-000001");
     assert.equal(second.rosterCode, "MR-202605-000002");
-    assert.equal(
-      differentMonth.rosterCode,
-      "MR-202606-000001",
-    );
+    assert.equal(differentMonth.rosterCode, "MR-202606-000001");
     assert.match(first.rosterCode, /^MR-\d{6}-\d{6}$/u);
   });
 });
 
 test("Monthly Roster explicit custom rosterCode is preserved and update cannot mutate it", async () => {
   await bindTraceId("trace-monthly-roster-custom-code", async () => {
-    const created =
-      await createService().createMonthlyRosterDraft(
-        createActor([Permission.WORK_SCHEDULE_CREATE]),
-        createRosterPayload({
-          rosterCode: "  CUSTOM-MR  ",
-        }),
-      );
+    const created = await createService().createMonthlyRosterDraft(
+      createActor([Permission.WORK_SCHEDULE_CREATE]),
+      createRosterPayload({
+        rosterCode: "  CUSTOM-MR  ",
+      }),
+    );
 
     assert.equal(created.rosterCode, "CUSTOM-MR");
 
-    const updated =
-      await createService({
-        rosters: [
-          {
-            ...seedRoster({
-              monthlyRosterId:
-                created.monthlyRosterId,
-            }),
-            rosterCode: created.rosterCode,
-            normalizedRosterCode: "custom-mr",
-          },
-        ],
-      }).updateMonthlyRosterDraft(
-        createActor([Permission.WORK_SCHEDULE_UPDATE]),
+    const updated = await createService({
+      rosters: [
         {
-          monthlyRosterId: created.monthlyRosterId,
-          description: "Metadata update",
-          rosterCode: "NEW-MR",
-        } as never,
-      );
+          ...seedRoster({
+            monthlyRosterId: created.monthlyRosterId,
+          }),
+          rosterCode: created.rosterCode,
+          normalizedRosterCode: "custom-mr",
+        },
+      ],
+    }).updateMonthlyRosterDraft(
+      createActor([Permission.WORK_SCHEDULE_UPDATE]),
+      {
+        monthlyRosterId: created.monthlyRosterId,
+        description: "Metadata update",
+        rosterCode: "NEW-MR",
+      } as never,
+    );
 
     assert.equal(updated.rosterCode, "CUSTOM-MR");
   });
 });
 
 test("Monthly Roster enforces target, pattern, calendar, month, duplicate, and client status contracts", async (t) => {
-  const actor = createActor([
-    Permission.WORK_SCHEDULE_CREATE,
-  ]);
+  const actor = createActor([Permission.WORK_SCHEDULE_CREATE]);
 
   await t.test("active non-department Org Unit target", async () => {
     await bindTraceId("trace-roster-active-team-target", async () => {
@@ -1716,10 +1550,7 @@ test("Monthly Roster enforces target, pattern, calendar, month, duplicate, and c
               status: "INACTIVE",
             },
           ],
-        }).createMonthlyRosterDraft(
-          actor,
-          createRosterPayload(),
-        ),
+        }).createMonthlyRosterDraft(actor, createRosterPayload()),
         WorkScheduleInvalidSubjectReferenceError,
       );
     });
@@ -1762,10 +1593,7 @@ test("Monthly Roster enforces target, pattern, calendar, month, duplicate, and c
       await assert.rejects(
         createService({
           patterns: [seedPattern({ status: "DRAFT" })],
-        }).createMonthlyRosterDraft(
-          actor,
-          createRosterPayload(),
-        ),
+        }).createMonthlyRosterDraft(actor, createRosterPayload()),
         WorkScheduleInvalidSubjectReferenceError,
       );
     });
@@ -1775,13 +1603,8 @@ test("Monthly Roster enforces target, pattern, calendar, month, duplicate, and c
     await bindTraceId("trace-roster-archived-calendar", async () => {
       await assert.rejects(
         createService({
-          calendars: [
-            seedCalendar({ status: "ARCHIVED" }),
-          ],
-        }).createMonthlyRosterDraft(
-          actor,
-          createRosterPayload(),
-        ),
+          calendars: [seedCalendar({ status: "ARCHIVED" })],
+        }).createMonthlyRosterDraft(actor, createRosterPayload()),
         WorkScheduleInvalidSubjectReferenceError,
       );
     });
@@ -1800,10 +1623,7 @@ test("Monthly Roster enforces target, pattern, calendar, month, duplicate, and c
       await assert.rejects(
         createService({
           rosters: [seedRoster()],
-        }).createMonthlyRosterDraft(
-          actor,
-          createRosterPayload(),
-        ),
+        }).createMonthlyRosterDraft(actor, createRosterPayload()),
         WorkScheduleConflictError,
       );
     });
@@ -1814,25 +1634,18 @@ test("Monthly Roster enforces target, pattern, calendar, month, duplicate, and c
       "src/modules/work-schedule/admin/admin.monthly-roster.controller.ts",
       "utf8",
     );
-    assert.equal(
-      routes.includes('"status"'),
-      false,
-    );
+    assert.equal(routes.includes('"status"'), false);
   });
 });
 
 test("Monthly Roster list/detail exposure and draft update work, archived is read-only", async () => {
   const roster = seedRoster();
-  const exposed =
-    MonthlyRosterAdminExposure.exposeDetail({
-      ...roster,
-      exceptionCount: 0,
-    });
+  const exposed = MonthlyRosterAdminExposure.exposeDetail({
+    ...roster,
+    exceptionCount: 0,
+  });
 
-  assert.equal(
-    exposed.monthlyRosterId,
-    "roster-1",
-  );
+  assert.equal(exposed.monthlyRosterId, "roster-1");
   assert.deepEqual(exposed.exceptions, []);
 
   await bindTraceId("trace-roster-update-archive", async () => {
@@ -1843,20 +1656,18 @@ test("Monthly Roster list/detail exposure and draft update work, archived is rea
       Permission.WORK_SCHEDULE_UPDATE,
       Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
     ]);
-    const updated =
-      await service.updateMonthlyRosterDraft(actor, {
-        monthlyRosterId: "roster-1",
-        description: "May roster",
-        externalRef: "EXT-1",
-      });
+    const updated = await service.updateMonthlyRosterDraft(actor, {
+      monthlyRosterId: "roster-1",
+      description: "May roster",
+      externalRef: "EXT-1",
+    });
 
     assert.equal(updated.description, "May roster");
     assert.equal(updated.draftVersion, 2);
 
-    const archived =
-      await service.archiveMonthlyRoster(actor, {
-        monthlyRosterId: "roster-1",
-      });
+    const archived = await service.archiveMonthlyRoster(actor, {
+      monthlyRosterId: "roster-1",
+    });
     assert.equal(archived.status, "ARCHIVED");
 
     await assert.rejects(
@@ -1870,9 +1681,7 @@ test("Monthly Roster list/detail exposure and draft update work, archived is rea
 });
 
 test("Monthly Roster locks structural draft fields while active exceptions exist", async (t) => {
-  const actor = createActor([
-    Permission.WORK_SCHEDULE_UPDATE,
-  ]);
+  const actor = createActor([Permission.WORK_SCHEDULE_UPDATE]);
 
   await t.test("WORKING_TO_OFF blocks rosterMonth", async () => {
     await bindTraceId("trace-roster-lock-month", async () => {
@@ -2005,54 +1814,32 @@ test("Monthly Roster permits metadata and same structural values while active ex
         }),
       ],
     });
-    const actor = createActor([
-      Permission.WORK_SCHEDULE_UPDATE,
-    ]);
+    const actor = createActor([Permission.WORK_SCHEDULE_UPDATE]);
 
-    const metadataOnly =
-      await service.updateMonthlyRosterDraft(actor, {
-        monthlyRosterId: "roster-1",
-        description: "Metadata can change",
-        externalRef: "ROSTER-EXT-1",
-      });
+    const metadataOnly = await service.updateMonthlyRosterDraft(actor, {
+      monthlyRosterId: "roster-1",
+      description: "Metadata can change",
+      externalRef: "ROSTER-EXT-1",
+    });
 
-    assert.equal(
-      metadataOnly.description,
-      "Metadata can change",
-    );
+    assert.equal(metadataOnly.description, "Metadata can change");
     assert.equal(metadataOnly.externalRef, "ROSTER-EXT-1");
     assert.equal(metadataOnly.exceptionCount, 1);
 
-    const sameStructuralValues =
-      await service.updateMonthlyRosterDraft(actor, {
-        monthlyRosterId: "roster-1",
-        rosterMonth: " 2026-05 ",
-        departmentOrgUnitId: " dept-1 ",
-        workPatternId: " pattern-1 ",
-        holidayCalendarId: " calendar-1 ",
-        description: "Same structural values",
-      });
+    const sameStructuralValues = await service.updateMonthlyRosterDraft(actor, {
+      monthlyRosterId: "roster-1",
+      rosterMonth: " 2026-05 ",
+      departmentOrgUnitId: " dept-1 ",
+      workPatternId: " pattern-1 ",
+      holidayCalendarId: " calendar-1 ",
+      description: "Same structural values",
+    });
 
-    assert.equal(
-      sameStructuralValues.rosterMonth,
-      "2026-05",
-    );
-    assert.equal(
-      sameStructuralValues.departmentOrgUnitId,
-      "dept-1",
-    );
-    assert.equal(
-      sameStructuralValues.workPatternId,
-      "pattern-1",
-    );
-    assert.equal(
-      sameStructuralValues.holidayCalendarId,
-      "calendar-1",
-    );
-    assert.equal(
-      sameStructuralValues.description,
-      "Same structural values",
-    );
+    assert.equal(sameStructuralValues.rosterMonth, "2026-05");
+    assert.equal(sameStructuralValues.departmentOrgUnitId, "dept-1");
+    assert.equal(sameStructuralValues.workPatternId, "pattern-1");
+    assert.equal(sameStructuralValues.holidayCalendarId, "calendar-1");
+    assert.equal(sameStructuralValues.description, "Same structural values");
   });
 });
 
@@ -2068,25 +1855,19 @@ test("Monthly Roster structural draft update succeeds after active exceptions ar
           ],
         }),
       ],
-      patterns: [
-        seedPattern(),
-        seedPattern({ workPatternId: "pattern-2" }),
-      ],
+      patterns: [seedPattern(), seedPattern({ workPatternId: "pattern-2" })],
     });
-    const actor = createActor([
-      Permission.WORK_SCHEDULE_UPDATE,
-    ]);
+    const actor = createActor([Permission.WORK_SCHEDULE_UPDATE]);
 
     await service.removeRosterException(actor, {
       monthlyRosterId: "roster-1",
       rosterExceptionId: "exception-1",
     });
 
-    const updated =
-      await service.updateMonthlyRosterDraft(actor, {
-        monthlyRosterId: "roster-1",
-        workPatternId: "pattern-2",
-      });
+    const updated = await service.updateMonthlyRosterDraft(actor, {
+      monthlyRosterId: "roster-1",
+      workPatternId: "pattern-2",
+    });
 
     assert.equal(updated.status, "DRAFT");
     assert.equal(updated.workPatternId, "pattern-2");
@@ -2096,9 +1877,7 @@ test("Monthly Roster structural draft update succeeds after active exceptions ar
 });
 
 test("Monthly Roster structural draft update still enforces active base references", async () => {
-  const actor = createActor([
-    Permission.WORK_SCHEDULE_UPDATE,
-  ]);
+  const actor = createActor([Permission.WORK_SCHEDULE_UPDATE]);
 
   await bindTraceId("trace-roster-update-active-refs", async () => {
     await assert.rejects(
@@ -2164,59 +1943,48 @@ test("Roster exceptions persist valid WORKING_TO_OFF, CHANGE_TIME, and ADD_SPECI
     const service = createService({
       rosters: [seedRoster()],
     });
-    const actor = createActor([
-      Permission.WORK_SCHEDULE_UPDATE,
-    ]);
+    const actor = createActor([Permission.WORK_SCHEDULE_UPDATE]);
 
-    const off =
-      await service.addRosterException(actor, {
-        monthlyRosterId: "roster-1",
-        exceptionType: "WORKING_TO_OFF",
-        exceptionDate: "2026-05-04",
-        subjectEmploymentProfileId: "emp-1",
-      });
+    const off = await service.addRosterException(actor, {
+      monthlyRosterId: "roster-1",
+      exceptionType: "WORKING_TO_OFF",
+      exceptionDate: "2026-05-04",
+      subjectEmploymentProfileId: "emp-1",
+    });
     assert.equal(off.exceptionCount, 1);
 
-    const change =
-      await service.addRosterException(actor, {
-        monthlyRosterId: "roster-1",
-        exceptionType: "CHANGE_TIME",
-        exceptionDate: "2026-05-05",
-        subjectEmploymentProfileId: "emp-1",
-        startLocalTime: "09:00",
-      });
+    const change = await service.addRosterException(actor, {
+      monthlyRosterId: "roster-1",
+      exceptionType: "CHANGE_TIME",
+      exceptionDate: "2026-05-05",
+      subjectEmploymentProfileId: "emp-1",
+      startLocalTime: "09:00",
+    });
     assert.equal(
-      change.exceptions[
-        change.exceptions.length - 1
-      ].endLocalTime,
+      change.exceptions[change.exceptions.length - 1].endLocalTime,
       "18:00",
     );
 
-    const special =
-      await service.addRosterException(actor, {
-        monthlyRosterId: "roster-1",
-        exceptionType: "ADD_SPECIAL_SHIFT",
-        exceptionDate: "2026-05-09",
-        subjectEmploymentProfileId: "emp-1",
-        title: "Saturday inventory",
-        startLocalTime: "10:00",
-        workingMinutes: 120,
-        breakMinutes: 30,
-        studioResourceIds: ["studio-1"],
-      });
+    const special = await service.addRosterException(actor, {
+      monthlyRosterId: "roster-1",
+      exceptionType: "ADD_SPECIAL_SHIFT",
+      exceptionDate: "2026-05-09",
+      subjectEmploymentProfileId: "emp-1",
+      title: "Saturday inventory",
+      startLocalTime: "10:00",
+      workingMinutes: 120,
+      breakMinutes: 30,
+      studioResourceIds: ["studio-1"],
+    });
     assert.equal(
-      special.exceptions[
-        special.exceptions.length - 1
-      ].endLocalTime,
+      special.exceptions[special.exceptions.length - 1].endLocalTime,
       "12:30",
     );
   });
 });
 
 test("Roster exceptions enforce date/profile/status and standard-candidate validation", async (t) => {
-  const actor = createActor([
-    Permission.WORK_SCHEDULE_UPDATE,
-  ]);
+  const actor = createActor([Permission.WORK_SCHEDULE_UPDATE]);
 
   await t.test("outside month and impossible date", async () => {
     await bindTraceId("trace-exception-date", async () => {
@@ -2355,33 +2123,25 @@ test("Roster exception update/remove and conflict behavior are enforced", async 
     const service = createService({
       rosters: [seedRoster()],
     });
-    const actor = createActor([
-      Permission.WORK_SCHEDULE_UPDATE,
-    ]);
-    const added =
-      await service.addRosterException(actor, {
-        monthlyRosterId: "roster-1",
-        exceptionType: "CHANGE_TIME",
-        exceptionDate: "2026-05-04",
-        subjectEmploymentProfileId: "emp-1",
-        startLocalTime: "09:00",
-      });
-    const exceptionId =
-      added.exceptions[0].rosterExceptionId;
+    const actor = createActor([Permission.WORK_SCHEDULE_UPDATE]);
+    const added = await service.addRosterException(actor, {
+      monthlyRosterId: "roster-1",
+      exceptionType: "CHANGE_TIME",
+      exceptionDate: "2026-05-04",
+      subjectEmploymentProfileId: "emp-1",
+      startLocalTime: "09:00",
+    });
+    const exceptionId = added.exceptions[0].rosterExceptionId;
 
-    const updated =
-      await service.updateRosterException(actor, {
-        monthlyRosterId: "roster-1",
-        rosterExceptionId: exceptionId,
-        exceptionType: "CHANGE_TIME",
-        exceptionDate: "2026-05-04",
-        subjectEmploymentProfileId: "emp-1",
-        startLocalTime: "10:00",
-      });
-    assert.equal(
-      updated.exceptions[0].endLocalTime,
-      "19:00",
-    );
+    const updated = await service.updateRosterException(actor, {
+      monthlyRosterId: "roster-1",
+      rosterExceptionId: exceptionId,
+      exceptionType: "CHANGE_TIME",
+      exceptionDate: "2026-05-04",
+      subjectEmploymentProfileId: "emp-1",
+      startLocalTime: "10:00",
+    });
+    assert.equal(updated.exceptions[0].endLocalTime, "19:00");
 
     await assert.rejects(
       service.addRosterException(actor, {
@@ -2393,23 +2153,17 @@ test("Roster exception update/remove and conflict behavior are enforced", async 
       WorkScheduleConflictError,
     );
 
-    const removed =
-      await service.removeRosterException(actor, {
-        monthlyRosterId: "roster-1",
-        rosterExceptionId: exceptionId,
-      });
-    assert.equal(
-      removed.exceptions[0].status,
-      "REMOVED",
-    );
+    const removed = await service.removeRosterException(actor, {
+      monthlyRosterId: "roster-1",
+      rosterExceptionId: exceptionId,
+    });
+    assert.equal(removed.exceptions[0].status, "REMOVED");
   });
 });
 
 test("ADD_SPECIAL_SHIFT allows off days but rejects overnight and existing overlaps", async () => {
   await bindTraceId("trace-special-shift-rules", async () => {
-    const actor = createActor([
-      Permission.WORK_SCHEDULE_UPDATE,
-    ]);
+    const actor = createActor([Permission.WORK_SCHEDULE_UPDATE]);
     await assert.rejects(
       createService({
         rosters: [seedRoster()],
@@ -2426,8 +2180,7 @@ test("ADD_SPECIAL_SHIFT allows off days but rejects overnight and existing overl
       WorkScheduleValidationError,
     );
 
-    const workShiftRepository =
-      new MemoryWorkShiftRepository();
+    const workShiftRepository = new MemoryWorkShiftRepository();
     workShiftRepository.subjectOverlap = true;
     await assert.rejects(
       createService({
@@ -2455,26 +2208,18 @@ test("Monthly Roster planning window is backend-authoritative for create and pub
       Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
     ]);
 
-    for (const rosterMonth of [
-      "2026-05",
-      "2026-06",
-      "2026-07",
-    ]) {
-      const created =
-        await createService().createMonthlyRosterDraft(
-          actor,
-          createRosterPayload({
-            rosterCode: `MR-${rosterMonth}`,
-            rosterMonth,
-          }),
-        );
+    for (const rosterMonth of ["2026-05", "2026-06", "2026-07"]) {
+      const created = await createService().createMonthlyRosterDraft(
+        actor,
+        createRosterPayload({
+          rosterCode: `MR-${rosterMonth}`,
+          rosterMonth,
+        }),
+      );
       assert.equal(created.rosterMonth, rosterMonth);
     }
 
-    for (const rosterMonth of [
-      "2026-04",
-      "2026-08",
-    ]) {
+    for (const rosterMonth of ["2026-04", "2026-08"]) {
       await assert.rejects(
         createService().createMonthlyRosterDraft(
           actor,
@@ -2505,8 +2250,7 @@ test("Monthly Roster planning window is backend-authoritative for create and pub
 
 test("Monthly Roster older drafts allow metadata-only edits but remain unpublishable", async () => {
   await bindTraceId("trace-older-roster-draft", async () => {
-    const now = () =>
-      Date.parse("2026-06-15T00:00:00.000Z");
+    const now = () => Date.parse("2026-06-15T00:00:00.000Z");
     const service = createService({
       rosters: [seedRoster()],
       now,
@@ -2516,19 +2260,13 @@ test("Monthly Roster older drafts allow metadata-only edits but remain unpublish
       Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
     ]);
 
-    const updated = await service.updateMonthlyRosterDraft(
-      actor,
-      {
-        monthlyRosterId: "roster-1",
-        description: "Older draft metadata remains editable",
-        externalRef: "OLDER-DRAFT",
-      },
-    );
+    const updated = await service.updateMonthlyRosterDraft(actor, {
+      monthlyRosterId: "roster-1",
+      description: "Older draft metadata remains editable",
+      externalRef: "OLDER-DRAFT",
+    });
 
-    assert.equal(
-      updated.description,
-      "Older draft metadata remains editable",
-    );
+    assert.equal(updated.description, "Older draft metadata remains editable");
     assert.equal(updated.externalRef, "OLDER-DRAFT");
 
     await assert.rejects(
@@ -2557,10 +2295,7 @@ test("Admin Monthly Roster operations require exact structured target authority"
           scopes: [],
         }),
       }).createMonthlyRosterDraft(
-        createActor(
-          [Permission.WORK_SCHEDULE_CREATE],
-          ["global"],
-        ),
+        createActor([Permission.WORK_SCHEDULE_CREATE], ["global"]),
         createRosterPayload(),
       ),
       WorkSchedulePermissionScopeError,
@@ -2600,10 +2335,7 @@ test("Admin Monthly Roster operations require exact structured target authority"
 
     await assert.rejects(
       createService().createMonthlyRosterDraft(
-        createActor(
-          [Permission.WORK_SCHEDULE_CREATE],
-          ["department"],
-        ),
+        createActor([Permission.WORK_SCHEDULE_CREATE], ["department"]),
         {
           ...createRosterPayload(),
           scope: "department",
@@ -2659,10 +2391,7 @@ test("Admin Monthly Roster operations require exact structured target authority"
           ],
         }),
       }).updateMonthlyRosterDraft(
-        createActor(
-          [Permission.WORK_SCHEDULE_UPDATE],
-          ["global"],
-        ),
+        createActor([Permission.WORK_SCHEDULE_UPDATE], ["global"]),
         {
           monthlyRosterId: "roster-1",
           description: "Not authorized",
@@ -2671,66 +2400,59 @@ test("Admin Monthly Roster operations require exact structured target authority"
       WorkSchedulePermissionScopeError,
     );
 
-    const created =
-      await createService().createMonthlyRosterDraft(
-        createActor(
-          [Permission.WORK_SCHEDULE_CREATE],
-          ["self", "team"],
-        ),
-        createRosterPayload(),
-      );
+    const created = await createService().createMonthlyRosterDraft(
+      createActor([Permission.WORK_SCHEDULE_CREATE], ["self", "team"]),
+      createRosterPayload(),
+    );
     assert.equal(created.status, "DRAFT");
   });
 });
 
 test("Monthly Roster read query normalizes filters and enforces read permission", async () => {
   let capturedQuery: unknown;
-  const readService =
-    new MonthlyRosterAdminQueryService(
-      {
-        listMonthlyRosters: async (input: unknown) => {
-          capturedQuery = input;
-          return { items: [] };
-        },
-        getMonthlyRosterDetail: async () => ({
-          ...seedRoster(),
-          exceptionCount: 0,
-        }),
+  const readService = new MonthlyRosterAdminQueryService(
+    {
+      listMonthlyRosters: async (input: unknown) => {
+        capturedQuery = input;
+        return { items: [] };
       },
-      {
-        findById: async () => null,
-        findByLinkedUserId: async () => null,
-        listIdsByActiveTalentGroupIds: async () => [],
-        listIdsByOrgUnitId: async () => [],
-        listByOrgUnitId: async () => [],
-        listTalentGroupMemberEmploymentProfileResolutions:
-          async () => [],
-      },
-      {
-        listWorkPatterns: async () => ({ items: [] }),
-        getWorkPatternDetail: async () => null,
-      },
-      {
-        listHolidayCalendars: async () => ({ items: [] }),
-        getHolidayCalendarDetail: async () => null,
-        listActiveEntriesForDateRange: async () => [],
-      },
-      {
-        listWorkShifts: async () => ({ items: [] }),
-        listWorkShiftsBySubject: async () => ({ items: [] }),
-        listWorkShiftsByResource: async () => ({ items: [] }),
-        getWorkShiftDetail: async () => null,
-        listActiveEmploymentProfileShiftsForWindow:
-          async () => [],
-      },
-      {
-        findById: async () => null,
-      },
-      {
-        findById: async () => null,
-      },
-      createStructuredAuthority(),
-    );
+      getMonthlyRosterDetail: async () => ({
+        ...seedRoster(),
+        exceptionCount: 0,
+      }),
+    },
+    {
+      findById: async () => null,
+      findByLinkedUserId: async () => null,
+      listIdsByActiveTalentGroupIds: async () => [],
+      listIdsByOrgUnitId: async () => [],
+      listByOrgUnitId: async () => [],
+      listTalentGroupMemberEmploymentProfileResolutions: async () => [],
+    },
+    {
+      listWorkPatterns: async () => ({ items: [] }),
+      getWorkPatternDetail: async () => null,
+    },
+    {
+      listHolidayCalendars: async () => ({ items: [] }),
+      getHolidayCalendarDetail: async () => null,
+      listActiveEntriesForDateRange: async () => [],
+    },
+    {
+      listWorkShifts: async () => ({ items: [] }),
+      listWorkShiftsBySubject: async () => ({ items: [] }),
+      listWorkShiftsByResource: async () => ({ items: [] }),
+      getWorkShiftDetail: async () => null,
+      listActiveEmploymentProfileShiftsForWindow: async () => [],
+    },
+    {
+      findById: async () => null,
+    },
+    {
+      findById: async () => null,
+    },
+    createStructuredAuthority(),
+  );
 
   await assert.rejects(
     readService.listMonthlyRosters(
@@ -2742,10 +2464,7 @@ test("Monthly Roster read query normalizes filters and enforces read permission"
 
   await assert.rejects(
     readService.listMonthlyRosters(
-      createActor(
-        [Permission.WORK_SCHEDULE_READ],
-        ["department"],
-      ),
+      createActor([Permission.WORK_SCHEDULE_READ], ["department"]),
       {
         scope: "department",
         departmentOrgUnitId: "dept-1",
@@ -2781,35 +2500,33 @@ test("Monthly Roster read query normalizes filters and enforces read permission"
 
 test("Admin applies approved availability lines to a DRAFT Monthly Roster without creating WorkShifts", async () => {
   await bindTraceId("trace-roster-apply-availability-success", async () => {
-    const availabilityRepository =
-      new MemoryAvailabilityRepository({
-        batches: [seedAvailabilityBatch()],
-        lines: [
-          seedAvailabilityLine({
-            id: "line-off",
-            availabilityType: "UNAVAILABLE_FULL_DAY",
-            taxonomyCode: "AUTHORIZED_LEAVE",
-            dateRangeStart: "2026-05-04",
-          }),
-          seedAvailabilityLine({
-            id: "line-time",
-            availabilityType: "PREFERRED_TIME",
-            taxonomyCode: "SHIFT_CHANGE",
-            dateRangeStart: "2026-05-05",
-            preferredStartLocalTime: "09:00",
-            preferredEndLocalTime: "18:00",
-          }),
-          seedAvailabilityLine({
-            id: "line-note",
-            availabilityType: "OTHER_AVAILABILITY_NOTE",
-            taxonomyCode: "OTHER",
-            dateRangeStart: "2026-05-06",
-            applyStatus: "ADVISORY_ONLY",
-          }),
-        ],
-      });
-    const workShiftRepository =
-      new MemoryWorkShiftRepository();
+    const availabilityRepository = new MemoryAvailabilityRepository({
+      batches: [seedAvailabilityBatch()],
+      lines: [
+        seedAvailabilityLine({
+          id: "line-off",
+          availabilityType: "UNAVAILABLE_FULL_DAY",
+          taxonomyCode: "AUTHORIZED_LEAVE",
+          dateRangeStart: "2026-05-04",
+        }),
+        seedAvailabilityLine({
+          id: "line-time",
+          availabilityType: "PREFERRED_TIME",
+          taxonomyCode: "SHIFT_CHANGE",
+          dateRangeStart: "2026-05-05",
+          preferredStartLocalTime: "09:00",
+          preferredEndLocalTime: "18:00",
+        }),
+        seedAvailabilityLine({
+          id: "line-note",
+          availabilityType: "OTHER_AVAILABILITY_NOTE",
+          taxonomyCode: "OTHER",
+          dateRangeStart: "2026-05-06",
+          applyStatus: "ADVISORY_ONLY",
+        }),
+      ],
+    });
+    const workShiftRepository = new MemoryWorkShiftRepository();
     const service = createService({
       rosters: [seedRoster()],
       availabilityRepository,
@@ -2817,23 +2534,19 @@ test("Admin applies approved availability lines to a DRAFT Monthly Roster withou
       now: () => 1000,
     });
 
-    const result =
-      await service.applyAvailabilityLinesToMonthlyRoster(
-        createActor([Permission.WORK_SCHEDULE_UPDATE]),
-        {
-          monthlyRosterId: "roster-1",
-          availabilityLineIds: [
-            "line-off",
-            "line-time",
-            "line-note",
-          ],
-          applyNote: "Apply accepted availability to draft roster",
-        },
-      );
+    const result = await service.applyAvailabilityLinesToMonthlyRoster(
+      createActor([Permission.WORK_SCHEDULE_UPDATE]),
+      {
+        monthlyRosterId: "roster-1",
+        availabilityLineIds: ["line-off", "line-time", "line-note"],
+        applyNote: "Apply accepted availability to draft roster",
+      },
+    );
 
     assert.equal(result.appliedCount, 2);
     assert.equal(result.advisoryOnlyCount, 1);
     assert.equal(result.failedCount, 0);
+    assert.equal(result.finalState, "APPLICATION_CONFLICT");
     assert.deepEqual(
       result.results.map((item) => item.outcome),
       ["APPLIED", "APPLIED", "ADVISORY_ONLY"],
@@ -2846,14 +2559,12 @@ test("Admin applies approved availability lines to a DRAFT Monthly Roster withou
       }
     ).rosterRepository.findById("roster-1");
     assert.equal(
-      roster?.exceptions.filter(
-        (exception) => exception.status === "ACTIVE",
-      ).length,
+      roster?.exceptions.filter((exception) => exception.status === "ACTIVE")
+        .length,
       2,
     );
     const off = roster?.exceptions.find(
-      (exception) =>
-        exception.sourceAvailabilityLineId === "line-off",
+      (exception) => exception.sourceAvailabilityLineId === "line-off",
     );
     assert.equal(off?.exceptionType, "WORKING_TO_OFF");
     assert.equal(off?.sourceAvailabilityBatchId, "availability-batch-1");
@@ -2862,8 +2573,7 @@ test("Admin applies approved availability lines to a DRAFT Monthly Roster withou
     assert.equal(off?.sourceAppliedAt, 1000);
     assert.equal(off?.sourceAppliedByActorId, "admin-user-1");
     const changed = roster?.exceptions.find(
-      (exception) =>
-        exception.sourceAvailabilityLineId === "line-time",
+      (exception) => exception.sourceAvailabilityLineId === "line-time",
     );
     assert.equal(changed?.exceptionType, "CHANGE_TIME");
     assert.equal(changed?.startLocalTime, "09:00");
@@ -2885,48 +2595,83 @@ test("Admin applies approved availability lines to a DRAFT Monthly Roster withou
   });
 });
 
+test("Admin all-advisory availability result cannot report applied success", async () => {
+  await bindTraceId("trace-roster-apply-availability-advisory", async () => {
+    const availabilityRepository = new MemoryAvailabilityRepository({
+      batches: [seedAvailabilityBatch()],
+      lines: [
+        seedAvailabilityLine({
+          id: "line-note-only",
+          availabilityType: "OTHER_AVAILABILITY_NOTE",
+          taxonomyCode: "OTHER",
+          dateRangeStart: "2026-05-06",
+        }),
+      ],
+    });
+    const service = createService({
+      rosters: [seedRoster()],
+      availabilityRepository,
+      now: () => 1000,
+    });
+
+    const result = await service.applyAvailabilityLinesToMonthlyRoster(
+      createActor([Permission.WORK_SCHEDULE_UPDATE]),
+      {
+        monthlyRosterId: "roster-1",
+        availabilityLineIds: ["line-note-only"],
+        applyNote: "Retain advisory signal without claiming roster mutation",
+      },
+    );
+
+    assert.equal(result.appliedCount, 0);
+    assert.equal(result.advisoryOnlyCount, 1);
+    assert.equal(result.failedCount, 0);
+    assert.equal(result.finalState, "APPLICATION_CONFLICT");
+    assert.equal(result.results[0]?.finalState, "APPLICATION_CONFLICT");
+  });
+});
+
 test("Admin apply availability is idempotent, conflict-safe, and fails closed for invalid lines", async () => {
   await bindTraceId("trace-roster-apply-availability-guards", async () => {
-    const availabilityRepository =
-      new MemoryAvailabilityRepository({
-        batches: [
-          seedAvailabilityBatch(),
-          seedAvailabilityBatch({
-            id: "batch-other",
-            targetOrgUnitId: "dept-other",
-          }),
-        ],
-        lines: [
-          seedAvailabilityLine({
-            id: "line-applied",
-            dateRangeStart: "2026-05-04",
-          }),
-          seedAvailabilityLine({
-            id: "line-pending",
-            dateRangeStart: "2026-05-05",
-            status: "PENDING",
-          }),
-          seedAvailabilityLine({
-            id: "line-unrepresentable-time",
-            availabilityType: "PREFERRED_TIME",
-            taxonomyCode: "SHIFT_CHANGE",
-            dateRangeStart: "2026-05-06",
-            preferredStartLocalTime: "10:00",
-            preferredEndLocalTime: "12:00",
-          }),
-          seedAvailabilityLine({
-            id: "line-target-mismatch",
-            batchId: "batch-other",
-            dateRangeStart: "2026-05-07",
-            targetOrgUnitId: "dept-other",
-          }),
-          seedAvailabilityLine({
-            id: "line-date-range",
-            dateRangeStart: "2026-05-07",
-            dateRangeEnd: "2026-05-08",
-          }),
-        ],
-      });
+    const availabilityRepository = new MemoryAvailabilityRepository({
+      batches: [
+        seedAvailabilityBatch(),
+        seedAvailabilityBatch({
+          id: "batch-other",
+          targetOrgUnitId: "dept-other",
+        }),
+      ],
+      lines: [
+        seedAvailabilityLine({
+          id: "line-applied",
+          dateRangeStart: "2026-05-04",
+        }),
+        seedAvailabilityLine({
+          id: "line-pending",
+          dateRangeStart: "2026-05-05",
+          status: "PENDING",
+        }),
+        seedAvailabilityLine({
+          id: "line-unrepresentable-time",
+          availabilityType: "PREFERRED_TIME",
+          taxonomyCode: "SHIFT_CHANGE",
+          dateRangeStart: "2026-05-06",
+          preferredStartLocalTime: "10:00",
+          preferredEndLocalTime: "12:00",
+        }),
+        seedAvailabilityLine({
+          id: "line-target-mismatch",
+          batchId: "batch-other",
+          dateRangeStart: "2026-05-07",
+          targetOrgUnitId: "dept-other",
+        }),
+        seedAvailabilityLine({
+          id: "line-date-range",
+          dateRangeStart: "2026-05-07",
+          dateRangeEnd: "2026-05-08",
+        }),
+      ],
+    });
     const service = createService({
       rosters: [
         seedRoster({
@@ -2947,52 +2692,76 @@ test("Admin apply availability is idempotent, conflict-safe, and fails closed fo
       now: () => 2000,
     });
 
-    const result =
-      await service.applyAvailabilityLinesToMonthlyRoster(
+    await assert.rejects(
+      service.applyAvailabilityLinesToMonthlyRoster(
         createActor([Permission.WORK_SCHEDULE_UPDATE]),
         {
           monthlyRosterId: "roster-1",
-          availabilityLineIds: [
-            "line-applied",
-            "line-pending",
-            "line-unrepresentable-time",
-            "line-target-mismatch",
-            "line-date-range",
-          ],
+          availabilityLineIds: ["line-pending"],
+          expectedRosterVersion: 999,
         },
-      );
+      ),
+      /SOURCE_CHANGED/u,
+    );
+    await assert.rejects(
+      service.applyAvailabilityLinesToMonthlyRoster(
+        createActor([Permission.WORK_SCHEDULE_UPDATE]),
+        {
+          monthlyRosterId: "roster-1",
+          availabilityLineIds: ["line-pending"],
+          expectedRequestVersions: { "line-pending": 999 },
+        },
+      ),
+      /SOURCE_CHANGED/u,
+    );
+
+    const result = await service.applyAvailabilityLinesToMonthlyRoster(
+      createActor([Permission.WORK_SCHEDULE_UPDATE]),
+      {
+        monthlyRosterId: "roster-1",
+        availabilityLineIds: [
+          "line-applied",
+          "line-pending",
+          "line-unrepresentable-time",
+          "line-target-mismatch",
+          "line-date-range",
+        ],
+      },
+    );
 
     assert.deepEqual(
       result.results.map((item) => item.outcome),
-      [
-        "SKIPPED_ALREADY_APPLIED",
-        "FAILED",
-        "FAILED",
-        "FAILED",
-        "FAILED",
-      ],
+      ["SKIPPED_ALREADY_APPLIED", "APPLIED", "FAILED", "FAILED", "FAILED"],
     );
-    assert.equal(result.appliedCount, 0);
+    assert.equal(result.appliedCount, 1);
     assert.equal(result.skippedAlreadyAppliedCount, 1);
-    assert.equal(result.failedCount, 4);
+    assert.equal(result.failedCount, 3);
+    assert.equal(result.finalState, "APPLICATION_FAILED");
+    assert.equal(result.sourceVersions?.rosterVersionBefore, 1);
+    assert.equal(result.sourceVersions?.rosterVersionAfter, 2);
+    assert.equal(result.beforeSnapshot?.activeRosterExceptionIds.length, 2);
+    assert.equal(result.afterSnapshot?.activeRosterExceptionIds.length, 3);
     assert.equal(
-      availabilityRepository.lines.find(
-        (line) => line.id === "line-pending",
-      )?.applyStatus,
-      "NOT_APPLIED",
+      availabilityRepository.lines.find((line) => line.id === "line-pending")
+        ?.applyStatus,
+      "APPLIED",
+    );
+    assert.equal(
+      availabilityRepository.lines.find((line) => line.id === "line-pending")
+        ?.status,
+      "APPROVED",
     );
 
-    const rangeRepository =
-      new MemoryAvailabilityRepository({
-        batches: [seedAvailabilityBatch()],
-        lines: [
-          seedAvailabilityLine({
-            id: "line-range",
-            dateRangeStart: "2026-05-04",
-            dateRangeEnd: "2026-05-05",
-          }),
-        ],
-      });
+    const rangeRepository = new MemoryAvailabilityRepository({
+      batches: [seedAvailabilityBatch()],
+      lines: [
+        seedAvailabilityLine({
+          id: "line-range",
+          dateRangeStart: "2026-05-04",
+          dateRangeEnd: "2026-05-05",
+        }),
+      ],
+    });
     const rangeService = createService({
       rosters: [seedRoster()],
       availabilityRepository: rangeRepository,
@@ -3007,10 +2776,7 @@ test("Admin apply availability is idempotent, conflict-safe, and fails closed fo
         },
       );
     assert.equal(rangeResult.appliedCount, 1);
-    assert.equal(
-      rangeResult.results[0]?.rosterExceptionIds.length,
-      2,
-    );
+    assert.equal(rangeResult.results[0]?.rosterExceptionIds.length, 2);
   });
 });
 
@@ -3020,21 +2786,17 @@ test("Admin apply availability route requires update plus exact structured scope
       "src/modules/work-schedule/admin/admin.monthly-roster.routes.ts",
       "utf8",
     );
-    assert.equal(
-      rosterRoutes.includes("/apply-availability-lines"),
-      true,
-    );
+    assert.equal(rosterRoutes.includes("/apply-availability-lines"), true);
 
-    const availabilityRepository =
-      new MemoryAvailabilityRepository({
-        batches: [seedAvailabilityBatch()],
-        lines: [
-          seedAvailabilityLine({
-            id: "line-off",
-            dateRangeStart: "2026-05-04",
-          }),
-        ],
-      });
+    const availabilityRepository = new MemoryAvailabilityRepository({
+      batches: [seedAvailabilityBatch()],
+      lines: [
+        seedAvailabilityLine({
+          id: "line-off",
+          dateRangeStart: "2026-05-04",
+        }),
+      ],
+    });
     const service = createService({
       rosters: [seedRoster()],
       availabilityRepository,
@@ -3063,10 +2825,7 @@ test("Admin apply availability route requires update plus exact structured scope
           ],
         }),
       }).applyAvailabilityLinesToMonthlyRoster(
-        createActor(
-          [Permission.WORK_SCHEDULE_UPDATE],
-          ["global"],
-        ),
+        createActor([Permission.WORK_SCHEDULE_UPDATE], ["global"]),
         {
           monthlyRosterId: "roster-1",
           availabilityLineIds: ["line-off"],
@@ -3118,10 +2877,7 @@ test("Monthly Roster publish denies legacy global scope without exact structured
           scopes: [],
         }),
       }).publishMonthlyRoster(
-        createActor(
-          [Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE],
-          ["global"],
-        ),
+        createActor([Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE], ["global"]),
         {
           monthlyRosterId: "roster-1",
           expectedPreviewHash: "hash",
@@ -3156,8 +2912,7 @@ test("Monthly Roster publish generates Work Shifts from current preview with sou
     const calendar = seedCalendar({
       activeHolidayDate: "2026-05-01",
     });
-    const workShiftRepository =
-      new MemoryWorkShiftRepository();
+    const workShiftRepository = new MemoryWorkShiftRepository();
     const service = createService({
       rosters: [roster],
       calendars: [calendar],
@@ -3169,9 +2924,7 @@ test("Monthly Roster publish generates Work Shifts from current preview with sou
     });
 
     const result = await service.publishMonthlyRoster(
-      createActor([
-        Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
-      ]),
+      createActor([Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE]),
       {
         monthlyRosterId: "roster-1",
         expectedPreviewHash: hash,
@@ -3179,6 +2932,43 @@ test("Monthly Roster publish generates Work Shifts from current preview with sou
     );
 
     assert.equal(result.status, "PUBLISHED");
+    assert.equal(result.publicationVersion, 1);
+    assert.equal(result.sourceSnapshot?.rosterDraftVersion, 1);
+    assert.equal(result.sourceSnapshot?.previewHash, hash);
+    assert.deepEqual(result.sourceSnapshot?.eligibleEmploymentProfileIds, [
+      "actor-profile",
+      "emp-1",
+    ]);
+    assert.deepEqual(result.sourceSnapshot?.resolvedWorkPattern, {
+      timezone: "Asia/Ho_Chi_Minh",
+      workingDays: ["MON", "TUE", "WED", "THU", "FRI"],
+      startLocalTime: "08:00",
+      endLocalTime: "17:00",
+      workingMinutes: 480,
+      breakMinutes: 60,
+    });
+    assert.deepEqual(result.sourceSnapshot?.membershipTrace, [
+      {
+        membershipKind: "ORG_UNIT_ASSOCIATION",
+        membershipId: null,
+        talentId: null,
+        employmentProfileId: "actor-profile",
+        orgUnitId: "dept-1",
+        membershipStatus: "ACTIVE",
+        eligibility: "ELIGIBLE",
+        exclusionReasonCode: null,
+      },
+      {
+        membershipKind: "ORG_UNIT_ASSOCIATION",
+        membershipId: null,
+        talentId: null,
+        employmentProfileId: "emp-1",
+        orgUnitId: "dept-1",
+        membershipStatus: "ACTIVE",
+        eligibility: "ELIGIBLE",
+        exclusionReasonCode: null,
+      },
+    ]);
     assert.equal(result.computedPreviewHash, hash);
     assert.equal(result.conflictCount, 0);
     assert.equal(result.skippedWorkingToOffCount, 1);
@@ -3195,11 +2985,8 @@ test("Monthly Roster publish generates Work Shifts from current preview with sou
       ),
     );
     assert.equal(
-      new Set(
-        workShiftRepository.records.map(
-          (record) => record.shiftCode,
-        ),
-      ).size,
+      new Set(workShiftRepository.records.map((record) => record.shiftCode))
+        .size,
       workShiftRepository.records.length,
     );
 
@@ -3214,15 +3001,9 @@ test("Monthly Roster publish generates Work Shifts from current preview with sou
     assert.equal(standard.sourceRosterId, "roster-1");
     assert.equal(standard.sourcePatternId, "pattern-1");
     assert.equal(standard.sourceExceptionId, null);
-    assert.equal(
-      standard.sourceGenerationRunId,
-      result.sourceGenerationRunId,
-    );
+    assert.equal(standard.sourceGenerationRunId, result.sourceGenerationRunId);
     assert.equal(standard.sourceRosterMonth, "2026-05");
-    assert.equal(
-      standard.sourceDepartmentOrgUnitId,
-      "dept-1",
-    );
+    assert.equal(standard.sourceDepartmentOrgUnitId, "dept-1");
 
     assert.equal(
       workShiftRepository.records.some(
@@ -3247,15 +3028,10 @@ test("Monthly Roster publish generates Work Shifts from current preview with sou
         record.sourceRosterSlotKey === "STANDARD",
     );
     assert.ok(changed);
-    assert.equal(
-      changed.shiftStartAt,
-      vietnamUtc("2026-05-05", "09:00"),
-    );
+    assert.equal(changed.shiftStartAt, vietnamUtc("2026-05-05", "09:00"));
 
     const special = workShiftRepository.records.find(
-      (record) =>
-        record.sourceRosterSlotKey ===
-        "ADD_SPECIAL_SHIFT:ex-special",
+      (record) => record.sourceRosterSlotKey === "ADD_SPECIAL_SHIFT:ex-special",
     );
     assert.ok(special);
     assert.equal(special.sourceExceptionId, "ex-special");
@@ -3269,9 +3045,7 @@ test("Monthly Roster publish rejects stale hash, conflicts, unauthorized actors,
       createService({
         rosters: [seedRoster()],
       }).publishMonthlyRoster(
-        createActor([
-          Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
-        ]),
+        createActor([Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE]),
         {
           monthlyRosterId: "roster-1",
           expectedPreviewHash: "stale",
@@ -3283,27 +3057,21 @@ test("Monthly Roster publish rejects stale hash, conflicts, unauthorized actors,
     await assert.rejects(
       createService({
         rosters: [seedRoster()],
-      }).publishMonthlyRoster(
-        createActor([Permission.WORK_SCHEDULE_UPDATE]),
-        {
-          monthlyRosterId: "roster-1",
-          expectedPreviewHash: expectedPreviewHash(),
-        },
-      ),
+      }).publishMonthlyRoster(createActor([Permission.WORK_SCHEDULE_UPDATE]), {
+        monthlyRosterId: "roster-1",
+        expectedPreviewHash: expectedPreviewHash(),
+      }),
       SystemInvariantError,
     );
 
-    const conflictRepository =
-      new MemoryWorkShiftRepository();
+    const conflictRepository = new MemoryWorkShiftRepository();
     conflictRepository.subjectOverlap = true;
     await assert.rejects(
       createService({
         rosters: [seedRoster()],
         workShiftRepository: conflictRepository,
       }).publishMonthlyRoster(
-        createActor([
-          Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
-        ]),
+        createActor([Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE]),
         {
           monthlyRosterId: "roster-1",
           expectedPreviewHash: expectedPreviewHash(),
@@ -3319,9 +3087,7 @@ test("Monthly Roster publish rejects stale hash, conflicts, unauthorized actors,
       workShiftRepository: repository,
     });
     const first = await service.publishMonthlyRoster(
-      createActor([
-        Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
-      ]),
+      createActor([Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE]),
       {
         monthlyRosterId: "roster-1",
         expectedPreviewHash: expectedPreviewHash(),
@@ -3330,9 +3096,7 @@ test("Monthly Roster publish rejects stale hash, conflicts, unauthorized actors,
     );
     const countAfterFirst = repository.records.length;
     const second = await service.publishMonthlyRoster(
-      createActor([
-        Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
-      ]),
+      createActor([Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE]),
       {
         monthlyRosterId: "roster-1",
         idempotencyKey: "retry-1",
@@ -3341,10 +3105,7 @@ test("Monthly Roster publish rejects stale hash, conflicts, unauthorized actors,
 
     assert.equal(repository.records.length, countAfterFirst);
     assert.equal(second.status, "PUBLISHED");
-    assert.equal(
-      second.generatedWorkShiftCount,
-      first.generatedWorkShiftCount,
-    );
+    assert.equal(second.generatedWorkShiftCount, first.generatedWorkShiftCount);
   });
 });
 
@@ -3364,17 +3125,14 @@ test("Monthly Roster publish blocks candidate self-conflicts from the shared pre
           }),
         ],
       });
-      const workShiftRepository =
-        new MemoryWorkShiftRepository();
+      const workShiftRepository = new MemoryWorkShiftRepository();
 
       await assert.rejects(
         createService({
           rosters: [roster],
           workShiftRepository,
         }).publishMonthlyRoster(
-          createActor([
-            Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
-          ]),
+          createActor([Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE]),
           {
             monthlyRosterId: "roster-1",
             expectedPreviewHash: expectedPreviewHash({
@@ -3410,15 +3168,12 @@ test("Monthly Roster publish succeeds when candidate rows only touch at boundari
           }),
         ],
       });
-      const workShiftRepository =
-        new MemoryWorkShiftRepository();
+      const workShiftRepository = new MemoryWorkShiftRepository();
       const result = await createService({
         rosters: [roster],
         workShiftRepository,
       }).publishMonthlyRoster(
-        createActor([
-          Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
-        ]),
+        createActor([Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE]),
         {
           monthlyRosterId: "roster-1",
           expectedPreviewHash: expectedPreviewHash({
@@ -3446,8 +3201,7 @@ test("Monthly Roster publish duplicate protection leaves roster draft metadata u
     "trace-monthly-roster-publish-duplicate-protection",
     async () => {
       const roster = seedRoster();
-      const workShiftRepository =
-        new MemoryWorkShiftRepository();
+      const workShiftRepository = new MemoryWorkShiftRepository();
       workShiftRepository.records.push({
         id: "preexisting-generated",
         shiftCode: "WS-20260504-9999",
@@ -3486,9 +3240,7 @@ test("Monthly Roster publish duplicate protection leaves roster draft metadata u
           rosters: [roster],
           workShiftRepository,
         }).publishMonthlyRoster(
-          createActor([
-            Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
-          ]),
+          createActor([Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE]),
           {
             monthlyRosterId: "roster-1",
             expectedPreviewHash: expectedPreviewHash({
@@ -3510,27 +3262,26 @@ test("Monthly Roster publish duplicate protection leaves roster draft metadata u
 
 test("Monthly Roster read repository defaults to non-archived and supports roster filters", async () => {
   let capturedQuery: unknown;
-  const repository =
-    new NativeMongoMonthlyRosterReadRepository({
-      collection() {
-        return {
-          find(query: unknown) {
-            capturedQuery = query;
-            return {
-              sort() {
-                return {
-                  limit() {
-                    return {
-                      toArray: async () => [],
-                    };
-                  },
-                };
-              },
-            };
-          },
-        };
-      },
-    } as never);
+  const repository = new NativeMongoMonthlyRosterReadRepository({
+    collection() {
+      return {
+        find(query: unknown) {
+          capturedQuery = query;
+          return {
+            sort() {
+              return {
+                limit() {
+                  return {
+                    toArray: async () => [],
+                  };
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  } as never);
 
   await repository.listMonthlyRosters({
     limit: 20,
@@ -3559,40 +3310,22 @@ test("Monthly Roster read repository defaults to non-archived and supports roste
 });
 
 test("Monthly Roster routes are present with preview and publish and without lock, approval, or generated shift routes", async () => {
-  const adminRoutes = await readFile(
-    "src/app/router/admin.routes.ts",
-    "utf8",
-  );
+  const adminRoutes = await readFile("src/app/router/admin.routes.ts", "utf8");
   const rosterRoutes = await readFile(
     "src/modules/work-schedule/admin/admin.monthly-roster.routes.ts",
     "utf8",
   );
 
-  assert.equal(
-    adminRoutes.includes("/work-schedule/rosters"),
-    true,
-  );
-  assert.equal(
-    rosterRoutes.includes("ROSTER_EXCEPTION_ADD"),
-    true,
-  );
+  assert.equal(adminRoutes.includes("/work-schedule/rosters"), true);
+  assert.equal(rosterRoutes.includes("ROSTER_EXCEPTION_ADD"), true);
   assert.equal(rosterRoutes.includes("/preview"), true);
   assert.equal(rosterRoutes.includes("/publish"), true);
-  assert.equal(
-    rosterRoutes.includes("MONTHLY_ROSTER_PREVIEW"),
-    true,
-  );
-  assert.equal(
-    rosterRoutes.includes("MONTHLY_ROSTER_PUBLISH"),
-    true,
-  );
+  assert.equal(rosterRoutes.includes("MONTHLY_ROSTER_PREVIEW"), true);
+  assert.equal(rosterRoutes.includes("MONTHLY_ROSTER_PUBLISH"), true);
 
   for (const text of [adminRoutes, rosterRoutes]) {
     assert.equal(text.includes("/lock"), false);
-    assert.equal(
-      text.includes("roster-change-requests"),
-      false,
-    );
+    assert.equal(text.includes("roster-change-requests"), false);
     assert.equal(text.includes("approval"), false);
   }
 });

@@ -86,15 +86,16 @@ const PUBLISH_BODY_FIELDS = Object.freeze([
 ]);
 const APPLY_AVAILABILITY_BODY_FIELDS = Object.freeze([
   "availabilityLineIds",
+  "expectedRosterVersion",
+  "expectedRequestVersions",
+  "idempotencyKey",
   "applyNote",
   "note",
   "scope",
 ]);
 
 export class MonthlyRosterAdminController extends SecureController {
-  constructor(
-    private readonly service: MonthlyRosterAdminService,
-  ) {
+  constructor(private readonly service: MonthlyRosterAdminService) {
     super();
   }
 
@@ -103,8 +104,7 @@ export class MonthlyRosterAdminController extends SecureController {
     actor: Actor,
     _context: ContextType,
   ): Promise<unknown> {
-    const command =
-      readCommand<MonthlyRosterMutationCommand>(req);
+    const command = readCommand<MonthlyRosterMutationCommand>(req);
 
     if (!command) {
       throw new SystemInvariantError(
@@ -196,10 +196,12 @@ function parseApplyAvailabilityLinesCommand(
 
   return {
     monthlyRosterId: req.params.monthlyRosterId,
-    availabilityLineIds:
-      body.availabilityLineIds as readonly string[],
-    applyNote:
-      body.applyNote as string | null | undefined,
+    availabilityLineIds: body.availabilityLineIds as readonly string[],
+    expectedRosterVersion: body.expectedRosterVersion as number | undefined,
+    expectedRequestVersions: body.expectedRequestVersions as
+      Readonly<Record<string, number>> | undefined,
+    idempotencyKey: body.idempotencyKey as string | null | undefined,
+    applyNote: body.applyNote as string | null | undefined,
     note: body.note as string | null | undefined,
     scope: body.scope as string | undefined,
   };
@@ -216,34 +218,18 @@ function parseCreateMonthlyRosterDraftCommand(
   );
 
   return {
-    rosterCode:
-      body.rosterCode as string | null | undefined,
+    rosterCode: body.rosterCode as string | null | undefined,
     rosterMonth: body.rosterMonth as string,
     timezone: body.timezone as string | undefined,
     targetType: body.targetType as string,
     targetMode: body.targetMode as string | undefined,
-    targetOrgUnitId:
-      body.targetOrgUnitId as string | null | undefined,
-    targetTalentGroupId:
-      body.targetTalentGroupId as
-        | string
-        | null
-        | undefined,
-    departmentOrgUnitId:
-      body.departmentOrgUnitId as string | undefined,
+    targetOrgUnitId: body.targetOrgUnitId as string | null | undefined,
+    targetTalentGroupId: body.targetTalentGroupId as string | null | undefined,
+    departmentOrgUnitId: body.departmentOrgUnitId as string | undefined,
     workPatternId: body.workPatternId as string,
-    holidayCalendarId:
-      body.holidayCalendarId as string,
-    description:
-      body.description as
-        | string
-        | null
-        | undefined,
-    externalRef:
-      body.externalRef as
-        | string
-        | null
-        | undefined,
+    holidayCalendarId: body.holidayCalendarId as string,
+    description: body.description as string | null | undefined,
+    externalRef: body.externalRef as string | null | undefined,
     scope: body.scope as string | undefined,
   };
 }
@@ -264,31 +250,13 @@ function parseUpdateMonthlyRosterDraftCommand(
     timezone: body.timezone as string | undefined,
     targetType: body.targetType as string | undefined,
     targetMode: body.targetMode as string | undefined,
-    targetOrgUnitId:
-      body.targetOrgUnitId as string | null | undefined,
-    targetTalentGroupId:
-      body.targetTalentGroupId as
-        | string
-        | null
-        | undefined,
-    departmentOrgUnitId:
-      body.departmentOrgUnitId as
-        | string
-        | undefined,
-    workPatternId:
-      body.workPatternId as string | undefined,
-    holidayCalendarId:
-      body.holidayCalendarId as string | undefined,
-    description:
-      body.description as
-        | string
-        | null
-        | undefined,
-    externalRef:
-      body.externalRef as
-        | string
-        | null
-        | undefined,
+    targetOrgUnitId: body.targetOrgUnitId as string | null | undefined,
+    targetTalentGroupId: body.targetTalentGroupId as string | null | undefined,
+    departmentOrgUnitId: body.departmentOrgUnitId as string | undefined,
+    workPatternId: body.workPatternId as string | undefined,
+    holidayCalendarId: body.holidayCalendarId as string | undefined,
+    description: body.description as string | null | undefined,
+    externalRef: body.externalRef as string | null | undefined,
     scope: body.scope as string | undefined,
   };
 }
@@ -313,18 +281,12 @@ function parsePublishMonthlyRosterCommand(
   req: Request,
 ): PublishMonthlyRosterCommand {
   const body = requireRecord(req.body);
-  assertNoUnexpectedFields(
-    body,
-    PUBLISH_BODY_FIELDS,
-    "publishMonthlyRoster",
-  );
+  assertNoUnexpectedFields(body, PUBLISH_BODY_FIELDS, "publishMonthlyRoster");
 
   return {
     monthlyRosterId: req.params.monthlyRosterId,
-    expectedPreviewHash:
-      body.expectedPreviewHash as string | undefined,
-    idempotencyKey:
-      body.idempotencyKey as string | null | undefined,
+    expectedPreviewHash: body.expectedPreviewHash as string | undefined,
+    idempotencyKey: body.idempotencyKey as string | null | undefined,
     note: body.note as string | null | undefined,
     scope: body.scope as string | undefined,
   };
@@ -334,43 +296,22 @@ function parseAddRosterExceptionCommand(
   req: Request,
 ): AddRosterExceptionCommand {
   const body = requireRecord(req.body);
-  assertNoUnexpectedFields(
-    body,
-    EXCEPTION_BODY_FIELDS,
-    "addRosterException",
-  );
+  assertNoUnexpectedFields(body, EXCEPTION_BODY_FIELDS, "addRosterException");
 
   return {
     monthlyRosterId: req.params.monthlyRosterId,
     exceptionType: body.exceptionType as string,
     exceptionDate: body.exceptionDate as string,
-    subjectEmploymentProfileId:
-      body.subjectEmploymentProfileId as string,
+    subjectEmploymentProfileId: body.subjectEmploymentProfileId as string,
     title: body.title as string | null | undefined,
-    startLocalTime:
-      body.startLocalTime as string | undefined,
-    workingMinutes:
-      body.workingMinutes as number | undefined,
-    breakMinutes:
-      body.breakMinutes as number | undefined,
-    studioResourceIds:
-      body.studioResourceIds as
-        | readonly string[]
-        | undefined,
-    reason:
-      body.reason as string | null | undefined,
-    sourceNote:
-      body.sourceNote as string | null | undefined,
-    description:
-      body.description as
-        | string
-        | null
-        | undefined,
-    externalRef:
-      body.externalRef as
-        | string
-        | null
-        | undefined,
+    startLocalTime: body.startLocalTime as string | undefined,
+    workingMinutes: body.workingMinutes as number | undefined,
+    breakMinutes: body.breakMinutes as number | undefined,
+    studioResourceIds: body.studioResourceIds as readonly string[] | undefined,
+    reason: body.reason as string | null | undefined,
+    sourceNote: body.sourceNote as string | null | undefined,
+    description: body.description as string | null | undefined,
+    externalRef: body.externalRef as string | null | undefined,
     scope: body.scope as string | undefined,
   };
 }
@@ -401,18 +342,12 @@ function parseRemoveRosterExceptionCommand(
   };
 }
 
-function requireRecord(
-  value: unknown,
-): Record<string, unknown> {
+function requireRecord(value: unknown): Record<string, unknown> {
   if (value === undefined) {
     return {};
   }
 
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value)
-  ) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new WorkScheduleValidationError(
       "Request body must be a plain object",
     );

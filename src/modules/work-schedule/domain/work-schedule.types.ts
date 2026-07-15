@@ -1,4 +1,9 @@
 import { ReferenceSummary } from "@modules/reference-summary";
+import type { WorkScheduleRosterSourceSnapshot } from "./work-schedule-application-policy";
+import type {
+  WorkScheduleApplicationLineage,
+  WorkScheduleLeadTimeClass,
+} from "./work-schedule-application-policy";
 import type {
   WorkScheduleAvailabilityTaxonomyCode,
   WorkScheduleAvailabilityType,
@@ -10,25 +15,15 @@ export const WORK_SHIFT_SUBJECT_KINDS = [
   "TALENT_GROUP",
 ] as const;
 
-export type WorkShiftSubjectKind =
-  (typeof WORK_SHIFT_SUBJECT_KINDS)[number];
+export type WorkShiftSubjectKind = (typeof WORK_SHIFT_SUBJECT_KINDS)[number];
 
-export const WORK_SHIFT_STATUSES = [
-  "ACTIVE",
-  "CANCELLED",
-  "ARCHIVED",
-] as const;
+export const WORK_SHIFT_STATUSES = ["ACTIVE", "CANCELLED", "ARCHIVED"] as const;
 
-export type WorkShiftStatus =
-  (typeof WORK_SHIFT_STATUSES)[number];
+export type WorkShiftStatus = (typeof WORK_SHIFT_STATUSES)[number];
 
-export const WORK_SHIFT_SOURCE_TYPES = [
-  "MANUAL",
-  "ROSTER_GENERATED",
-] as const;
+export const WORK_SHIFT_SOURCE_TYPES = ["MANUAL", "ROSTER_GENERATED"] as const;
 
-export type WorkShiftSourceType =
-  (typeof WORK_SHIFT_SOURCE_TYPES)[number];
+export type WorkShiftSourceType = (typeof WORK_SHIFT_SOURCE_TYPES)[number];
 
 export const WORK_SHIFT_SORT_FIELDS = [
   "shiftStartAt",
@@ -36,13 +31,9 @@ export const WORK_SHIFT_SORT_FIELDS = [
   "createdAt",
 ] as const;
 
-export type WorkShiftSortField =
-  (typeof WORK_SHIFT_SORT_FIELDS)[number];
+export type WorkShiftSortField = (typeof WORK_SHIFT_SORT_FIELDS)[number];
 
-export const WORK_SHIFT_SORT_DIRECTIONS = [
-  "ASC",
-  "DESC",
-] as const;
+export const WORK_SHIFT_SORT_DIRECTIONS = ["ASC", "DESC"] as const;
 
 export type WorkShiftSortDirection =
   (typeof WORK_SHIFT_SORT_DIRECTIONS)[number];
@@ -54,17 +45,11 @@ export const WORK_SHIFT_SCOPES = [
   "global",
 ] as const;
 
-export type WorkShiftScope =
-  (typeof WORK_SHIFT_SCOPES)[number];
+export type WorkShiftScope = (typeof WORK_SHIFT_SCOPES)[number];
 
-export const WORK_PATTERN_STATUSES = [
-  "DRAFT",
-  "ACTIVE",
-  "ARCHIVED",
-] as const;
+export const WORK_PATTERN_STATUSES = ["DRAFT", "ACTIVE", "ARCHIVED"] as const;
 
-export type WorkPatternStatus =
-  (typeof WORK_PATTERN_STATUSES)[number];
+export type WorkPatternStatus = (typeof WORK_PATTERN_STATUSES)[number];
 
 export const WORK_PATTERN_WEEKDAY_TOKENS = [
   "MON",
@@ -79,8 +64,7 @@ export const WORK_PATTERN_WEEKDAY_TOKENS = [
 export type WorkPatternWeekdayToken =
   (typeof WORK_PATTERN_WEEKDAY_TOKENS)[number];
 
-export const WORK_PATTERN_TIMEZONE =
-  "Asia/Ho_Chi_Minh" as const;
+export const WORK_PATTERN_TIMEZONE = "Asia/Ho_Chi_Minh" as const;
 
 export const HOLIDAY_CALENDAR_STATUSES = [
   "DRAFT",
@@ -88,18 +72,14 @@ export const HOLIDAY_CALENDAR_STATUSES = [
   "ARCHIVED",
 ] as const;
 
-export type HolidayCalendarStatus =
-  (typeof HOLIDAY_CALENDAR_STATUSES)[number];
+export type HolidayCalendarStatus = (typeof HOLIDAY_CALENDAR_STATUSES)[number];
 
-export const HOLIDAY_CALENDAR_SCOPE_TYPES = [
-  "GLOBAL",
-] as const;
+export const HOLIDAY_CALENDAR_SCOPE_TYPES = ["GLOBAL"] as const;
 
 export type HolidayCalendarScopeType =
   (typeof HOLIDAY_CALENDAR_SCOPE_TYPES)[number];
 
-export const HOLIDAY_CALENDAR_TIMEZONE =
-  "Asia/Ho_Chi_Minh" as const;
+export const HOLIDAY_CALENDAR_TIMEZONE = "Asia/Ho_Chi_Minh" as const;
 
 export const HOLIDAY_CALENDAR_ENTRY_TYPES = [
   "HOLIDAY",
@@ -110,10 +90,7 @@ export const HOLIDAY_CALENDAR_ENTRY_TYPES = [
 export type HolidayCalendarEntryType =
   (typeof HOLIDAY_CALENDAR_ENTRY_TYPES)[number];
 
-export const HOLIDAY_CALENDAR_ENTRY_STATUSES = [
-  "ACTIVE",
-  "REMOVED",
-] as const;
+export const HOLIDAY_CALENDAR_ENTRY_STATUSES = ["ACTIVE", "REMOVED"] as const;
 
 export type HolidayCalendarEntryStatus =
   (typeof HOLIDAY_CALENDAR_ENTRY_STATUSES)[number];
@@ -125,14 +102,11 @@ export const MONTHLY_ROSTER_STATUSES = [
   "ARCHIVED",
 ] as const;
 
-export type MonthlyRosterStatus =
-  (typeof MONTHLY_ROSTER_STATUSES)[number];
+export type MonthlyRosterStatus = (typeof MONTHLY_ROSTER_STATUSES)[number];
 
-export const MONTHLY_ROSTER_TIMEZONE =
-  "Asia/Ho_Chi_Minh" as const;
+export const MONTHLY_ROSTER_TIMEZONE = "Asia/Ho_Chi_Minh" as const;
 
-export const MONTHLY_ROSTER_TARGET_SUBJECT_KIND =
-  "EMPLOYMENT_PROFILE" as const;
+export const MONTHLY_ROSTER_TARGET_SUBJECT_KIND = "EMPLOYMENT_PROFILE" as const;
 
 export const MONTHLY_ROSTER_TARGET_TYPES = [
   "ORG_UNIT",
@@ -142,12 +116,9 @@ export const MONTHLY_ROSTER_TARGET_TYPES = [
 export type MonthlyRosterTargetType =
   (typeof MONTHLY_ROSTER_TARGET_TYPES)[number];
 
-export const MONTHLY_ROSTER_TARGET_ORG_UNIT_MODE =
-  "EXACT_ONLY" as const;
+export const MONTHLY_ROSTER_TARGET_ORG_UNIT_MODE = "EXACT_ONLY" as const;
 
-export const MONTHLY_ROSTER_TARGET_MODES = [
-  "EXACT_ONLY",
-] as const;
+export const MONTHLY_ROSTER_TARGET_MODES = ["EXACT_ONLY"] as const;
 
 export type MonthlyRosterTargetMode =
   (typeof MONTHLY_ROSTER_TARGET_MODES)[number];
@@ -171,16 +142,11 @@ export const ROSTER_EXCEPTION_TYPES = [
   "ADD_SPECIAL_SHIFT",
 ] as const;
 
-export type RosterExceptionType =
-  (typeof ROSTER_EXCEPTION_TYPES)[number];
+export type RosterExceptionType = (typeof ROSTER_EXCEPTION_TYPES)[number];
 
-export const ROSTER_EXCEPTION_STATUSES = [
-  "ACTIVE",
-  "REMOVED",
-] as const;
+export const ROSTER_EXCEPTION_STATUSES = ["ACTIVE", "REMOVED"] as const;
 
-export type RosterExceptionStatus =
-  (typeof ROSTER_EXCEPTION_STATUSES)[number];
+export type RosterExceptionStatus = (typeof ROSTER_EXCEPTION_STATUSES)[number];
 
 export interface WorkShiftRecord {
   readonly id: string;
@@ -209,8 +175,7 @@ export interface WorkShiftRecord {
   readonly sourceRosterTargetId: string | null;
   readonly sourceRosterTargetMode: MonthlyRosterTargetMode | null;
   readonly sourceMemberIdentityType:
-    | typeof MONTHLY_ROSTER_TARGET_SUBJECT_KIND
-    | null;
+    typeof MONTHLY_ROSTER_TARGET_SUBJECT_KIND | null;
   readonly sourceRosterLocalDate: string | null;
   readonly sourceRosterSlotKey: string | null;
   readonly createdAt: number;
@@ -247,8 +212,7 @@ export interface WorkShiftDetailView {
   readonly sourceRosterTargetId: string | null;
   readonly sourceRosterTargetMode: MonthlyRosterTargetMode | null;
   readonly sourceMemberIdentityType:
-    | typeof MONTHLY_ROSTER_TARGET_SUBJECT_KIND
-    | null;
+    typeof MONTHLY_ROSTER_TARGET_SUBJECT_KIND | null;
   readonly sourceRosterLocalDate: string | null;
   readonly sourceRosterSlotKey: string | null;
   readonly createdAt: number;
@@ -301,8 +265,7 @@ export interface WorkShiftByResourceListItemView {
   readonly shiftEndAt: number;
 }
 
-export interface WorkShiftMutationView
-  extends WorkShiftDetailView {}
+export interface WorkShiftMutationView extends WorkShiftDetailView {}
 
 export interface WorkPatternRecord {
   readonly workPatternId: string;
@@ -344,11 +307,9 @@ export interface WorkPatternView {
   readonly updatedAt: number;
 }
 
-export interface WorkPatternListItemView
-  extends WorkPatternView {}
+export interface WorkPatternListItemView extends WorkPatternView {}
 
-export interface WorkPatternMutationView
-  extends WorkPatternView {}
+export interface WorkPatternMutationView extends WorkPatternView {}
 
 export interface HolidayCalendarEntryRecord {
   readonly holidayCalendarEntryId: string;
@@ -397,11 +358,9 @@ export interface HolidayCalendarView {
   readonly updatedAt: number;
 }
 
-export interface HolidayCalendarListItemView
-  extends HolidayCalendarView {}
+export interface HolidayCalendarListItemView extends HolidayCalendarView {}
 
-export interface HolidayCalendarMutationView
-  extends HolidayCalendarView {}
+export interface HolidayCalendarMutationView extends HolidayCalendarView {}
 
 export interface RosterExceptionRecord {
   readonly rosterExceptionId: string;
@@ -456,6 +415,8 @@ export interface MonthlyRosterRecord {
   readonly publishedAt: number | null;
   readonly publishedByUserId: string | null;
   readonly publishGenerationRunId: string | null;
+  readonly publicationVersion?: number;
+  readonly sourceSnapshot?: WorkScheduleRosterSourceSnapshot | null;
   readonly description: string | null;
   readonly externalRef: string | null;
   readonly exceptions: readonly RosterExceptionRecord[];
@@ -494,18 +455,18 @@ export interface MonthlyRosterListItemView {
   readonly updatedAt: number;
 }
 
-export interface MonthlyRosterView
-  extends MonthlyRosterListItemView {
+export interface MonthlyRosterView extends MonthlyRosterListItemView {
   readonly previewHash: string | null;
   readonly lastPreviewedAt: number | null;
   readonly publishedAt: number | null;
   readonly publishedByUserId: string | null;
   readonly publishGenerationRunId: string | null;
+  readonly publicationVersion?: number;
+  readonly sourceSnapshot?: WorkScheduleRosterSourceSnapshot | null;
   readonly exceptions: readonly RosterExceptionRecord[];
 }
 
-export interface MonthlyRosterMutationView
-  extends MonthlyRosterView {}
+export interface MonthlyRosterMutationView extends MonthlyRosterView {}
 
 export const MONTHLY_ROSTER_PREVIEW_ROW_KINDS = [
   "STANDARD",
@@ -536,9 +497,7 @@ export interface MonthlyRosterPreviewExcludedMemberView {
 }
 
 export interface MonthlyRosterPreviewConflictView {
-  readonly conflictKind:
-    | "SUBJECT_OVERLAP"
-    | "CANDIDATE_SUBJECT_OVERLAP";
+  readonly conflictKind: "SUBJECT_OVERLAP" | "CANDIDATE_SUBJECT_OVERLAP";
   readonly workShiftId: string | null;
   readonly relatedPreviewRowId: string | null;
   readonly shiftCode: string | null;
@@ -655,9 +614,7 @@ export const WORK_SCHEDULE_REQUEST_TARGET_KINDS = [
 export type WorkScheduleRequestTargetKind =
   (typeof WORK_SCHEDULE_REQUEST_TARGET_KINDS)[number];
 
-export const WORK_SCHEDULE_REQUEST_SOURCES = [
-  "TEAM_MANAGER",
-] as const;
+export const WORK_SCHEDULE_REQUEST_SOURCES = ["TEAM_MANAGER"] as const;
 
 export type WorkScheduleRequestSource =
   (typeof WORK_SCHEDULE_REQUEST_SOURCES)[number];
@@ -694,15 +651,13 @@ export interface WorkScheduleRequestRecord {
   readonly updatedAt: number;
 }
 
-export interface WorkScheduleRequestView
-  extends WorkScheduleRequestRecord {
+export interface WorkScheduleRequestView extends WorkScheduleRequestRecord {
   readonly targetEmploymentProfileRef?: ReferenceSummary | null;
   readonly targetWorkShiftRef?: ReferenceSummary | null;
   readonly appliedWorkShiftRef?: ReferenceSummary | null;
 }
 
-export interface WorkScheduleRequestListItemView
-  extends WorkScheduleRequestView {}
+export interface WorkScheduleRequestListItemView extends WorkScheduleRequestView {}
 
 export const WORK_SCHEDULE_REQUEST_BATCH_STATUSES = [
   "PENDING",
@@ -730,6 +685,9 @@ export const WORK_SCHEDULE_REQUEST_LINE_STATUSES = [
   "REJECTED",
   "CANCELLED",
   "FAILED_TO_APPLY",
+  "SOURCE_CHANGED",
+  "APPLICATION_CONFLICT",
+  "APPLICATION_FAILED",
 ] as const;
 
 export type WorkScheduleRequestLineStatus =
@@ -769,6 +727,8 @@ export interface WorkScheduleRequestLineRecord {
   readonly requestType: WorkScheduleRequestType;
   readonly memberEmploymentProfileId: string;
   readonly workShiftId: string | null;
+  readonly sourceWorkShiftVersion?: number | null;
+  readonly sourceGenerationRunId?: string | null;
   readonly requestedStartAt: number | null;
   readonly requestedEndAt: number | null;
   readonly timezone: string;
@@ -782,6 +742,19 @@ export interface WorkScheduleRequestLineRecord {
   readonly cancellationReason: string | null;
   readonly failureReason: string | null;
   readonly appliedWorkShiftId: string | null;
+  readonly applicationState?:
+    | "APPROVED_APPLIED"
+    | "SOURCE_CHANGED"
+    | "APPLICATION_CONFLICT"
+    | "APPLICATION_FAILED"
+    | null;
+  readonly applicationLineage?: WorkScheduleApplicationLineage | null;
+  readonly applicationIdempotencyKey?: string | null;
+  readonly applicationPayloadFingerprint?: string | null;
+  readonly leadTimeClassification?: WorkScheduleLeadTimeClass;
+  readonly leadTimeProposedStartAt?: number;
+  readonly decisionSlaMinutes?: 240 | 60 | null;
+  readonly emergencyOverrideReason?: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly approvedAt: number | null;
@@ -796,20 +769,17 @@ export interface WorkScheduleRequestLineRecord {
   readonly periodMonth: string;
 }
 
-export interface WorkScheduleRequestLineView
-  extends WorkScheduleRequestLineRecord {
+export interface WorkScheduleRequestLineView extends WorkScheduleRequestLineRecord {
   readonly memberEmploymentProfileRef?: ReferenceSummary | null;
   readonly workShiftRef?: ReferenceSummary | null;
   readonly appliedWorkShiftRef?: ReferenceSummary | null;
 }
 
-export interface WorkScheduleRequestBatchView
-  extends WorkScheduleRequestBatchRecord {
+export interface WorkScheduleRequestBatchView extends WorkScheduleRequestBatchRecord {
   readonly submittedByEmploymentProfileRef?: ReferenceSummary | null;
   readonly lines: readonly WorkScheduleRequestLineView[];
 }
 
-export interface WorkScheduleRequestBatchListItemView
-  extends WorkScheduleRequestBatchRecord {
+export interface WorkScheduleRequestBatchListItemView extends WorkScheduleRequestBatchRecord {
   readonly submittedByEmploymentProfileRef?: ReferenceSummary | null;
 }

@@ -649,6 +649,8 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       category: "MANAGEMENT",
       recommendedAccountContext: "MANAGER_CONSOLE",
       permissions: [
+        Permission.MANAGER_GROUP_READ,
+        Permission.MANAGER_MEMBER_READ,
         Permission.WORK_SCHEDULE_READ,
         Permission.EVENT_READ,
         Permission.TALENT_READ,
@@ -684,6 +686,8 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       category: "MANAGEMENT",
       recommendedAccountContext: "MANAGER_CONSOLE",
       permissions: [
+        Permission.MANAGER_GROUP_READ,
+        Permission.MANAGER_MEMBER_READ,
         Permission.ORG_UNIT_READ,
         Permission.EMPLOYMENT_PROFILE_READ,
         Permission.TALENT_READ,

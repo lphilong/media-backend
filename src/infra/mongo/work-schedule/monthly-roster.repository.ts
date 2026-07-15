@@ -1,7 +1,4 @@
-import {
-  ClientSession,
-  Db,
-} from "mongodb";
+import { ClientSession, Db } from "mongodb";
 import { BaseRepository } from "@infra/database/repository/base.repository";
 import {
   AddRosterExceptionInput,
@@ -46,6 +43,8 @@ interface MonthlyRosterDocument {
   readonly publishedAt: number | null;
   readonly publishedByUserId: string | null;
   readonly publishGenerationRunId: string | null;
+  readonly publicationVersion?: number;
+  readonly sourceSnapshot?: MonthlyRosterRecord["sourceSnapshot"];
   readonly description: string | null;
   readonly externalRef: string | null;
   readonly exceptions: readonly RosterExceptionRecord[];
@@ -123,8 +122,7 @@ export class NativeMongoMonthlyRosterRepository
           }
         : {
             targetType: "TALENT_GROUP",
-            targetTalentGroupId:
-              target.targetTalentGroupId,
+            targetTalentGroupId: target.targetTalentGroupId,
           };
     const doc = await this.collection.findOne(
       {
@@ -153,8 +151,7 @@ export class NativeMongoMonthlyRosterRepository
     }
 
     if (input.departmentOrgUnitId !== undefined) {
-      set.departmentOrgUnitId =
-        input.departmentOrgUnitId;
+      set.departmentOrgUnitId = input.departmentOrgUnitId;
     }
 
     if (input.targetType !== undefined) {
@@ -170,8 +167,7 @@ export class NativeMongoMonthlyRosterRepository
     }
 
     if (input.targetTalentGroupId !== undefined) {
-      set.targetTalentGroupId =
-        input.targetTalentGroupId;
+      set.targetTalentGroupId = input.targetTalentGroupId;
     }
 
     if (input.workPatternId !== undefined) {
@@ -179,8 +175,7 @@ export class NativeMongoMonthlyRosterRepository
     }
 
     if (input.holidayCalendarId !== undefined) {
-      set.holidayCalendarId =
-        input.holidayCalendarId;
+      set.holidayCalendarId = input.holidayCalendarId;
     }
 
     if (input.description !== undefined) {
@@ -256,8 +251,9 @@ export class NativeMongoMonthlyRosterRepository
           lastPreviewedAt: input.lastPreviewedAt,
           publishedAt: input.publishedAt,
           publishedByUserId: input.publishedByUserId,
-          publishGenerationRunId:
-            input.publishGenerationRunId,
+          publishGenerationRunId: input.publishGenerationRunId,
+          publicationVersion: input.publicationVersion,
+          sourceSnapshot: input.sourceSnapshot,
           updatedAt: input.updatedAt,
         },
       },
@@ -360,8 +356,7 @@ export class NativeMongoMonthlyRosterRepository
       {
         _id: input.monthlyRosterId,
         status: "DRAFT",
-        "exceptions.rosterExceptionId":
-          input.rosterExceptionId,
+        "exceptions.rosterExceptionId": input.rosterExceptionId,
         "exceptions.status": "ACTIVE",
       },
       {
@@ -385,8 +380,7 @@ export class NativeMongoMonthlyRosterRepository
       {
         _id: input.monthlyRosterId,
         status: "DRAFT",
-        "exceptions.rosterExceptionId":
-          input.rosterExceptionId,
+        "exceptions.rosterExceptionId": input.rosterExceptionId,
         "exceptions.status": "ACTIVE",
       },
       {
@@ -432,15 +426,14 @@ function toMonthlyRosterDocument(
     lastPreviewedAt: record.lastPreviewedAt,
     publishedAt: record.publishedAt,
     publishedByUserId: record.publishedByUserId,
-    publishGenerationRunId:
-      record.publishGenerationRunId,
+    publishGenerationRunId: record.publishGenerationRunId,
+    publicationVersion: record.publicationVersion,
+    sourceSnapshot: record.sourceSnapshot,
     description: record.description,
     externalRef: record.externalRef,
     exceptions: record.exceptions.map((exception) => ({
       ...exception,
-      studioResourceIds: [
-        ...exception.studioResourceIds,
-      ],
+      studioResourceIds: [...exception.studioResourceIds],
     })),
     archivedAt: record.archivedAt,
     createdAt: record.createdAt,
@@ -460,19 +453,12 @@ function toMonthlyRosterRecord(
     targetSubjectKind: document.targetSubjectKind,
     targetOrgUnitMode: document.targetOrgUnitMode,
     targetType: document.targetType ?? "ORG_UNIT",
-    targetMode:
-      document.targetMode ??
-      document.targetOrgUnitMode,
+    targetMode: document.targetMode ?? document.targetOrgUnitMode,
     targetOrgUnitId:
-      document.targetOrgUnitId ??
-      document.departmentOrgUnitId ??
-      null,
-    targetTalentGroupId:
-      document.targetTalentGroupId ?? null,
+      document.targetOrgUnitId ?? document.departmentOrgUnitId ?? null,
+    targetTalentGroupId: document.targetTalentGroupId ?? null,
     departmentOrgUnitId:
-      document.departmentOrgUnitId ??
-      document.targetOrgUnitId ??
-      null,
+      document.departmentOrgUnitId ?? document.targetOrgUnitId ?? null,
     workPatternId: document.workPatternId,
     holidayCalendarId: document.holidayCalendarId,
     status: document.status,
@@ -481,15 +467,14 @@ function toMonthlyRosterRecord(
     lastPreviewedAt: document.lastPreviewedAt,
     publishedAt: document.publishedAt,
     publishedByUserId: document.publishedByUserId,
-    publishGenerationRunId:
-      document.publishGenerationRunId,
+    publishGenerationRunId: document.publishGenerationRunId,
+    publicationVersion: document.publicationVersion,
+    sourceSnapshot: document.sourceSnapshot,
     description: document.description,
     externalRef: document.externalRef,
     exceptions: document.exceptions.map((exception) => ({
       ...exception,
-      studioResourceIds: [
-        ...exception.studioResourceIds,
-      ],
+      studioResourceIds: [...exception.studioResourceIds],
     })),
     archivedAt: document.archivedAt,
     createdAt: document.createdAt,

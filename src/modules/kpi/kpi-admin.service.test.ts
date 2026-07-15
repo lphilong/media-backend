@@ -39,6 +39,9 @@ import {
 } from "@modules/kpi/domain/kpi.errors";
 import { KpiActualRepository } from "@modules/kpi/domain/kpi-actual.repository";
 import {
+  ClaimKpiAllocationOperationInput,
+  CompleteKpiAllocationOperationInput,
+  KpiAllocationOperationRecord,
   KpiActualWorkspaceDerivedPlanSortRow,
   ListKpiPlansInput,
   KpiPlanListCursor,
@@ -92,15 +95,15 @@ const DECEMBER_2026_END_AT = Date.UTC(2027, 0, 1, -7, 0, 0, 0) - 1;
 const MAY_5_2026_START_HCM = Date.UTC(2026, 4, 4, 17, 0, 0, 0);
 const MAY_5_2026_NOON_HCM = Date.UTC(2026, 4, 5, 5, 0, 0, 0);
 const MAY_6_2026_09_59_HCM = Date.UTC(2026, 4, 6, 2, 59, 0, 0);
-const MAY_6_2026_10_00_HCM = Date.UTC(2026, 4, 6, 3, 0, 0, 0);
-const MAY_5_2026_AFTER_LOCK_HCM = Date.UTC(2026, 4, 6, 3, 1, 0, 0);
+const MAY_6_2026_10_00_HCM = Date.UTC(2026, 4, 6, 5, 0, 0, 0);
+const MAY_5_2026_AFTER_LOCK_HCM = Date.UTC(2026, 4, 6, 5, 1, 0, 0);
 const JUNE_1_2026_09_30_HCM = Date.UTC(2026, 5, 1, 2, 30, 0, 0);
-const JUNE_1_2026_10_01_HCM = Date.UTC(2026, 5, 1, 3, 1, 0, 0);
-const JUNE_1_2026_NOON_HCM = Date.UTC(2026, 5, 1, 5, 0, 0, 0);
+const JUNE_1_2026_10_01_HCM = Date.UTC(2026, 5, 1, 5, 1, 0, 0);
+const JUNE_1_2026_NOON_HCM = Date.UTC(2026, 5, 1, 5, 1, 0, 0);
 const JULY_1_2026_09_30_HCM = Date.UTC(2026, 6, 1, 2, 30, 0, 0);
-const JULY_1_2026_10_01_HCM = Date.UTC(2026, 6, 1, 3, 1, 0, 0);
-const JAN_1_2027_10_00_HCM = Date.UTC(2027, 0, 1, 3, 0, 0, 0);
-const JAN_1_2027_10_01_HCM = Date.UTC(2027, 0, 1, 3, 1, 0, 0);
+const JULY_1_2026_10_01_HCM = Date.UTC(2026, 6, 1, 5, 1, 0, 0);
+const JAN_1_2027_10_00_HCM = Date.UTC(2027, 0, 1, 5, 0, 0, 0);
+const JAN_1_2027_10_01_HCM = Date.UTC(2027, 0, 1, 5, 1, 0, 0);
 const FEB_2028_START_AT = Date.UTC(2028, 1, 1, -7, 0, 0, 0);
 const FEB_2028_END_AT = Date.UTC(2028, 2, 1, -7, 0, 0, 0) - 1;
 const FEB_29_2028_NOON_HCM = Date.UTC(2028, 1, 29, 5, 0, 0, 0);
@@ -127,6 +130,36 @@ function createActor(): Actor {
     scopeGrants: {
       kpi: ["global"],
     },
+    isActive: true,
+  });
+}
+
+function createCheckerActor(): Actor {
+  const actor = createActor();
+  return new Actor({
+    id: "admin-2",
+    type: actor.type,
+    context: actor.context,
+    accountContexts: actor.accountContexts,
+    roles: actor.roles,
+    permissions: actor.permissions,
+    scopeGrants: actor.scopeGrants,
+    isActive: actor.isActive,
+  });
+}
+
+function createAllocationReviewManagerActor(id = "manager-user"): Actor {
+  return new Actor({
+    id,
+    type: "admin",
+    context: "ADMIN",
+    accountContexts: ["MANAGER_CONSOLE"],
+    roles: ["TEAM_MANAGER"],
+    permissions: [
+      Permission.KPI_MANAGE_ALLOCATION,
+      Permission.KPI_ENTER_ACTUAL,
+    ],
+    scopeGrants: { kpi: ["managedGroup"] },
     isActive: true,
   });
 }
@@ -311,12 +344,77 @@ const DEFAULT_KPI_STRUCTURED_SCOPE_GRANTS: readonly RoleAssignmentScopeGrant[] =
     { scopeType: "managedOrgUnit", targetId: "org-support-active" },
   ];
 
+type AllocationVersionField =
+  | "expectedPlanVersion"
+  | "expectedAllocationVersion"
+  | "expectedMembershipSnapshotVersion"
+  | "idempotencyKey";
+
+type RelaxAllocationCommand<T extends object> = Omit<
+  T,
+  AllocationVersionField
+> &
+  Partial<Pick<T, Extract<keyof T, AllocationVersionField>>>;
+
+type RelaxCorrectionCommand<T extends object> = Omit<
+  T,
+  "expectedEntryVersion" | "idempotencyKey"
+> &
+  Partial<Pick<T, Extract<keyof T, "expectedEntryVersion" | "idempotencyKey">>>;
+
+type TestKpiAdminService = KpiAdminService & {
+  upsertKpiAllocationDraft(
+    actor: Actor,
+    command: RelaxAllocationCommand<
+      Parameters<KpiAdminService["upsertKpiAllocationDraft"]>[1]
+    >,
+  ): ReturnType<KpiAdminService["upsertKpiAllocationDraft"]>;
+  submitKpiAllocationDraft(
+    actor: Actor,
+    command: RelaxAllocationCommand<
+      Parameters<KpiAdminService["submitKpiAllocationDraft"]>[1]
+    >,
+  ): ReturnType<KpiAdminService["submitKpiAllocationDraft"]>;
+  approveKpiAllocation(
+    actor: Actor,
+    command: RelaxAllocationCommand<
+      Parameters<KpiAdminService["approveKpiAllocation"]>[1]
+    >,
+  ): ReturnType<KpiAdminService["approveKpiAllocation"]>;
+  rejectKpiAllocation(
+    actor: Actor,
+    command: RelaxAllocationCommand<
+      Parameters<KpiAdminService["rejectKpiAllocation"]>[1]
+    >,
+  ): ReturnType<KpiAdminService["rejectKpiAllocation"]>;
+  publishKpiAllocation(
+    actor: Actor,
+    command: RelaxAllocationCommand<
+      Parameters<KpiAdminService["publishKpiAllocation"]>[1]
+    >,
+  ): ReturnType<KpiAdminService["publishKpiAllocation"]>;
+  correctKpiActual(
+    actor: Actor,
+    command: RelaxCorrectionCommand<
+      Parameters<KpiAdminService["correctKpiActual"]>[1]
+    >,
+  ): ReturnType<KpiAdminService["correctKpiActual"]>;
+  correctKpiOrgUnitActual(
+    actor: Actor,
+    command: RelaxCorrectionCommand<
+      Parameters<KpiAdminService["correctKpiOrgUnitActual"]>[1]
+    >,
+  ): ReturnType<KpiAdminService["correctKpiOrgUnitActual"]>;
+};
+
 function createHarness(
   clock: () => number = fixedClock(),
-  structuredAuthority: StructuredScopeAuthorityService =
-    createDefaultKpiStructuredAuthority(clock),
+  structuredAuthority: StructuredScopeAuthorityService = createDefaultKpiStructuredAuthority(
+    clock,
+  ),
 ): {
-  readonly service: KpiAdminService;
+  readonly service: TestKpiAdminService;
+  readonly authoritativeService: KpiAdminService;
   readonly repository: InMemoryKpiPlanRepository;
   readonly actualRepository: InMemoryKpiActualRepository;
   readonly subjectAccess: InMemoryKpiSubjectReadonlyAccess;
@@ -330,13 +428,14 @@ function createHarness(
   repository.actualEntries = actualRepository.entries;
   const subjectAccess = new InMemoryKpiSubjectReadonlyAccess();
   const managerRepository = new InMemoryManagerAssignmentRepository();
-  const orgUnitManagerRepository = new InMemoryOrgUnitManagerAssignmentRepository();
+  const orgUnitManagerRepository =
+    new InMemoryOrgUnitManagerAssignmentRepository();
   const managedScopeReader = new InMemoryResponsibilityManagedScopeReader(
     managerRepository,
     orgUnitManagerRepository,
   );
   const audit = new RecordingAuditGuard();
-  const service = new KpiAdminService(
+  const authoritativeService = new KpiAdminService(
     repository,
     actualRepository,
     new InMemoryBusinessCodeSequenceRepository(),
@@ -347,8 +446,10 @@ function createHarness(
     structuredAuthority,
     clock,
   );
+  const service = createTestKpiAdminService(authoritativeService, repository);
   return {
     service,
+    authoritativeService,
     repository,
     actualRepository,
     subjectAccess,
@@ -357,6 +458,85 @@ function createHarness(
     managedScopeReader,
     audit,
   };
+}
+
+function createTestKpiAdminService(
+  service: KpiAdminService,
+  repository: InMemoryKpiPlanRepository,
+): TestKpiAdminService {
+  const allocationMethods = new Set([
+    "upsertKpiAllocationDraft",
+    "submitKpiAllocationDraft",
+    "approveKpiAllocation",
+    "rejectKpiAllocation",
+    "publishKpiAllocation",
+  ]);
+  let operationSequence = 0;
+  return new Proxy(service, {
+    get(target, property, receiver) {
+      if (typeof property !== "string" || !allocationMethods.has(property)) {
+        if (
+          property === "correctKpiActual" ||
+          property === "correctKpiOrgUnitActual"
+        ) {
+          return (actor: Actor, command: Record<string, unknown>) => {
+            const entry = repository.actualEntries.find(
+              (item) => item.id === command.actualEntryId,
+            );
+            operationSequence += 1;
+            const method = target[property].bind(target) as (
+              actor: Actor,
+              command: Parameters<KpiAdminService["correctKpiActual"]>[1],
+            ) => ReturnType<KpiAdminService["correctKpiActual"]>;
+            return method(actor, {
+              ...command,
+              expectedEntryVersion:
+                command.expectedEntryVersion ?? entry?.entryVersion ?? 1,
+              idempotencyKey:
+                command.idempotencyKey ??
+                `test:${property}:${operationSequence}`,
+            } as Parameters<KpiAdminService["correctKpiActual"]>[1]);
+          };
+        }
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+      return (actor: Actor, command: Record<string, unknown>) => {
+        const kpiPlanId = String(command.kpiPlanId ?? "");
+        const plan = repository.plans.find((item) => item.id === kpiPlanId);
+        const allocations = repository.allocations.filter(
+          (item) =>
+            item.kpiPlanId === kpiPlanId &&
+            item.lifecycleStatus !== "SUPERSEDED",
+        );
+        operationSequence += 1;
+        const hydrated = {
+          ...command,
+          expectedPlanVersion:
+            command.expectedPlanVersion ?? plan?.updatedAt ?? 0,
+          expectedAllocationVersion:
+            command.expectedAllocationVersion ??
+            Math.max(
+              0,
+              ...allocations.map(
+                (item) => item.allocationVersion ?? item.updatedAt,
+              ),
+            ),
+          expectedMembershipSnapshotVersion:
+            command.expectedMembershipSnapshotVersion ??
+            allocations[0]?.membershipSnapshotVersion ??
+            "EMPTY",
+          idempotencyKey:
+            command.idempotencyKey ?? `test:${property}:${operationSequence}`,
+        };
+        const method = Reflect.get(target, property, target) as (
+          actor: Actor,
+          command: Record<string, unknown>,
+        ) => unknown;
+        return method.call(target, actor, hydrated);
+      };
+    },
+  }) as TestKpiAdminService;
 }
 
 function createDefaultKpiStructuredAuthority(
@@ -373,13 +553,26 @@ function createDefaultKpiStructuredAuthority(
         ],
       }),
       kpiStructuredRecord({
+        userId: "admin-2",
+        permissions: ALL_KPI_ADMIN_PERMISSIONS,
+        structuredScopeGrants: [
+          { scopeType: "global" },
+          ...DEFAULT_KPI_STRUCTURED_SCOPE_GRANTS,
+        ],
+      }),
+      kpiStructuredRecord({
         userId: "manager-user",
         permissions: [
           Permission.KPI_READ,
+          Permission.KPI_MANAGE_ALLOCATION,
           Permission.KPI_ENTER_ACTUAL,
           Permission.KPI_CORRECT_ACTUAL,
           Permission.KPI_READ_PROGRESS,
         ],
+      }),
+      kpiStructuredRecord({
+        userId: "superior-user",
+        permissions: [Permission.KPI_MANAGE_ALLOCATION],
       }),
       kpiStructuredRecord({
         userId: "read-only-user",
@@ -399,9 +592,7 @@ function createKpiStructuredAuthority(
       async listByUserId(
         userId: string,
       ): Promise<readonly StructuredScopeAuthorityAssignment[]> {
-        return records.filter(
-          (record) => record.assignment.userId === userId,
-        );
+        return records.filter((record) => record.assignment.userId === userId);
       },
     } satisfies StructuredScopeAuthorityReader,
     clock,
@@ -530,7 +721,7 @@ function buildAllocationFixture(
 }
 
 async function createPublishedGroupPlan(
-  service: KpiAdminService,
+  service: TestKpiAdminService,
 ): Promise<
   ReturnType<KpiAdminService["publishKpiPlan"]> extends Promise<infer T>
     ? T
@@ -578,7 +769,7 @@ async function createPublishedGroupPlan(
 }
 
 async function createPublishedDiamondGroupPlan(
-  service: KpiAdminService,
+  service: TestKpiAdminService,
 ): Promise<
   ReturnType<KpiAdminService["publishKpiAllocation"]> extends Promise<infer T>
     ? T
@@ -632,7 +823,9 @@ test("KPI allocation storage preserves TALENT_GROUP member identity", async () =
   const { service, repository } = createHarness(() => MAY_5_2026_NOON_HCM);
   const published = await createPublishedGroupPlan(service);
   const allocation = published.allocations[0] as KpiAllocation;
-  const stored = repository.allocations.find((item) => item.id === allocation.id);
+  const stored = repository.allocations.find(
+    (item) => item.id === allocation.id,
+  );
 
   assert.ok(stored);
   assert.equal(stored.subjectType, "TALENT_GROUP");
@@ -806,7 +999,8 @@ test("KPI allocation index source definitions use partial unique identities", as
   );
   const orgUnitIndex = allocationIndexes.find(
     (index) =>
-      index.options.name === KPI_ALLOCATION_ORG_UNIT_PLAN_PROFILE_UNIQ_INDEX_NAME,
+      index.options.name ===
+      KPI_ALLOCATION_ORG_UNIT_PLAN_PROFILE_UNIQ_INDEX_NAME,
   );
 
   assert.ok(talentGroupIndex);
@@ -837,7 +1031,7 @@ test("KPI allocation index source definitions use partial unique identities", as
 });
 
 async function createPublishedFebruary2028GroupPlan(
-  service: KpiAdminService,
+  service: TestKpiAdminService,
 ): Promise<
   ReturnType<KpiAdminService["publishKpiPlan"]> extends Promise<infer T>
     ? T
@@ -884,7 +1078,7 @@ async function createPublishedFebruary2028GroupPlan(
 }
 
 async function createPublishedJune2026GroupPlan(
-  service: KpiAdminService,
+  service: TestKpiAdminService,
 ): Promise<
   ReturnType<KpiAdminService["publishKpiPlan"]> extends Promise<infer T>
     ? T
@@ -927,7 +1121,7 @@ async function createPublishedJune2026GroupPlan(
 }
 
 async function createPublishedDecember2026GroupPlan(
-  service: KpiAdminService,
+  service: TestKpiAdminService,
 ): Promise<
   ReturnType<KpiAdminService["publishKpiPlan"]> extends Promise<infer T>
     ? T
@@ -970,7 +1164,7 @@ async function createPublishedDecember2026GroupPlan(
 }
 
 async function withEphemeralManagerAssignment<T>(
-  service: KpiAdminService,
+  service: TestKpiAdminService,
   groupId: string,
   action: () => Promise<T>,
 ): Promise<T> {
@@ -1010,11 +1204,12 @@ function seedManagerAssignment(
   repository: InMemoryManagerAssignmentRepository,
   groupId = "group-1",
   effectiveFrom = MAY_2026_START_AT,
+  managerEmploymentProfileId = "manager-profile-1",
 ): void {
   repository.assignments.push({
-    id: "assignment-1",
+    id: `assignment-${managerEmploymentProfileId}`,
     groupId,
-    managerEmploymentProfileId: "manager-profile-1",
+    managerEmploymentProfileId,
     role: "MANAGER",
     effectiveFrom,
     effectiveTo: null,
@@ -1368,13 +1563,14 @@ test("NativeMongo OrgUnit manager assignment repository filters active manager-r
     departmentOwners.map((assignment) => assignment.id),
     ["department-owner", "defaults"],
   );
-  assert.deepEqual(unitManagers.map((assignment) => assignment.id), [
-    "unit-manager",
-  ]);
-  assert.deepEqual(unitOperators.map((assignment) => assignment.id), [
-    "unit-operator",
-    "same-manager-different-role",
-  ]);
+  assert.deepEqual(
+    unitManagers.map((assignment) => assignment.id),
+    ["unit-manager"],
+  );
+  assert.deepEqual(
+    unitOperators.map((assignment) => assignment.id),
+    ["unit-operator", "same-manager-different-role"],
+  );
   assert.equal(departmentOwners[0]?.includeDescendants, true);
   assert.deepEqual(departmentOwners[0]?.actionMask, ["READ_PROGRESS"]);
   assert.equal(departmentOwners[1]?.includeDescendants, false);
@@ -1383,9 +1579,8 @@ test("NativeMongo OrgUnit manager assignment repository filters active manager-r
 });
 
 test("KPI managed unit authority adapter preserves active central TalentGroup responsibility scope", async () => {
-  const { subjectAccess, managerRepository, managedScopeReader } = createHarness(
-    () => MAY_5_2026_NOON_HCM,
-  );
+  const { subjectAccess, managerRepository, managedScopeReader } =
+    createHarness(() => MAY_5_2026_NOON_HCM);
   seedManagerAssignment(managerRepository, "group-1");
   seedManagerAssignment(managerRepository, "group-2");
   seedManagerAssignment(managerRepository, "group-2");
@@ -1598,7 +1793,9 @@ function seedOfficialActualExcusesForDate(
   }
 }
 
-function requireTestAllocationMemberTalentId(allocation: KpiAllocation): string {
+function requireTestAllocationMemberTalentId(
+  allocation: KpiAllocation,
+): string {
   if (
     allocation.subjectType === "TALENT_GROUP" &&
     typeof allocation.memberTalentId === "string" &&
@@ -2108,10 +2305,7 @@ test("KPI plan create requires exact structured subject authority", async () => 
 
   for (const actor of [deniedLegacyGlobalActor, deniedLegacyManagedActor]) {
     await assert.rejects(
-      service.createKpiPlan(
-        actor,
-        orgUnitPlanCommand("org-department-active"),
-      ),
+      service.createKpiPlan(actor, orgUnitPlanCommand("org-department-active")),
       KpiPermissionScopeError,
     );
   }
@@ -2512,7 +2706,7 @@ test("KPI V2 rejects LIVE_HOURS plan target with more than two decimals", async 
   );
 });
 
-test("KPI V2 rejects numeric string plan target values", async () => {
+test("KPI V2 accepts canonical exact strings and rejects formatted numeric strings", async () => {
   const { service } = createHarness();
   const formattedMoneyTarget = [
     { metricCode: "REVENUE_VND", targetValue: "1.000.000" },
@@ -2526,15 +2720,13 @@ test("KPI V2 rejects numeric string plan target values", async () => {
       ...groupPlanCommand(),
       targetMetrics: formattedMoneyTarget,
     }),
-    /REVENUE_VND requires a finite non-negative numeric target value/,
+    /requires a non-negative canonical target value/u,
   );
-  await assert.rejects(
-    service.createKpiPlan(createActor(), {
-      ...groupPlanCommand(),
-      targetMetrics: numericStringTarget,
-    }),
-    /REVENUE_VND requires a finite non-negative numeric target value/,
-  );
+  const created = await service.createKpiPlan(createActor(), {
+    ...groupPlanCommand(),
+    targetMetrics: numericStringTarget,
+  });
+  assert.equal(created.targetMetrics[0]?.targetValueExact, "1000000");
 });
 
 test("KPI V2 rejects invalid non-monthly period window", async () => {
@@ -2857,24 +3049,45 @@ test("KPI V2 ORG_UNIT official published allocations appear in Admin actual work
       },
     ],
   });
-  await service.submitKpiAllocationDraft(createActor(), { kpiPlanId: published.id });
-  await service.approveKpiAllocation(createActor(), { kpiPlanId: published.id });
-  await service.publishKpiAllocation(createActor(), { kpiPlanId: published.id });
-  const groupPlan = await createPublishedGroupPlan(service);
-
-  const allWorkspace = await service.listKpiActualWorkspacePlans(createActor(), {});
-  const orgOnlyWorkspace = await service.listKpiActualWorkspacePlans(createActor(), {
-    subjectType: "ORG_UNIT",
-  });
-  const groupOnlyWorkspace = await service.listKpiActualWorkspacePlans(createActor(), {
-    subjectType: "TALENT_GROUP",
-  });
-  const searchedWorkspace = await service.listKpiActualWorkspacePlans(createActor(), {
-    search: "OU-DEP-001",
-  });
-  const orgDetail = await service.getKpiActualWorkspacePlanDetail(createActor(), {
+  await service.submitKpiAllocationDraft(createActor(), {
     kpiPlanId: published.id,
   });
+  await service.approveKpiAllocation(createCheckerActor(), {
+    kpiPlanId: published.id,
+  });
+  await service.publishKpiAllocation(createActor(), {
+    kpiPlanId: published.id,
+  });
+  const groupPlan = await createPublishedGroupPlan(service);
+
+  const allWorkspace = await service.listKpiActualWorkspacePlans(
+    createActor(),
+    {},
+  );
+  const orgOnlyWorkspace = await service.listKpiActualWorkspacePlans(
+    createActor(),
+    {
+      subjectType: "ORG_UNIT",
+    },
+  );
+  const groupOnlyWorkspace = await service.listKpiActualWorkspacePlans(
+    createActor(),
+    {
+      subjectType: "TALENT_GROUP",
+    },
+  );
+  const searchedWorkspace = await service.listKpiActualWorkspacePlans(
+    createActor(),
+    {
+      search: "OU-DEP-001",
+    },
+  );
+  const orgDetail = await service.getKpiActualWorkspacePlanDetail(
+    createActor(),
+    {
+      kpiPlanId: published.id,
+    },
+  );
 
   assert.equal(
     allWorkspace.items.some((item) => item.planId === published.id),
@@ -2899,7 +3112,10 @@ test("KPI V2 ORG_UNIT official published allocations appear in Admin actual work
   assert.equal(orgDetail.subjectType, "ORG_UNIT");
   assert.equal(orgDetail.members.length, 1);
   assert.equal(JSON.stringify(orgDetail).includes("memberTalentId"), false);
-  assert.equal(JSON.stringify(orgDetail).includes("memberEmploymentProfileId"), false);
+  assert.equal(
+    JSON.stringify(orgDetail).includes("memberEmploymentProfileId"),
+    false,
+  );
   const managerOrgWorkspace = await service.listKpiActualWorkspacePlans(
     createManagerActor(),
     {
@@ -2926,7 +3142,9 @@ test("KPI ORG_UNIT actual/progress/correction uses EmploymentProfile identity wi
     ],
   });
   await service.submitKpiAllocationDraft(actor, { kpiPlanId: created.id });
-  await service.approveKpiAllocation(actor, { kpiPlanId: created.id });
+  await service.approveKpiAllocation(createCheckerActor(), {
+    kpiPlanId: created.id,
+  });
   const published = await service.publishKpiAllocation(actor, {
     kpiPlanId: created.id,
   });
@@ -2943,14 +3161,22 @@ test("KPI ORG_UNIT actual/progress/correction uses EmploymentProfile identity wi
     kpiPlanId: created.id,
     actualDate: "2026-05-05",
   });
-  const progress = await service.getKpiProgress(actor, { kpiPlanId: created.id });
+  const progress = await service.getKpiProgress(actor, {
+    kpiPlanId: created.id,
+  });
 
-  assert.equal(createdActual.actualEntry.memberEmploymentProfileId, "org-profile-1");
+  assert.equal(
+    createdActual.actualEntry.memberEmploymentProfileId,
+    "org-profile-1",
+  );
   assert.equal(createdActual.actualEntry.memberTalentId, null);
   assert.equal(grid.rows[0]?.memberEmploymentProfileId, "org-profile-1");
   assert.equal(grid.rows[0]?.memberTalentId, null);
   assert.equal(grid.rows[0]?.memberDisplayName, "Org Profile 1");
-  assert.equal(progress.memberProgress[0]?.memberEmploymentProfileId, "org-profile-1");
+  assert.equal(
+    progress.memberProgress[0]?.memberEmploymentProfileId,
+    "org-profile-1",
+  );
   assert.equal(progress.memberProgress[0]?.memberTalentId, null);
   assert.equal(progress.memberProgress[0]?.actualValue, 80);
 
@@ -2999,7 +3225,9 @@ test("KPI ORG_UNIT correction succeeds after zero update and cleared exceptions 
     ],
   });
   await service.submitKpiAllocationDraft(actor, { kpiPlanId: created.id });
-  await service.approveKpiAllocation(actor, { kpiPlanId: created.id });
+  await service.approveKpiAllocation(createCheckerActor(), {
+    kpiPlanId: created.id,
+  });
   const published = await service.publishKpiAllocation(actor, {
     kpiPlanId: created.id,
   });
@@ -3216,9 +3444,12 @@ test("KPI V2 manager-scoped ORG_UNIT read shows only assigned published plans", 
   assert.equal(progress.plan.subjectType, "ORG_UNIT");
   assert.deepEqual(progress.memberProgress, []);
   await assert.rejects(
-    service.getKpiActualWorkspacePlanDetail(createBackofficeTeamManagerActor(), {
-      kpiPlanId: direct.id,
-    }),
+    service.getKpiActualWorkspacePlanDetail(
+      createBackofficeTeamManagerActor(),
+      {
+        kpiPlanId: direct.id,
+      },
+    ),
     KpiPermissionScopeError,
   );
   const grid = await service.getKpiActualDailyGrid(
@@ -3364,22 +3595,17 @@ test("KPI global admin can run ORG_UNIT allocation lifecycle with EmploymentProf
   });
   assert.equal(submitted.allocations[0]?.allocationStatus, "PENDING_APPROVAL");
 
-  const rejected = await service.rejectKpiAllocation(actor, {
+  const rejected = await service.rejectKpiAllocation(createCheckerActor(), {
     kpiPlanId: created.id,
     rejectionReason: "Revise",
   });
   assert.equal(rejected.allocations[0]?.allocationStatus, "REJECTED");
-
-  for (let index = 0; index < repository.allocations.length; index += 1) {
-    const allocation = repository.allocations[index] as KpiAllocation;
-    if (allocation.kpiPlanId === created.id) {
-      repository.allocations[index] = {
-        ...allocation,
-        allocationStatus: "PENDING_APPROVAL",
-      };
-    }
-  }
-  const approved = await service.approveKpiAllocation(actor, {
+  assert.equal(rejected.allocations[0]?.lifecycleStatus, "CHANGES_REQUESTED");
+  const resubmitted = await service.submitKpiAllocationDraft(actor, {
+    kpiPlanId: created.id,
+  });
+  assert.equal(resubmitted.allocations[0]?.lifecycleStatus, "SUBMITTED");
+  const approved = await service.approveKpiAllocation(createCheckerActor(), {
     kpiPlanId: created.id,
   });
   assert.equal(approved.allocations[0]?.allocationStatus, "APPROVED");
@@ -3473,7 +3699,9 @@ test("KPI ORG_UNIT explicit query route contracts expose EmploymentProfile-safe 
     ],
   });
   await service.submitKpiAllocationDraft(actor, { kpiPlanId: created.id });
-  await service.approveKpiAllocation(actor, { kpiPlanId: created.id });
+  await service.approveKpiAllocation(createCheckerActor(), {
+    kpiPlanId: created.id,
+  });
   const published = await service.publishKpiAllocation(actor, {
     kpiPlanId: created.id,
   });
@@ -3597,7 +3825,9 @@ test("KPI ORG_UNIT explicit mutation route contract returns profile identity wit
     ],
   });
   await service.submitKpiAllocationDraft(actor, { kpiPlanId: created.id });
-  await service.approveKpiAllocation(actor, { kpiPlanId: created.id });
+  await service.approveKpiAllocation(createCheckerActor(), {
+    kpiPlanId: created.id,
+  });
   const published = await service.publishKpiAllocation(actor, {
     kpiPlanId: created.id,
   });
@@ -3641,7 +3871,12 @@ test("KPI ORG_UNIT explicit mutation route contract returns profile identity wit
 
   now.value = MAY_5_2026_AFTER_LOCK_HCM;
   const correctionReq = {
-    body: { correctedValue: 110, reason: "post cutoff correction" },
+    body: {
+      correctedValue: 110,
+      reason: "post cutoff correction",
+      expectedEntryVersion: 2,
+      idempotencyKey: "org-unit-controller-correction-1",
+    },
     params: { kpiPlanId: created.id, actualEntryId: actual.id },
   } as unknown as Request;
   bindCommand(correctionReq, "KPI_ORG_UNIT_ACTUAL_CORRECT");
@@ -3659,7 +3894,10 @@ test("KPI ORG_UNIT explicit mutation route contract returns profile identity wit
     correctionPayload.actualEntry.memberEmploymentProfileId,
     "org-profile-1",
   );
-  assert.equal("memberEmploymentProfileId" in correctionPayload.correction, false);
+  assert.equal(
+    "memberEmploymentProfileId" in correctionPayload.correction,
+    false,
+  );
 
   const groupPlan = await createPublishedGroupPlan(service);
   const groupReq = {
@@ -3714,7 +3952,9 @@ test("KPI ORG_UNIT explicit excuse and correction-history route contracts stay O
     ],
   });
   await service.submitKpiAllocationDraft(actor, { kpiPlanId: created.id });
-  await service.approveKpiAllocation(actor, { kpiPlanId: created.id });
+  await service.approveKpiAllocation(createCheckerActor(), {
+    kpiPlanId: created.id,
+  });
   const published = await service.publishKpiAllocation(actor, {
     kpiPlanId: created.id,
   });
@@ -3907,7 +4147,9 @@ test("KPI UNIT_MANAGER direct assignment can draft ORG_UNIT allocation while bro
     ],
   });
   assert.equal(draft.allocations[0]?.createdByActorId, "manager-user");
-  await service.submitKpiAllocationDraft(managerActor, { kpiPlanId: created.id });
+  await service.submitKpiAllocationDraft(managerActor, {
+    kpiPlanId: created.id,
+  });
 
   for (const role of ["DEPARTMENT_OWNER", "UNIT_OPERATOR"] as const) {
     orgUnitManagerRepository.assignments.length = 0;
@@ -3990,7 +4232,10 @@ test("KPI managed ORG_UNIT picker excludes current manager and draft rejects sel
       },
     ],
   });
-  assert.equal(draft.allocations[0]?.memberEmploymentProfileId, "org-profile-1");
+  assert.equal(
+    draft.allocations[0]?.memberEmploymentProfileId,
+    "org-profile-1",
+  );
 });
 
 test("KPI managed ORG_UNIT submit rejects stored self draft while global path remains unchanged", async () => {
@@ -4025,7 +4270,10 @@ test("KPI managed ORG_UNIT submit rejects stored self draft while global path re
       },
     ],
   });
-  assert.equal(draft.allocations[0]?.memberEmploymentProfileId, "manager-profile-1");
+  assert.equal(
+    draft.allocations[0]?.memberEmploymentProfileId,
+    "manager-profile-1",
+  );
 
   await assert.rejects(
     service.submitKpiAllocationDraft(managerActor, { kpiPlanId: created.id }),
@@ -4207,7 +4455,10 @@ test("KPI ORG_UNIT allocation draft rejects missing EmploymentProfile identity w
   const { service, repository, orgUnitManagerRepository } = createHarness(
     () => MAY_5_2026_NOON_HCM,
   );
-  const created = await service.createKpiPlan(createActor(), orgUnitPlanCommand());
+  const created = await service.createKpiPlan(
+    createActor(),
+    orgUnitPlanCommand(),
+  );
   await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
   orgUnitManagerRepository.assignments.push(
     orgUnitManagerAssignment({
@@ -4248,7 +4499,7 @@ test("KPI ORG_UNIT allocation draft upserts duplicate EmploymentProfile rows by 
       {
         employmentProfileId: "org-profile-1",
         allocationStartDate: "2026-05-01",
-        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 100 }],
+        targetMetrics: [{ metricCode: "REVENUE_VND", targetValue: 300 }],
         note: "Initial draft",
       },
     ],
@@ -4294,7 +4545,9 @@ test("KPI ORG_UNIT published allocation enables actuals and excuses with Employm
     ],
   });
   await service.submitKpiAllocationDraft(actor, { kpiPlanId: created.id });
-  await service.approveKpiAllocation(actor, { kpiPlanId: created.id });
+  await service.approveKpiAllocation(createCheckerActor(), {
+    kpiPlanId: created.id,
+  });
   const published = await service.publishKpiAllocation(actor, {
     kpiPlanId: created.id,
   });
@@ -4338,10 +4591,7 @@ test("KPI ORG_UNIT published allocation enables actuals and excuses with Employm
     kpiPlanId: created.id,
     actualDate: "2026-05-05",
   });
-  assert.equal(
-    excusedGrid.rows[0]?.metrics[0]?.dailyActualStatus,
-    "EXCUSED",
-  );
+  assert.equal(excusedGrid.rows[0]?.metrics[0]?.dailyActualStatus, "EXCUSED");
   await assert.rejects(
     service.createOrSetKpiActual(actor, {
       kpiPlanId: created.id,
@@ -4404,7 +4654,9 @@ test("KPI ORG_UNIT finalize writes finalResult from EmploymentProfile actuals wi
     ],
   });
   await service.submitKpiAllocationDraft(actor, { kpiPlanId: created.id });
-  await service.approveKpiAllocation(actor, { kpiPlanId: created.id });
+  await service.approveKpiAllocation(createCheckerActor(), {
+    kpiPlanId: created.id,
+  });
   const publishedAllocation = await service.publishKpiAllocation(actor, {
     kpiPlanId: created.id,
   });
@@ -4485,7 +4737,9 @@ test("KPI ORG_UNIT finalized finalResult route is manager-readable and scoped", 
     ],
   });
   await service.submitKpiAllocationDraft(actor, { kpiPlanId: created.id });
-  await service.approveKpiAllocation(actor, { kpiPlanId: created.id });
+  await service.approveKpiAllocation(createCheckerActor(), {
+    kpiPlanId: created.id,
+  });
   const publishedAllocation = await service.publishKpiAllocation(actor, {
     kpiPlanId: created.id,
   });
@@ -4529,7 +4783,10 @@ test("KPI ORG_UNIT finalized finalResult route is manager-readable and scoped", 
   assert.equal(detail.subjectType, "ORG_UNIT");
   assert.deepEqual(detail.allocations, []);
   assert.equal(detail.finalResult.subjectType, "ORG_UNIT");
-  assert.equal(JSON.stringify(detail.finalResult).includes("memberTalentId"), false);
+  assert.equal(
+    JSON.stringify(detail.finalResult).includes("memberTalentId"),
+    false,
+  );
   assert.equal(
     JSON.stringify(detail.finalResult).includes("memberEmploymentProfileId"),
     false,
@@ -4707,46 +4964,42 @@ test("KPI V2 publish TALENT_GROUP plan freezes target and moves to PUBLISHED", a
   );
 });
 
-test("KPI V2 allocation publish rejects allocation totals that do not match", async () => {
-  const { service } = createHarness();
+test("KPI V2 allocation draft rejects totals that do not match", async () => {
+  const { service, repository } = createHarness();
   const created = await service.createKpiPlan(
     createActor(),
     groupPlanCommand(),
   );
   await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
   await withEphemeralManagerAssignment(service, "group-1", async () => {
-    await service.upsertKpiAllocationDraft(createManagerActor(), {
-      kpiPlanId: created.id,
-      allocations: [
-        {
-          employmentProfileId: "talent-profile-1",
-          allocationStartDate: "2026-05-01",
-          targetMetrics: [
-            { metricCode: "REVENUE_VND", targetValue: 100 },
-            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
-          ],
-        },
-        {
-          employmentProfileId: "talent-profile-2",
-          allocationStartDate: "2026-05-01",
-          targetMetrics: [
-            { metricCode: "REVENUE_VND", targetValue: 100 },
-            { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
-          ],
-        },
-      ],
-    });
-    await service.submitKpiAllocationDraft(createManagerActor(), {
-      kpiPlanId: created.id,
-    });
+    await assert.rejects(
+      service.upsertKpiAllocationDraft(createManagerActor(), {
+        kpiPlanId: created.id,
+        allocations: [
+          {
+            employmentProfileId: "talent-profile-1",
+            allocationStartDate: "2026-05-01",
+            targetMetrics: [
+              { metricCode: "REVENUE_VND", targetValue: 100 },
+              { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
+            ],
+          },
+          {
+            employmentProfileId: "talent-profile-2",
+            allocationStartDate: "2026-05-01",
+            targetMetrics: [
+              { metricCode: "REVENUE_VND", targetValue: 100 },
+              { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
+            ],
+          },
+        ],
+      }),
+      KpiInvalidAllocationError,
+    );
   });
-  await service.approveKpiAllocation(createActor(), {
-    kpiPlanId: created.id,
-  });
-
-  await assert.rejects(
-    service.publishKpiAllocation(createActor(), { kpiPlanId: created.id }),
-    KpiInvalidAllocationError,
+  assert.equal(
+    repository.allocations.some((item) => item.kpiPlanId === created.id),
+    false,
   );
 });
 
@@ -4997,7 +5250,7 @@ test("KPI V2 actual policy snapshot and actual lifecycle are enforced", async ()
 
   assert.equal(published.actualPolicySnapshot?.timezone, "Asia/Ho_Chi_Minh");
   assert.equal(published.actualPolicySnapshot?.entryOpenLocalTime, "00:00");
-  assert.equal(published.actualPolicySnapshot?.entryLockLocalTime, "10:00");
+  assert.equal(published.actualPolicySnapshot?.entryLockLocalTime, "12:00");
   assert.equal(published.actualPolicySnapshot?.maxDirectEditsPerEntry, 3);
 
   const created = await service.createOrSetKpiActual(createActor(), {
@@ -5187,7 +5440,7 @@ test("KPI V2 actualDate accepts leap day in YYYY-MM-DD within plan window", asyn
   assert.equal(result.actualEntry.effectiveValue, 100);
 });
 
-test("KPI V2 direct actual window allows D 00:00 through D+1 10:00 inclusive", async () => {
+test("KPI V3 direct actual window allows D 00:00 through D+1 12:00 inclusive", async () => {
   const now = { value: MAY_5_2026_START_HCM };
   const { service } = createHarness(() => now.value);
   const published = await createPublishedGroupPlan(service);
@@ -5227,7 +5480,7 @@ test("KPI V2 direct actual window allows D 00:00 through D+1 10:00 inclusive", a
   );
 });
 
-test("KPI V2 month-end actual remains in original period until D+1 10:00", async () => {
+test("KPI V3 month-end actual remains in original period until D+1 12:00", async () => {
   const now = { value: Date.UTC(2026, 5, 15, 5, 0, 0, 0) };
   const { service } = createHarness(() => now.value);
   const published = await createPublishedJune2026GroupPlan(service);
@@ -5338,7 +5591,7 @@ test("KPI V2 duplicate POST is idempotent only inside the direct window", async 
   assert.equal(patched.actualEntry.editCount, 1);
 });
 
-test("KPI V2 progress sums effective values, can exceed 100%, and tracks missing entries", async () => {
+test("KPI V2 progress aggregates only accepted values and tracks missing entries", async () => {
   const now = { value: MAY_5_2026_NOON_HCM };
   const { service } = createHarness(() => now.value);
   const published = await createPublishedGroupPlan(service);
@@ -5618,8 +5871,8 @@ test("KPI daily actual status distinguishes timing and entered values", async ()
   assert.equal(detail.actualEntryStatusSummary.expectedEntryCount, 124);
   assert.equal(detail.actualEntryStatusSummary.enteredEntryCount, 2);
   assert.equal(detail.actualEntryStatusSummary.enteredZeroCount, 1);
-  assert.equal(detail.actualEntryStatusSummary.overdueEntryCount, 16);
-  assert.equal(detail.actualEntryStatusSummary.pendingEntryCount, 2);
+  assert.equal(detail.actualEntryStatusSummary.overdueEntryCount, 12);
+  assert.equal(detail.actualEntryStatusSummary.pendingEntryCount, 6);
   assert.equal(detail.actualEntryStatusSummary.notDueEntryCount, 104);
 });
 
@@ -6781,6 +7034,92 @@ test("KPI correction rejects the direct-edit window through exact cutoff and all
   assert.equal(second.actualEntry.correctionCount, 2);
 });
 
+test("KPI correction is versioned, replay-safe, and preserves accepted progress while under review", async () => {
+  const now = { value: MAY_5_2026_NOON_HCM };
+  const { service, authoritativeService } = createHarness(() => now.value);
+  const published = await createPublishedGroupPlan(service);
+  const allocation = published.allocations[0] as KpiAllocation;
+  const created = await service.createOrSetKpiActual(createActor(), {
+    kpiPlanId: published.id,
+    allocationId: allocation.id,
+    metricCode: "REVENUE_VND",
+    actualDate: "2026-05-05",
+    actualValue: 100,
+  });
+  now.value = Date.UTC(2026, 4, 8, 5, 0, 0, 0);
+  const command = {
+    kpiPlanId: published.id,
+    actualEntryId: created.actualEntry.id,
+    correctedValue: 150,
+    reason: "Late correction requires review",
+    expectedEntryVersion: 1,
+    idempotencyKey: "actual-correction-review-1",
+  } as const;
+  const corrected = await authoritativeService.correctKpiActual(
+    createActor(),
+    command,
+  );
+  assert.equal(corrected.correction.requiresReview, true);
+  assert.equal(corrected.actualEntry.lifecycleStatus, "UNDER_REVIEW");
+  assert.equal(corrected.actualEntry.effectiveValue, 100);
+  assert.equal(corrected.actualEntry.acceptedValue, 100);
+
+  const replay = await authoritativeService.correctKpiActual(
+    createActor(),
+    command,
+  );
+  assert.deepEqual(replay, corrected);
+  await assert.rejects(
+    authoritativeService.correctKpiActual(createActor(), {
+      ...command,
+      correctedValue: 151,
+    }),
+    /idempotency key was reused/u,
+  );
+  await assert.rejects(
+    authoritativeService.correctKpiActual(createActor(), {
+      ...command,
+      idempotencyKey: "actual-correction-stale-2",
+    }),
+    /entry version changed/u,
+  );
+  const progress = await service.getKpiProgress(createActor(), {
+    kpiPlanId: published.id,
+  });
+  assert.equal(
+    progress.groupTotals.find((item) => item.metricCode === "REVENUE_VND")
+      ?.actualValue,
+    100,
+  );
+});
+
+test("KPI actual production entry denies persisted source-owned capture policy", async () => {
+  const { service, repository, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const published = await createPublishedGroupPlan(service);
+  seedManagerAssignment(managerRepository);
+  const metricIndex = repository.targets.findIndex(
+    (item) =>
+      item.kpiPlanId === published.id && item.metricCode === "REVENUE_VND",
+  );
+  repository.targets[metricIndex] = {
+    ...(repository.targets[metricIndex] as KpiTargetMetric),
+    actualCaptureMode: "IMPORTED_SOURCE",
+    actualSource: "IMPORTED_SOURCE",
+  };
+  await assert.rejects(
+    service.createOrSetKpiActual(createAllocationReviewManagerActor(), {
+      kpiPlanId: published.id,
+      allocationId: published.allocations[0]!.id,
+      metricCode: "REVENUE_VND",
+      actualDate: "2026-05-05",
+      actualValue: 100,
+    }),
+    /SOURCE_OWNED_MANAGER_READ_ONLY/u,
+  );
+});
+
 test("KPI backoffice TEAM_MANAGER can correct and read managed history only under strict managed authority", async () => {
   const now = { value: MAY_5_2026_NOON_HCM };
   const { service, managerRepository } = createHarness(() => now.value);
@@ -7048,7 +7387,7 @@ test("KPI V2 finalize rejects before period end", async () => {
   );
 });
 
-test("KPI V2 manual finalize rejects during closing window and allows after D+1 10:00", async () => {
+test("KPI V3 manual finalize rejects during closing window and allows after D+1 12:00", async () => {
   const now = { value: MAY_5_2026_NOON_HCM };
   const { service } = createHarness(() => now.value);
   const published = await createPublishedGroupPlan(service);
@@ -7195,9 +7534,7 @@ test("KPI V2 finalize persists operational final result snapshot", async () => {
       ...created.actualEntry,
       id: "actual-wrong-group-final-snapshot",
       allocationId: wrongGroupAllocation.id,
-      memberTalentId: requireTestAllocationMemberTalentId(
-        wrongGroupAllocation,
-      ),
+      memberTalentId: requireTestAllocationMemberTalentId(wrongGroupAllocation),
       actualDate: "2026-05-05",
       actualValue: 500,
       effectiveValue: 500,
@@ -7610,9 +7947,221 @@ test("KPI allocation approval foundation supports manager draft submit and admin
   );
 });
 
-test("KPI allocation approve and reject cannot mutate pending rows after plan FINALIZED", async () => {
+test("KPI allocation lifecycle enforces versions, idempotency, maker-checker, and central superior authority", async () => {
+  const { service, managerRepository, repository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const administrator = createActor();
+  const submitter = createAllocationReviewManagerActor();
+  const created = await service.createKpiPlan(
+    administrator,
+    groupPlanCommand(),
+  );
+  const released = await service.publishKpiPlan(administrator, {
+    kpiPlanId: created.id,
+  });
+  seedManagerAssignment(managerRepository);
+  const draftCommand = {
+    kpiPlanId: created.id,
+    expectedPlanVersion: Number(released.updatedAt),
+    expectedAllocationVersion: 0,
+    expectedMembershipSnapshotVersion: "EMPTY",
+    idempotencyKey: "allocation-draft-1",
+    allocations: [
+      {
+        employmentProfileId: "talent-profile-1",
+        allocationStartDate: "2026-05-01",
+        targetMetrics: [
+          { metricCode: "REVENUE_VND" as const, targetValue: 100 },
+          { metricCode: "ONBOARDED_TALENT_COUNT" as const, targetValue: 1 },
+        ],
+      },
+      {
+        employmentProfileId: "talent-profile-2",
+        allocationStartDate: "2026-05-01",
+        targetMetrics: [
+          { metricCode: "REVENUE_VND" as const, targetValue: 200 },
+          { metricCode: "ONBOARDED_TALENT_COUNT" as const, targetValue: 2 },
+        ],
+      },
+    ],
+  };
+  const draft = await service.upsertKpiAllocationDraft(submitter, draftCommand);
+  const replayedDraft = await service.upsertKpiAllocationDraft(
+    submitter,
+    draftCommand,
+  );
+  assert.deepEqual(
+    replayedDraft.allocations.map((item) => item.id),
+    draft.allocations.map((item) => item.id),
+  );
+  await assert.rejects(
+    service.upsertKpiAllocationDraft(submitter, {
+      ...draftCommand,
+      allocations: draftCommand.allocations.map((item, index) => ({
+        ...item,
+        targetMetrics: item.targetMetrics.map((metric) => ({
+          ...metric,
+          targetValue:
+            index === 0 ? metric.targetValue + 1 : metric.targetValue,
+        })),
+      })),
+    }),
+    /idempotency key was reused/u,
+  );
+  await assert.rejects(
+    service.submitKpiAllocationDraft(submitter, {
+      kpiPlanId: created.id,
+      expectedPlanVersion: Number(released.updatedAt) + 1,
+      expectedAllocationVersion: 1,
+    }),
+    /source plan version changed/u,
+  );
+  const submitted = await service.submitKpiAllocationDraft(submitter, {
+    kpiPlanId: created.id,
+    expectedPlanVersion: Number(released.updatedAt),
+    expectedAllocationVersion: 1,
+    idempotencyKey: "allocation-submit-1",
+  });
+  assert.equal(submitted.allocations[0]?.lifecycleStatus, "SUBMITTED");
+  const submittedReplay = await service.submitKpiAllocationDraft(submitter, {
+    kpiPlanId: created.id,
+    expectedPlanVersion: Number(released.updatedAt),
+    expectedAllocationVersion: 1,
+    idempotencyKey: "allocation-submit-1",
+  });
+  assert.equal(submittedReplay.allocations[0]?.allocationVersion, 2);
+
+  await assert.rejects(
+    service.approveKpiAllocation(submitter, { kpiPlanId: created.id }),
+    /checker decision/u,
+  );
+  await assert.rejects(
+    service.rejectKpiAllocation(submitter, {
+      kpiPlanId: created.id,
+      rejectionReason: "Self-request changes must be denied",
+    }),
+    /checker decision/u,
+  );
+  const superior = createAllocationReviewManagerActor("superior-user");
+  await assert.rejects(
+    service.approveKpiAllocation(superior, { kpiPlanId: created.id }),
+    /central approval responsibility/u,
+  );
+  seedManagerAssignment(
+    managerRepository,
+    "group-1",
+    MAY_2026_START_AT,
+    "superior-profile-1",
+  );
+  const approved = await service.approveKpiAllocation(superior, {
+    kpiPlanId: created.id,
+    expectedAllocationVersion: 2,
+    idempotencyKey: "allocation-approve-1",
+  });
+  assert.equal(approved.allocations[0]?.lifecycleStatus, "APPROVED");
+  assert.equal(approved.allocations[0]?.approvedByActorId, "superior-user");
+
+  const published = await service.publishKpiAllocation(createCheckerActor(), {
+    kpiPlanId: created.id,
+    expectedAllocationVersion: 3,
+    idempotencyKey: "allocation-publish-1",
+  });
+  assert.equal(published.lifecycleStatus, "ACTIVE");
+  assert.equal(published.allocations[0]?.lifecycleStatus, "PUBLISHED");
+  assert.equal(
+    repository.allocations.some(
+      (item) => item.submittedByActorId === item.approvedByActorId,
+    ),
+    false,
+  );
+  assert.equal(managerRepository.assignments.length, 2);
+});
+
+test("KPI allocation production path enforces persisted GROUP_ONLY and HYBRID policy arithmetic", async () => {
+  const { service, managerRepository } = createHarness(
+    () => MAY_5_2026_NOON_HCM,
+  );
+  const created = await service.createKpiPlan(createActor(), {
+    ...groupPlanCommand(),
+    targetMetrics: [
+      {
+        metricCode: "REVENUE_VND",
+        targetValue: "300",
+        allocationMode: "HYBRID",
+        groupRemainder: "100",
+      },
+      {
+        metricCode: "ONBOARDED_TALENT_COUNT",
+        targetValue: "3",
+        allocationMode: "MEMBER_ALLOCATED",
+      },
+      {
+        metricCode: "LIVE_HOURS",
+        targetValue: "10.00",
+        allocationMode: "GROUP_ONLY",
+      },
+    ],
+  });
+  await service.publishKpiPlan(createActor(), { kpiPlanId: created.id });
+  seedManagerAssignment(managerRepository);
+  const validRows = [
+    {
+      employmentProfileId: "talent-profile-1",
+      allocationStartDate: "2026-05-01",
+      targetMetrics: [
+        { metricCode: "REVENUE_VND", targetValue: "100" },
+        { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: "1" },
+      ],
+    },
+    {
+      employmentProfileId: "talent-profile-2",
+      allocationStartDate: "2026-05-01",
+      targetMetrics: [
+        { metricCode: "REVENUE_VND", targetValue: "100" },
+        { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: "2" },
+      ],
+    },
+  ] as const;
+  const draft = await service.upsertKpiAllocationDraft(
+    createAllocationReviewManagerActor(),
+    { kpiPlanId: created.id, allocations: validRows },
+  );
+  assert.deepEqual(
+    draft.targetMetrics.map((metric) => [
+      metric.metricCode,
+      metric.allocationMode,
+      metric.groupRemainderExact,
+    ]),
+    [
+      ["REVENUE_VND", "HYBRID", "100"],
+      ["ONBOARDED_TALENT_COUNT", "MEMBER_ALLOCATED", "0"],
+      ["LIVE_HOURS", "GROUP_ONLY", "10"],
+    ],
+  );
+  await assert.rejects(
+    service.upsertKpiAllocationDraft(createAllocationReviewManagerActor(), {
+      kpiPlanId: created.id,
+      allocations: validRows.map((row, index) => ({
+        ...row,
+        targetMetrics: row.targetMetrics.map((metric) => ({
+          ...metric,
+          targetValue:
+            metric.metricCode === "REVENUE_VND" && index === 0
+              ? "101"
+              : metric.targetValue,
+        })),
+      })),
+    }),
+    /exact group remainder/u,
+  );
+});
+
+test("KPI released plan cannot finalize and finalized plan cannot mutate pending allocation rows", async () => {
   const now = { value: MAY_5_2026_NOON_HCM };
-  const { service, managerRepository } = createHarness(() => now.value);
+  const { service, managerRepository, repository } = createHarness(
+    () => now.value,
+  );
   const managerActor = createBackofficeTeamManagerActor();
   const created = await service.createKpiPlan(
     createActor(),
@@ -7627,8 +8176,8 @@ test("KPI allocation approve and reject cannot mutate pending rows after plan FI
         employmentProfileId: "talent-profile-1",
         allocationStartDate: "2026-05-01",
         targetMetrics: [
-          { metricCode: "REVENUE_VND", targetValue: 100 },
-          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 1 },
+          { metricCode: "REVENUE_VND", targetValue: 300 },
+          { metricCode: "ONBOARDED_TALENT_COUNT", targetValue: 3 },
         ],
       },
     ],
@@ -7637,7 +8186,19 @@ test("KPI allocation approve and reject cannot mutate pending rows after plan FI
     kpiPlanId: created.id,
   });
   now.value = JUNE_1_2026_NOON_HCM;
-  await service.finalizeKpiPlan(createActor(), { kpiPlanId: created.id });
+  await assert.rejects(
+    service.finalizeKpiPlan(createActor(), { kpiPlanId: created.id }),
+    /RELEASED_FOR_ALLOCATION cannot finalize/u,
+  );
+  const storedPlanIndex = repository.plans.findIndex(
+    (plan) => plan.id === created.id,
+  );
+  const storedPlan = repository.plans[storedPlanIndex]!;
+  repository.plans[storedPlanIndex] = {
+    ...storedPlan,
+    status: "FINALIZED",
+    lifecycleStatus: "FINALIZED",
+  };
 
   await assert.rejects(
     service.approveKpiAllocation(createActor(), { kpiPlanId: created.id }),
@@ -8224,8 +8785,8 @@ test("KPI actual workspace exposes correction-aware revenue, coverage, limited m
     expectedEntryCount: 124,
     enteredEntryCount: 3,
     enteredZeroCount: 0,
-    pendingEntryCount: 1,
-    overdueEntryCount: 16,
+    pendingEntryCount: 5,
+    overdueEntryCount: 12,
     excusedEntryCount: 0,
     notRequiredEntryCount: 0,
     notDueEntryCount: 104,
@@ -8274,8 +8835,8 @@ test("KPI actual workspace exposes correction-aware revenue, coverage, limited m
     expectedEntryCount: 124,
     enteredEntryCount: 3,
     enteredZeroCount: 0,
-    pendingEntryCount: 1,
-    overdueEntryCount: 16,
+    pendingEntryCount: 5,
+    overdueEntryCount: 12,
     excusedEntryCount: 0,
     notRequiredEntryCount: 0,
     notDueEntryCount: 104,
@@ -9009,7 +9570,7 @@ test("KPI actual workspace status booleans use accepted daily status AND semanti
     repository,
     actualRepository,
     overdueOnly.id,
-    ["2026-05-05"],
+    ["2026-05-04", "2026-05-05"],
   );
   seedOfficialActualEntriesForDates(
     repository,
@@ -9088,7 +9649,7 @@ test("KPI actual workspace status booleans ignore future, EXCUSED, and NOT_REQUI
   );
 });
 
-test("KPI actual workspace status booleans respect the D+1 10:00 HCM cutoff", async () => {
+test("KPI actual workspace status booleans respect the D+1 12:00 HCM cutoff", async () => {
   const now = { value: MAY_6_2026_10_00_HCM };
   const { service, repository, actualRepository } = createHarness(
     () => now.value,
@@ -9388,6 +9949,40 @@ test("KPI V2 controller rejects unknown create payload keys", async () => {
   }, KpiValidationError);
 });
 
+test("KPI allocation controller requires every version and idempotency field", async () => {
+  const { service } = createHarness();
+  const controller = new KpiAdminController(service) as unknown as {
+    handle(req: Request, actor: Actor, context: "ADMIN"): Promise<unknown>;
+  };
+  const cases = [
+    {
+      command: "KPI_ALLOCATION_DRAFT_UPSERT",
+      body: { allocations: [] },
+    },
+    { command: "KPI_ALLOCATION_SUBMIT", body: {} },
+    { command: "KPI_ALLOCATION_APPROVE", body: {} },
+    {
+      command: "KPI_ALLOCATION_REJECT",
+      body: { rejectionReason: "Changes required" },
+    },
+    { command: "KPI_ALLOCATION_PUBLISH", body: {} },
+    {
+      command: "KPI_ACTUAL_CORRECT",
+      body: { correctedValue: 1, reason: "Correction" },
+    },
+  ] as const;
+  for (const item of cases) {
+    await assert.rejects(async () => {
+      const req = {
+        body: item.body,
+        params: { kpiPlanId: "plan-1" },
+      } as unknown as Request;
+      bindCommand(req, item.command);
+      await controller.handle(req, createActor(), "ADMIN");
+    }, KpiValidationError);
+  }
+});
+
 interface RecordedAudit {
   readonly actorId: string;
   readonly permissionCode: string;
@@ -9455,6 +10050,7 @@ function buildFutureSubjectDraftPlan(subjectType: KpiSubjectType): KpiPlan {
     subjectType,
     subjectId: `future-subject-${subjectType}`,
     status: "DRAFT",
+    lifecycleStatus: "DRAFT",
     currencyCode: "VND",
     periodMonth: "2026-05",
     periodStartAt: MAY_2026_START_AT,
@@ -9873,7 +10469,9 @@ class InMemoryKpiSubjectReadonlyAccess implements KpiSubjectReadonlyAccess {
     const search = input.search?.toLocaleLowerCase("en-US");
     return [...this.orgUnitProfiles.values()]
       .filter((profile) => profile.orgUnitId === orgUnitId)
-      .filter((profile) => ["ACTIVE", "ON_LEAVE"].includes(profile.employmentStatus))
+      .filter((profile) =>
+        ["ACTIVE", "ON_LEAVE"].includes(profile.employmentStatus),
+      )
       .map((profile) => ({
         employmentProfileId: profile.employmentProfileId,
         employeeCode: profile.employeeCode,
@@ -9896,6 +10494,9 @@ class InMemoryKpiSubjectReadonlyAccess implements KpiSubjectReadonlyAccess {
     if (linkedUserId === "manager-user") {
       return { employmentProfileId: "manager-profile-1" };
     }
+    if (linkedUserId === "superior-user") {
+      return { employmentProfileId: "superior-profile-1" };
+    }
     if (linkedUserId === "talent-user") {
       return { employmentProfileId: "talent-profile-1" };
     }
@@ -9917,9 +10518,57 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
   readonly targets: KpiTargetMetric[] = [];
   readonly allocations: KpiAllocation[] = [];
   readonly actualExcuses: KpiActualSlotExcuse[] = [];
+  readonly allocationOperations: KpiAllocationOperationRecord[] = [];
   actualEntries: KpiActualEntry[] = [];
   countAllocationsByPlanIdsCallCount = 0;
   listAllocationsByPlanIdCallCount = 0;
+
+  async claimAllocationOperation(input: ClaimKpiAllocationOperationInput) {
+    const existing = this.allocationOperations.find(
+      (item) =>
+        item.actorId === input.actorId &&
+        item.kpiPlanId === input.kpiPlanId &&
+        item.idempotencyKey === input.idempotencyKey,
+    );
+    if (existing) {
+      return { isNew: false, record: existing };
+    }
+    const record: KpiAllocationOperationRecord = {
+      id: `${input.actorId}:${input.kpiPlanId}:${input.idempotencyKey}`,
+      actorId: input.actorId,
+      kpiPlanId: input.kpiPlanId,
+      operation: input.operation,
+      idempotencyKey: input.idempotencyKey,
+      payloadFingerprint: input.payloadFingerprint,
+      result: null,
+      createdAt: input.now,
+      completedAt: null,
+    };
+    this.allocationOperations.push(record);
+    return { isNew: true, record };
+  }
+
+  async completeAllocationOperation(
+    input: CompleteKpiAllocationOperationInput,
+  ): Promise<KpiAllocationOperationRecord> {
+    const index = this.allocationOperations.findIndex(
+      (item) =>
+        item.id === input.operationId &&
+        item.operation === input.operation &&
+        item.payloadFingerprint === input.payloadFingerprint &&
+        item.result === null,
+    );
+    if (index < 0) {
+      throw new Error("KPI allocation operation completion CAS failed");
+    }
+    const completed: KpiAllocationOperationRecord = {
+      ...(this.allocationOperations[index] as KpiAllocationOperationRecord),
+      result: input.result,
+      completedAt: input.completedAt,
+    };
+    this.allocationOperations[index] = completed;
+    return completed;
+  }
 
   async insertPlan(plan: KpiPlan): Promise<KpiPlan> {
     this.plans.push(plan);
@@ -9960,7 +10609,10 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     readonly updatedByActorId: string;
   }): Promise<KpiPlan | null> {
     const index = this.plans.findIndex(
-      (plan) => plan.id === input.kpiPlanId && plan.status === "DRAFT",
+      (plan) =>
+        plan.id === input.kpiPlanId &&
+        plan.status === "DRAFT" &&
+        plan.lifecycleStatus === "DRAFT",
     );
     if (index < 0) {
       return null;
@@ -9993,7 +10645,11 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
   async transitionStatus(input: {
     readonly kpiPlanId: string;
     readonly fromStatuses: readonly KpiPlanStatus[];
+    readonly fromLifecycleStatuses: readonly NonNullable<
+      KpiPlan["lifecycleStatus"]
+    >[];
     readonly toStatus: KpiPlanStatus;
+    readonly lifecycleStatus?: KpiPlan["lifecycleStatus"];
     readonly publishedAt?: number | null;
     readonly publishedByActorId?: string | null;
     readonly actualPolicySnapshot?: KpiActualPolicySnapshot | null;
@@ -10007,7 +10663,10 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
   }): Promise<KpiPlan | null> {
     const index = this.plans.findIndex(
       (plan) =>
-        plan.id === input.kpiPlanId && input.fromStatuses.includes(plan.status),
+        plan.id === input.kpiPlanId &&
+        input.fromStatuses.includes(plan.status) &&
+        plan.lifecycleStatus !== undefined &&
+        input.fromLifecycleStatuses.includes(plan.lifecycleStatus),
     );
     if (index < 0) {
       return null;
@@ -10016,6 +10675,7 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     const updated = {
       ...current,
       status: input.toStatus,
+      lifecycleStatus: input.lifecycleStatus ?? current.lifecycleStatus,
       publishedAt:
         input.publishedAt === undefined
           ? current.publishedAt
@@ -10142,7 +10802,10 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
           input.subjectType === undefined &&
           input.subjectTypes !== undefined &&
           !input.subjectTypes.includes(
-            plan.subjectType as Extract<KpiSubjectType, "TALENT_GROUP" | "ORG_UNIT">,
+            plan.subjectType as Extract<
+              KpiSubjectType,
+              "TALENT_GROUP" | "ORG_UNIT"
+            >,
           )
         ) {
           return false;
@@ -10327,6 +10990,9 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
   async replaceAllocationsForPlan(input: {
     readonly kpiPlanId: string;
     readonly allowedCurrentStatuses: readonly KpiAllocation["allocationStatus"][];
+    readonly allowedCurrentLifecycleStatuses: readonly NonNullable<
+      KpiAllocation["lifecycleStatus"]
+    >[];
     readonly allocations: readonly KpiAllocation[];
   }): Promise<void> {
     for (const allocation of input.allocations) {
@@ -10336,7 +11002,13 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
       this.allocations.some(
         (allocation) =>
           allocation.kpiPlanId === input.kpiPlanId &&
-          !input.allowedCurrentStatuses.includes(allocation.allocationStatus),
+          (!input.allowedCurrentStatuses.includes(
+            allocation.allocationStatus,
+          ) ||
+            allocation.lifecycleStatus === undefined ||
+            !input.allowedCurrentLifecycleStatuses.includes(
+              allocation.lifecycleStatus,
+            )),
       )
     ) {
       throw new Error("allocation status conflict");
@@ -10350,8 +11022,12 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
 
   async transitionAllocationsForPlan(input: {
     readonly kpiPlanId: string;
-    readonly fromStatus: KpiAllocation["allocationStatus"];
+    readonly fromStatuses: readonly KpiAllocation["allocationStatus"][];
+    readonly fromLifecycleStatuses: readonly NonNullable<
+      KpiAllocation["lifecycleStatus"]
+    >[];
     readonly toStatus: KpiAllocation["allocationStatus"];
+    readonly lifecycleStatus?: KpiAllocation["lifecycleStatus"];
     readonly updatedAt: number;
     readonly updatedByActorId: string;
     readonly submittedAt?: number | null;
@@ -10364,19 +11040,32 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     readonly rejectionReason?: string | null;
     readonly publishedAt?: number | null;
     readonly publishedByActorId?: string | null;
+    readonly allocationVersion?: number;
+    readonly idempotencyKey?: string | null;
+    readonly idempotencyFingerprint?: string | null;
+    readonly correlationId?: string | null;
   }): Promise<number> {
     let modified = 0;
     for (let index = 0; index < this.allocations.length; index += 1) {
       const allocation = this.allocations[index] as KpiAllocation;
       if (
         allocation.kpiPlanId !== input.kpiPlanId ||
-        allocation.allocationStatus !== input.fromStatus
+        !input.fromStatuses.includes(allocation.allocationStatus) ||
+        allocation.lifecycleStatus === undefined ||
+        !input.fromLifecycleStatuses.includes(allocation.lifecycleStatus)
       ) {
         continue;
       }
       this.allocations[index] = {
         ...allocation,
         allocationStatus: input.toStatus,
+        lifecycleStatus: input.lifecycleStatus ?? allocation.lifecycleStatus,
+        allocationVersion:
+          input.allocationVersion ?? allocation.allocationVersion,
+        idempotencyKey: input.idempotencyKey ?? allocation.idempotencyKey,
+        idempotencyFingerprint:
+          input.idempotencyFingerprint ?? allocation.idempotencyFingerprint,
+        correlationId: input.correlationId ?? allocation.correlationId,
         updatedAt: input.updatedAt,
         updatedByActorId: input.updatedByActorId,
         submittedAt:
@@ -10612,6 +11301,7 @@ class InMemoryKpiActualRepository implements KpiActualRepository {
 
   async updateEntryDirect(input: {
     readonly actualEntryId: string;
+    readonly expectedEntryVersion: number;
     readonly actualValue: number;
     readonly updatedAt: number;
     readonly updatedByActorId: string;
@@ -10620,6 +11310,7 @@ class InMemoryKpiActualRepository implements KpiActualRepository {
     const index = this.entries.findIndex(
       (entry) =>
         entry.id === input.actualEntryId &&
+        (entry.entryVersion ?? 1) === input.expectedEntryVersion &&
         entry.editCount < input.maxCurrentEditCountExclusive,
     );
     if (index < 0) {
@@ -10630,7 +11321,10 @@ class InMemoryKpiActualRepository implements KpiActualRepository {
       ...current,
       actualValue: input.actualValue,
       effectiveValue: input.actualValue,
+      acceptedValue: input.actualValue,
+      acceptedVersion: input.expectedEntryVersion + 1,
       editCount: current.editCount + 1,
+      entryVersion: (current.entryVersion ?? 1) + 1,
       updatedAt: input.updatedAt,
       updatedByActorId: input.updatedByActorId,
       lastEditedAt: input.updatedAt,
@@ -10642,11 +11336,15 @@ class InMemoryKpiActualRepository implements KpiActualRepository {
 
   async insertCorrectionAndApply(input: {
     readonly correction: KpiActualCorrection;
+    readonly expectedEntryVersion: number;
+    readonly applyAcceptedProjection: boolean;
     readonly updatedAt: number;
     readonly updatedByActorId: string;
   }): Promise<KpiActualEntry | null> {
     const index = this.entries.findIndex(
-      (entry) => entry.id === input.correction.actualEntryId,
+      (entry) =>
+        entry.id === input.correction.actualEntryId &&
+        (entry.entryVersion ?? 1) === input.expectedEntryVersion,
     );
     if (index < 0) {
       return null;
@@ -10655,9 +11353,22 @@ class InMemoryKpiActualRepository implements KpiActualRepository {
     const current = this.entries[index] as KpiActualEntry;
     const updated: KpiActualEntry = {
       ...current,
-      effectiveValue: input.correction.correctedValue,
+      effectiveValue: input.applyAcceptedProjection
+        ? input.correction.correctedValue
+        : current.effectiveValue,
+      acceptedValue: input.applyAcceptedProjection
+        ? input.correction.correctedValue
+        : current.acceptedValue,
+      acceptedVersion: input.applyAcceptedProjection
+        ? input.correction.replacementEntryVersion
+        : current.acceptedVersion,
       correctionCount: current.correctionCount + 1,
       latestCorrectionId: input.correction.id,
+      lifecycleStatus:
+        input.correction.replacementLifecycleStatus ?? "CORRECTED",
+      entryVersion:
+        input.correction.replacementEntryVersion ??
+        (current.entryVersion ?? 1) + 1,
       updatedAt: input.updatedAt,
       updatedByActorId: input.updatedByActorId,
     };
@@ -10783,9 +11494,7 @@ class InMemoryManagerAssignmentRepository implements TalentGroupManagerAssignmen
   }
 }
 
-class InMemoryResponsibilityManagedScopeReader
-  implements ResponsibilityManagedScopeReader
-{
+class InMemoryResponsibilityManagedScopeReader implements ResponsibilityManagedScopeReader {
   constructor(
     private readonly talentGroups: InMemoryManagerAssignmentRepository,
     private readonly orgUnits: InMemoryOrgUnitManagerAssignmentRepository,
@@ -10813,6 +11522,16 @@ class InMemoryResponsibilityManagedScopeReader
       talentGroupIds: uniqueTextValues(
         talentGroupAssignments.map((assignment) => assignment.groupId),
       ),
+      talentGroupScopes: talentGroupAssignments.map((assignment) => ({
+        talentGroupId: assignment.groupId,
+        role: assignment.role,
+        actionMask:
+          assignment.managerEmploymentProfileId === "superior-profile-1" ||
+          assignment.managerEmploymentProfileId === "manager-profile-1"
+            ? ["KPI_ALLOCATION_APPROVE"]
+            : [],
+        isPrimary: assignment.isPrimary,
+      })),
       orgUnitIds: uniqueTextValues(
         orgUnitAssignments.map((assignment) => assignment.orgUnitId),
       ),
@@ -10831,9 +11550,7 @@ function uniqueTextValues(values: readonly string[]): readonly string[] {
   return [...new Set(values.filter((value) => value.trim().length > 0))].sort();
 }
 
-class InMemoryOrgUnitManagerAssignmentRepository
-  implements OrgUnitManagerAssignmentRepository
-{
+class InMemoryOrgUnitManagerAssignmentRepository implements OrgUnitManagerAssignmentRepository {
   readonly assignments: OrgUnitManagerAssignment[] = [];
 
   async insertAssignment(
@@ -10857,8 +11574,8 @@ class InMemoryOrgUnitManagerAssignmentRepository
   ): Promise<readonly OrgUnitManagerAssignment[]> {
     return this.assignments.filter(
       (assignment) =>
-        assignment.managerEmploymentProfileId ===
-          managerEmploymentProfileId && isActiveAt(assignment, asOf),
+        assignment.managerEmploymentProfileId === managerEmploymentProfileId &&
+        isActiveAt(assignment, asOf),
     );
   }
 
@@ -10869,8 +11586,7 @@ class InMemoryOrgUnitManagerAssignmentRepository
   ): Promise<readonly OrgUnitManagerAssignment[]> {
     return this.assignments.filter(
       (assignment) =>
-        assignment.managerEmploymentProfileId ===
-          managerEmploymentProfileId &&
+        assignment.managerEmploymentProfileId === managerEmploymentProfileId &&
         assignment.role === role &&
         isActiveAt(assignment, asOf),
     );
@@ -11029,9 +11745,7 @@ function removeMatching<T>(items: T[], predicate: (item: T) => boolean): void {
 
 function assertValidTestAllocationIdentity(allocation: KpiAllocation): void {
   if (allocation.subjectId.trim().length === 0) {
-    throw new KpiInvalidAllocationError(
-      "KPI allocation subjectId is required",
-    );
+    throw new KpiInvalidAllocationError("KPI allocation subjectId is required");
   }
   const memberTalentId =
     typeof allocation.memberTalentId === "string" &&

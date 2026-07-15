@@ -1,9 +1,7 @@
 import crypto from "crypto";
 import { ClientSession, MongoServerError } from "mongodb";
 import { Actor } from "@core/actor/actor";
-import {
-  AuthoritativeAdminMutationBridge,
-} from "@core/application/authoritative-admin-mutation.bridge";
+import { AuthoritativeAdminMutationBridge } from "@core/application/authoritative-admin-mutation.bridge";
 import { AuthoritativeAdminMutationIdentity } from "@core/application/authoritative-admin-mutation.permission-map";
 import { AuditGuard } from "@core/audit/audit.guard";
 import { PermissionContract } from "@core/permission/permission.contract";
@@ -30,9 +28,7 @@ import {
 import { WorkScheduleOrgUnitReadonlyAccess } from "../domain/work-schedule-org-unit-readonly-access";
 import { WorkScheduleTalentGroupReadonlyAccess } from "../domain/work-schedule-talent-group-readonly-access";
 import { MonthlyRosterTargetType } from "../domain/work-schedule.types";
-import {
-  WorkScheduleAvailabilityBatchRepository,
-} from "../domain/work-schedule-availability.repository";
+import { WorkScheduleAvailabilityBatchRepository } from "../domain/work-schedule-availability.repository";
 import {
   WORK_SCHEDULE_AVAILABILITY_BATCH_STATUSES,
   WORK_SCHEDULE_AVAILABILITY_TAXONOMY_CODES,
@@ -92,7 +88,10 @@ interface NormalizedSubmitCommand {
 
 interface TargetResolution {
   readonly targetRef: ReferenceSummary | null;
-  readonly profiles: ReadonlyMap<string, WorkScheduleReferencedEmploymentProfile>;
+  readonly profiles: ReadonlyMap<
+    string,
+    WorkScheduleReferencedEmploymentProfile
+  >;
 }
 
 export interface ListManagerAvailabilityTargetMembersQuery {
@@ -142,28 +141,21 @@ export class WorkScheduleAvailabilityBatchAdminService {
     const target = await this.resolveAssignedTarget(actor, manager.id, {
       targetType,
       targetOrgUnitId: targetType === "ORG_UNIT" ? targetId : null,
-      targetTalentGroupId:
-        targetType === "TALENT_GROUP" ? targetId : null,
+      targetTalentGroupId: targetType === "TALENT_GROUP" ? targetId : null,
     });
     const targetName =
-      target.targetRef?.name ??
-      target.targetRef?.displayName ??
-      targetId;
+      target.targetRef?.name ?? target.targetRef?.displayName ?? targetId;
     const members = [...target.profiles.values()]
       .map((profile) => ({
         employmentProfileId: profile.id,
         displayName:
           profile.ref?.displayName ?? profile.ref?.code ?? profile.id,
-        ...(profile.ref?.code
-          ? { employeeCode: profile.ref.code }
-          : {}),
+        ...(profile.ref?.code ? { employeeCode: profile.ref.code } : {}),
       }))
       .sort(
         (left, right) =>
           left.displayName.localeCompare(right.displayName) ||
-          left.employmentProfileId.localeCompare(
-            right.employmentProfileId,
-          ),
+          left.employmentProfileId.localeCompare(right.employmentProfileId),
       );
 
     return {
@@ -173,9 +165,7 @@ export class WorkScheduleAvailabilityBatchAdminService {
         targetMode: "EXACT_ONLY",
         name: targetName,
         displayName: target.targetRef?.displayName ?? targetName,
-        ...(target.targetRef?.code
-          ? { code: target.targetRef.code }
-          : {}),
+        ...(target.targetRef?.code ? { code: target.targetRef.code } : {}),
       },
       members,
       totalMembers: members.length,
@@ -382,7 +372,10 @@ export class WorkScheduleAvailabilityBatchAdminService {
       actor,
       Permission.WORK_SCHEDULE_READ,
     );
-    const reason = normalizeReason(command.cancellationReason, "cancellationReason");
+    const reason = normalizeReason(
+      command.cancellationReason,
+      "cancellationReason",
+    );
     const manager = await this.requireManagerProfile(actor.id);
     return this.executeMutation(
       actor,
@@ -403,7 +396,10 @@ export class WorkScheduleAvailabilityBatchAdminService {
             `Availability batch ${batch.id} cannot be cancelled from ${batch.status}`,
           );
         }
-        const lines = await this.repository.listLinesByBatchId(batch.id, session);
+        const lines = await this.repository.listLinesByBatchId(
+          batch.id,
+          session,
+        );
         lines.forEach(assertPendingLine);
         const now = this.clock();
         for (const line of lines) {
@@ -444,7 +440,10 @@ export class WorkScheduleAvailabilityBatchAdminService {
       actor,
       Permission.WORK_SCHEDULE_READ,
     );
-    const reason = normalizeReason(command.cancellationReason, "cancellationReason");
+    const reason = normalizeReason(
+      command.cancellationReason,
+      "cancellationReason",
+    );
     const manager = await this.requireManagerProfile(actor.id);
     return this.executeMutation(
       actor,
@@ -499,7 +498,9 @@ export class WorkScheduleAvailabilityBatchAdminService {
     this.assertGlobalAuthority(actor);
     const result = await this.repository.listBatches(normalizeListQuery(query));
     return {
-      items: await Promise.all(result.items.map((item) => this.toListItem(item))),
+      items: await Promise.all(
+        result.items.map((item) => this.toListItem(item)),
+      ),
       nextCursor: result.nextCursor,
     };
   }
@@ -520,10 +521,12 @@ export class WorkScheduleAvailabilityBatchAdminService {
   }
 
   async approveAdminLines(
-    actor: Actor,
-    command: DecideWorkScheduleAvailabilityLinesCommand,
+    _actor: Actor,
+    _command: DecideWorkScheduleAvailabilityLinesCommand,
   ): Promise<WorkScheduleAvailabilityBatchMutationResult> {
-    return this.decideAdminLines(actor, command, "APPROVED");
+    throw new WorkScheduleValidationError(
+      "Availability approval without atomic Monthly Roster application is prohibited; use applyAvailabilityLinesToMonthlyRoster",
+    );
   }
 
   async rejectAdminLines(
@@ -547,7 +550,10 @@ export class WorkScheduleAvailabilityBatchAdminService {
     command: DecideWorkScheduleAvailabilityLinesCommand,
     status: "APPROVED" | "REJECTED" | "CANCELLED",
   ): Promise<WorkScheduleAvailabilityBatchMutationResult> {
-    const permission = this.assertPermission(actor, Permission.WORK_SCHEDULE_UPDATE);
+    const permission = this.assertPermission(
+      actor,
+      Permission.WORK_SCHEDULE_UPDATE,
+    );
     const lineIds = normalizeLineIds(command.lineIds);
     const note =
       normalizeOptionalText(command.adminDecisionNote, "adminDecisionNote") ??
@@ -657,10 +663,11 @@ export class WorkScheduleAvailabilityBatchAdminService {
           "Selected OrgUnit target must be ACTIVE",
         );
       }
-      const profiles = await this.employmentProfileReadonlyAccess.listByOrgUnitId(
-        input.targetOrgUnitId as string,
-        session,
-      );
+      const profiles =
+        await this.employmentProfileReadonlyAccess.listByOrgUnitId(
+          input.targetOrgUnitId as string,
+          session,
+        );
       return {
         targetRef: target.ref ?? { id: target.id, status: target.status },
         profiles: new Map(
@@ -845,9 +852,7 @@ export class WorkScheduleAvailabilityBatchAdminService {
     managerEmploymentProfileId: string,
     action: string,
   ): void {
-    if (
-      batch.submittedByEmploymentProfileId !== managerEmploymentProfileId
-    ) {
+    if (batch.submittedByEmploymentProfileId !== managerEmploymentProfileId) {
       throw new WorkSchedulePermissionScopeError(
         `Manager can ${action} only own WorkSchedule availability batches`,
       );
@@ -893,10 +898,7 @@ export class WorkScheduleAvailabilityBatchAdminService {
     };
   }
 
-  private assertPermission(
-    actor: Actor,
-    code: Permission,
-  ): PermissionContract {
+  private assertPermission(actor: Actor, code: Permission): PermissionContract {
     PermissionGuard.assertAdminActor(actor);
     const permission = PermissionResolver.resolve(code);
     PermissionGuard.assert(actor, permission);
@@ -1024,15 +1026,11 @@ function normalizeSubmitCommand(
   const targetOrgUnitId =
     normalizeOptionalText(command.targetOrgUnitId, "targetOrgUnitId") ?? null;
   const targetTalentGroupId =
-    normalizeOptionalText(
-      command.targetTalentGroupId,
-      "targetTalentGroupId",
-    ) ?? null;
+    normalizeOptionalText(command.targetTalentGroupId, "targetTalentGroupId") ??
+    null;
   if (
-    (targetType === "ORG_UNIT" &&
-      (!targetOrgUnitId || targetTalentGroupId)) ||
-    (targetType === "TALENT_GROUP" &&
-      (!targetTalentGroupId || targetOrgUnitId))
+    (targetType === "ORG_UNIT" && (!targetOrgUnitId || targetTalentGroupId)) ||
+    (targetType === "TALENT_GROUP" && (!targetTalentGroupId || targetOrgUnitId))
   ) {
     throw new WorkScheduleValidationError(
       "Exactly one target id is required for targetType",
@@ -1048,7 +1046,9 @@ function normalizeSubmitCommand(
     );
   }
   if (!Array.isArray(command.lines) || command.lines.length === 0) {
-    throw new WorkScheduleValidationError("lines must contain at least one line");
+    throw new WorkScheduleValidationError(
+      "lines must contain at least one line",
+    );
   }
   if (command.lines.length > MAX_LINES_PER_BATCH) {
     throw new WorkScheduleValidationError(
@@ -1057,7 +1057,9 @@ function normalizeSubmitCommand(
   }
   const note = normalizeOptionalText(command.note, "note") ?? null;
   if (note && note.length > 1000) {
-    throw new WorkScheduleValidationError("note must be at most 1000 characters");
+    throw new WorkScheduleValidationError(
+      "note must be at most 1000 characters",
+    );
   }
   return {
     periodMonth,
@@ -1322,10 +1324,7 @@ function normalizeMonth(value: unknown, field: string): string {
   return month;
 }
 
-function normalizeOptionalDate(
-  value: unknown,
-  field: string,
-): string | null {
+function normalizeOptionalDate(value: unknown, field: string): string | null {
   if (value === undefined || value === null) {
     return null;
   }
@@ -1361,13 +1360,17 @@ function normalizeOptionalLocalTime(
 
 function normalizeLineIds(value: unknown): readonly string[] {
   if (!Array.isArray(value) || value.length === 0) {
-    throw new WorkScheduleValidationError("lineIds must contain at least one id");
+    throw new WorkScheduleValidationError(
+      "lineIds must contain at least one id",
+    );
   }
   const ids = value.map((item, index) =>
     normalizeRequiredText(item, `lineIds[${index}]`),
   );
   if (new Set(ids).size !== ids.length) {
-    throw new WorkScheduleValidationError("lineIds must not contain duplicates");
+    throw new WorkScheduleValidationError(
+      "lineIds must not contain duplicates",
+    );
   }
   return ids;
 }
@@ -1436,9 +1439,7 @@ function createPendingDuplicateKey(
     .digest("hex");
 }
 
-function isPendingDuplicateKeyError(
-  error: unknown,
-): error is MongoServerError {
+function isPendingDuplicateKeyError(error: unknown): error is MongoServerError {
   if (!(error instanceof MongoServerError) || error.code !== 11000) {
     return false;
   }

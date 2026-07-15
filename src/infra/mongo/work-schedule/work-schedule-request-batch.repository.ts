@@ -43,6 +43,8 @@ interface WorkScheduleRequestLineDocument {
   readonly requestType: WorkScheduleRequestType;
   readonly memberEmploymentProfileId: string;
   readonly workShiftId: string | null;
+  readonly sourceWorkShiftVersion?: number | null;
+  readonly sourceGenerationRunId?: string | null;
   readonly requestedStartAt: number | null;
   readonly requestedEndAt: number | null;
   readonly timezone: string;
@@ -56,6 +58,14 @@ interface WorkScheduleRequestLineDocument {
   readonly cancellationReason: string | null;
   readonly failureReason: string | null;
   readonly appliedWorkShiftId: string | null;
+  readonly applicationState?: WorkScheduleRequestLineRecord["applicationState"];
+  readonly applicationLineage?: WorkScheduleRequestLineRecord["applicationLineage"];
+  readonly applicationIdempotencyKey?: string | null;
+  readonly applicationPayloadFingerprint?: string | null;
+  readonly leadTimeClassification?: WorkScheduleRequestLineRecord["leadTimeClassification"];
+  readonly leadTimeProposedStartAt?: number;
+  readonly decisionSlaMinutes?: WorkScheduleRequestLineRecord["decisionSlaMinutes"];
+  readonly emergencyOverrideReason?: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly approvedAt: number | null;
@@ -75,9 +85,7 @@ type EncodedCursor = {
   readonly id: string;
 };
 
-export class NativeMongoWorkScheduleRequestBatchRepository
-  implements WorkScheduleRequestBatchRepository
-{
+export class NativeMongoWorkScheduleRequestBatchRepository implements WorkScheduleRequestBatchRepository {
   private readonly batches: Collection<WorkScheduleRequestBatchDocument>;
   private readonly lines: Collection<WorkScheduleRequestLineDocument>;
 
@@ -91,10 +99,7 @@ export class NativeMongoWorkScheduleRequestBatchRepository
     lines: readonly WorkScheduleRequestLineRecord[],
     session: ClientSession,
   ): Promise<WorkScheduleRequestBatchRecord> {
-    await this.batches.insertOne(
-      toBatchDocument(batch),
-      withSession(session),
-    );
+    await this.batches.insertOne(toBatchDocument(batch), withSession(session));
 
     if (lines.length > 0) {
       await this.lines.insertMany(
@@ -145,8 +150,7 @@ export class NativeMongoWorkScheduleRequestBatchRepository
     }
     if (input.submittedByEmploymentProfileId) {
       filters.push({
-        submittedByEmploymentProfileId:
-          input.submittedByEmploymentProfileId,
+        submittedByEmploymentProfileId: input.submittedByEmploymentProfileId,
       });
     }
     if (input.submittedByActorId) {
@@ -240,6 +244,23 @@ export class NativeMongoWorkScheduleRequestBatchRepository
     applyOptional(set, "cancellationReason", input.cancellationReason);
     applyOptional(set, "failureReason", input.failureReason);
     applyOptional(set, "appliedWorkShiftId", input.appliedWorkShiftId);
+    applyOptional(set, "applicationState", input.applicationState);
+    applyOptional(set, "applicationLineage", input.applicationLineage);
+    applyOptional(
+      set,
+      "applicationIdempotencyKey",
+      input.applicationIdempotencyKey,
+    );
+    applyOptional(
+      set,
+      "applicationPayloadFingerprint",
+      input.applicationPayloadFingerprint,
+    );
+    applyOptional(
+      set,
+      "emergencyOverrideReason",
+      input.emergencyOverrideReason,
+    );
     applyOptional(set, "approvedAt", input.approvedAt);
     applyOptional(set, "approvedByActorId", input.approvedByActorId);
     applyOptional(set, "rejectedAt", input.rejectedAt);
@@ -344,6 +365,12 @@ function toLineDocument(
     requestType: line.requestType,
     memberEmploymentProfileId: line.memberEmploymentProfileId,
     workShiftId: line.workShiftId,
+    ...(line.sourceWorkShiftVersion !== undefined
+      ? { sourceWorkShiftVersion: line.sourceWorkShiftVersion }
+      : {}),
+    ...(line.sourceGenerationRunId !== undefined
+      ? { sourceGenerationRunId: line.sourceGenerationRunId }
+      : {}),
     requestedStartAt: line.requestedStartAt,
     requestedEndAt: line.requestedEndAt,
     timezone: line.timezone,
@@ -357,6 +384,14 @@ function toLineDocument(
     cancellationReason: line.cancellationReason,
     failureReason: line.failureReason,
     appliedWorkShiftId: line.appliedWorkShiftId,
+    applicationState: line.applicationState,
+    applicationLineage: line.applicationLineage,
+    applicationIdempotencyKey: line.applicationIdempotencyKey,
+    applicationPayloadFingerprint: line.applicationPayloadFingerprint,
+    leadTimeClassification: line.leadTimeClassification,
+    leadTimeProposedStartAt: line.leadTimeProposedStartAt,
+    decisionSlaMinutes: line.decisionSlaMinutes,
+    emergencyOverrideReason: line.emergencyOverrideReason,
     createdAt: line.createdAt,
     updatedAt: line.updatedAt,
     approvedAt: line.approvedAt,
@@ -382,6 +417,12 @@ function toLineRecord(
     requestType: doc.requestType,
     memberEmploymentProfileId: doc.memberEmploymentProfileId,
     workShiftId: doc.workShiftId,
+    ...(doc.sourceWorkShiftVersion !== undefined
+      ? { sourceWorkShiftVersion: doc.sourceWorkShiftVersion }
+      : {}),
+    ...(doc.sourceGenerationRunId !== undefined
+      ? { sourceGenerationRunId: doc.sourceGenerationRunId }
+      : {}),
     requestedStartAt: doc.requestedStartAt,
     requestedEndAt: doc.requestedEndAt,
     timezone: doc.timezone,
@@ -395,6 +436,14 @@ function toLineRecord(
     cancellationReason: doc.cancellationReason,
     failureReason: doc.failureReason,
     appliedWorkShiftId: doc.appliedWorkShiftId,
+    applicationState: doc.applicationState,
+    applicationLineage: doc.applicationLineage,
+    applicationIdempotencyKey: doc.applicationIdempotencyKey,
+    applicationPayloadFingerprint: doc.applicationPayloadFingerprint,
+    leadTimeClassification: doc.leadTimeClassification,
+    leadTimeProposedStartAt: doc.leadTimeProposedStartAt,
+    decisionSlaMinutes: doc.decisionSlaMinutes,
+    emergencyOverrideReason: doc.emergencyOverrideReason,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
     approvedAt: doc.approvedAt,
@@ -420,9 +469,7 @@ function applyOptional(
   }
 }
 
-function withSession(
-  session?: ClientSession,
-): { session?: ClientSession } {
+function withSession(session?: ClientSession): { session?: ClientSession } {
   return session ? { session } : {};
 }
 
@@ -438,9 +485,7 @@ function buildQuery(
   return { $and: [...filters] };
 }
 
-function encodeCursor(
-  doc: WorkScheduleRequestBatchDocument,
-): string {
+function encodeCursor(doc: WorkScheduleRequestBatchDocument): string {
   return Buffer.from(
     JSON.stringify({
       createdAt: doc.createdAt,

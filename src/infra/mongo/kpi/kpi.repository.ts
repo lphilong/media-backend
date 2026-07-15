@@ -9,6 +9,10 @@ import { BaseRepository } from "@infra/database/repository";
 import { KpiInvalidAllocationError } from "@modules/kpi/domain/kpi.errors";
 import {
   KpiActualWorkspaceDerivedPlanSortRow,
+  ClaimKpiAllocationOperationInput,
+  CompleteKpiAllocationOperationInput,
+  KpiAllocationOperationClaim,
+  KpiAllocationOperationRecord,
   KpiPlanListCursor,
   KpiActualSlotExcuseIdentityInput,
   KpiPlanRepository,
@@ -52,6 +56,7 @@ interface KpiPlanDocument {
   readonly subjectType: KpiSubjectType;
   readonly subjectId: string;
   readonly status: KpiPlanStatus;
+  readonly lifecycleStatus?: KpiPlan["lifecycleStatus"];
   readonly currencyCode: KpiPlanCurrency;
   readonly periodMonth: string;
   readonly periodStartAt: number;
@@ -77,9 +82,17 @@ interface KpiTargetMetricDocument {
   readonly kpiPlanId: string;
   readonly metricCode: KpiMetricCode;
   readonly targetValue: number;
+  readonly targetValueExact?: string;
+  readonly allocationMode?: KpiTargetMetric["allocationMode"];
+  readonly allocationScale?: number;
+  readonly groupRemainderExact?: string;
   readonly unit: KpiMetricUnit;
   readonly rollupMethod: KpiRollupMethod;
   readonly actualSource: KpiActualSource;
+  readonly actualCaptureMode?: KpiTargetMetric["actualCaptureMode"];
+  readonly actualReviewMode?: KpiTargetMetric["actualReviewMode"];
+  readonly actualEvidenceMode?: KpiTargetMetric["actualEvidenceMode"];
+  readonly actualPolicyVersion?: string;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -94,6 +107,22 @@ interface KpiAllocationDocument {
   readonly memberTalentId?: string | null;
   readonly membershipId: string | null;
   readonly allocationStatus: KpiAllocationStatus;
+  readonly lifecycleStatus?: KpiAllocation["lifecycleStatus"];
+  readonly allocationMode?: "GROUP_ONLY" | "MEMBER_ALLOCATED" | "HYBRID";
+  readonly sourcePlanVersion?: number;
+  readonly allocationVersion?: number;
+  readonly membershipSnapshotVersion?: string | null;
+  readonly eligibleMemberSnapshot?: {
+    readonly employmentProfileId: string;
+    readonly talentId: string | null;
+    readonly membershipId: string | null;
+    readonly membershipStatus: string | null;
+  } | null;
+  readonly idempotencyKey?: string | null;
+  readonly idempotencyFingerprint?: string | null;
+  readonly correlationId?: string | null;
+  readonly supersedesAllocationId?: string | null;
+  readonly correctsAllocationId?: string | null;
   readonly allocationStartDate: string;
   readonly allocationEndDate: string | null;
   readonly targetMetrics: readonly KpiAllocationTargetMetric[];
@@ -139,6 +168,18 @@ interface KpiActualWorkspaceDerivedPlanDocument extends KpiPlanDocument {
   readonly achievementNullRank: 0 | 1;
 }
 
+interface KpiAllocationOperationDocument {
+  readonly _id: string;
+  readonly actorId: string;
+  readonly kpiPlanId: string;
+  readonly operation: string;
+  readonly idempotencyKey: string;
+  readonly payloadFingerprint: string;
+  readonly result: unknown | null;
+  readonly createdAt: number;
+  readonly completedAt: number | null;
+}
+
 export class NativeMongoKpiPlanRepository
   extends BaseRepository<KpiPlanDocument>
   implements KpiPlanRepository
@@ -146,6 +187,7 @@ export class NativeMongoKpiPlanRepository
   private readonly targetMetricCollection: Collection<KpiTargetMetricDocument>;
   private readonly allocationCollection: Collection<KpiAllocationDocument>;
   private readonly actualExcuseCollection: Collection<KpiActualSlotExcuseDocument>;
+  private readonly allocationOperationCollection: Collection<KpiAllocationOperationDocument>;
 
   constructor(db: Db) {
     super(db, "kpi_plans");
@@ -153,14 +195,78 @@ export class NativeMongoKpiPlanRepository
       db.collection<KpiTargetMetricDocument>("kpi_target_metrics");
     this.allocationCollection =
       db.collection<KpiAllocationDocument>("kpi_allocations");
-    this.actualExcuseCollection =
-      db.collection<KpiActualSlotExcuseDocument>("kpi_actual_slot_excuses");
+    this.actualExcuseCollection = db.collection<KpiActualSlotExcuseDocument>(
+      "kpi_actual_slot_excuses",
+    );
+    this.allocationOperationCollection =
+      db.collection<KpiAllocationOperationDocument>(
+        "kpi_allocation_operations",
+      );
   }
 
-  async insertPlan(
-    plan: KpiPlan,
+  async claimAllocationOperation(
+    input: ClaimKpiAllocationOperationInput,
     session: ClientSession,
-  ): Promise<KpiPlan> {
+  ): Promise<KpiAllocationOperationClaim> {
+    const operationId = crypto
+      .createHash("sha256")
+      .update(
+        `${input.actorId}\u0000${input.kpiPlanId}\u0000${input.idempotencyKey}`,
+      )
+      .digest("hex");
+    const existing = await this.allocationOperationCollection.findOne(
+      { _id: operationId },
+      this.withSession(session),
+    );
+    if (existing) {
+      return { isNew: false, record: toKpiAllocationOperation(existing) };
+    }
+    const record: KpiAllocationOperationDocument = {
+      _id: operationId,
+      actorId: input.actorId,
+      kpiPlanId: input.kpiPlanId,
+      operation: input.operation,
+      idempotencyKey: input.idempotencyKey,
+      payloadFingerprint: input.payloadFingerprint,
+      result: null,
+      createdAt: input.now,
+      completedAt: null,
+    };
+    await this.allocationOperationCollection.insertOne(
+      record,
+      this.withSession(session),
+    );
+    return { isNew: true, record: toKpiAllocationOperation(record) };
+  }
+
+  async completeAllocationOperation(
+    input: CompleteKpiAllocationOperationInput,
+    session: ClientSession,
+  ): Promise<KpiAllocationOperationRecord> {
+    const completed = await this.allocationOperationCollection.findOneAndUpdate(
+      {
+        _id: input.operationId,
+        operation: input.operation,
+        payloadFingerprint: input.payloadFingerprint,
+        result: null,
+      },
+      {
+        $set: {
+          result: input.result,
+          completedAt: input.completedAt,
+        },
+      },
+      { ...this.withSession(session), returnDocument: "after" },
+    );
+    if (!completed) {
+      throw new Error(
+        "KPI allocation operation completion compare-and-set failed",
+      );
+    }
+    return toKpiAllocationOperation(completed);
+  }
+
+  async insertPlan(plan: KpiPlan, session: ClientSession): Promise<KpiPlan> {
     await this.collection.insertOne(
       toKpiPlanDocument(plan),
       this.withSession(session),
@@ -220,7 +326,7 @@ export class NativeMongoKpiPlanRepository
       .limit(1)
       .next();
     return doc
-      ? parseGeneratedBusinessCodeSequence(doc.planCode, policy) ?? 0
+      ? (parseGeneratedBusinessCodeSequence(doc.planCode, policy) ?? 0)
       : 0;
   }
 
@@ -243,7 +349,7 @@ export class NativeMongoKpiPlanRepository
     assignIfDefined(set, "externalRef", input.externalRef);
 
     const updated = await this.collection.findOneAndUpdate(
-      { _id: input.kpiPlanId, status: "DRAFT" },
+      { _id: input.kpiPlanId, status: "DRAFT", lifecycleStatus: "DRAFT" },
       { $set: set },
       { ...this.withSession(session), returnDocument: "after" },
     );
@@ -259,6 +365,7 @@ export class NativeMongoKpiPlanRepository
       updatedAt: input.updatedAt,
       updatedByActorId: input.updatedByActorId,
     };
+    assignIfDefined(set, "lifecycleStatus", input.lifecycleStatus);
     assignIfDefined(set, "publishedAt", input.publishedAt);
     assignIfDefined(set, "publishedByActorId", input.publishedByActorId);
     assignIfDefined(set, "actualPolicySnapshot", input.actualPolicySnapshot);
@@ -272,6 +379,7 @@ export class NativeMongoKpiPlanRepository
       {
         _id: input.kpiPlanId,
         status: { $in: [...input.fromStatuses] },
+        lifecycleStatus: { $in: [...input.fromLifecycleStatuses] },
       },
       { $set: set },
       { ...this.withSession(session), returnDocument: "after" },
@@ -327,8 +435,7 @@ export class NativeMongoKpiPlanRepository
       }
       filters.push({ $or: searchFilters });
     }
-    const sortDirection: 1 | -1 =
-      input.sortDirection === "ASC" ? 1 : -1;
+    const sortDirection: 1 | -1 = input.sortDirection === "ASC" ? 1 : -1;
     const sortField = input.sortBy ?? "periodMonth";
     let sort: Record<string, 1 | -1>;
     if (sortField === "planCode") {
@@ -474,17 +581,13 @@ export class NativeMongoKpiPlanRepository
                           {
                             $eq: [
                               {
-                                $type:
-                                  "$$allocation.memberEmploymentProfileId",
+                                $type: "$$allocation.memberEmploymentProfileId",
                               },
                               "string",
                             ],
                           },
                           {
-                            $ne: [
-                              "$$allocation.memberEmploymentProfileId",
-                              "",
-                            ],
+                            $ne: ["$$allocation.memberEmploymentProfileId", ""],
                           },
                         ],
                       },
@@ -742,7 +845,7 @@ export class NativeMongoKpiPlanRepository
     }
     await this.insertTargetMetrics(metrics, session);
     await this.collection.updateOne(
-      { _id: kpiPlanId, status: "DRAFT" },
+      { _id: kpiPlanId, status: "DRAFT", lifecycleStatus: "DRAFT" },
       { $set: { updatedAt, updatedByActorId } },
       this.withSession(session),
     );
@@ -809,7 +912,7 @@ export class NativeMongoKpiPlanRepository
     }
     await this.insertAllocations(allocations, session);
     await this.collection.updateOne(
-      { _id: kpiPlanId, status: "DRAFT" },
+      { _id: kpiPlanId, status: "DRAFT", lifecycleStatus: "DRAFT" },
       { $set: { updatedAt, updatedByActorId } },
       this.withSession(session),
     );
@@ -820,7 +923,10 @@ export class NativeMongoKpiPlanRepository
     session?: ClientSession,
   ): Promise<readonly KpiAllocation[]> {
     const docs = await this.allocationCollection
-      .find({ kpiPlanId }, this.withSession(session))
+      .find(
+        { kpiPlanId, lifecycleStatus: { $ne: "SUPERSEDED" } },
+        this.withSession(session),
+      )
       .sort({ memberTalentId: 1, _id: 1 })
       .toArray();
     return docs.map(toKpiAllocation);
@@ -837,7 +943,13 @@ export class NativeMongoKpiPlanRepository
     }
 
     const docs = await this.allocationCollection
-      .find({ kpiPlanId: { $in: ids } }, this.withSession(session))
+      .find(
+        {
+          kpiPlanId: { $in: ids },
+          lifecycleStatus: { $ne: "SUPERSEDED" },
+        },
+        this.withSession(session),
+      )
       .sort({ kpiPlanId: 1, memberTalentId: 1, _id: 1 })
       .toArray();
     return docs.map(toKpiAllocation);
@@ -862,7 +974,12 @@ export class NativeMongoKpiPlanRepository
         readonly count: number;
       }>(
         [
-          { $match: { kpiPlanId: { $in: ids } } },
+          {
+            $match: {
+              kpiPlanId: { $in: ids },
+              lifecycleStatus: { $ne: "SUPERSEDED" },
+            },
+          },
           {
             $group: {
               _id: {
@@ -893,6 +1010,7 @@ export class NativeMongoKpiPlanRepository
     readonly limit: number;
   }): Promise<readonly KpiAllocation[]> {
     const query: Record<string, unknown> = {};
+    query.lifecycleStatus = { $ne: "SUPERSEDED" };
     assignIfDefined(query, "allocationStatus", input.status);
     assignIfDefined(query, "kpiPlanId", input.kpiPlanId);
     assignIfDefined(query, "groupId", input.groupId);
@@ -923,30 +1041,43 @@ export class NativeMongoKpiPlanRepository
     if (
       existing.some(
         (allocation) =>
-          !input.allowedCurrentStatuses.includes(
-            allocation.allocationStatus,
+          !input.allowedCurrentStatuses.includes(allocation.allocationStatus) ||
+          allocation.lifecycleStatus === undefined ||
+          !input.allowedCurrentLifecycleStatuses.includes(
+            allocation.lifecycleStatus,
           ),
       )
     ) {
       throw new Error("KPI allocation status conflict");
     }
-    for (const allocation of existing) {
-      await this.allocationCollection.deleteOne(
-        { _id: allocation._id },
+    const preservesChangesRequestedLineage = existing.some(
+      (allocation) => allocation.lifecycleStatus === "CHANGES_REQUESTED",
+    );
+    if (preservesChangesRequestedLineage) {
+      await this.allocationCollection.updateMany(
+        {
+          kpiPlanId: input.kpiPlanId,
+          lifecycleStatus: "CHANGES_REQUESTED",
+        },
+        {
+          $set: {
+            lifecycleStatus: "SUPERSEDED",
+            updatedAt: input.updatedAt,
+            updatedByActorId: input.updatedByActorId,
+            closedAt: input.updatedAt,
+          },
+        },
         this.withSession(session),
       );
+    } else {
+      for (const allocation of existing) {
+        await this.allocationCollection.deleteOne(
+          { _id: allocation._id },
+          this.withSession(session),
+        );
+      }
     }
     await this.insertAllocations(input.allocations, session);
-    await this.collection.updateOne(
-      { _id: input.kpiPlanId },
-      {
-        $set: {
-          updatedAt: input.updatedAt,
-          updatedByActorId: input.updatedByActorId,
-        },
-      },
-      this.withSession(session),
-    );
   }
 
   async transitionAllocationsForPlan(
@@ -958,6 +1089,7 @@ export class NativeMongoKpiPlanRepository
       updatedAt: input.updatedAt,
       updatedByActorId: input.updatedByActorId,
     };
+    assignIfDefined(set, "lifecycleStatus", input.lifecycleStatus);
     assignIfDefined(set, "submittedAt", input.submittedAt);
     assignIfDefined(set, "submittedByActorId", input.submittedByActorId);
     assignIfDefined(set, "approvedAt", input.approvedAt);
@@ -968,10 +1100,19 @@ export class NativeMongoKpiPlanRepository
     assignIfDefined(set, "rejectionReason", input.rejectionReason);
     assignIfDefined(set, "publishedAt", input.publishedAt);
     assignIfDefined(set, "publishedByActorId", input.publishedByActorId);
+    assignIfDefined(set, "allocationVersion", input.allocationVersion);
+    assignIfDefined(set, "idempotencyKey", input.idempotencyKey);
+    assignIfDefined(
+      set,
+      "idempotencyFingerprint",
+      input.idempotencyFingerprint,
+    );
+    assignIfDefined(set, "correlationId", input.correlationId);
     const result = await this.allocationCollection.updateMany(
       {
         kpiPlanId: input.kpiPlanId,
-        allocationStatus: input.fromStatus,
+        allocationStatus: { $in: [...input.fromStatuses] },
+        lifecycleStatus: { $in: [...input.fromLifecycleStatuses] },
       },
       { $set: set },
       this.withSession(session),
@@ -985,10 +1126,7 @@ export class NativeMongoKpiPlanRepository
     session: ClientSession,
   ): Promise<void> {
     const draftAllocations = await this.allocationCollection
-      .find(
-        { kpiPlanId, allocationStatus: "DRAFT" },
-        this.withSession(session),
-      )
+      .find({ kpiPlanId, allocationStatus: "DRAFT" }, this.withSession(session))
       .project<{ _id: string }>({ _id: 1 })
       .toArray();
     for (const allocation of draftAllocations) {
@@ -1059,7 +1197,10 @@ export class NativeMongoKpiPlanRepository
     session?: ClientSession,
   ): Promise<readonly KpiActualSlotExcuse[]> {
     const docs = await this.actualExcuseCollection
-      .find({ kpiPlanId, actualDate, deletedAt: null }, this.withSession(session))
+      .find(
+        { kpiPlanId, actualDate, deletedAt: null },
+        this.withSession(session),
+      )
       .sort({ allocationId: 1, metricCode: 1, _id: 1 })
       .toArray();
     return docs.map(toKpiActualSlotExcuse);
@@ -1143,7 +1284,9 @@ function assignIfDefined(
   }
 }
 
-function buildQuery(filters: readonly Record<string, unknown>[]): Record<string, unknown> {
+function buildQuery(
+  filters: readonly Record<string, unknown>[],
+): Record<string, unknown> {
   const nonEmpty = filters.filter((filter) => Object.keys(filter).length > 0);
   if (nonEmpty.length === 0) {
     return {};
@@ -1308,9 +1451,7 @@ function buildDerivedSort(
 function uniqueNonEmpty(values: readonly string[]): readonly string[] {
   return [
     ...new Set(
-      values
-        .map((value) => value.trim())
-        .filter((value) => value.length > 0),
+      values.map((value) => value.trim()).filter((value) => value.length > 0),
     ),
   ];
 }
@@ -1326,6 +1467,7 @@ function toKpiPlanDocument(input: KpiPlan): KpiPlanDocument {
     subjectType: input.subjectType,
     subjectId: input.subjectId,
     status: input.status,
+    lifecycleStatus: input.lifecycleStatus,
     currencyCode: input.currencyCode,
     periodMonth: input.periodMonth,
     periodStartAt: input.periodStartAt,
@@ -1358,6 +1500,9 @@ function toKpiPlan(doc: KpiPlanDocument): KpiPlan {
     subjectType: doc.subjectType,
     subjectId: doc.subjectId,
     status: doc.status,
+    lifecycleStatus:
+      doc.lifecycleStatus ??
+      (doc.status === "PUBLISHED" ? "ACTIVE" : doc.status),
     currencyCode: doc.currencyCode,
     periodMonth: doc.periodMonth,
     periodStartAt: doc.periodStartAt,
@@ -1387,9 +1532,17 @@ function toKpiTargetMetricDocument(
     kpiPlanId: input.kpiPlanId,
     metricCode: input.metricCode,
     targetValue: input.targetValue,
+    targetValueExact: input.targetValueExact,
+    allocationMode: input.allocationMode,
+    allocationScale: input.allocationScale,
+    groupRemainderExact: input.groupRemainderExact,
     unit: input.unit,
     rollupMethod: input.rollupMethod,
     actualSource: input.actualSource,
+    actualCaptureMode: input.actualCaptureMode,
+    actualReviewMode: input.actualReviewMode,
+    actualEvidenceMode: input.actualEvidenceMode,
+    actualPolicyVersion: input.actualPolicyVersion,
     createdAt: input.createdAt,
     updatedAt: input.updatedAt,
   };
@@ -1401,17 +1554,23 @@ function toKpiTargetMetric(doc: KpiTargetMetricDocument): KpiTargetMetric {
     kpiPlanId: doc.kpiPlanId,
     metricCode: doc.metricCode,
     targetValue: doc.targetValue,
+    targetValueExact: doc.targetValueExact,
+    allocationMode: doc.allocationMode,
+    allocationScale: doc.allocationScale,
+    groupRemainderExact: doc.groupRemainderExact,
     unit: doc.unit,
     rollupMethod: doc.rollupMethod,
     actualSource: doc.actualSource,
+    actualCaptureMode: doc.actualCaptureMode,
+    actualReviewMode: doc.actualReviewMode,
+    actualEvidenceMode: doc.actualEvidenceMode,
+    actualPolicyVersion: doc.actualPolicyVersion,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
 }
 
-function toKpiAllocationDocument(
-  input: KpiAllocation,
-): KpiAllocationDocument {
+function toKpiAllocationDocument(input: KpiAllocation): KpiAllocationDocument {
   return {
     _id: input.id,
     kpiPlanId: input.kpiPlanId,
@@ -1422,11 +1581,23 @@ function toKpiAllocationDocument(
     memberTalentId: input.memberTalentId,
     membershipId: input.membershipId,
     allocationStatus: input.allocationStatus,
+    lifecycleStatus: input.lifecycleStatus,
+    allocationMode: input.allocationMode,
+    sourcePlanVersion: input.sourcePlanVersion,
+    allocationVersion: input.allocationVersion,
+    membershipSnapshotVersion: input.membershipSnapshotVersion,
+    eligibleMemberSnapshot: input.eligibleMemberSnapshot,
+    idempotencyKey: input.idempotencyKey,
+    idempotencyFingerprint: input.idempotencyFingerprint,
+    correlationId: input.correlationId,
+    supersedesAllocationId: input.supersedesAllocationId,
+    correctsAllocationId: input.correctsAllocationId,
     allocationStartDate: input.allocationStartDate,
     allocationEndDate: input.allocationEndDate,
     targetMetrics: input.targetMetrics.map((metric) => ({
       metricCode: metric.metricCode,
       targetValue: metric.targetValue,
+      targetValueExact: metric.targetValueExact,
     })),
     snapshotMemberDisplayName: input.snapshotMemberDisplayName,
     note: input.note,
@@ -1461,11 +1632,23 @@ function toKpiAllocation(doc: KpiAllocationDocument): KpiAllocation {
     memberTalentId: doc.memberTalentId ?? null,
     membershipId: doc.membershipId,
     allocationStatus: doc.allocationStatus,
+    lifecycleStatus: doc.lifecycleStatus,
+    allocationMode: doc.allocationMode,
+    sourcePlanVersion: doc.sourcePlanVersion,
+    allocationVersion: doc.allocationVersion,
+    membershipSnapshotVersion: doc.membershipSnapshotVersion ?? null,
+    eligibleMemberSnapshot: doc.eligibleMemberSnapshot ?? null,
+    idempotencyKey: doc.idempotencyKey ?? null,
+    idempotencyFingerprint: doc.idempotencyFingerprint ?? null,
+    correlationId: doc.correlationId ?? null,
+    supersedesAllocationId: doc.supersedesAllocationId ?? null,
+    correctsAllocationId: doc.correctsAllocationId ?? null,
     allocationStartDate: doc.allocationStartDate,
     allocationEndDate: doc.allocationEndDate,
     targetMetrics: doc.targetMetrics.map((metric) => ({
       metricCode: metric.metricCode,
       targetValue: metric.targetValue,
+      targetValueExact: metric.targetValueExact,
     })),
     snapshotMemberDisplayName: doc.snapshotMemberDisplayName,
     note: doc.note ?? null,
@@ -1484,6 +1667,22 @@ function toKpiAllocation(doc: KpiAllocationDocument): KpiAllocation {
     publishedAt: doc.publishedAt,
     publishedByActorId: doc.publishedByActorId ?? null,
     closedAt: doc.closedAt,
+  };
+}
+
+function toKpiAllocationOperation(
+  doc: KpiAllocationOperationDocument,
+): KpiAllocationOperationRecord {
+  return {
+    id: doc._id,
+    actorId: doc.actorId,
+    kpiPlanId: doc.kpiPlanId,
+    operation: doc.operation,
+    idempotencyKey: doc.idempotencyKey,
+    payloadFingerprint: doc.payloadFingerprint,
+    result: doc.result,
+    createdAt: doc.createdAt,
+    completedAt: doc.completedAt,
   };
 }
 

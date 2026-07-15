@@ -13,6 +13,26 @@ export function adminManagerWorkspaceRoutes(
     controller.execute,
   );
   router.get(
+    "/groups",
+    withCommand("MANAGER_WORKSPACE_LIST_GROUPS"),
+    controller.execute,
+  );
+  router.get(
+    "/groups/:scopeType/:scopeId",
+    withCommand("MANAGER_WORKSPACE_GET_GROUP"),
+    controller.execute,
+  );
+  router.get(
+    "/groups/:scopeType/:scopeId/members",
+    withCommand("MANAGER_WORKSPACE_LIST_MEMBERS"),
+    controller.execute,
+  );
+  router.get(
+    "/groups/:scopeType/:scopeId/members/:memberId",
+    withCommand("MANAGER_WORKSPACE_GET_MEMBER"),
+    controller.execute,
+  );
+  router.get(
     "/events",
     withCommand("MANAGER_WORKSPACE_LIST_EVENTS"),
     controller.execute,
@@ -73,80 +93,63 @@ export function adminManagerWorkspaceRoutes(
     controller.execute,
   );
   router.get(
+    "/work-schedule/weekly-schedule",
+    withCommand("MANAGER_WORKSPACE_GET_WEEKLY_SCHEDULE"),
+    controller.execute,
+  );
+  router.get(
     "/work-schedule/availability-members",
-    withCommand(
-      "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_MEMBERS",
-    ),
+    withCommand("MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_MEMBERS"),
     controller.execute,
   );
   router.get(
     "/work-schedule/request-batches",
-    withCommand(
-      "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_REQUEST_BATCHES",
-    ),
+    withCommand("MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_REQUEST_BATCHES"),
     controller.execute,
   );
   router.post(
     "/work-schedule/request-batches",
-    withCommand(
-      "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_REQUEST_BATCH",
-    ),
+    withCommand("MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_REQUEST_BATCH"),
     controller.execute,
   );
   router.get(
     "/work-schedule/request-batches/:batchId",
-    withCommand(
-      "MANAGER_WORKSPACE_GET_WORK_SCHEDULE_REQUEST_BATCH",
-    ),
+    withCommand("MANAGER_WORKSPACE_GET_WORK_SCHEDULE_REQUEST_BATCH"),
     controller.execute,
   );
   router.post(
     "/work-schedule/request-batches/:batchId/cancel",
-    withCommand(
-      "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_REQUEST_BATCH",
-    ),
+    withCommand("MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_REQUEST_BATCH"),
     controller.execute,
   );
   router.post(
     "/work-schedule/request-batches/:batchId/lines/:lineId/cancel",
-    withCommand(
-      "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_REQUEST_LINE",
-    ),
+    withCommand("MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_REQUEST_LINE"),
     controller.execute,
   );
   router.get(
     "/work-schedule/availability-batches",
-    withCommand(
-      "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_BATCHES",
-    ),
+    withCommand("MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_BATCHES"),
     controller.execute,
   );
   router.post(
     "/work-schedule/availability-batches",
-    withCommand(
-      "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_AVAILABILITY_BATCH",
-    ),
+    withCommand("MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_AVAILABILITY_BATCH"),
     controller.execute,
   );
   router.get(
     "/work-schedule/availability-batches/:batchId",
-    withCommand(
-      "MANAGER_WORKSPACE_GET_WORK_SCHEDULE_AVAILABILITY_BATCH",
-    ),
+    withCommand("MANAGER_WORKSPACE_GET_WORK_SCHEDULE_AVAILABILITY_BATCH"),
     controller.execute,
   );
   router.post(
     "/work-schedule/availability-batches/:batchId/cancel",
-    withCommand(
-      "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_BATCH",
-    ),
+    withCommand("MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_BATCH"),
     controller.execute,
   );
   router.post(
     "/work-schedule/availability-batches/:batchId/lines/:lineId/cancel",
-    withCommand(
-      "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_LINE",
-    ),
+    withCommand("MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_LINE"),
     controller.execute,
   );
 

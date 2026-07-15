@@ -13,7 +13,6 @@ export enum Permission {
   USER_AUTH_LINKAGE_UNLINK = "user:auth_linkage:unlink",
   USER_PASSWORD_SETUP_SEND = "user:password_setup:send",
 
-  
   /* =========================
      ROLE
   ========================= */
@@ -121,6 +120,12 @@ export enum Permission {
   WORK_SCHEDULE_CREATE = "workSchedule.create",
   WORK_SCHEDULE_UPDATE = "workSchedule.update",
   WORK_SCHEDULE_MANAGE_LIFECYCLE = "workSchedule.manageLifecycle",
+
+  /* =========================
+     MANAGER WORKSPACE
+  ========================= */
+  MANAGER_GROUP_READ = "managerWorkspace.group.read",
+  MANAGER_MEMBER_READ = "managerWorkspace.member.read",
 
   /* =========================
      CONTRACT REGISTRY

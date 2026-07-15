@@ -21,7 +21,7 @@ import { SelfServiceIdentityResolver } from "@modules/self-service/shared/self-s
 const MAX_SELF_SERVICE_KPI_ALLOCATIONS = 100;
 const MAX_SELF_SERVICE_KPI_HISTORY_ITEMS = 12;
 const HCM_UTC_OFFSET_HOURS = 7;
-const DEFAULT_ACTUAL_ENTRY_LOCK_LOCAL_TIME = "10:00";
+const DEFAULT_ACTUAL_ENTRY_LOCK_LOCAL_TIME = "12:00";
 
 export class SelfServiceKpiService {
   constructor(
@@ -89,18 +89,22 @@ export class SelfServiceKpiService {
         (plan) =>
           officialPlanIds.has(plan.id) &&
           isSelfServiceKpiSubjectSupported(plan) &&
-          isOfficialSelfServiceHistoryPlan(plan) && plan.periodEndAt < now,
+          isOfficialSelfServiceHistoryPlan(plan) &&
+          plan.periodEndAt < now,
       )
       .sort(compareKpiPlansNewestFirst);
     const historyPlans = previousOfficialPlans.slice(
       0,
       MAX_SELF_SERVICE_KPI_HISTORY_ITEMS,
     );
-    const currentPlanIds = new Set(currentPublishedPlans.map((plan) => plan.id));
-    const historyPlanIds = new Set(historyPlans.map((plan) => plan.id));
-    const exposedPlanIds = uniqueNonEmpty(
-      [...currentPlanIds, ...historyPlanIds],
+    const currentPlanIds = new Set(
+      currentPublishedPlans.map((plan) => plan.id),
     );
+    const historyPlanIds = new Set(historyPlans.map((plan) => plan.id));
+    const exposedPlanIds = uniqueNonEmpty([
+      ...currentPlanIds,
+      ...historyPlanIds,
+    ]);
     const currentAllocations = officialAllocations.filter((allocation) =>
       currentPlanIds.has(allocation.kpiPlanId),
     );
@@ -119,8 +123,7 @@ export class SelfServiceKpiService {
         toSelfServiceKpiItem({
           allocation,
           plan: planById.get(allocation.kpiPlanId),
-          entriesForAllocation:
-            entriesByAllocation.get(allocation.id) ?? [],
+          entriesForAllocation: entriesByAllocation.get(allocation.id) ?? [],
           entriesBySlot,
           excusesBySlot,
           now,
@@ -271,8 +274,12 @@ function buildSelfServiceKpiItem(input: {
     lastUpdatedAt: resolveLastUpdatedAt(allocation, entriesForAllocation),
     metrics: allocation.targetMetrics.map((metric) => {
       const actualValue = entriesForAllocation
-        .filter((entry) => entry.metricCode === metric.metricCode)
-        .reduce((sum, entry) => sum + entry.effectiveValue, 0);
+        .filter(
+          (entry) =>
+            entry.metricCode === metric.metricCode &&
+            isMemberVisibleAcceptedEntry(entry),
+        )
+        .reduce((sum, entry) => sum + memberVisibleAcceptedValue(entry)!, 0);
       const catalog = getKpiMetricCatalogEntry(metric.metricCode);
 
       return {
@@ -337,9 +344,7 @@ function groupExcusesBySlot(
 function uniqueNonEmpty(values: readonly string[]): readonly string[] {
   return [
     ...new Set(
-      values
-        .map((value) => value.trim())
-        .filter((value) => value.length > 0),
+      values.map((value) => value.trim()).filter((value) => value.length > 0),
     ),
   ];
 }
@@ -366,7 +371,9 @@ function resolveLastUpdatedAt(
 }
 
 type MutableKpiActualEntryStatusSummary = {
-  -readonly [Key in keyof KpiActualEntryStatusSummary]: KpiActualEntryStatusSummary[Key];
+  -readonly [
+    Key in keyof KpiActualEntryStatusSummary
+  ]: KpiActualEntryStatusSummary[Key];
 };
 
 function summarizeActualEntryStatuses(input: {
@@ -431,10 +438,14 @@ function resolveDailyActualStatus(input: {
   if (input.allocation.allocationStatus !== "PUBLISHED") {
     return "BLOCKED_BY_ALLOCATION_STATUS";
   }
-  if (input.entry && numbersEqual(input.entry.actualValue, 0)) {
+  if (
+    input.entry &&
+    isMemberVisibleAcceptedEntry(input.entry) &&
+    numbersEqual(memberVisibleAcceptedValue(input.entry)!, 0)
+  ) {
     return "ENTERED_ZERO";
   }
-  if (input.entry) {
+  if (input.entry && isMemberVisibleAcceptedEntry(input.entry)) {
     return "ENTERED";
   }
   if (input.excuse?.status === "EXCUSED") {
@@ -450,13 +461,30 @@ function resolveDailyActualStatus(input: {
     input.now <=
     localDateTimeToUtcMs(
       input.actualDate,
-      DEFAULT_ACTUAL_ENTRY_LOCK_LOCAL_TIME,
+      input.plan.actualPolicySnapshot?.entryLockLocalTime ??
+        DEFAULT_ACTUAL_ENTRY_LOCK_LOCAL_TIME,
       1,
     )
   ) {
     return "DUE_OPEN";
   }
   return "OVERDUE";
+}
+
+function isMemberVisibleAcceptedEntry(entry: KpiActualEntry): boolean {
+  return memberVisibleAcceptedValue(entry) !== null;
+}
+
+function memberVisibleAcceptedValue(entry: KpiActualEntry): number | null {
+  if (entry.acceptedValue !== undefined) {
+    return entry.acceptedValue;
+  }
+  return entry.lifecycleStatus === undefined ||
+    entry.lifecycleStatus === "ACCEPTED" ||
+    entry.lifecycleStatus === "CORRECTED" ||
+    entry.lifecycleStatus === "LOCKED"
+    ? entry.effectiveValue
+    : null;
 }
 
 function applyDailyActualStatus(

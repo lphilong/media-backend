@@ -49,9 +49,7 @@ import type { WorkScheduleRequestBatchLineCommand } from "@modules/work-schedule
 const NOW = Date.parse("2026-06-06T00:00:00+07:00");
 const JUNE_START = Date.parse("2026-06-12T09:00:00+07:00");
 
-class MemoryBatchRepository
-  implements WorkScheduleRequestBatchRepository
-{
+class MemoryBatchRepository implements WorkScheduleRequestBatchRepository {
   readonly batches: WorkScheduleRequestBatchRecord[] = [];
   readonly lines: WorkScheduleRequestLineRecord[] = [];
 
@@ -78,8 +76,7 @@ class MemoryBatchRepository
       this.batches.find(
         (batch) =>
           batch.submittedByEmploymentProfileId ===
-            submittedByEmploymentProfileId &&
-          batch.clientToken === clientToken,
+            submittedByEmploymentProfileId && batch.clientToken === clientToken,
       ) ?? null
     );
   }
@@ -132,8 +129,7 @@ class MemoryBatchRepository
             input.submittedByEmploymentProfileId &&
           line.periodMonth === input.periodMonth &&
           line.requestType === input.requestType &&
-          line.memberEmploymentProfileId ===
-            input.memberEmploymentProfileId &&
+          line.memberEmploymentProfileId === input.memberEmploymentProfileId &&
           line.workShiftId === input.workShiftId &&
           line.requestedStartAt === input.requestedStartAt &&
           line.requestedEndAt === input.requestedEndAt,
@@ -159,12 +155,20 @@ class MemoryBatchRepository
       failureReason: input.failureReason ?? current.failureReason,
       appliedWorkShiftId:
         input.appliedWorkShiftId ?? current.appliedWorkShiftId,
+      applicationState: input.applicationState ?? current.applicationState,
+      applicationLineage:
+        input.applicationLineage ?? current.applicationLineage,
+      applicationIdempotencyKey:
+        input.applicationIdempotencyKey ?? current.applicationIdempotencyKey,
+      applicationPayloadFingerprint:
+        input.applicationPayloadFingerprint ??
+        current.applicationPayloadFingerprint,
+      emergencyOverrideReason:
+        input.emergencyOverrideReason ?? current.emergencyOverrideReason,
       approvedAt: input.approvedAt ?? current.approvedAt,
-      approvedByActorId:
-        input.approvedByActorId ?? current.approvedByActorId,
+      approvedByActorId: input.approvedByActorId ?? current.approvedByActorId,
       rejectedAt: input.rejectedAt ?? current.rejectedAt,
-      rejectedByActorId:
-        input.rejectedByActorId ?? current.rejectedByActorId,
+      rejectedByActorId: input.rejectedByActorId ?? current.rejectedByActorId,
       cancelledAt: input.cancelledAt ?? current.cancelledAt,
       cancelledByActorId:
         input.cancelledByActorId ?? current.cancelledByActorId,
@@ -308,9 +312,7 @@ class MemoryWorkShiftRepository implements WorkShiftRepository {
   }
 }
 
-class MemoryCodeSequenceRepository
-  implements WorkScheduleCodeSequenceRepository
-{
+class MemoryCodeSequenceRepository implements WorkScheduleCodeSequenceRepository {
   private readonly values = new Map<string, number>();
 
   async allocateNext(dateBucket: string): Promise<number> {
@@ -464,12 +466,11 @@ const employmentProfileReadonlyAccess: WorkScheduleEmploymentProfileReadonlyAcce
     },
   };
 
-const studioResourceReadonlyAccess: WorkScheduleStudioResourceReadonlyAccess =
-  {
-    async findById(studioResourceId: string) {
-      return { id: studioResourceId, operationalStatus: "ACTIVE" };
-    },
-  };
+const studioResourceReadonlyAccess: WorkScheduleStudioResourceReadonlyAccess = {
+  async findById(studioResourceId: string) {
+    return { id: studioResourceId, operationalStatus: "ACTIVE" };
+  },
+};
 
 const managedScopeReader = {
   async resolveManagedScopeByResponsibleEmploymentProfile(input: {
@@ -724,8 +725,7 @@ function seedShift(params?: {
     title: "Current shift",
     normalizedTitle: "current shift",
     subjectKind: "EMPLOYMENT_PROFILE",
-    subjectEmploymentProfileId:
-      params?.memberEmploymentProfileId ?? "ep-org",
+    subjectEmploymentProfileId: params?.memberEmploymentProfileId ?? "ep-org",
     subjectTalentId: null,
     subjectTalentGroupId: null,
     studioResourceIds: [],
@@ -864,10 +864,7 @@ test("manager unified scope allows exact OrgUnit and TalentGroup members while d
     ),
   );
 
-  for (const memberEmploymentProfileId of [
-    "ep-descendant",
-    "ep-reporting",
-  ]) {
+  for (const memberEmploymentProfileId of ["ep-descendant", "ep-reporting"]) {
     await assert.rejects(
       withTrace(() =>
         service.submitManagerBatch(
@@ -964,7 +961,11 @@ test("unauthorized Manager request submission and cancellation perform no reposi
   const unauthorized = createService({
     batchRepository,
     structuredAuthority: new StructuredScopeAuthorityService(
-      { async listByUserId() { return []; } },
+      {
+        async listByUserId() {
+          return [];
+        },
+      },
       () => NOW,
     ),
   });
@@ -993,8 +994,16 @@ test("unauthorized Manager request submission and cancellation perform no reposi
 
 test("shared members cannot bridge Manager request history or cancellation to an unauthorized roster target", async () => {
   for (const scenario of [
-    { type: "ORG_UNIT" as const, authorizedTarget: "org-b", retainedTarget: "org-a" },
-    { type: "TALENT_GROUP" as const, authorizedTarget: "group-b", retainedTarget: "group-a" },
+    {
+      type: "ORG_UNIT" as const,
+      authorizedTarget: "org-b",
+      retainedTarget: "org-a",
+    },
+    {
+      type: "TALENT_GROUP" as const,
+      authorizedTarget: "group-b",
+      retainedTarget: "group-a",
+    },
   ]) {
     const batchRepository = new MemoryBatchRepository();
     const workShiftRepository = new MemoryWorkShiftRepository([
@@ -1007,18 +1016,15 @@ test("shared members cannot bridge Manager request history or cancellation to an
     const authorized = createService({
       batchRepository,
       workShiftRepository,
-      employmentProfileAccess: sharedMemberEmploymentAccess(
-        scenario.type,
-        [scenario.authorizedTarget],
-      ),
-      managedScope: sharedMemberManagedScope(
-        scenario.type,
-        [scenario.authorizedTarget],
-      ),
-      structuredAuthority: sharedMemberStructuredAuthority(
-        scenario.type,
-        [scenario.authorizedTarget],
-      ),
+      employmentProfileAccess: sharedMemberEmploymentAccess(scenario.type, [
+        scenario.authorizedTarget,
+      ]),
+      managedScope: sharedMemberManagedScope(scenario.type, [
+        scenario.authorizedTarget,
+      ]),
+      structuredAuthority: sharedMemberStructuredAuthority(scenario.type, [
+        scenario.authorizedTarget,
+      ]),
     });
     const batch = await withTrace(() =>
       authorized.submitManagerBatch(
@@ -1046,18 +1052,15 @@ test("shared members cannot bridge Manager request history or cancellation to an
     const afterTargetBLoss = createService({
       batchRepository,
       workShiftRepository,
-      employmentProfileAccess: sharedMemberEmploymentAccess(
-        scenario.type,
-        [scenario.retainedTarget],
-      ),
-      managedScope: sharedMemberManagedScope(
-        scenario.type,
-        [scenario.retainedTarget],
-      ),
-      structuredAuthority: sharedMemberStructuredAuthority(
-        scenario.type,
-        [scenario.retainedTarget],
-      ),
+      employmentProfileAccess: sharedMemberEmploymentAccess(scenario.type, [
+        scenario.retainedTarget,
+      ]),
+      managedScope: sharedMemberManagedScope(scenario.type, [
+        scenario.retainedTarget,
+      ]),
+      structuredAuthority: sharedMemberStructuredAuthority(scenario.type, [
+        scenario.retainedTarget,
+      ]),
     });
     const beforeBatches = structuredClone(batchRepository.batches);
     const beforeLines = structuredClone(batchRepository.lines);
@@ -1105,18 +1108,15 @@ test("shared members cannot bridge Manager request history or cancellation to an
           rosterTarget: { type: scenario.type, id: scenario.authorizedTarget },
         }),
       ]),
-      employmentProfileAccess: sharedMemberEmploymentAccess(
-        scenario.type,
-        [scenario.authorizedTarget],
-      ),
-      managedScope: sharedMemberManagedScope(
-        scenario.type,
-        [scenario.authorizedTarget],
-      ),
-      structuredAuthority: sharedMemberStructuredAuthority(
-        scenario.type,
-        [scenario.authorizedTarget],
-      ),
+      employmentProfileAccess: sharedMemberEmploymentAccess(scenario.type, [
+        scenario.authorizedTarget,
+      ]),
+      managedScope: sharedMemberManagedScope(scenario.type, [
+        scenario.authorizedTarget,
+      ]),
+      structuredAuthority: sharedMemberStructuredAuthority(scenario.type, [
+        scenario.authorizedTarget,
+      ]),
     });
     const authorizedBatch = await withTrace(() =>
       exactTargetService.submitManagerBatch(
@@ -1171,35 +1171,185 @@ test("admin approves create, reschedule, and cancel lines with derived partial a
     ),
   );
 
+  assert.equal(batch.lines[1]?.sourceWorkShiftVersion, 1);
+  assert.equal(batch.lines[2]?.sourceWorkShiftVersion, 1);
+
   const first = await withTrace(() =>
     service.approveAdminLines(opsActor(), {
       batchId: batch.id,
       lineIds: [batch.lines[0]!.id],
+      expectedRequestVersions: {
+        [batch.lines[0]!.id]: batch.lines[0]!.updatedAt,
+      },
+      idempotencyKey: "approve-create-1",
       approvalNote: "Approved",
     }),
   );
   assert.equal(first.status, "PARTIALLY_APPROVED");
   assert.equal(first.lineCounts.approved, 1);
+  const replay = await withTrace(() =>
+    service.approveAdminLines(opsActor(), {
+      batchId: batch.id,
+      lineIds: [batch.lines[0]!.id],
+      expectedRequestVersions: {
+        [batch.lines[0]!.id]: batch.lines[0]!.updatedAt,
+      },
+      idempotencyKey: "approve-create-1",
+      approvalNote: "Approved",
+    }),
+  );
+  assert.equal(
+    replay.lines[0]?.appliedWorkShiftId,
+    first.lines[0]?.appliedWorkShiftId,
+  );
+  await assert.rejects(
+    withTrace(() =>
+      service.approveAdminLines(opsActor(), {
+        batchId: batch.id,
+        lineIds: [batch.lines[0]!.id],
+        expectedRequestVersions: {
+          [batch.lines[0]!.id]: batch.lines[0]!.updatedAt,
+        },
+        idempotencyKey: "approve-create-1",
+        approvalNote: "Different payload",
+      }),
+    ),
+    /IDEMPOTENCY_CONFLICT/u,
+  );
 
   const final = await withTrace(() =>
     service.approveAdminLines(opsActor(), {
       batchId: batch.id,
       lineIds: [batch.lines[1]!.id, batch.lines[2]!.id],
+      expectedRequestVersions: {
+        [batch.lines[1]!.id]: batch.lines[1]!.updatedAt,
+        [batch.lines[2]!.id]: batch.lines[2]!.updatedAt,
+      },
+      expectedWorkShiftVersions: {
+        [batch.lines[1]!.id]: Number(batch.lines[1]!.sourceWorkShiftVersion),
+        [batch.lines[2]!.id]: Number(batch.lines[2]!.sourceWorkShiftVersion),
+      },
+      expectedSourceGenerationRunIds: {
+        [batch.lines[1]!.id]: batch.lines[1]!.sourceGenerationRunId ?? null,
+        [batch.lines[2]!.id]: batch.lines[2]!.sourceGenerationRunId ?? null,
+      },
+      idempotencyKey: "approve-reschedule-cancel-1",
     }),
   );
   assert.equal(final.status, "APPROVED");
   assert.equal(final.lineCounts.approved, 3);
   assert.equal(
     workShiftRepository.records.find((shift) => shift.id === "shift-reschedule")
-      ?.shiftStartAt,
+      ?.status,
+    "CANCELLED",
+  );
+  assert.equal(
+    workShiftRepository.records.find(
+      (shift) => shift.id === final.lines[1]?.appliedWorkShiftId,
+    )?.shiftStartAt,
     JUNE_START + 4 * 60 * 60 * 1000,
+  );
+  assert.equal(final.lines[1]?.applicationState, "APPROVED_APPLIED");
+  assert.equal(
+    final.lines[1]?.applicationLineage?.before?.workShiftId,
+    "shift-reschedule",
+  );
+  assert.equal(
+    final.lines[1]?.applicationLineage?.after?.workShiftId,
+    final.lines[1]?.appliedWorkShiftId,
   );
   assert.equal(
     workShiftRepository.records.find((shift) => shift.id === "shift-cancel")
       ?.status,
     "CANCELLED",
   );
-  assert.equal(workShiftRepository.records.length, 3);
+  assert.equal(workShiftRepository.records.length, 4);
+});
+
+test("admin approval fails closed when request or source WorkShift versions changed", async () => {
+  const workShiftRepository = new MemoryWorkShiftRepository([
+    seedShift({ id: "shift-stale", memberEmploymentProfileId: "ep-org" }),
+  ]);
+  const service = createService({ workShiftRepository });
+  const staleRequestBatch = await withTrace(() =>
+    service.submitManagerBatch(managerActor(), submitPayload([createLine()])),
+  );
+
+  const staleRequestResult = await withTrace(() =>
+    service.approveAdminLines(opsActor(), {
+      batchId: staleRequestBatch.id,
+      lineIds: [staleRequestBatch.lines[0]!.id],
+      expectedRequestVersions: {
+        [staleRequestBatch.lines[0]!.id]: 999,
+      },
+      idempotencyKey: "approve-stale-request-1",
+    }),
+  );
+  assert.equal(staleRequestResult.lines[0]?.status, "SOURCE_CHANGED");
+  assert.match(
+    staleRequestResult.lines[0]?.failureReason ?? "",
+    /SOURCE_CHANGED/u,
+  );
+
+  const staleShiftBatch = await withTrace(() =>
+    service.submitManagerBatch(
+      managerActor(),
+      submitPayload([
+        {
+          requestType: "CANCEL_SHIFT",
+          memberEmploymentProfileId: "ep-org",
+          workShiftId: "shift-stale",
+          reason: "Cancel this shift after checking the official source",
+        },
+      ]),
+    ),
+  );
+  await assert.rejects(
+    withTrace(() =>
+      service.approveAdminLines(opsActor(), {
+        batchId: staleShiftBatch.id,
+        lineIds: [staleShiftBatch.lines[0]!.id],
+        expectedRequestVersions: {
+          [staleShiftBatch.lines[0]!.id]: Number(
+            staleShiftBatch.lines[0]!.updatedAt,
+          ),
+        },
+        idempotencyKey: "approve-missing-shift-source-1",
+      }),
+    ),
+    /expectedWorkShiftVersions/u,
+  );
+  workShiftRepository.records[0] = {
+    ...workShiftRepository.records[0]!,
+    updatedAt: 999,
+  };
+  const staleShiftResult = await withTrace(() =>
+    service.approveAdminLines(opsActor(), {
+      batchId: staleShiftBatch.id,
+      lineIds: [staleShiftBatch.lines[0]!.id],
+      expectedRequestVersions: {
+        [staleShiftBatch.lines[0]!.id]: Number(
+          staleShiftBatch.lines[0]!.updatedAt,
+        ),
+      },
+      expectedWorkShiftVersions: {
+        [staleShiftBatch.lines[0]!.id]: Number(
+          staleShiftBatch.lines[0]!.sourceWorkShiftVersion,
+        ),
+      },
+      expectedSourceGenerationRunIds: {
+        [staleShiftBatch.lines[0]!.id]:
+          staleShiftBatch.lines[0]!.sourceGenerationRunId ?? null,
+      },
+      idempotencyKey: "approve-stale-shift-1",
+    }),
+  );
+  assert.equal(staleShiftResult.lines[0]?.status, "SOURCE_CHANGED");
+  assert.match(
+    staleShiftResult.lines[0]?.failureReason ?? "",
+    /SOURCE_CHANGED/u,
+  );
+  assert.equal(workShiftRepository.records[0]?.status, "ACTIVE");
 });
 
 test("admin reject and cancel require reasons and update derived status", async () => {
@@ -1228,6 +1378,10 @@ test("admin reject and cancel require reasons and update derived status", async 
     service.rejectAdminLines(opsActor(), {
       batchId: batch.id,
       lineIds: [batch.lines[0]!.id],
+      expectedRequestVersions: {
+        [batch.lines[0]!.id]: batch.lines[0]!.updatedAt,
+      },
+      idempotencyKey: "approve-conflict-1",
       rejectionReason: "Reject because the requested coverage is not needed",
     }),
   );
@@ -1254,7 +1408,7 @@ test("admin reject and cancel require reasons and update derived status", async 
   assert.equal(cancelled.status, "PENDING");
 });
 
-test("approval-time conflict marks selected line FAILED_TO_APPLY and terminal failed-only batch derives REJECTED", async () => {
+test("approval-time conflict uses canonical APPLICATION_CONFLICT and terminal failed-only batch derives REJECTED", async () => {
   const workShiftRepository = new MemoryWorkShiftRepository();
   workShiftRepository.subjectOverlap = true;
   const service = createService({ workShiftRepository });
@@ -1266,14 +1420,61 @@ test("approval-time conflict marks selected line FAILED_TO_APPLY and terminal fa
     service.approveAdminLines(opsActor(), {
       batchId: batch.id,
       lineIds: [batch.lines[0]!.id],
+      expectedRequestVersions: {
+        [batch.lines[0]!.id]: batch.lines[0]!.updatedAt,
+      },
+      idempotencyKey: "approve-dto-1",
     }),
   );
 
   assert.equal(result.status, "REJECTED");
   assert.equal(result.lineCounts.failedToApply, 1);
-  assert.equal(result.lines[0]?.status, "FAILED_TO_APPLY");
+  assert.equal(result.lines[0]?.status, "APPLICATION_CONFLICT");
   assert.match(result.lines[0]?.failureReason ?? "", /overlap/i);
   assert.equal(workShiftRepository.records.length, 0);
+});
+
+test("production request path persists lead-time SLA and requires audited emergency override", async () => {
+  const workShiftRepository = new MemoryWorkShiftRepository();
+  const service = createService({ workShiftRepository });
+  const batch = await withTrace(() =>
+    service.submitManagerBatch(
+      managerActor(),
+      submitPayload([createLine({ startAt: NOW + 3 * 60 * 60 * 1000 })]),
+    ),
+  );
+  const line = batch.lines[0]!;
+  assert.equal(line.leadTimeClassification, "EMERGENCY");
+  assert.equal(line.decisionSlaMinutes, null);
+
+  await assert.rejects(
+    withTrace(() =>
+      service.approveAdminLines(opsActor(), {
+        batchId: batch.id,
+        lineIds: [line.id],
+        expectedRequestVersions: { [line.id]: line.updatedAt },
+        idempotencyKey: "emergency-approval-1",
+      }),
+    ),
+    /EMERGENCY_REASON_REQUIRED/u,
+  );
+  assert.equal(workShiftRepository.records.length, 0);
+
+  const approved = await withTrace(() =>
+    service.approveAdminLines(opsActor(), {
+      batchId: batch.id,
+      lineIds: [line.id],
+      expectedRequestVersions: { [line.id]: line.updatedAt },
+      idempotencyKey: "emergency-approval-1",
+      emergencyOverrideReason: "Urgent operational coverage approved by Ops",
+    }),
+  );
+  assert.equal(approved.lines[0]?.applicationState, "APPROVED_APPLIED");
+  assert.equal(
+    approved.lines[0]?.emergencyOverrideReason,
+    "Urgent operational coverage approved by Ops",
+  );
+  assert.equal(workShiftRepository.records.length, 1);
 });
 
 test("admin DTO exposure excludes raw actor and decision audit internals", async () => {
@@ -1285,6 +1486,10 @@ test("admin DTO exposure excludes raw actor and decision audit internals", async
     service.approveAdminLines(opsActor(), {
       batchId: batch.id,
       lineIds: [batch.lines[0]!.id],
+      expectedRequestVersions: {
+        [batch.lines[0]!.id]: batch.lines[0]!.updatedAt,
+      },
+      idempotencyKey: "approve-dto-1",
     }),
   );
   const exposed = WorkScheduleRequestBatchAdminExposure.exposeDetail(approved);

@@ -106,7 +106,10 @@ test("manager Event detail returns completion evidence as read-only summary", as
     "event-completed",
   );
 
-  assert.equal(result.completionEvidence?.evidenceNote, "Delivered recap package.");
+  assert.equal(
+    result.completionEvidence?.evidenceNote,
+    "Delivered recap package.",
+  );
   assert.equal(result.owner?.status, "ACTIVE");
   assert.equal("completeEvent" in service, false);
   assert.equal("updateCompletionEvidence" in service, false);
@@ -253,9 +256,7 @@ test("manager KPI stays unavailable without the shared operation's kpi.managedGr
     orgUnitAssignments: [orgUnitAssignment("ou-production", "UNIT_MANAGER")],
   });
 
-  const context = await service.getContext(
-    managerActor({ scopeGrants: {} }),
-  );
+  const context = await service.getContext(managerActor({ scopeGrants: {} }));
 
   assert.equal(context.scopes.orgUnits[0]?.capabilities.kpi.read, true);
   assert.equal(context.modules.kpi.visible, false);
@@ -354,7 +355,9 @@ test("direct UNIT_MANAGER assignment exposes current KPI write capabilities when
 
 test("role/capability without assignment does not expose module data", async () => {
   const service = createService({ profile: activeProfile() });
-  const context = await service.getContext(managerActor({ roles: ["TEAM_MANAGER"] }));
+  const context = await service.getContext(
+    managerActor({ roles: ["TEAM_MANAGER"] }),
+  );
 
   assert.equal(context.modules.kpi.visible, false);
   assert.equal(context.scopes.orgUnits.length, 0);
@@ -434,9 +437,17 @@ test("manager workspace context requires no new scope literals", async () => {
 test("manager WorkSchedule unions exact OrgUnit and eligible TalentGroup members, dedupes, and fails closed", async () => {
   let capturedInput: WorkShiftListReadInput | undefined;
   const service = createWorkScheduleService({
-    orgUnitAssignments: [orgUnitAssignment("ou-direct", "UNIT_MANAGER", { includeDescendants: true })],
+    orgUnitAssignments: [
+      orgUnitAssignment("ou-direct", "UNIT_MANAGER", {
+        includeDescendants: true,
+      }),
+    ],
     talentGroupAssignments: [talentGroupAssignment("tg-live")],
-    orgUnitProfiles: [managedProfile("ep-org"), managedProfile("ep-both"), managedProfile("ep-inactive", "SUSPENDED")],
+    orgUnitProfiles: [
+      managedProfile("ep-org"),
+      managedProfile("ep-both"),
+      managedProfile("ep-inactive", "SUSPENDED"),
+    ],
     talentGroupProfiles: [
       managedTalentGroupResolution(managedProfile("ep-group")),
       managedTalentGroupResolution(managedProfile("ep-both")),
@@ -458,14 +469,17 @@ test("manager WorkSchedule unions exact OrgUnit and eligible TalentGroup members
     { month: "2026-06" },
   );
 
-  assert.deepEqual(capturedInput?.scopeEmploymentProfileIds, ["ep-both", "ep-group", "ep-org"]);
+  assert.deepEqual(capturedInput?.scopeEmploymentProfileIds, [
+    "ep-both",
+    "ep-group",
+    "ep-org",
+  ]);
   assert.equal(capturedInput?.status, "ACTIVE");
   assert.equal(capturedInput?.subjectKind, "EMPLOYMENT_PROFILE");
-  assert.deepEqual(result.items.map((item) => item.workShiftId), [
-    "shift-org",
-    "shift-group",
-    "shift-both",
-  ]);
+  assert.deepEqual(
+    result.items.map((item) => item.workShiftId),
+    ["shift-org", "shift-group", "shift-both"],
+  );
   assert.equal(result.meta.managedMemberCount, 3);
   assert.equal(result.meta.representedMemberCount, 3);
 });
@@ -638,6 +652,128 @@ test("manager WorkSchedule requires matching structured OrgUnit and TalentGroup 
   assert.equal(result.meta.managedMemberCount, 0);
 });
 
+test("manager weekly schedule groups exact-scope members into a bounded safe seven-day DTO", async () => {
+  let capturedInput: WorkShiftListReadInput | undefined;
+  const service = createWorkScheduleService({
+    orgUnitAssignments: [orgUnitAssignment("ou-direct", "UNIT_MANAGER")],
+    talentGroupAssignments: [talentGroupAssignment("tg-live")],
+    orgUnitProfiles: [
+      managedProfile("ep-org"),
+      managedProfile("ep-unscheduled"),
+    ],
+    talentGroupProfiles: [
+      managedTalentGroupResolution(managedProfile("ep-group")),
+    ],
+    onList(input) {
+      capturedInput = input;
+      return [
+        managerShift("shift-org-a", "ep-org"),
+        managerShift("shift-org-b", "ep-org"),
+        managerShift("shift-cross-scope", "ep-group"),
+      ];
+    },
+  });
+
+  const result = await service.getWeeklySchedule(
+    managerActor({ permissions: ["workSchedule.read"], scopeGrants: {} }),
+    {
+      scopeType: "ORG_UNIT",
+      scopeId: "ou-direct",
+      weekStart: "2026-06-01",
+    },
+  );
+
+  assert.equal(result.days.length, 7);
+  assert.equal(
+    result.window.endAt - result.window.startAt,
+    7 * 24 * 60 * 60 * 1000,
+  );
+  assert.deepEqual(capturedInput?.scopeEmploymentProfileIds, [
+    "ep-org",
+    "ep-unscheduled",
+  ]);
+  assert.deepEqual(
+    result.rows.map((row) => row.member.employmentProfileId),
+    ["ep-org", "ep-unscheduled"],
+  );
+  assert.equal(result.rows[0]?.shifts.length, 2);
+  assert.equal(result.rows[0]?.readiness, "CONFLICT");
+  assert.equal(result.rows[0]?.conflicts[0]?.code, "SHIFT_OVERLAP");
+  assert.equal(result.rows[1]?.readiness, "UNSCHEDULED");
+  assert.equal(result.summary.managedMemberCount, 2);
+  assert.equal(result.summary.conflictCount, 1);
+  assert.equal(result.summary.indicatorCompleteness, "UNAVAILABLE");
+  const serialized = JSON.stringify(result).toLowerCase();
+  assert.equal(serialized.includes("attendance"), false);
+  assert.equal(serialized.includes("payroll"), false);
+});
+
+test("manager weekly schedule consumes every bounded shift page before claiming complete rows", async () => {
+  const cursors: Array<string | undefined> = [];
+  const service = createWorkScheduleService({
+    orgUnitAssignments: [orgUnitAssignment("ou-direct", "UNIT_MANAGER")],
+    orgUnitProfiles: [managedProfile("ep-org")],
+    onList(input) {
+      cursors.push(input.cursor);
+      return input.cursor
+        ? { items: [managerShift("shift-page-2", "ep-org")] }
+        : {
+            items: [managerShift("shift-page-1", "ep-org")],
+            nextCursor: "shift-page-2",
+          };
+    },
+  });
+
+  const result = await service.getWeeklySchedule(
+    managerActor({ permissions: ["workSchedule.read"], scopeGrants: {} }),
+    {
+      scopeType: "ORG_UNIT",
+      scopeId: "ou-direct",
+      weekStart: "2026-06-01",
+    },
+  );
+
+  assert.deepEqual(cursors, [undefined, "shift-page-2"]);
+  assert.equal(result.rows[0]?.shifts.length, 2);
+  assert.equal(result.nextCursor, undefined);
+});
+
+test("manager weekly schedule rejects invalid windows and dual-scope bridging", async () => {
+  const service = createWorkScheduleService({
+    orgUnitAssignments: [orgUnitAssignment("ou-direct", "UNIT_MANAGER")],
+    orgUnitProfiles: [managedProfile("ep-org")],
+  });
+  const actor = managerActor({
+    permissions: ["workSchedule.read"],
+    scopeGrants: {},
+  });
+
+  await assert.rejects(
+    service.getWeeklySchedule(actor, {
+      scopeType: "ORG_UNIT",
+      scopeId: "ou-direct",
+      weekStart: "2026-06-02",
+    }),
+    /valid Monday/u,
+  );
+  await assert.rejects(
+    service.getWeeklySchedule(actor, {
+      scopeType: "ORG_UNIT",
+      scopeId: "ou-direct",
+      weekStart: "2026-02-30",
+    }),
+    /valid Monday/u,
+  );
+  await assert.rejects(
+    service.getWeeklySchedule(actor, {
+      scopeType: "TALENT_GROUP",
+      scopeId: "tg-live",
+      weekStart: "2026-06-01",
+    }),
+    /Exact assigned/u,
+  );
+});
+
 function createService(input: {
   readonly profile: EmploymentProfileRecord | null;
   readonly orgUnitAssignments?: readonly OrgUnitManagerAssignment[];
@@ -673,9 +809,13 @@ function createService(input: {
                   id: subject.subjectId,
                   code: subject.subjectId.toUpperCase(),
                   name:
-                    subject.subjectId === "tg-live" ? "Live Talent" : subject.subjectId,
+                    subject.subjectId === "tg-live"
+                      ? "Live Talent"
+                      : subject.subjectId,
                   displayName:
-                    subject.subjectId === "tg-live" ? "Live Talent" : subject.subjectId,
+                    subject.subjectId === "tg-live"
+                      ? "Live Talent"
+                      : subject.subjectId,
                   status: "ACTIVE",
                 },
           ]),
@@ -826,8 +966,15 @@ function createWorkScheduleService(input: {
   readonly orgUnitAssignments?: readonly OrgUnitManagerAssignment[];
   readonly talentGroupAssignments?: readonly TalentGroupManagerAssignment[];
   readonly orgUnitProfiles?: readonly WorkScheduleReferencedEmploymentProfile[];
-  readonly talentGroupProfiles?: readonly ReturnType<typeof managedTalentGroupResolution>[];
-  readonly onList?: (input: WorkShiftListReadInput) => ReturnType<typeof managerShift>[];
+  readonly talentGroupProfiles?: readonly ReturnType<
+    typeof managedTalentGroupResolution
+  >[];
+  readonly onList?: (input: WorkShiftListReadInput) =>
+    | ReturnType<typeof managerShift>[]
+    | {
+        readonly items: ReturnType<typeof managerShift>[];
+        readonly nextCursor?: string;
+      };
   readonly structuredAuthority?: StructuredScopeAuthorityService;
   readonly managedScope?: ReturnType<typeof managedScopeReader>;
 }): ManagerWorkspaceWorkScheduleAdminService {
@@ -848,7 +995,8 @@ function createWorkScheduleService(input: {
     input.managedScope ?? managedScopeReader(input),
     {
       async listWorkShifts(readInput) {
-        return { items: input.onList?.(readInput) ?? [] };
+        const result = input.onList?.(readInput) ?? [];
+        return Array.isArray(result) ? { items: result } : result;
       },
     },
     input.structuredAuthority ?? structuredAuthority(),
@@ -1011,7 +1159,10 @@ function managerShift(
   id: string,
   employmentProfileId: string,
   sourceType: "MANUAL" | "ROSTER_GENERATED" = "MANUAL",
-  rosterTarget: { readonly type: "ORG_UNIT" | "TALENT_GROUP"; readonly id: string } = {
+  rosterTarget: {
+    readonly type: "ORG_UNIT" | "TALENT_GROUP";
+    readonly id: string;
+  } = {
     type: "TALENT_GROUP",
     id: "tg-live",
   },
@@ -1030,10 +1181,14 @@ function managerShift(
     sourceType,
     sourceRosterId: sourceType === "ROSTER_GENERATED" ? "roster-1" : null,
     sourceRosterMonth: sourceType === "ROSTER_GENERATED" ? "2026-06" : null,
-    sourceRosterTargetType: sourceType === "ROSTER_GENERATED" ? rosterTarget.type : null,
-    sourceRosterTargetId: sourceType === "ROSTER_GENERATED" ? rosterTarget.id : null,
-    sourceRosterTargetMode: sourceType === "ROSTER_GENERATED" ? ("EXACT_ONLY" as const) : null,
-    sourceRosterLocalDate: sourceType === "ROSTER_GENERATED" ? "2026-06-06" : null,
+    sourceRosterTargetType:
+      sourceType === "ROSTER_GENERATED" ? rosterTarget.type : null,
+    sourceRosterTargetId:
+      sourceType === "ROSTER_GENERATED" ? rosterTarget.id : null,
+    sourceRosterTargetMode:
+      sourceType === "ROSTER_GENERATED" ? ("EXACT_ONLY" as const) : null,
+    sourceRosterLocalDate:
+      sourceType === "ROSTER_GENERATED" ? "2026-06-06" : null,
     sourceRosterSlotKey: sourceType === "ROSTER_GENERATED" ? "slot-1" : null,
     createdAt: now,
   };

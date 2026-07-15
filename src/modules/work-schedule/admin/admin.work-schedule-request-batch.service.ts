@@ -26,6 +26,13 @@ import {
 } from "@modules/work-schedule/domain/work-schedule.errors";
 import { WorkScheduleCodeSequenceRepository } from "@modules/work-schedule/domain/work-schedule-code-sequence.repository";
 import {
+  assertEmergencyOverride,
+  classifyWorkScheduleLeadTime,
+  createWorkScheduleApplicationLineage,
+  WorkScheduleApplicationLineage,
+  WorkScheduleLeadTimeDecision,
+} from "@modules/work-schedule/domain/work-schedule-application-policy";
+import {
   WorkScheduleEmploymentProfileReadonlyAccess,
   WorkScheduleReferencedEmploymentProfile,
 } from "@modules/work-schedule/domain/work-schedule-employment-profile-readonly-access";
@@ -97,7 +104,10 @@ interface NormalizedSubmitBatchCommand {
 }
 
 interface ManagedScopeResolution {
-  readonly profiles: ReadonlyMap<string, WorkScheduleReferencedEmploymentProfile>;
+  readonly profiles: ReadonlyMap<
+    string,
+    WorkScheduleReferencedEmploymentProfile
+  >;
   readonly orgUnitProfileIds: ReadonlySet<string>;
   readonly talentGroupProfileIds: ReadonlySet<string>;
   readonly authority: ManagerWorkScheduleTargetAuthority;
@@ -136,8 +146,10 @@ export class WorkScheduleRequestBatchAdminService {
         lineCount: input.lines.length,
       },
       async (session) => {
-        const managerProfile =
-          await this.requireManagerReadyEmploymentProfile(actor.id, session);
+        const managerProfile = await this.requireManagerReadyEmploymentProfile(
+          actor.id,
+          session,
+        );
         const scope = await this.resolveManagedScope(
           actor,
           managerProfile.id,
@@ -148,12 +160,11 @@ export class WorkScheduleRequestBatchAdminService {
             "Active exact Manager responsibility plus matching structured WorkSchedule scope are required",
           );
         }
-        const existing =
-          await this.batchRepository.findBatchByClientToken(
-            managerProfile.id,
-            input.clientToken,
-            session,
-          );
+        const existing = await this.batchRepository.findBatchByClientToken(
+          managerProfile.id,
+          input.clientToken,
+          session,
+        );
 
         if (existing) {
           return this.toBatchView(existing, session);
@@ -172,13 +183,24 @@ export class WorkScheduleRequestBatchAdminService {
         const batchCode = await this.allocateGeneratedBatchCode(now, session);
 
         for (const [index, line] of input.lines.entries()) {
-          await this.assertLineSubmitEligible(
+          const sourceWorkShift = await this.assertLineSubmitEligible(
             line,
             input.periodMonth,
             managerProfile.id,
             scope,
             session,
           );
+          const proposedStartAt =
+            line.requestedStartAt ?? sourceWorkShift?.shiftStartAt;
+          if (proposedStartAt === undefined) {
+            throw new WorkScheduleValidationError(
+              "Schedule request requires a proposed or source shift start",
+            );
+          }
+          const leadTime = classifyWorkScheduleLeadTime({
+            now,
+            proposedStartAt,
+          });
           lines.push({
             id: crypto.randomUUID(),
             batchId,
@@ -186,6 +208,9 @@ export class WorkScheduleRequestBatchAdminService {
             requestType: line.requestType,
             memberEmploymentProfileId: line.memberEmploymentProfileId,
             workShiftId: line.workShiftId,
+            sourceWorkShiftVersion: sourceWorkShift?.updatedAt ?? null,
+            sourceGenerationRunId:
+              sourceWorkShift?.sourceGenerationRunId ?? null,
             requestedStartAt: line.requestedStartAt,
             requestedEndAt: line.requestedEndAt,
             timezone: line.timezone,
@@ -204,6 +229,14 @@ export class WorkScheduleRequestBatchAdminService {
             cancellationReason: null,
             failureReason: null,
             appliedWorkShiftId: null,
+            applicationState: null,
+            applicationLineage: null,
+            applicationIdempotencyKey: null,
+            applicationPayloadFingerprint: null,
+            leadTimeClassification: leadTime.classification,
+            leadTimeProposedStartAt: proposedStartAt,
+            decisionSlaMinutes: leadTime.slaMinutes,
+            emergencyOverrideReason: null,
             createdAt: now,
             updatedAt: now,
             approvedAt: null,
@@ -237,11 +270,7 @@ export class WorkScheduleRequestBatchAdminService {
           updatedAt: now,
         };
 
-        await this.batchRepository.insertBatchWithLines(
-          batch,
-          lines,
-          session,
-        );
+        await this.batchRepository.insertBatchWithLines(batch, lines, session);
 
         await this.recordAudit({
           actor,
@@ -267,8 +296,9 @@ export class WorkScheduleRequestBatchAdminService {
     query: ListWorkScheduleRequestBatchesQuery,
   ): Promise<ListWorkScheduleRequestBatchesResult> {
     assertManagerWorkSchedulePermission(actor, Permission.WORK_SCHEDULE_READ);
-    const managerProfile =
-      await this.requireManagerReadyEmploymentProfile(actor.id);
+    const managerProfile = await this.requireManagerReadyEmploymentProfile(
+      actor.id,
+    );
     const scope = await this.resolveManagedScope(actor, managerProfile.id);
     if (!hasManagerWorkScheduleTargets(scope.authority)) {
       return { items: [], nextCursor: undefined };
@@ -299,8 +329,9 @@ export class WorkScheduleRequestBatchAdminService {
     query: GetWorkScheduleRequestBatchDetailQuery,
   ): Promise<WorkScheduleRequestBatchView> {
     assertManagerWorkSchedulePermission(actor, Permission.WORK_SCHEDULE_READ);
-    const managerProfile =
-      await this.requireManagerReadyEmploymentProfile(actor.id);
+    const managerProfile = await this.requireManagerReadyEmploymentProfile(
+      actor.id,
+    );
     const scope = await this.resolveManagedScope(actor, managerProfile.id);
     const batch = await this.requireBatch(query.batchId);
     if (batch.submittedByEmploymentProfileId !== managerProfile.id) {
@@ -320,9 +351,13 @@ export class WorkScheduleRequestBatchAdminService {
       actor,
       Permission.WORK_SCHEDULE_READ,
     );
-    const reason = normalizeReason(command.cancellationReason, "cancellationReason");
-    const managerProfile =
-      await this.requireManagerReadyEmploymentProfile(actor.id);
+    const reason = normalizeReason(
+      command.cancellationReason,
+      "cancellationReason",
+    );
+    const managerProfile = await this.requireManagerReadyEmploymentProfile(
+      actor.id,
+    );
 
     return this.executeMutation(
       actor,
@@ -389,9 +424,13 @@ export class WorkScheduleRequestBatchAdminService {
       actor,
       Permission.WORK_SCHEDULE_READ,
     );
-    const reason = normalizeReason(command.cancellationReason, "cancellationReason");
-    const managerProfile =
-      await this.requireManagerReadyEmploymentProfile(actor.id);
+    const reason = normalizeReason(
+      command.cancellationReason,
+      "cancellationReason",
+    );
+    const managerProfile = await this.requireManagerReadyEmploymentProfile(
+      actor.id,
+    );
 
     return this.executeMutation(
       actor,
@@ -474,12 +513,38 @@ export class WorkScheduleRequestBatchAdminService {
     command: DecideWorkScheduleRequestBatchLinesCommand,
   ): Promise<WorkScheduleRequestBatchMutationResult> {
     const note =
-      normalizeOptionalNullableText(command.approvalNote, "approvalNote") ?? null;
+      normalizeOptionalNullableText(command.approvalNote, "approvalNote") ??
+      null;
     const lineIds = normalizeLineIds(command.lineIds);
+    const idempotencyKey = normalizeRequiredText(
+      command.idempotencyKey,
+      "idempotencyKey",
+    );
+    const emergencyOverrideReason =
+      normalizeOptionalNullableText(
+        command.emergencyOverrideReason,
+        "emergencyOverrideReason",
+      ) ?? null;
     let latest: WorkScheduleRequestBatchRecord | null = null;
 
     for (const lineId of lineIds) {
-      latest = await this.approveOneLine(actor, command.batchId, lineId, note);
+      const expectedRequestVersion = command.expectedRequestVersions?.[lineId];
+      if (!Number.isSafeInteger(expectedRequestVersion)) {
+        throw new WorkScheduleValidationError(
+          `expectedRequestVersions.${lineId} is required`,
+        );
+      }
+      latest = await this.approveOneLine(
+        actor,
+        command.batchId,
+        lineId,
+        note,
+        expectedRequestVersion as number,
+        command.expectedWorkShiftVersions?.[lineId],
+        command.expectedSourceGenerationRunIds?.[lineId],
+        idempotencyKey,
+        emergencyOverrideReason,
+      );
     }
 
     return this.toBatchView(
@@ -491,7 +556,10 @@ export class WorkScheduleRequestBatchAdminService {
     actor: Actor,
     command: DecideWorkScheduleRequestBatchLinesCommand,
   ): Promise<WorkScheduleRequestBatchMutationResult> {
-    const permission = this.assertPermission(actor, Permission.WORK_SCHEDULE_UPDATE);
+    const permission = this.assertPermission(
+      actor,
+      Permission.WORK_SCHEDULE_UPDATE,
+    );
     this.assertGlobalScheduleAuthority(actor);
     const reason = normalizeReason(command.rejectionReason, "rejectionReason");
     const lineIds = normalizeLineIds(command.lineIds);
@@ -525,9 +593,15 @@ export class WorkScheduleRequestBatchAdminService {
     actor: Actor,
     command: DecideWorkScheduleRequestBatchLinesCommand,
   ): Promise<WorkScheduleRequestBatchMutationResult> {
-    const permission = this.assertPermission(actor, Permission.WORK_SCHEDULE_UPDATE);
+    const permission = this.assertPermission(
+      actor,
+      Permission.WORK_SCHEDULE_UPDATE,
+    );
     this.assertGlobalScheduleAuthority(actor);
-    const reason = normalizeReason(command.cancellationReason, "cancellationReason");
+    const reason = normalizeReason(
+      command.cancellationReason,
+      "cancellationReason",
+    );
     const lineIds = normalizeLineIds(command.lineIds);
 
     return this.executeLineDecision(
@@ -560,9 +634,39 @@ export class WorkScheduleRequestBatchAdminService {
     batchId: string,
     lineId: string,
     approvalNote: string | null,
+    expectedRequestVersion: number,
+    expectedWorkShiftVersion: number | null | undefined,
+    expectedSourceGenerationRunId: string | null | undefined,
+    idempotencyKey: string,
+    emergencyOverrideReason: string | null,
   ): Promise<WorkScheduleRequestBatchRecord> {
     const batch = await this.requireBatch(batchId);
     const line = await this.requireLine(batch.id, lineId);
+    assertExpectedApplicationSourceVersions(
+      line,
+      expectedWorkShiftVersion,
+      expectedSourceGenerationRunId,
+    );
+    const payloadFingerprint = fingerprintApproval({
+      batchId,
+      lineId,
+      expectedRequestVersion,
+      expectedWorkShiftVersion,
+      expectedSourceGenerationRunId,
+      approvalNote,
+      emergencyOverrideReason,
+    });
+    if (line.status !== "PENDING") {
+      if (
+        line.applicationIdempotencyKey === idempotencyKey &&
+        line.applicationPayloadFingerprint === payloadFingerprint
+      ) {
+        return batch;
+      }
+      throw new WorkScheduleConflictError(
+        "IDEMPOTENCY_CONFLICT: request line is already terminal",
+      );
+    }
     const permission = this.assertPermission(
       actor,
       Permission.WORK_SCHEDULE_UPDATE,
@@ -581,8 +685,29 @@ export class WorkScheduleRequestBatchAdminService {
           assertBatchNotCancelled(currentBatch);
           const currentLine = await this.requireLine(batchId, lineId, session);
           assertPendingLine(currentLine);
-          const appliedWorkShiftId = await this.applyApprovedLine(
+          if (expectedRequestVersion !== currentLine.updatedAt) {
+            throw new WorkScheduleConflictError(
+              `SOURCE_CHANGED: request line ${lineId} changed after review`,
+            );
+          }
+          const leadTime = resolvePersistedLeadTime(currentLine, this.clock());
+          try {
+            assertEmergencyOverride({
+              decision: leadTime,
+              actorKind: "ADMIN_OPS",
+              reason: emergencyOverrideReason,
+              identityAndScopeValid: true,
+            });
+          } catch (error) {
+            throw new WorkScheduleValidationError(
+              error instanceof Error
+                ? error.message
+                : "Emergency override denied",
+            );
+          }
+          const application = await this.applyApprovedLine(
             currentLine,
+            idempotencyKey,
             session,
           );
           const now = this.clock();
@@ -596,7 +721,12 @@ export class WorkScheduleRequestBatchAdminService {
               approvalNote,
               approvedAt: now,
               approvedByActorId: actor.id,
-              appliedWorkShiftId,
+              appliedWorkShiftId: application.appliedWorkShiftId,
+              applicationState: "APPROVED_APPLIED",
+              applicationLineage: application.lineage,
+              applicationIdempotencyKey: idempotencyKey,
+              applicationPayloadFingerprint: payloadFingerprint,
+              emergencyOverrideReason,
             },
             session,
           );
@@ -611,7 +741,12 @@ export class WorkScheduleRequestBatchAdminService {
               batchCode: currentBatch.batchCode,
               lineNo: currentLine.lineNo,
               requestType: currentLine.requestType,
-              appliedWorkShiftId,
+              appliedWorkShiftId: application.appliedWorkShiftId,
+              applicationState: "APPROVED_APPLIED",
+              applicationLineage: application.lineage,
+              leadTime,
+              emergencyOverrideReason,
+              idempotencyKey,
             },
             session,
           });
@@ -619,6 +754,12 @@ export class WorkScheduleRequestBatchAdminService {
         },
       );
     } catch (error) {
+      if (
+        error instanceof WorkScheduleValidationError &&
+        /EMERGENCY_/u.test(error.message)
+      ) {
+        throw error;
+      }
       if (!isApprovalApplyFailure(error)) {
         throw error;
       }
@@ -629,6 +770,9 @@ export class WorkScheduleRequestBatchAdminService {
         batchId,
         lineId,
         safeFailureReason(error),
+        classifyApprovalFailure(error),
+        idempotencyKey,
+        payloadFingerprint,
       );
     }
   }
@@ -687,6 +831,10 @@ export class WorkScheduleRequestBatchAdminService {
     batchId: string,
     lineId: string,
     failureReason: string,
+    applicationState:
+      "SOURCE_CHANGED" | "APPLICATION_CONFLICT" | "APPLICATION_FAILED",
+    idempotencyKey: string,
+    payloadFingerprint: string,
   ): Promise<WorkScheduleRequestBatchRecord> {
     return this.executeMutation(
       actor,
@@ -704,11 +852,14 @@ export class WorkScheduleRequestBatchAdminService {
             batchId,
             lineId,
             fromStatus: "PENDING",
-            toStatus: "FAILED_TO_APPLY",
+            toStatus: applicationState,
             updatedAt: now,
             failureReason,
             failedAt: now,
             failedByActorId: actor.id,
+            applicationState,
+            applicationIdempotencyKey: idempotencyKey,
+            applicationPayloadFingerprint: payloadFingerprint,
           },
           session,
         );
@@ -724,6 +875,8 @@ export class WorkScheduleRequestBatchAdminService {
             lineNo: line.lineNo,
             failedToApply: true,
             failureReason,
+            applicationState,
+            idempotencyKey,
           },
           session,
         });
@@ -734,26 +887,34 @@ export class WorkScheduleRequestBatchAdminService {
 
   private async applyApprovedLine(
     line: WorkScheduleRequestLineRecord,
+    idempotencyKey: string,
     session: ClientSession,
-  ): Promise<string> {
+  ): Promise<{
+    readonly appliedWorkShiftId: string;
+    readonly lineage: WorkScheduleApplicationLineage;
+  }> {
     await this.assertTargetEmploymentProfileEligible(
       line.memberEmploymentProfileId,
       session,
     );
 
     if (line.requestType === "CREATE_SHIFT") {
-      return this.applyCreateShiftLine(line, session);
+      return this.applyCreateShiftLine(line, idempotencyKey, session);
     }
     if (line.requestType === "RESCHEDULE_SHIFT") {
-      return this.applyRescheduleShiftLine(line, session);
+      return this.applyRescheduleShiftLine(line, idempotencyKey, session);
     }
-    return this.applyCancelShiftLine(line, session);
+    return this.applyCancelShiftLine(line, idempotencyKey, session);
   }
 
   private async applyCreateShiftLine(
     line: WorkScheduleRequestLineRecord,
+    idempotencyKey: string,
     session: ClientSession,
-  ): Promise<string> {
+  ): Promise<{
+    readonly appliedWorkShiftId: string;
+    readonly lineage: WorkScheduleApplicationLineage;
+  }> {
     if (
       line.requestedStartAt === null ||
       line.requestedEndAt === null ||
@@ -812,13 +973,26 @@ export class WorkScheduleRequestBatchAdminService {
       session,
     );
 
-    return created.id;
+    return {
+      appliedWorkShiftId: created.id,
+      lineage: createWorkScheduleApplicationLineage({
+        kind: "CREATE",
+        before: null,
+        after: toApplicationShiftSnapshot(created),
+        rosterId: created.sourceRosterId,
+        idempotencyKey,
+      }),
+    };
   }
 
   private async applyRescheduleShiftLine(
     line: WorkScheduleRequestLineRecord,
+    idempotencyKey: string,
     session: ClientSession,
-  ): Promise<string> {
+  ): Promise<{
+    readonly appliedWorkShiftId: string;
+    readonly lineage: WorkScheduleApplicationLineage;
+  }> {
     if (
       line.workShiftId === null ||
       line.requestedStartAt === null ||
@@ -833,6 +1007,7 @@ export class WorkScheduleRequestBatchAdminService {
       line.memberEmploymentProfileId,
       session,
     );
+    assertRequestSourceUnchanged(line, current);
     assertActiveWorkShift(current, "RESCHEDULE_SHIFT");
     await this.assertNoOverlapConflicts({
       subject: toEmploymentProfileSubject(line.memberEmploymentProfileId),
@@ -847,31 +1022,71 @@ export class WorkScheduleRequestBatchAdminService {
       current.shiftStartAt === line.requestedStartAt &&
       current.shiftEndAt === line.requestedEndAt
     ) {
-      return current.id;
+      return {
+        appliedWorkShiftId: current.id,
+        lineage: createWorkScheduleApplicationLineage({
+          kind: "RESCHEDULE",
+          before: toApplicationShiftSnapshot(current),
+          after: toApplicationShiftSnapshot(current),
+          rosterId: current.sourceRosterId,
+          idempotencyKey,
+        }),
+      };
     }
 
-    const updated = await this.workShiftRepository.reschedule(
-      {
-        workShiftId: current.id,
-        shiftStartAt: line.requestedStartAt,
-        shiftEndAt: line.requestedEndAt,
-        updatedAt: this.clock(),
-      } satisfies RescheduleWorkShiftInput,
+    const now = this.clock();
+    const replacementCode = await this.allocateGeneratedShiftCode(
+      line.requestedStartAt,
       session,
     );
-
-    if (!updated) {
+    const replacement = await this.workShiftRepository.insert(
+      {
+        ...current,
+        id: crypto.randomUUID(),
+        shiftCode: replacementCode,
+        normalizedShiftCode: canonicalizeSearchToken(replacementCode),
+        status: "ACTIVE",
+        shiftStartAt: line.requestedStartAt,
+        shiftEndAt: line.requestedEndAt,
+        createdAt: now,
+        updatedAt: now,
+      },
+      session,
+    );
+    const cancelled = await this.workShiftRepository.transitionStatus(
+      {
+        workShiftId: current.id,
+        fromStatuses: ["ACTIVE"],
+        toStatus: "CANCELLED",
+        updatedAt: now,
+      },
+      session,
+    );
+    if (!cancelled) {
       throw new WorkScheduleConflictError(
         `Failed to reschedule work shift: ${current.id}`,
       );
     }
-    return updated.id;
+    return {
+      appliedWorkShiftId: replacement.id,
+      lineage: createWorkScheduleApplicationLineage({
+        kind: "RESCHEDULE",
+        before: toApplicationShiftSnapshot(current),
+        after: toApplicationShiftSnapshot(replacement),
+        rosterId: current.sourceRosterId,
+        idempotencyKey,
+      }),
+    };
   }
 
   private async applyCancelShiftLine(
     line: WorkScheduleRequestLineRecord,
+    idempotencyKey: string,
     session: ClientSession,
-  ): Promise<string> {
+  ): Promise<{
+    readonly appliedWorkShiftId: string;
+    readonly lineage: WorkScheduleApplicationLineage;
+  }> {
     if (line.workShiftId === null) {
       throw new WorkScheduleValidationError(
         "CANCEL_SHIFT approval requires target shift",
@@ -882,6 +1097,7 @@ export class WorkScheduleRequestBatchAdminService {
       line.memberEmploymentProfileId,
       session,
     );
+    assertRequestSourceUnchanged(line, current);
     assertActiveWorkShift(current, "CANCEL_SHIFT");
     const updated = await this.workShiftRepository.transitionStatus(
       {
@@ -898,7 +1114,16 @@ export class WorkScheduleRequestBatchAdminService {
         `Failed to cancel work shift: ${current.id}`,
       );
     }
-    return updated.id;
+    return {
+      appliedWorkShiftId: updated.id,
+      lineage: createWorkScheduleApplicationLineage({
+        kind: "CANCEL",
+        before: toApplicationShiftSnapshot(current),
+        after: toApplicationShiftSnapshot(updated),
+        rosterId: current.sourceRosterId,
+        idempotencyKey,
+      }),
+    };
   }
 
   private async assertLineSubmitEligible(
@@ -907,7 +1132,7 @@ export class WorkScheduleRequestBatchAdminService {
     submitterEmploymentProfileId: string,
     scope: ManagedScopeResolution,
     session: ClientSession,
-  ): Promise<void> {
+  ): Promise<WorkShiftRecord | null> {
     if (!scope.profiles.has(line.memberEmploymentProfileId)) {
       throw new WorkSchedulePermissionScopeError(
         "Manager can submit WorkSchedule request lines only for assigned exact OrgUnit or TalentGroup members",
@@ -919,19 +1144,18 @@ export class WorkScheduleRequestBatchAdminService {
       session,
     );
 
-    const duplicate =
-      await this.batchRepository.findPendingDuplicateLine(
-        {
-          submittedByEmploymentProfileId: submitterEmploymentProfileId,
-          periodMonth,
-          requestType: line.requestType,
-          memberEmploymentProfileId: line.memberEmploymentProfileId,
-          workShiftId: line.workShiftId,
-          requestedStartAt: line.requestedStartAt,
-          requestedEndAt: line.requestedEndAt,
-        },
-        session,
-      );
+    const duplicate = await this.batchRepository.findPendingDuplicateLine(
+      {
+        submittedByEmploymentProfileId: submitterEmploymentProfileId,
+        periodMonth,
+        requestType: line.requestType,
+        memberEmploymentProfileId: line.memberEmploymentProfileId,
+        workShiftId: line.workShiftId,
+        requestedStartAt: line.requestedStartAt,
+        requestedEndAt: line.requestedEndAt,
+      },
+      session,
+    );
     if (duplicate) {
       throw new WorkScheduleConflictError(
         "Duplicate pending WorkSchedule request line already exists",
@@ -940,7 +1164,7 @@ export class WorkScheduleRequestBatchAdminService {
 
     if (line.requestType === "CREATE_SHIFT") {
       assertMonthMatches(periodMonth, line.requestedStartAt);
-      return;
+      return null;
     }
 
     const target = await this.requireTargetEmploymentProfileShift(
@@ -956,6 +1180,7 @@ export class WorkScheduleRequestBatchAdminService {
     } else {
       assertMonthMatches(periodMonth, target.shiftStartAt);
     }
+    return target;
   }
 
   private async resolveManagedScope(
@@ -1137,7 +1362,9 @@ export class WorkScheduleRequestBatchAdminService {
   }
 
   private async transitionLineOrThrow(
-    input: Parameters<WorkScheduleRequestBatchRepository["transitionLineStatus"]>[0],
+    input: Parameters<
+      WorkScheduleRequestBatchRepository["transitionLineStatus"]
+    >[0],
     session: ClientSession,
   ): Promise<WorkScheduleRequestLineRecord> {
     const updated = await this.batchRepository.transitionLineStatus(
@@ -1170,11 +1397,7 @@ export class WorkScheduleRequestBatchAdminService {
     session?: ClientSession,
   ): Promise<WorkScheduleRequestLineRecord> {
     const id = normalizeRequiredText(lineId, "lineId");
-    const line = await this.batchRepository.findLineById(
-      batchId,
-      id,
-      session,
-    );
+    const line = await this.batchRepository.findLineById(batchId, id, session);
     if (!line) {
       throw new WorkScheduleRequestBatchNotFoundError(`${batchId}/${id}`);
     }
@@ -1185,11 +1408,10 @@ export class WorkScheduleRequestBatchAdminService {
     batch: WorkScheduleRequestBatchRecord,
     session?: ClientSession,
   ): Promise<WorkScheduleRequestBatchListItemView> {
-    const submitter =
-      await this.employmentProfileReadonlyAccess.findById(
-        batch.submittedByEmploymentProfileId,
-        session,
-      );
+    const submitter = await this.employmentProfileReadonlyAccess.findById(
+      batch.submittedByEmploymentProfileId,
+      session,
+    );
     return {
       ...batch,
       submittedByEmploymentProfileRef: submitter?.ref ?? null,
@@ -1353,11 +1575,10 @@ export class WorkScheduleRequestBatchAdminService {
     }
 
     for (const studioResourceId of params.studioResourceIds) {
-      const studioResource =
-        await this.studioResourceReadonlyAccess.findById(
-          studioResourceId,
-          params.session,
-        );
+      const studioResource = await this.studioResourceReadonlyAccess.findById(
+        studioResourceId,
+        params.session,
+      );
       if (!studioResource) {
         throw new WorkScheduleInvalidResourceReferenceError(
           `Studio resource does not exist: ${studioResourceId}`,
@@ -1486,7 +1707,10 @@ function normalizeSubmitBatchCommand(
   command: SubmitWorkScheduleRequestBatchCommand,
   now: number,
 ): NormalizedSubmitBatchCommand {
-  const periodMonth = normalizeRequiredMonth(command.periodMonth, "periodMonth");
+  const periodMonth = normalizeRequiredMonth(
+    command.periodMonth,
+    "periodMonth",
+  );
   assertPeriodInPlanningWindow(periodMonth, now);
   const clientToken = normalizeRequiredText(
     command.clientToken ?? command.idempotencyKey,
@@ -1498,7 +1722,9 @@ function normalizeSubmitBatchCommand(
     );
   }
   if (!Array.isArray(command.lines) || command.lines.length === 0) {
-    throw new WorkScheduleValidationError("lines must contain at least one line");
+    throw new WorkScheduleValidationError(
+      "lines must contain at least one line",
+    );
   }
   if (command.lines.length > MAX_LINES_PER_BATCH) {
     throw new WorkScheduleValidationError(
@@ -1606,9 +1832,7 @@ function normalizeLineInput(
   };
 }
 
-function normalizeListBatchesQuery(
-  query: ListWorkScheduleRequestBatchesQuery,
-) {
+function normalizeListBatchesQuery(query: ListWorkScheduleRequestBatchesQuery) {
   return {
     status: normalizeOptionalBatchStatus(query.status),
     periodMonth:
@@ -1633,9 +1857,7 @@ function normalizeRequestType(value: unknown): WorkScheduleRequestType {
   }
   const normalized = value.trim().toUpperCase();
   if (
-    WORK_SCHEDULE_REQUEST_TYPES.includes(
-      normalized as WorkScheduleRequestType,
-    )
+    WORK_SCHEDULE_REQUEST_TYPES.includes(normalized as WorkScheduleRequestType)
   ) {
     return normalized as WorkScheduleRequestType;
   }
@@ -1702,12 +1924,17 @@ function normalizeReason(value: unknown, field: string): string {
   return reason;
 }
 
-function normalizeOptionalTimestamp(value: unknown, field: string): number | null {
+function normalizeOptionalTimestamp(
+  value: unknown,
+  field: string,
+): number | null {
   if (value === undefined || value === null) {
     return null;
   }
   if (typeof value !== "number" || !Number.isInteger(value)) {
-    throw new WorkScheduleValidationError(`${field} must be an integer timestamp`);
+    throw new WorkScheduleValidationError(
+      `${field} must be an integer timestamp`,
+    );
   }
   return value;
 }
@@ -1722,13 +1949,17 @@ function normalizeRequiredMonth(value: unknown, field: string): string {
 
 function normalizeLineIds(value: unknown): readonly string[] {
   if (!Array.isArray(value) || value.length === 0) {
-    throw new WorkScheduleValidationError("lineIds must contain at least one line id");
+    throw new WorkScheduleValidationError(
+      "lineIds must contain at least one line id",
+    );
   }
   const ids = value.map((item, index) =>
     normalizeRequiredText(item, `lineIds[${index}]`),
   );
   if (new Set(ids).size !== ids.length) {
-    throw new WorkScheduleValidationError("lineIds must not contain duplicates");
+    throw new WorkScheduleValidationError(
+      "lineIds must not contain duplicates",
+    );
   }
   return ids;
 }
@@ -1781,7 +2012,10 @@ function assertPeriodInPlanningWindow(periodMonth: string, now: number): void {
   }
 }
 
-function assertMonthMatches(periodMonth: string, timestamp: number | null): void {
+function assertMonthMatches(
+  periodMonth: string,
+  timestamp: number | null,
+): void {
   if (timestamp === null || hcmMonthFromTimestamp(timestamp) !== periodMonth) {
     throw new WorkScheduleValidationError(
       "request line date must be within the batch periodMonth",
@@ -1798,7 +2032,14 @@ function deriveLineCounts(
     approved: lines.filter((line) => line.status === "APPROVED").length,
     rejected: lines.filter((line) => line.status === "REJECTED").length,
     cancelled: lines.filter((line) => line.status === "CANCELLED").length,
-    failedToApply: lines.filter((line) => line.status === "FAILED_TO_APPLY").length,
+    failedToApply: lines.filter((line) =>
+      [
+        "FAILED_TO_APPLY",
+        "SOURCE_CHANGED",
+        "APPLICATION_CONFLICT",
+        "APPLICATION_FAILED",
+      ].includes(line.status),
+    ).length,
   };
 }
 
@@ -1893,6 +2134,29 @@ function assertActiveWorkShift(
   );
 }
 
+function assertRequestSourceUnchanged(
+  line: WorkScheduleRequestLineRecord,
+  current: WorkShiftRecord,
+): void {
+  if (
+    line.sourceWorkShiftVersion !== undefined &&
+    line.sourceWorkShiftVersion !== null &&
+    line.sourceWorkShiftVersion !== current.updatedAt
+  ) {
+    throw new WorkScheduleConflictError(
+      `SOURCE_CHANGED: work shift ${current.id} changed after request submission`,
+    );
+  }
+  if (
+    line.sourceGenerationRunId !== undefined &&
+    line.sourceGenerationRunId !== current.sourceGenerationRunId
+  ) {
+    throw new WorkScheduleConflictError(
+      `SOURCE_CHANGED: roster source for work shift ${current.id} changed after request submission`,
+    );
+  }
+}
+
 function permissionCodeForApproval(
   requestType: WorkScheduleRequestType,
 ): Permission {
@@ -1935,6 +2199,104 @@ function safeFailureReason(error: unknown): string {
   return "Approval-time WorkSchedule revalidation failed";
 }
 
+function classifyApprovalFailure(
+  error: unknown,
+): "SOURCE_CHANGED" | "APPLICATION_CONFLICT" | "APPLICATION_FAILED" {
+  if (
+    error instanceof Error &&
+    /SOURCE_CHANGED|changed after/iu.test(error.message)
+  ) {
+    return "SOURCE_CHANGED";
+  }
+  if (
+    error instanceof WorkScheduleOverlapConflictError ||
+    error instanceof WorkScheduleConflictError ||
+    error instanceof WorkScheduleStateError ||
+    error instanceof WorkScheduleValidationError
+  ) {
+    return "APPLICATION_CONFLICT";
+  }
+  return "APPLICATION_FAILED";
+}
+
+function fingerprintApproval(input: Readonly<Record<string, unknown>>): string {
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(input))
+    .digest("hex");
+}
+
+function assertExpectedApplicationSourceVersions(
+  line: WorkScheduleRequestLineRecord,
+  expectedWorkShiftVersion: number | null | undefined,
+  expectedSourceGenerationRunId: string | null | undefined,
+): void {
+  if (line.workShiftId === null) {
+    if (
+      expectedWorkShiftVersion !== undefined &&
+      expectedWorkShiftVersion !== null
+    ) {
+      throw new WorkScheduleValidationError(
+        `expectedWorkShiftVersions.${line.id} is not applicable`,
+      );
+    }
+    return;
+  }
+
+  if (!Number.isSafeInteger(expectedWorkShiftVersion)) {
+    throw new WorkScheduleValidationError(
+      `expectedWorkShiftVersions.${line.id} is required`,
+    );
+  }
+  if (expectedSourceGenerationRunId === undefined) {
+    throw new WorkScheduleValidationError(
+      `expectedSourceGenerationRunIds.${line.id} is required`,
+    );
+  }
+  if (
+    expectedSourceGenerationRunId !== null &&
+    (typeof expectedSourceGenerationRunId !== "string" ||
+      expectedSourceGenerationRunId.trim().length === 0)
+  ) {
+    throw new WorkScheduleValidationError(
+      `expectedSourceGenerationRunIds.${line.id} must be a non-empty string or null`,
+    );
+  }
+  if (
+    expectedWorkShiftVersion !== line.sourceWorkShiftVersion ||
+    expectedSourceGenerationRunId !== (line.sourceGenerationRunId ?? null)
+  ) {
+    throw new WorkScheduleConflictError(
+      `SOURCE_CHANGED: approval source for request line ${line.id} differs from the submitted source`,
+    );
+  }
+}
+
+function resolvePersistedLeadTime(
+  line: WorkScheduleRequestLineRecord,
+  now: number,
+): WorkScheduleLeadTimeDecision {
+  if (!Number.isFinite(line.leadTimeProposedStartAt)) {
+    throw new WorkScheduleValidationError(
+      "SOURCE_CHANGED: request line lacks an authoritative lead-time source",
+    );
+  }
+  return classifyWorkScheduleLeadTime({
+    now,
+    proposedStartAt: line.leadTimeProposedStartAt as number,
+  });
+}
+
+function toApplicationShiftSnapshot(workShift: WorkShiftRecord) {
+  return {
+    workShiftId: workShift.id,
+    version: workShift.updatedAt,
+    status: workShift.status,
+    startAt: workShift.shiftStartAt,
+    endAt: workShift.shiftEndAt,
+  };
+}
+
 function canonicalizeSearchToken(value: string): string {
   return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 }
@@ -1953,7 +2315,9 @@ function hcmMonthFromTimestamp(timestamp: number): string {
 
 function addMonths(month: string, amount: number): string {
   const [yearText, monthText] = month.split("-");
-  const date = new Date(Date.UTC(Number(yearText), Number(monthText) - 1 + amount, 1));
+  const date = new Date(
+    Date.UTC(Number(yearText), Number(monthText) - 1 + amount, 1),
+  );
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 

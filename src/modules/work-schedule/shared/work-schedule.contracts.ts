@@ -35,6 +35,7 @@ import {
   WorkShiftStatus,
   WorkShiftSubjectKind,
 } from "@modules/work-schedule/domain/work-schedule.types";
+import type { WorkScheduleRosterSourceSnapshot } from "@modules/work-schedule/domain/work-schedule-application-policy";
 
 export interface CreateWorkShiftCommand {
   readonly shiftCode?: string | null;
@@ -171,6 +172,9 @@ export interface PublishMonthlyRosterCommand {
 export interface ApplyAvailabilityLinesToMonthlyRosterCommand {
   readonly monthlyRosterId: string;
   readonly availabilityLineIds: readonly string[];
+  readonly expectedRosterVersion?: number;
+  readonly expectedRequestVersions?: Readonly<Record<string, number>>;
+  readonly idempotencyKey?: string | null;
   readonly applyNote?: string | null;
   readonly note?: string | null;
   readonly scope?: WorkShiftScope | string;
@@ -193,8 +197,7 @@ export interface AddRosterExceptionCommand {
   readonly scope?: WorkShiftScope | string;
 }
 
-export interface UpdateRosterExceptionCommand
-  extends AddRosterExceptionCommand {
+export interface UpdateRosterExceptionCommand extends AddRosterExceptionCommand {
   readonly rosterExceptionId: string;
 }
 
@@ -268,6 +271,13 @@ export interface GetWorkScheduleRequestBatchDetailQuery {
 export interface DecideWorkScheduleRequestBatchLinesCommand {
   readonly batchId: string;
   readonly lineIds: readonly string[];
+  readonly expectedRequestVersions?: Readonly<Record<string, number>>;
+  readonly expectedWorkShiftVersions?: Readonly<Record<string, number | null>>;
+  readonly expectedSourceGenerationRunIds?: Readonly<
+    Record<string, string | null>
+  >;
+  readonly idempotencyKey?: string;
+  readonly emergencyOverrideReason?: string | null;
   readonly approvalNote?: string | null;
   readonly rejectionReason?: string | null;
   readonly cancellationReason?: string | null;
@@ -438,11 +448,9 @@ export interface ListWorkScheduleRequestsQuery {
   readonly cursor?: string;
 }
 
-export type WorkShiftMutationResult =
-  WorkShiftMutationView;
+export type WorkShiftMutationResult = WorkShiftMutationView;
 
-export type GetWorkShiftDetailResult =
-  WorkShiftDetailView;
+export type GetWorkShiftDetailResult = WorkShiftDetailView;
 
 export interface ListWorkShiftsResult {
   readonly items: readonly WorkShiftListItemView[];
@@ -459,22 +467,18 @@ export interface ListWorkShiftsByResourceResult {
   readonly nextCursor?: string;
 }
 
-export type WorkPatternMutationResult =
-  WorkPatternMutationView;
+export type WorkPatternMutationResult = WorkPatternMutationView;
 
-export type GetWorkPatternDetailResult =
-  WorkPatternView;
+export type GetWorkPatternDetailResult = WorkPatternView;
 
 export interface ListWorkPatternsResult {
   readonly items: readonly WorkPatternListItemView[];
   readonly nextCursor?: string;
 }
 
-export type HolidayCalendarMutationResult =
-  HolidayCalendarMutationView;
+export type HolidayCalendarMutationResult = HolidayCalendarMutationView;
 
-export type GetHolidayCalendarDetailResult =
-  HolidayCalendarView;
+export type GetHolidayCalendarDetailResult = HolidayCalendarView;
 
 export interface ListHolidayCalendarsResult {
   readonly items: readonly HolidayCalendarListItemView[];
@@ -490,6 +494,8 @@ export interface PublishMonthlyRosterResult {
   readonly sourceGenerationRunId: string | null;
   readonly publishedAt: number | null;
   readonly publishedByUserId: string | null;
+  readonly publicationVersion?: number;
+  readonly sourceSnapshot?: WorkScheduleRosterSourceSnapshot | null;
   readonly generatedWorkShiftCount: number;
   readonly skippedWorkingToOffCount: number;
   readonly holidaySuppressedCount: number;
@@ -501,10 +507,7 @@ export interface PublishMonthlyRosterResult {
 }
 
 export type ApplyAvailabilityLineOutcome =
-  | "APPLIED"
-  | "ADVISORY_ONLY"
-  | "SKIPPED_ALREADY_APPLIED"
-  | "FAILED";
+  "APPLIED" | "ADVISORY_ONLY" | "SKIPPED_ALREADY_APPLIED" | "FAILED";
 
 export interface ApplyAvailabilityLineResult {
   readonly availabilityLineId: string;
@@ -512,6 +515,11 @@ export interface ApplyAvailabilityLineResult {
   readonly rosterExceptionId: string | null;
   readonly rosterExceptionIds: readonly string[];
   readonly reason: string;
+  readonly finalState?:
+    | "APPROVED_APPLIED"
+    | "SOURCE_CHANGED"
+    | "APPLICATION_CONFLICT"
+    | "APPLICATION_FAILED";
 }
 
 export interface ApplyAvailabilityLinesToMonthlyRosterResult {
@@ -528,27 +536,43 @@ export interface ApplyAvailabilityLinesToMonthlyRosterResult {
   readonly skippedAlreadyAppliedCount: number;
   readonly failedCount: number;
   readonly results: readonly ApplyAvailabilityLineResult[];
+  readonly finalState?:
+    | "APPROVED_APPLIED"
+    | "SOURCE_CHANGED"
+    | "APPLICATION_CONFLICT"
+    | "APPLICATION_FAILED";
+  readonly sourceVersions?: {
+    readonly rosterVersionBefore: number;
+    readonly rosterVersionAfter: number;
+    readonly requestVersions: Readonly<Record<string, number>>;
+  };
+  readonly beforeSnapshot?: {
+    readonly draftVersion: number;
+    readonly activeRosterExceptionIds: readonly string[];
+  };
+  readonly afterSnapshot?: {
+    readonly draftVersion: number;
+    readonly activeRosterExceptionIds: readonly string[];
+  };
+  readonly conflicts?: readonly string[];
+  readonly auditReference?: string;
+  readonly idempotencyResult?: "APPLIED" | "REPLAYED";
 }
 
-export type MonthlyRosterMutationResult =
-  MonthlyRosterMutationView;
+export type MonthlyRosterMutationResult = MonthlyRosterMutationView;
 
-export type GetMonthlyRosterDetailResult =
-  MonthlyRosterView;
+export type GetMonthlyRosterDetailResult = MonthlyRosterView;
 
-export type PreviewMonthlyRosterResult =
-  MonthlyRosterPreviewView;
+export type PreviewMonthlyRosterResult = MonthlyRosterPreviewView;
 
 export interface ListMonthlyRostersResult {
   readonly items: readonly MonthlyRosterListItemView[];
   readonly nextCursor?: string;
 }
 
-export type WorkScheduleRequestMutationResult =
-  WorkScheduleRequestView;
+export type WorkScheduleRequestMutationResult = WorkScheduleRequestView;
 
-export type GetWorkScheduleRequestDetailResult =
-  WorkScheduleRequestView;
+export type GetWorkScheduleRequestDetailResult = WorkScheduleRequestView;
 
 export interface ListWorkScheduleRequestsResult {
   readonly items: readonly WorkScheduleRequestListItemView[];

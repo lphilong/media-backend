@@ -16,7 +16,12 @@ import {
   EmploymentStatus,
 } from "@modules/employment-profile/domain/employment-profile.types";
 import { KpiActualRepository } from "@modules/kpi/domain/kpi-actual.repository";
-import { KpiPlanRepository } from "@modules/kpi/domain/kpi.repository";
+import {
+  ClaimKpiAllocationOperationInput,
+  CompleteKpiAllocationOperationInput,
+  KpiAllocationOperationRecord,
+  KpiPlanRepository,
+} from "@modules/kpi/domain/kpi.repository";
 import {
   KpiAllocation,
   KpiAllocationStatusCount,
@@ -289,10 +294,7 @@ test("GET /self-service/kpi excludes forged ORG_UNIT plans from current and hist
     assert.equal(allExposedIds.includes("plan-forged-org-current"), false);
     assert.equal(allExposedIds.includes("plan-forged-org-previous"), false);
     assert.equal(allExposedIds.includes("plan-forged-org-finalized"), false);
-    assert.equal(
-      allExposedIds.includes("plan-org-profile-current"),
-      false,
-    );
+    assert.equal(allExposedIds.includes("plan-org-profile-current"), false);
     assert.deepEqual(harness.actuals.listPlanIdsInputs, [
       ["plan-official", "plan-previous-published", "plan-previous-finalized"],
     ]);
@@ -448,10 +450,8 @@ test("GET /self-service/kpi returns profile-first ORG_UNIT KPI without linked in
 test("GET /self-service/kpi keeps items empty when current period is missing but returns latest previous", async () => {
   const harness = createHarness();
   const { server, baseUrl } = await listen(
-    createSelfServiceKpiTestApp(
-      harness,
-      createStaffActor("user-staff"),
-      () => Date.UTC(2026, 5, 2, 12, 0, 0, 0),
+    createSelfServiceKpiTestApp(harness, createStaffActor("user-staff"), () =>
+      Date.UTC(2026, 5, 2, 12, 0, 0, 0),
     ),
   );
 
@@ -467,11 +467,7 @@ test("GET /self-service/kpi keeps items empty when current period is missing but
     assert.equal(body.data.latestPrevious.isPreviousPeriod, true);
     assert.deepEqual(
       body.data.history.map((item: { kpiPlanId: string }) => item.kpiPlanId),
-      [
-        "plan-official",
-        "plan-previous-published",
-        "plan-previous-finalized",
-      ],
+      ["plan-official", "plan-previous-published", "plan-previous-finalized"],
     );
   } finally {
     await close(server);
@@ -481,7 +477,10 @@ test("GET /self-service/kpi keeps items empty when current period is missing but
 test("GET /self-service/kpi returns safe empty result without linked internal Talent or KPI allocations", async () => {
   const harness = createHarness();
   const { server, baseUrl } = await listen(
-    createSelfServiceKpiTestApp(harness, createStaffActor("user-empty-profile")),
+    createSelfServiceKpiTestApp(
+      harness,
+      createStaffActor("user-empty-profile"),
+    ),
   );
 
   try {
@@ -1101,7 +1100,9 @@ function createHarness(): SelfServiceKpiHarness {
       id: "actual-revenue",
       allocationId: "alloc-official",
       metricCode: "REVENUE_VND",
-      effectiveValue: 40,
+      effectiveValue: 150,
+      acceptedValue: 40,
+      lifecycleStatus: "UNDER_REVIEW",
       updatedAt: 30,
     }),
     actualEntry({
@@ -1430,9 +1431,7 @@ function actualSlotExcuse(
   };
 }
 
-class InMemoryEmploymentProfileRepository
-  implements EmploymentProfileRepository
-{
+class InMemoryEmploymentProfileRepository implements EmploymentProfileRepository {
   constructor(private readonly records: EmploymentProfileRecord[]) {}
 
   snapshot(): readonly EmploymentProfileRecord[] {
@@ -1570,6 +1569,18 @@ class InMemoryKpiPlanRepository implements KpiPlanRepository {
     private readonly plans: KpiPlan[],
     private readonly allocations: KpiAllocation[],
   ) {}
+
+  async claimAllocationOperation(
+    _input: ClaimKpiAllocationOperationInput,
+  ): Promise<{ isNew: boolean; record: KpiAllocationOperationRecord }> {
+    throw new Error("Not implemented");
+  }
+
+  async completeAllocationOperation(
+    _input: CompleteKpiAllocationOperationInput,
+  ): Promise<KpiAllocationOperationRecord> {
+    throw new Error("Not implemented");
+  }
 
   snapshot(): unknown {
     return {

@@ -1,4 +1,11 @@
 import { ReferenceSummary } from "@modules/reference-summary";
+import type {
+  KpiActualAggregationMethod,
+  KpiActualCaptureMode,
+  KpiActualEvidenceMode,
+  KpiActualLifecycleStatus,
+  KpiActualReviewMode,
+} from "./kpi-actual-policy";
 
 export const KPI_SUBJECT_TYPES = [
   "TALENT",
@@ -43,11 +50,22 @@ export const KPI_METRIC_UNITS = ["VND", "COUNT", "HOUR"] as const;
 
 export type KpiMetricUnit = (typeof KPI_METRIC_UNITS)[number];
 
-export const KPI_ROLLUP_METHODS = ["SUM"] as const;
+export const KPI_ROLLUP_METHODS = [
+  "SUM",
+  "AVERAGE",
+  "WEIGHTED",
+  "MAX",
+  "MANUAL",
+  "NONE",
+] as const;
 
 export type KpiRollupMethod = (typeof KPI_ROLLUP_METHODS)[number];
 
-export const KPI_ACTUAL_SOURCES = ["MANUAL"] as const;
+export const KPI_ACTUAL_SOURCES = [
+  "MANUAL",
+  "IMPORTED_SOURCE",
+  "DERIVED",
+] as const;
 
 export type KpiActualSource = (typeof KPI_ACTUAL_SOURCES)[number];
 
@@ -191,7 +209,16 @@ export interface KpiFinalResultSnapshot {
 export interface KpiActualPolicySnapshot {
   readonly timezone: "Asia/Ho_Chi_Minh";
   readonly entryOpenLocalTime: "00:00";
-  readonly entryLockLocalTime: "10:00";
+  readonly entryLockLocalTime: "10:00" | "12:00";
+  readonly ordinaryCorrectionLockLocalTime?: "18:00";
+  readonly ordinaryCorrectionDayOffset?: 2;
+  readonly periodLockDayOfFollowingMonth?: 3;
+  readonly periodLockLocalTime?: "18:00";
+  readonly controlledReopenUntil?: number | null;
+  readonly defaultCaptureMode?: KpiActualCaptureMode;
+  readonly defaultAggregationMethod?: KpiActualAggregationMethod;
+  readonly defaultReviewMode?: KpiActualReviewMode;
+  readonly defaultEvidenceMode?: KpiActualEvidenceMode;
   readonly maxDirectEditsPerEntry: number;
   readonly correctionAllowedUntil: KpiActualCorrectionAllowedUntil;
   readonly policyVersion: string;
@@ -256,6 +283,9 @@ export interface KpiPlan {
   readonly subjectType: KpiSubjectType;
   readonly subjectId: string;
   readonly status: KpiPlanStatus;
+  /** Canonical V2 lifecycle; absent on historical records and derived compatibly. */
+  readonly lifecycleStatus?:
+    "DRAFT" | "RELEASED_FOR_ALLOCATION" | "ACTIVE" | "FINALIZED" | "ARCHIVED";
   readonly currencyCode: KpiPlanCurrency;
   readonly periodMonth: string;
   readonly periodStartAt: number;
@@ -281,9 +311,17 @@ export interface KpiTargetMetric {
   readonly kpiPlanId: string;
   readonly metricCode: KpiMetricCode;
   readonly targetValue: number;
+  readonly targetValueExact?: string;
+  readonly allocationMode?: "GROUP_ONLY" | "MEMBER_ALLOCATED" | "HYBRID";
+  readonly allocationScale?: number;
+  readonly groupRemainderExact?: string;
   readonly unit: KpiMetricUnit;
   readonly rollupMethod: KpiRollupMethod;
   readonly actualSource: KpiActualSource;
+  readonly actualCaptureMode?: KpiActualCaptureMode;
+  readonly actualReviewMode?: KpiActualReviewMode;
+  readonly actualEvidenceMode?: KpiActualEvidenceMode;
+  readonly actualPolicyVersion?: string;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -291,6 +329,7 @@ export interface KpiTargetMetric {
 export interface KpiAllocationTargetMetric {
   readonly metricCode: KpiMetricCode;
   readonly targetValue: number;
+  readonly targetValueExact?: string;
 }
 
 export interface KpiAllocation {
@@ -303,6 +342,29 @@ export interface KpiAllocation {
   readonly memberTalentId: string | null;
   readonly membershipId: string | null;
   readonly allocationStatus: KpiAllocationStatus;
+  readonly lifecycleStatus?:
+    | "DRAFT"
+    | "SUBMITTED"
+    | "CHANGES_REQUESTED"
+    | "APPROVED"
+    | "PUBLISHED"
+    | "SUPERSEDED"
+    | "CORRECTED";
+  readonly allocationMode?: "GROUP_ONLY" | "MEMBER_ALLOCATED" | "HYBRID";
+  readonly sourcePlanVersion?: number;
+  readonly allocationVersion?: number;
+  readonly membershipSnapshotVersion?: string | null;
+  readonly eligibleMemberSnapshot?: {
+    readonly employmentProfileId: string;
+    readonly talentId: string | null;
+    readonly membershipId: string | null;
+    readonly membershipStatus: string | null;
+  } | null;
+  readonly idempotencyKey?: string | null;
+  readonly idempotencyFingerprint?: string | null;
+  readonly correlationId?: string | null;
+  readonly supersedesAllocationId?: string | null;
+  readonly correctsAllocationId?: string | null;
   readonly allocationStartDate: string;
   readonly allocationEndDate: string | null;
   readonly targetMetrics: readonly KpiAllocationTargetMetric[];
@@ -386,9 +448,21 @@ export interface KpiActualEntry {
   readonly actualDate: string;
   readonly actualValue: number;
   readonly effectiveValue: number;
+  readonly acceptedValue?: number | null;
+  readonly acceptedVersion?: number | null;
   readonly editCount: number;
   readonly correctionCount: number;
   readonly latestCorrectionId: string | null;
+  readonly lifecycleStatus?: KpiActualLifecycleStatus;
+  readonly entryVersion?: number;
+  readonly captureMode?: KpiActualCaptureMode;
+  readonly aggregationMethod?: KpiActualAggregationMethod;
+  readonly reviewMode?: KpiActualReviewMode;
+  readonly evidenceMode?: KpiActualEvidenceMode;
+  readonly policyVersion?: string;
+  readonly sourceFingerprint?: string | null;
+  readonly acceptedInputVersions?: readonly string[];
+  readonly derivationVersion?: string | null;
   readonly createdAt: number;
   readonly createdByActorId: string;
   readonly updatedAt: number;
@@ -408,6 +482,12 @@ export interface KpiActualCorrection {
   readonly actualDate: string;
   readonly previousValue: number;
   readonly correctedValue: number;
+  readonly previousEntryVersion?: number;
+  readonly replacementEntryVersion?: number;
+  readonly replacementLifecycleStatus?: "CORRECTED" | "UNDER_REVIEW";
+  readonly requiresReview?: boolean;
+  readonly idempotencyKey?: string;
+  readonly payloadFingerprint?: string;
   readonly reason: string;
   readonly correctedByActorId: string;
   readonly correctedAt: number;
@@ -483,7 +563,11 @@ export interface KpiProgressView {
 export interface KpiActualGridPolicyView {
   readonly timezone: "Asia/Ho_Chi_Minh";
   readonly entryOpenLocalTime: "00:00";
-  readonly entryLockLocalTime: "10:00";
+  readonly entryLockLocalTime: "10:00" | "12:00";
+  readonly ordinaryCorrectionLockLocalTime?: "18:00";
+  readonly ordinaryCorrectionDayOffset?: 2;
+  readonly periodLockDayOfFollowingMonth?: 3;
+  readonly periodLockLocalTime?: "18:00";
   readonly maxDirectEditsPerEntry: number;
   readonly correctionAllowedUntil: KpiActualCorrectionAllowedUntil;
 }
@@ -498,6 +582,12 @@ export interface KpiActualGridTargetMetricView {
   readonly metricCode: KpiMetricCode;
   readonly targetValue: number;
   readonly unit: KpiMetricUnit;
+  readonly captureMode?: KpiActualCaptureMode;
+  readonly aggregationMethod?: KpiActualAggregationMethod;
+  readonly reviewMode?: KpiActualReviewMode;
+  readonly evidenceMode?: KpiActualEvidenceMode;
+  readonly source: KpiActualSource;
+  readonly policyVersion?: string;
 }
 
 export interface KpiActualGridMetricCellView {

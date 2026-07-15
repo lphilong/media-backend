@@ -48,9 +48,7 @@ import {
 
 const NOW = Date.parse("2026-06-06T00:00:00+07:00");
 
-class MemoryAvailabilityRepository
-  implements WorkScheduleAvailabilityBatchRepository
-{
+class MemoryAvailabilityRepository implements WorkScheduleAvailabilityBatchRepository {
   readonly batches: WorkScheduleAvailabilityBatchRecord[] = [];
   readonly lines: WorkScheduleAvailabilityLineRecord[] = [];
 
@@ -75,8 +73,7 @@ class MemoryAvailabilityRepository
       this.batches.find(
         (batch) =>
           batch.submittedByEmploymentProfileId ===
-            submittedByEmploymentProfileId &&
-          batch.clientToken === clientToken,
+            submittedByEmploymentProfileId && batch.clientToken === clientToken,
       ) ?? null
     );
   }
@@ -84,10 +81,7 @@ class MemoryAvailabilityRepository
   async listBatches(input: WorkScheduleAvailabilityBatchListInput) {
     let items = [...this.batches];
     for (const [key, value] of Object.entries(input)) {
-      if (
-        value !== undefined &&
-        !["limit", "cursor"].includes(key)
-      ) {
+      if (value !== undefined && !["limit", "cursor"].includes(key)) {
         items = items.filter(
           (item) =>
             item[key as keyof WorkScheduleAvailabilityBatchRecord] === value,
@@ -142,17 +136,14 @@ class MemoryAvailabilityRepository
       ...current,
       status: input.toStatus,
       updatedAt: input.updatedAt,
-      adminDecisionNote:
-        input.adminDecisionNote ?? current.adminDecisionNote,
+      adminDecisionNote: input.adminDecisionNote ?? current.adminDecisionNote,
       rejectionReason: input.rejectionReason ?? current.rejectionReason,
       cancellationReason:
         input.cancellationReason ?? current.cancellationReason,
       approvedAt: input.approvedAt ?? current.approvedAt,
-      approvedByActorId:
-        input.approvedByActorId ?? current.approvedByActorId,
+      approvedByActorId: input.approvedByActorId ?? current.approvedByActorId,
       rejectedAt: input.rejectedAt ?? current.rejectedAt,
-      rejectedByActorId:
-        input.rejectedByActorId ?? current.rejectedByActorId,
+      rejectedByActorId: input.rejectedByActorId ?? current.rejectedByActorId,
       cancelledAt: input.cancelledAt ?? current.cancelledAt,
       cancelledByActorId:
         input.cancelledByActorId ?? current.cancelledByActorId,
@@ -184,10 +175,7 @@ class MemoryAvailabilityRepository
     input: UpdateWorkScheduleAvailabilityLineApplyStateInput,
   ) {
     const current = await this.findLineById(input.batchId, input.lineId);
-    if (
-      !current ||
-      !input.fromApplyStatuses.includes(current.applyStatus)
-    ) {
+    if (!current || !input.fromApplyStatuses.includes(current.applyStatus)) {
       return null;
     }
     const updated: WorkScheduleAvailabilityLineRecord = {
@@ -256,9 +244,7 @@ class AtomicDuplicateAvailabilityRepository extends MemoryAvailabilityRepository
   }
 }
 
-class MemoryCodeSequenceRepository
-  implements WorkScheduleCodeSequenceRepository
-{
+class MemoryCodeSequenceRepository implements WorkScheduleCodeSequenceRepository {
   private value = 0;
   async allocateNext() {
     return ++this.value;
@@ -648,9 +634,7 @@ function adminActor(
 }
 
 let token = 0;
-function payload(
-  overrides: Record<string, unknown> = {},
-) {
+function payload(overrides: Record<string, unknown> = {}) {
   token += 1;
   return {
     periodMonth: "2026-06",
@@ -687,16 +671,17 @@ function withTrace<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 function listRouteInventory(router: unknown): string[] {
-  const layers = (
-    router as {
-      stack?: Array<{
-        route?: {
-          path: string;
-          methods: Record<string, boolean>;
-        };
-      }>;
-    }
-  ).stack ?? [];
+  const layers =
+    (
+      router as {
+        stack?: Array<{
+          route?: {
+            path: string;
+            methods: Record<string, boolean>;
+          };
+        }>;
+      }
+    ).stack ?? [];
 
   return layers
     .flatMap((layer) => {
@@ -837,19 +822,14 @@ test("manager availability member picker validates target shape and fails closed
   }
 
   await assert.rejects(
-    service.listManagerTargetMembers(
-      adminActor([], [], ["TEAM_MANAGER"]),
-      {
-        targetType: "ORG_UNIT",
-        targetId: "org-managed",
-      },
-    ),
+    service.listManagerTargetMembers(adminActor([], [], ["TEAM_MANAGER"]), {
+      targetType: "ORG_UNIT",
+      targetId: "org-managed",
+    }),
   );
   await assert.rejects(
     service.listManagerTargetMembers(
-      adminActor([Permission.WORK_SCHEDULE_READ], ["global"], [
-        "ADMIN_FULL",
-      ]),
+      adminActor([Permission.WORK_SCHEDULE_READ], ["global"], ["ADMIN_FULL"]),
       {
         targetType: "ORG_UNIT",
         targetId: "org-managed",
@@ -908,10 +888,7 @@ test("manager submits multi-line OrgUnit availability with policy/apply defaults
     reason: `Availability planning reason number ${index + 1}`,
   }));
   const result = await withTrace(() =>
-    service.submitManagerBatch(
-      managerActor(),
-      payload({ lines }),
-    ),
+    service.submitManagerBatch(managerActor(), payload({ lines })),
   );
 
   assert.equal(result.lineCounts.total, 50);
@@ -924,7 +901,9 @@ test("manager submits multi-line OrgUnit availability with policy/apply defaults
     withTrace(() =>
       service.submitManagerBatch(
         managerActor(),
-        payload({ lines: [...lines, { ...lines[0], reason: "Line 51 reason" }] }),
+        payload({
+          lines: [...lines, { ...lines[0], reason: "Line 51 reason" }],
+        }),
       ),
     ),
     WorkScheduleValidationError,
@@ -1009,9 +988,7 @@ test("validation rejects invalid period, target shape, unsupported types/taxonom
 
 test("unified target scope accepts exact OrgUnit and eligible TalentGroup members and rejects descendants, reporting, inactive, unlinked, mismatch, and role-name-only", async () => {
   const { service } = createService();
-  await withTrace(() =>
-    service.submitManagerBatch(managerActor(), payload()),
-  );
+  await withTrace(() => service.submitManagerBatch(managerActor(), payload()));
   await withTrace(() =>
     service.submitManagerBatch(
       managerActor(),
@@ -1085,10 +1062,7 @@ test("unified target scope accepts exact OrgUnit and eligible TalentGroup member
 
   await assert.rejects(
     withTrace(() =>
-      service.submitManagerBatch(
-        managerActor("other-manager-user"),
-        payload(),
-      ),
+      service.submitManagerBatch(managerActor("other-manager-user"), payload()),
     ),
     WorkSchedulePermissionScopeError,
   );
@@ -1145,9 +1119,7 @@ test("partial unique pendingDuplicateKey remains the atomic fallback when lookup
 
   assert.match(first.lines[0]?.pendingDuplicateKey ?? "", /^[a-f0-9]{64}$/);
   await assert.rejects(
-    withTrace(() =>
-      service.submitManagerBatch(managerActor(), payload()),
-    ),
+    withTrace(() => service.submitManagerBatch(managerActor(), payload())),
     WorkScheduleConflictError,
   );
   assert.equal(repository.batches.length, 1);
@@ -1265,9 +1237,7 @@ test("unauthorized Manager availability submission and cancellation perform no r
   ).service;
 
   await assert.rejects(
-    withTrace(() =>
-      unauthorized.submitManagerBatch(managerActor(), payload()),
-    ),
+    withTrace(() => unauthorized.submitManagerBatch(managerActor(), payload())),
     WorkSchedulePermissionScopeError,
   );
   await assert.rejects(
@@ -1284,50 +1254,34 @@ test("unauthorized Manager availability submission and cancellation perform no r
 });
 
 test("manager and Admin decisions reject every requested terminal availability transition", async () => {
-  const { service } = createService();
+  const { service, repository } = createService();
 
-  const approvedBatch = await withTrace(() =>
+  const pendingBatch = await withTrace(() =>
     service.submitManagerBatch(managerActor(), payload()),
   );
-  await withTrace(() =>
-    service.approveAdminLines(opsActor(), {
-      batchId: approvedBatch.id,
-      lineIds: [approvedBatch.lines[0]!.id],
-    }),
-  );
+  const beforeBatches = repository.batches.map((item) => ({ ...item }));
+  const beforeLines = repository.lines.map((item) => ({ ...item }));
   await assert.rejects(
     withTrace(() =>
-      service.cancelManagerLine(managerActor(), {
-        batchId: approvedBatch.id,
-        lineId: approvedBatch.lines[0]!.id,
-        cancellationReason: "Manager cannot cancel an approved line",
+      service.approveAdminLines(opsActor(), {
+        batchId: pendingBatch.id,
+        lineIds: [pendingBatch.lines[0]!.id],
       }),
     ),
-    WorkScheduleStateError,
+    /approval without atomic Monthly Roster application is prohibited/u,
   );
-  await assert.rejects(
-    withTrace(() =>
-      service.cancelAdminLines(opsActor(), {
-        batchId: approvedBatch.id,
-        lineIds: [approvedBatch.lines[0]!.id],
-        cancellationReason: "Admin cannot cancel an approved line",
-      }),
-    ),
-    WorkScheduleStateError,
-  );
-  await assert.rejects(
-    withTrace(() =>
-      service.rejectAdminLines(opsActor(), {
-        batchId: approvedBatch.id,
-        lineIds: [approvedBatch.lines[0]!.id],
-        rejectionReason: "Admin cannot reject an approved line",
-      }),
-    ),
-    WorkScheduleStateError,
-  );
+  assert.deepEqual(repository.batches, beforeBatches);
+  assert.deepEqual(repository.lines, beforeLines);
 
   const rejectedBatch = await withTrace(() =>
-    service.submitManagerBatch(managerActor(), payload()),
+    service.submitManagerBatch(
+      managerActor(),
+      payload({
+        lines: [
+          availabilityLineForDate("17", "Rejected terminal availability"),
+        ],
+      }),
+    ),
   );
   await withTrace(() =>
     service.rejectAdminLines(opsActor(), {
@@ -1346,18 +1300,16 @@ test("manager and Admin decisions reject every requested terminal availability t
     ),
     WorkScheduleStateError,
   );
-  await assert.rejects(
-    withTrace(() =>
-      service.approveAdminLines(opsActor(), {
-        batchId: rejectedBatch.id,
-        lineIds: [rejectedBatch.lines[0]!.id],
-      }),
-    ),
-    WorkScheduleStateError,
-  );
 
   const cancelledBatch = await withTrace(() =>
-    service.submitManagerBatch(managerActor(), payload()),
+    service.submitManagerBatch(
+      managerActor(),
+      payload({
+        lines: [
+          availabilityLineForDate("18", "Cancelled terminal availability"),
+        ],
+      }),
+    ),
   );
   await withTrace(() =>
     service.cancelAdminLines(opsActor(), {
@@ -1372,15 +1324,6 @@ test("manager and Admin decisions reject every requested terminal availability t
         batchId: cancelledBatch.id,
         lineId: cancelledBatch.lines[0]!.id,
         cancellationReason: "Manager cannot cancel a cancelled line",
-      }),
-    ),
-    WorkScheduleStateError,
-  );
-  await assert.rejects(
-    withTrace(() =>
-      service.approveAdminLines(opsActor(), {
-        batchId: cancelledBatch.id,
-        lineIds: [cancelledBatch.lines[0]!.id],
       }),
     ),
     WorkScheduleStateError,
@@ -1490,9 +1433,8 @@ test("Admin availability detail and decisions require permission plus matching s
     "structured-read-user",
   );
   assert.equal(
-    (
-      await service.getAdminBatchDetail(structuredRead, { batchId: batch.id })
-    ).id,
+    (await service.getAdminBatchDetail(structuredRead, { batchId: batch.id }))
+      .id,
     batch.id,
   );
 
@@ -1559,11 +1501,14 @@ test("Admin availability detail and decisions require permission plus matching s
       }),
     ),
   );
-  await withTrace(() =>
-    service.approveAdminLines(structuredUpdate, {
-      batchId: approveBatch.id,
-      lineIds: [approveBatch.lines[0]!.id],
-    }),
+  await assert.rejects(
+    withTrace(() =>
+      service.approveAdminLines(structuredUpdate, {
+        batchId: approveBatch.id,
+        lineIds: [approveBatch.lines[0]!.id],
+      }),
+    ),
+    /approval without atomic Monthly Roster application is prohibited/u,
   );
   const rejectBatch = await withTrace(() =>
     service.submitManagerBatch(
@@ -1621,7 +1566,7 @@ test("Admin availability detail and decisions require permission plus matching s
   );
   await assert.rejects(
     withTrace(() =>
-      service.approveAdminLines(
+      service.rejectAdminLines(
         adminActor(
           [Permission.WORK_SCHEDULE_UPDATE],
           ["global"],
@@ -1631,6 +1576,7 @@ test("Admin availability detail and decisions require permission plus matching s
         {
           batchId: denyBatch.id,
           lineIds: [denyBatch.lines[0]!.id],
+          rejectionReason: "Exact structured authority is required",
         },
       ),
     ),
@@ -1638,7 +1584,7 @@ test("Admin availability detail and decisions require permission plus matching s
   );
   await assert.rejects(
     withTrace(() =>
-      service.approveAdminLines(
+      service.rejectAdminLines(
         adminActor(
           [Permission.WORK_SCHEDULE_UPDATE],
           [],
@@ -1648,6 +1594,7 @@ test("Admin availability detail and decisions require permission plus matching s
         {
           batchId: denyBatch.id,
           lineIds: [denyBatch.lines[0]!.id],
+          rejectionReason: "Exact structured authority is required",
         },
       ),
     ),
@@ -1655,11 +1602,12 @@ test("Admin availability detail and decisions require permission plus matching s
   );
   await assert.rejects(
     withTrace(() =>
-      service.approveAdminLines(
+      service.rejectAdminLines(
         adminActor([Permission.WORK_SCHEDULE_READ], ["global"]),
         {
           batchId: denyBatch.id,
           lineIds: [denyBatch.lines[0]!.id],
+          rejectionReason: "Update permission is required",
         },
       ),
     ),
@@ -1671,8 +1619,8 @@ test("Admin availability detail and decisions require permission plus matching s
   );
 });
 
-test("admin queue/read and line decisions update availability status only with derived counts", async () => {
-  const { service } = createService();
+test("legacy Admin approve-only service path fails closed without derived-status mutation", async () => {
+  const { service, repository } = createService();
   const batch = await withTrace(() =>
     service.submitManagerBatch(
       managerActor(),
@@ -1704,29 +1652,20 @@ test("admin queue/read and line decisions update availability status only with d
     batch.id,
   );
 
-  const partial = await withTrace(() =>
-    service.approveAdminLines(opsActor(), {
-      batchId: batch.id,
-      lineIds: [batch.lines[0]!.id],
-      adminDecisionNote: "Approved planning signal",
-    }),
+  const beforeBatches = repository.batches.map((item) => ({ ...item }));
+  const beforeLines = repository.lines.map((item) => ({ ...item }));
+  await assert.rejects(
+    withTrace(() =>
+      service.approveAdminLines(opsActor(), {
+        batchId: batch.id,
+        lineIds: batch.lines.map((line) => line.id),
+        adminDecisionNote: "Approval must apply atomically",
+      }),
+    ),
+    /approval without atomic Monthly Roster application is prohibited/u,
   );
-  assert.equal(partial.status, "PARTIALLY_APPROVED");
-  assert.equal(partial.lineCounts.approved, 1);
-  assert.equal(partial.lines[0]?.applyStatus, "NOT_APPLIED");
-  assert.equal(partial.lines[0]?.policyEvaluationStatus, "NOT_EVALUATED");
-
-  const final = await withTrace(() =>
-    service.approveAdminLines(opsActor(), {
-      batchId: batch.id,
-      lineIds: [batch.lines[1]!.id, batch.lines[2]!.id],
-    }),
-  );
-  assert.equal(final.status, "APPROVED");
-  assert.equal(final.lineCounts.approved, 3);
-  const serialized = JSON.stringify(final);
-  assert.equal(serialized.includes("appliedWorkShiftId"), false);
-  assert.equal(serialized.includes("rosterException"), false);
+  assert.deepEqual(repository.batches, beforeBatches);
+  assert.deepEqual(repository.lines, beforeLines);
 });
 
 test("admin reject/cancel require reasons and derive REJECTED and CANCELLED terminal states", async () => {
@@ -1779,15 +1718,9 @@ test("manager and admin DTOs omit raw actor, grant, payroll, and attendance inte
   const batch = await withTrace(() =>
     service.submitManagerBatch(managerActor(), payload()),
   );
-  const approved = await withTrace(() =>
-    service.approveAdminLines(opsActor(), {
-      batchId: batch.id,
-      lineIds: [batch.lines[0]!.id],
-    }),
-  );
   for (const exposed of [
-    exposeManagerAvailabilityBatch(approved),
-    exposeAdminAvailabilityBatch(approved),
+    exposeManagerAvailabilityBatch(batch),
+    exposeAdminAvailabilityBatch(batch),
   ]) {
     const serialized = JSON.stringify(exposed);
     assert.equal(serialized.includes("submittedByActorId"), false);

@@ -30,8 +30,7 @@ export type PermissionContractRegistry = {
  * CENTRAL PERMISSION REGISTRY — V2 (SECURITY-FIRST)
  * ❗ Every Permission enum MUST appear exactly once here
  */
-export const PermissionContracts: PermissionContractRegistry =
-  Object.freeze({
+export const PermissionContracts: PermissionContractRegistry = Object.freeze({
   /* =========================
      USER
   ========================= */
@@ -620,6 +619,24 @@ export const PermissionContracts: PermissionContractRegistry =
     resource: "WORK_SCHEDULE",
     auditAction: "work-schedule.manage-lifecycle",
     riskLevel: "CRITICAL",
+  },
+
+  /* =========================
+     MANAGER WORKSPACE
+  ========================= */
+  [Permission.MANAGER_GROUP_READ]: {
+    code: Permission.MANAGER_GROUP_READ,
+    context: "ADMIN",
+    resource: "MANAGER_WORKSPACE",
+    auditAction: "manager-workspace.group.read",
+    riskLevel: "LOW",
+  },
+  [Permission.MANAGER_MEMBER_READ]: {
+    code: Permission.MANAGER_MEMBER_READ,
+    context: "ADMIN",
+    resource: "MANAGER_WORKSPACE",
+    auditAction: "manager-workspace.member.read",
+    riskLevel: "LOW",
   },
 
   /* =========================

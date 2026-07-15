@@ -9,9 +9,7 @@ import { Actor } from "@core/actor/actor";
 import { ContextType } from "@core/context/context.types";
 import { SystemInvariantError } from "@core/error/system-error";
 import { WorkScheduleValidationError } from "../domain/work-schedule.errors";
-import {
-  WorkScheduleAvailabilityBatchView,
-} from "../domain/work-schedule-availability.types";
+import { WorkScheduleAvailabilityBatchView } from "../domain/work-schedule-availability.types";
 import {
   DecideWorkScheduleAvailabilityLinesCommand,
   ListWorkScheduleAvailabilityBatchesResult,
@@ -30,8 +28,7 @@ type AvailabilityCommand =
   | "WORK_SCHEDULE_AVAILABILITY_BATCH_CANCEL_LINES";
 
 type AvailabilityResult =
-  | WorkScheduleAvailabilityBatchView
-  | ListWorkScheduleAvailabilityBatchesResult;
+  WorkScheduleAvailabilityBatchView | ListWorkScheduleAvailabilityBatchesResult;
 
 export class WorkScheduleAvailabilityBatchAdminController extends SecureController {
   constructor(
@@ -67,19 +64,14 @@ export class WorkScheduleAvailabilityBatchAdminController extends SecureControll
       });
     }
     if (command === "WORK_SCHEDULE_AVAILABILITY_BATCH_APPROVE_LINES") {
-      return this.service.approveAdminLines(
-        actor,
-        parseDecision(req, ["lineIds", "adminDecisionNote"]),
+      throw new WorkScheduleValidationError(
+        "Availability approval must use the atomic Monthly Roster apply command; approval without application is prohibited",
       );
     }
     if (command === "WORK_SCHEDULE_AVAILABILITY_BATCH_REJECT_LINES") {
       return this.service.rejectAdminLines(
         actor,
-        parseDecision(req, [
-          "lineIds",
-          "adminDecisionNote",
-          "rejectionReason",
-        ]),
+        parseDecision(req, ["lineIds", "adminDecisionNote", "rejectionReason"]),
       );
     }
     if (command === "WORK_SCHEDULE_AVAILABILITY_BATCH_CANCEL_LINES") {

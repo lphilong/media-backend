@@ -93,9 +93,22 @@ export interface ManagerWorkspaceContextView {
         | "MISSING_TALENT_GROUP_PREREQUISITE"
         | "MISSING_REVENUE_SOURCE_SUBMIT_CAPABILITY";
     };
+    readonly groups: {
+      readonly visible: boolean;
+      readonly reason?:
+        | "NO_MANAGED_SCOPE_ASSIGNED"
+        | "NO_MANAGER_RESPONSIBILITY_ASSIGNED"
+        | "NO_STRUCTURED_SCOPE_ASSIGNED"
+        | "MISSING_MANAGER_GROUP_READ_CAPABILITY";
+    };
     readonly members: {
-      readonly visible: false;
-      readonly reason: "NOT_ENABLED_IN_MANAGER_WORKSPACE_YET";
+      readonly visible: boolean;
+      readonly reason?:
+        | "NO_MANAGED_SCOPE_ASSIGNED"
+        | "NO_MANAGER_RESPONSIBILITY_ASSIGNED"
+        | "NO_STRUCTURED_SCOPE_ASSIGNED"
+        | "MISSING_MANAGER_GROUP_READ_CAPABILITY"
+        | "MISSING_MANAGER_MEMBER_READ_CAPABILITY";
     };
   };
 }
@@ -155,7 +168,8 @@ export class ManagerWorkspaceAdminService {
         this.filterTalentGroupIds(actor, managedScope.talentGroupIds),
       ]);
     const hasManagedResponsibility =
-      managedScope.orgUnitScopes.length + managedScope.talentGroupIds.length > 0;
+      managedScope.orgUnitScopes.length + managedScope.talentGroupIds.length >
+      0;
     const refs = await this.loadScopeRefs(
       authorizedOrgUnitAssignments,
       authorizedTalentGroupAssignments,
@@ -174,8 +188,7 @@ export class ManagerWorkspaceAdminService {
     // Its visibility must include the operation's managed-group prerequisite
     // and an exact effective target authority.
     const hasKpiManagedGroupScope =
-      actor.isActive &&
-      PermissionGuard.hasKpiScopeGrant(actor, "managedGroup");
+      actor.isActive && PermissionGuard.hasKpiScopeGrant(actor, "managedGroup");
     const unitKpiVisible =
       hasKpiManagedGroupScope &&
       orgUnits.some((scope) => scope.capabilities.kpi.read);
@@ -187,29 +200,48 @@ export class ManagerWorkspaceAdminService {
     const missingAuthorityReason = !hasManagedResponsibility
       ? "NO_MANAGER_RESPONSIBILITY_ASSIGNED"
       : "NO_STRUCTURED_SCOPE_ASSIGNED";
-    const [workShiftsVisible, eventsVisible, revenueSourceVisible] =
-      await Promise.all([
-        hasStructuredModuleScope(
-          this.structuredAuthority,
-          actor,
-          Permission.WORK_SCHEDULE_READ,
-          orgUnits.map((scope) => scope.orgUnitId),
-          talentGroups.map((scope) => scope.talentGroupId),
-        ),
-        hasStructuredModuleScope(
-          this.structuredAuthority,
-          actor,
-          Permission.EVENT_READ,
-          orgUnits.map((scope) => scope.orgUnitId),
-          talentGroups.map((scope) => scope.talentGroupId),
-        ),
-        hasAnyManagedTalentGroupAuthority(
-          this.structuredAuthority,
-          actor,
-          talentGroups.map((scope) => scope.talentGroupId),
-          [Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT],
-        ),
-      ]);
+    const [
+      workShiftsVisible,
+      eventsVisible,
+      revenueSourceVisible,
+      groupsVisible,
+      membersVisible,
+    ] = await Promise.all([
+      hasStructuredModuleScope(
+        this.structuredAuthority,
+        actor,
+        Permission.WORK_SCHEDULE_READ,
+        orgUnits.map((scope) => scope.orgUnitId),
+        talentGroups.map((scope) => scope.talentGroupId),
+      ),
+      hasStructuredModuleScope(
+        this.structuredAuthority,
+        actor,
+        Permission.EVENT_READ,
+        orgUnits.map((scope) => scope.orgUnitId),
+        talentGroups.map((scope) => scope.talentGroupId),
+      ),
+      hasAnyManagedTalentGroupAuthority(
+        this.structuredAuthority,
+        actor,
+        talentGroups.map((scope) => scope.talentGroupId),
+        [Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT],
+      ),
+      hasStructuredModuleScope(
+        this.structuredAuthority,
+        actor,
+        Permission.MANAGER_GROUP_READ,
+        orgUnits.map((scope) => scope.orgUnitId),
+        talentGroups.map((scope) => scope.talentGroupId),
+      ),
+      hasStructuredModuleScope(
+        this.structuredAuthority,
+        actor,
+        Permission.MANAGER_MEMBER_READ,
+        orgUnits.map((scope) => scope.orgUnitId),
+        talentGroups.map((scope) => scope.talentGroupId),
+      ),
+    ]);
     const reasons = visible
       ? []
       : [
@@ -262,7 +294,26 @@ export class ManagerWorkspaceAdminService {
                     ? "MISSING_TALENT_GROUP_PREREQUISITE"
                     : missingAuthorityReason,
             },
-        members: disabledModule(),
+        groups: groupsVisible
+          ? { visible: true }
+          : {
+              visible: false,
+              reason: hasManagedAssignment
+                ? "MISSING_MANAGER_GROUP_READ_CAPABILITY"
+                : missingAuthorityReason,
+            },
+        members:
+          membersVisible && groupsVisible
+            ? { visible: true }
+            : {
+                visible: false,
+                reason:
+                  !groupsVisible && hasManagedAssignment
+                    ? "MISSING_MANAGER_GROUP_READ_CAPABILITY"
+                    : hasManagedAssignment
+                      ? "MISSING_MANAGER_MEMBER_READ_CAPABILITY"
+                      : missingAuthorityReason,
+              },
       },
     };
   }
@@ -450,18 +501,15 @@ function emptyContext(
         visible: false,
         reason: "NO_MANAGED_SCOPE_ASSIGNED",
       },
-      members: disabledModule(),
+      groups: {
+        visible: false,
+        reason: "NO_MANAGED_SCOPE_ASSIGNED",
+      },
+      members: {
+        visible: false,
+        reason: "NO_MANAGED_SCOPE_ASSIGNED",
+      },
     },
-  };
-}
-
-function disabledModule(): {
-  readonly visible: false;
-  readonly reason: "NOT_ENABLED_IN_MANAGER_WORKSPACE_YET";
-} {
-  return {
-    visible: false,
-    reason: "NOT_ENABLED_IN_MANAGER_WORKSPACE_YET",
   };
 }
 
@@ -509,6 +557,8 @@ async function hasAnyManagedOrgUnitAuthority(
     Permission.KPI_CORRECT_ACTUAL,
     Permission.WORK_SCHEDULE_READ,
     Permission.EVENT_READ,
+    Permission.MANAGER_GROUP_READ,
+    Permission.MANAGER_MEMBER_READ,
   ],
 ): Promise<boolean> {
   const ids = Array.isArray(orgUnitIds) ? orgUnitIds : [orgUnitIds];
@@ -536,6 +586,8 @@ async function hasAnyManagedTalentGroupAuthority(
     Permission.WORK_SCHEDULE_READ,
     Permission.EVENT_READ,
     Permission.REVENUE_LEDGER_PLATFORM_EARNING_SUBMIT,
+    Permission.MANAGER_GROUP_READ,
+    Permission.MANAGER_MEMBER_READ,
   ],
 ): Promise<boolean> {
   const ids = Array.isArray(talentGroupIds) ? talentGroupIds : [talentGroupIds];

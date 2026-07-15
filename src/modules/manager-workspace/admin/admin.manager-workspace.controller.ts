@@ -13,8 +13,16 @@ import {
   ManagerWorkspaceContextView,
 } from "./admin.manager-workspace.service";
 import {
+  ManagedGroupListView,
+  ManagedGroupView,
+  ManagedMemberListView,
+  ManagedMemberView,
+  ManagerWorkspaceGroupAdminService,
+} from "./admin.manager-workspace-group.service";
+import {
   ManagerWorkspaceWorkScheduleAdminService,
   ManagerWorkShiftListView,
+  ManagerWeeklyScheduleView,
 } from "./admin.manager-workspace-work-schedule.service";
 import { WorkScheduleValidationError } from "@modules/work-schedule/domain/work-schedule.errors";
 import {
@@ -30,9 +38,7 @@ import {
   ManagerAvailabilityTargetMembersView,
   WorkScheduleAvailabilityBatchAdminService,
 } from "@modules/work-schedule/admin/admin.work-schedule-availability-batch.service";
-import {
-  WorkScheduleAvailabilityBatchView,
-} from "@modules/work-schedule/domain/work-schedule-availability.types";
+import { WorkScheduleAvailabilityBatchView } from "@modules/work-schedule/domain/work-schedule-availability.types";
 import {
   ListWorkScheduleAvailabilityBatchesResult,
   SubmitWorkScheduleAvailabilityBatchCommand,
@@ -54,6 +60,10 @@ import {
 
 type ManagerWorkspaceCommand =
   | "MANAGER_WORKSPACE_CONTEXT"
+  | "MANAGER_WORKSPACE_LIST_GROUPS"
+  | "MANAGER_WORKSPACE_GET_GROUP"
+  | "MANAGER_WORKSPACE_LIST_MEMBERS"
+  | "MANAGER_WORKSPACE_GET_MEMBER"
   | "MANAGER_WORKSPACE_LIST_EVENTS"
   | "MANAGER_WORKSPACE_GET_EVENT"
   | "MANAGER_WORKSPACE_REVENUE_PLATFORM_EARNING_SCOPE"
@@ -66,6 +76,7 @@ type ManagerWorkspaceCommand =
   | "MANAGER_WORKSPACE_UPDATE_REVENUE_PLATFORM_EARNING_LINE"
   | "MANAGER_WORKSPACE_SUBMIT_REVENUE_PLATFORM_EARNING_BATCH"
   | "MANAGER_WORKSPACE_LIST_WORK_SHIFTS"
+  | "MANAGER_WORKSPACE_GET_WEEKLY_SCHEDULE"
   | "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_MEMBERS"
   | "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_REQUEST_BATCH"
   | "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_REQUEST_BATCHES"
@@ -80,7 +91,12 @@ type ManagerWorkspaceCommand =
 
 type ManagerWorkspaceResult =
   | ManagerWorkspaceContextView
+  | ManagedGroupListView
+  | ManagedGroupView
+  | ManagedMemberListView
+  | ManagedMemberView
   | ManagerWorkShiftListView
+  | ManagerWeeklyScheduleView
   | WorkScheduleRequestBatchView
   | ListWorkScheduleRequestBatchesResult
   | WorkScheduleAvailabilityBatchView
@@ -146,6 +162,7 @@ export class ManagerWorkspaceAdminController extends SecureController {
     private readonly workScheduleAvailabilityBatchService: WorkScheduleAvailabilityBatchAdminService,
     private readonly eventService: ManagerWorkspaceEventAdminService,
     private readonly revenueService: ManagerWorkspaceRevenueAdminService,
+    private readonly groupService?: ManagerWorkspaceGroupAdminService,
   ) {
     super();
   }
@@ -159,6 +176,56 @@ export class ManagerWorkspaceAdminController extends SecureController {
     if (command === "MANAGER_WORKSPACE_CONTEXT") {
       return this.service.getContext(actor);
     }
+    if (
+      command === "MANAGER_WORKSPACE_LIST_GROUPS" ||
+      command === "MANAGER_WORKSPACE_GET_GROUP" ||
+      command === "MANAGER_WORKSPACE_LIST_MEMBERS" ||
+      command === "MANAGER_WORKSPACE_GET_MEMBER"
+    ) {
+      if (!this.groupService) {
+        throw new SystemInvariantError(
+          "SYSTEM_INVARIANT_VIOLATION",
+          "Manager group service is not configured",
+        );
+      }
+      if (command === "MANAGER_WORKSPACE_LIST_GROUPS") {
+        return this.groupService.listGroups(actor, {
+          search: readOptionalQuery(req, "search"),
+          scopeType: readOptionalQuery(req, "scopeType"),
+          limit: readOptionalQuery(req, "limit"),
+          cursor: readOptionalQuery(req, "cursor"),
+        });
+      }
+      if (command === "MANAGER_WORKSPACE_GET_GROUP") {
+        return this.groupService.getGroup(
+          actor,
+          req.params.scopeType,
+          req.params.scopeId,
+        );
+      }
+      if (command === "MANAGER_WORKSPACE_LIST_MEMBERS") {
+        return this.groupService.listMembers(
+          actor,
+          req.params.scopeType,
+          req.params.scopeId,
+          {
+            search: readOptionalQuery(req, "search"),
+            operationalStatus: readOptionalQuery(req, "operationalStatus"),
+            personKind: readOptionalQuery(req, "personKind"),
+            kpiEligibility: readOptionalQuery(req, "kpiEligibility"),
+            scheduleEligibility: readOptionalQuery(req, "scheduleEligibility"),
+            limit: readOptionalQuery(req, "limit"),
+            cursor: readOptionalQuery(req, "cursor"),
+          },
+        );
+      }
+      return this.groupService.getMember(
+        actor,
+        req.params.scopeType,
+        req.params.scopeId,
+        req.params.memberId,
+      );
+    }
     if (command === "MANAGER_WORKSPACE_LIST_EVENTS") {
       return this.eventService.listEvents(actor);
     }
@@ -168,9 +235,7 @@ export class ManagerWorkspaceAdminController extends SecureController {
     if (command === "MANAGER_WORKSPACE_REVENUE_PLATFORM_EARNING_SCOPE") {
       return this.revenueService.getScope(actor);
     }
-    if (
-      command === "MANAGER_WORKSPACE_LIST_REVENUE_PLATFORM_EARNING_BATCHES"
-    ) {
+    if (command === "MANAGER_WORKSPACE_LIST_REVENUE_PLATFORM_EARNING_BATCHES") {
       return this.revenueService.listBatches(actor, {
         status: readOptionalQuery(req, "status"),
         platform: readOptionalQuery(req, "platform"),
@@ -183,9 +248,7 @@ export class ManagerWorkspaceAdminController extends SecureController {
         cursor: readOptionalQuery(req, "cursor"),
       });
     }
-    if (
-      command === "MANAGER_WORKSPACE_CREATE_REVENUE_PLATFORM_EARNING_BATCH"
-    ) {
+    if (command === "MANAGER_WORKSPACE_CREATE_REVENUE_PLATFORM_EARNING_BATCH") {
       const body = requireRecord(req.body);
       assertNoUnexpectedFields(
         body,
@@ -203,14 +266,10 @@ export class ManagerWorkspaceAdminController extends SecureController {
         sourceDateTo: body.sourceDateTo as number,
       });
     }
-    if (
-      command === "MANAGER_WORKSPACE_GET_REVENUE_PLATFORM_EARNING_BATCH"
-    ) {
+    if (command === "MANAGER_WORKSPACE_GET_REVENUE_PLATFORM_EARNING_BATCH") {
       return this.revenueService.getBatch(actor, req.params.batchId);
     }
-    if (
-      command === "MANAGER_WORKSPACE_UPDATE_REVENUE_PLATFORM_EARNING_BATCH"
-    ) {
+    if (command === "MANAGER_WORKSPACE_UPDATE_REVENUE_PLATFORM_EARNING_BATCH") {
       const body = requireRecord(req.body);
       assertNoUnexpectedFields(
         body,
@@ -225,18 +284,14 @@ export class ManagerWorkspaceAdminController extends SecureController {
         sourceDateTo: body.sourceDateTo as number | undefined,
       });
     }
-    if (
-      command === "MANAGER_WORKSPACE_LIST_REVENUE_PLATFORM_EARNING_LINES"
-    ) {
+    if (command === "MANAGER_WORKSPACE_LIST_REVENUE_PLATFORM_EARNING_LINES") {
       return this.revenueService.listLines(actor, {
         batchId: req.params.batchId,
         limit: readOptionalQuery(req, "limit"),
         cursor: readOptionalQuery(req, "cursor"),
       });
     }
-    if (
-      command === "MANAGER_WORKSPACE_ADD_REVENUE_PLATFORM_EARNING_LINE"
-    ) {
+    if (command === "MANAGER_WORKSPACE_ADD_REVENUE_PLATFORM_EARNING_LINE") {
       const body = requireRecord(req.body);
       assertNoUnexpectedFields(
         body,
@@ -247,17 +302,14 @@ export class ManagerWorkspaceAdminController extends SecureController {
         batchId: req.params.batchId,
         sourceDate: body.sourceDate as number,
         memberTalentId: body.memberTalentId as string | null | undefined,
-        memberEmploymentProfileId:
-          body.memberEmploymentProfileId as string | null | undefined,
+        memberEmploymentProfileId: body.memberEmploymentProfileId as
+          string | null | undefined,
         rawQuantity: body.rawQuantity as number,
-        externalSourceRef:
-          body.externalSourceRef as string | null | undefined,
+        externalSourceRef: body.externalSourceRef as string | null | undefined,
         notes: body.notes as string | null | undefined,
       });
     }
-    if (
-      command === "MANAGER_WORKSPACE_UPDATE_REVENUE_PLATFORM_EARNING_LINE"
-    ) {
+    if (command === "MANAGER_WORKSPACE_UPDATE_REVENUE_PLATFORM_EARNING_LINE") {
       const body = requireRecord(req.body);
       assertNoUnexpectedFields(
         body,
@@ -269,17 +321,14 @@ export class ManagerWorkspaceAdminController extends SecureController {
         lineId: req.params.lineId,
         sourceDate: body.sourceDate as number | undefined,
         memberTalentId: body.memberTalentId as string | null | undefined,
-        memberEmploymentProfileId:
-          body.memberEmploymentProfileId as string | null | undefined,
+        memberEmploymentProfileId: body.memberEmploymentProfileId as
+          string | null | undefined,
         rawQuantity: body.rawQuantity as number | undefined,
-        externalSourceRef:
-          body.externalSourceRef as string | null | undefined,
+        externalSourceRef: body.externalSourceRef as string | null | undefined,
         notes: body.notes as string | null | undefined,
       });
     }
-    if (
-      command === "MANAGER_WORKSPACE_SUBMIT_REVENUE_PLATFORM_EARNING_BATCH"
-    ) {
+    if (command === "MANAGER_WORKSPACE_SUBMIT_REVENUE_PLATFORM_EARNING_BATCH") {
       return this.revenueService.submitBatch(actor, {
         batchId: req.params.batchId,
       });
@@ -293,10 +342,21 @@ export class ManagerWorkspaceAdminController extends SecureController {
         cursor: readOptionalQuery(req, "cursor"),
       });
     }
+    if (command === "MANAGER_WORKSPACE_GET_WEEKLY_SCHEDULE") {
+      return this.workScheduleService.getWeeklySchedule(actor, {
+        scopeType: readOptionalQuery(req, "scopeType"),
+        scopeId: readOptionalQuery(req, "scopeId"),
+        weekStart: readOptionalQuery(req, "weekStart"),
+        search: readOptionalQuery(req, "search"),
+        status: readOptionalQuery(req, "status"),
+        conflict: readOptionalQuery(req, "conflict"),
+        request: readOptionalQuery(req, "request"),
+        cursor: readOptionalQuery(req, "cursor"),
+      });
+    }
 
     if (
-      command ===
-      "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_MEMBERS"
+      command === "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_MEMBERS"
     ) {
       return this.workScheduleAvailabilityBatchService.listManagerTargetMembers(
         actor,
@@ -307,20 +367,14 @@ export class ManagerWorkspaceAdminController extends SecureController {
       );
     }
 
-    if (
-      command ===
-      "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_REQUEST_BATCH"
-    ) {
+    if (command === "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_REQUEST_BATCH") {
       return this.workScheduleRequestBatchService.submitManagerBatch(
         actor,
         parseSubmitBatchCommand(req),
       );
     }
 
-    if (
-      command ===
-      "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_REQUEST_BATCHES"
-    ) {
+    if (command === "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_REQUEST_BATCHES") {
       return this.workScheduleRequestBatchService.listManagerBatches(actor, {
         status: readOptionalQuery(req, "status"),
         periodMonth: readOptionalQuery(req, "periodMonth"),
@@ -329,58 +383,41 @@ export class ManagerWorkspaceAdminController extends SecureController {
       });
     }
 
-    if (
-      command ===
-      "MANAGER_WORKSPACE_GET_WORK_SCHEDULE_REQUEST_BATCH"
-    ) {
-      return this.workScheduleRequestBatchService.getManagerBatchDetail(
-        actor,
-        { batchId: req.params.batchId },
-      );
+    if (command === "MANAGER_WORKSPACE_GET_WORK_SCHEDULE_REQUEST_BATCH") {
+      return this.workScheduleRequestBatchService.getManagerBatchDetail(actor, {
+        batchId: req.params.batchId,
+      });
     }
 
-    if (
-      command ===
-      "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_REQUEST_BATCH"
-    ) {
+    if (command === "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_REQUEST_BATCH") {
       const body = requireRecord(req.body);
       assertNoUnexpectedFields(
         body,
         CANCEL_BODY_FIELDS,
         "cancelWorkScheduleRequestBatch",
       );
-      return this.workScheduleRequestBatchService.cancelManagerBatch(
-        actor,
-        {
-          batchId: req.params.batchId,
-          cancellationReason: body.cancellationReason as string,
-        },
-      );
+      return this.workScheduleRequestBatchService.cancelManagerBatch(actor, {
+        batchId: req.params.batchId,
+        cancellationReason: body.cancellationReason as string,
+      });
     }
 
-    if (
-      command ===
-      "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_REQUEST_LINE"
-    ) {
+    if (command === "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_REQUEST_LINE") {
       const body = requireRecord(req.body);
       assertNoUnexpectedFields(
         body,
         CANCEL_BODY_FIELDS,
         "cancelWorkScheduleRequestLine",
       );
-      return this.workScheduleRequestBatchService.cancelManagerLine(
-        actor,
-        {
-          batchId: req.params.batchId,
-          lineId: req.params.lineId,
-          cancellationReason: body.cancellationReason as string,
-        },
-      );
+      return this.workScheduleRequestBatchService.cancelManagerLine(actor, {
+        batchId: req.params.batchId,
+        lineId: req.params.lineId,
+        cancellationReason: body.cancellationReason as string,
+      });
     }
 
     if (
-      command ===
-      "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_AVAILABILITY_BATCH"
+      command === "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_AVAILABILITY_BATCH"
     ) {
       return this.workScheduleAvailabilityBatchService.submitManagerBatch(
         actor,
@@ -389,8 +426,7 @@ export class ManagerWorkspaceAdminController extends SecureController {
     }
 
     if (
-      command ===
-      "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_BATCHES"
+      command === "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_BATCHES"
     ) {
       return this.workScheduleAvailabilityBatchService.listManagerBatches(
         actor,
@@ -399,20 +435,14 @@ export class ManagerWorkspaceAdminController extends SecureController {
           periodMonth: readOptionalQuery(req, "periodMonth"),
           targetType: readOptionalQuery(req, "targetType"),
           targetOrgUnitId: readOptionalQuery(req, "targetOrgUnitId"),
-          targetTalentGroupId: readOptionalQuery(
-            req,
-            "targetTalentGroupId",
-          ),
+          targetTalentGroupId: readOptionalQuery(req, "targetTalentGroupId"),
           limit: readOptionalQuery(req, "limit"),
           cursor: readOptionalQuery(req, "cursor"),
         },
       );
     }
 
-    if (
-      command ===
-      "MANAGER_WORKSPACE_GET_WORK_SCHEDULE_AVAILABILITY_BATCH"
-    ) {
+    if (command === "MANAGER_WORKSPACE_GET_WORK_SCHEDULE_AVAILABILITY_BATCH") {
       return this.workScheduleAvailabilityBatchService.getManagerBatchDetail(
         actor,
         { batchId: req.params.batchId },
@@ -420,10 +450,8 @@ export class ManagerWorkspaceAdminController extends SecureController {
     }
 
     if (
-      command ===
-        "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_BATCH" ||
-      command ===
-        "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_LINE"
+      command === "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_BATCH" ||
+      command === "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_LINE"
     ) {
       const body = requireRecord(req.body);
       assertNoUnexpectedFields(
@@ -432,8 +460,7 @@ export class ManagerWorkspaceAdminController extends SecureController {
         "cancelWorkScheduleAvailability",
       );
       if (
-        command ===
-        "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_BATCH"
+        command === "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_BATCH"
       ) {
         return this.workScheduleAvailabilityBatchService.cancelManagerBatch(
           actor,
@@ -467,20 +494,31 @@ export class ManagerWorkspaceAdminController extends SecureController {
   ): Promise<PresentationResult> {
     const command = readCommand<ManagerWorkspaceCommand>(req);
     if (
-      command ===
-      "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_REQUEST_BATCHES"
+      command === "MANAGER_WORKSPACE_LIST_GROUPS" ||
+      command === "MANAGER_WORKSPACE_GET_GROUP" ||
+      command === "MANAGER_WORKSPACE_LIST_MEMBERS" ||
+      command === "MANAGER_WORKSPACE_GET_MEMBER"
     ) {
+      return {
+        data: toPlainObject(result, "managerWorkspaceManagedGroupRead"),
+      };
+    }
+    if (command === "MANAGER_WORKSPACE_GET_WEEKLY_SCHEDULE") {
+      return {
+        data: toPlainObject(result, "managerWorkspaceWeeklySchedule"),
+      };
+    }
+    if (command === "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_REQUEST_BATCHES") {
       return {
         data: toPlainObject(
           {
-            items: (
-              result as ListWorkScheduleRequestBatchesResult
-            ).items.map(exposeManagerBatchListItem),
+            items: (result as ListWorkScheduleRequestBatchesResult).items.map(
+              exposeManagerBatchListItem,
+            ),
             ...((result as ListWorkScheduleRequestBatchesResult).nextCursor
               ? {
-                  nextCursor: (
-                    result as ListWorkScheduleRequestBatchesResult
-                  ).nextCursor,
+                  nextCursor: (result as ListWorkScheduleRequestBatchesResult)
+                    .nextCursor,
                 }
               : {}),
           },
@@ -494,7 +532,10 @@ export class ManagerWorkspaceAdminController extends SecureController {
       command === "MANAGER_WORKSPACE_REVENUE_PLATFORM_EARNING_SCOPE"
     ) {
       return {
-        data: toPlainObject(result, "managerWorkspaceRevenuePlatformEarningList"),
+        data: toPlainObject(
+          result,
+          "managerWorkspaceRevenuePlatformEarningList",
+        ),
       };
     }
     if (
@@ -513,8 +554,7 @@ export class ManagerWorkspaceAdminController extends SecureController {
       };
     }
     if (
-      command ===
-      "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_BATCHES"
+      command === "MANAGER_WORKSPACE_LIST_WORK_SCHEDULE_AVAILABILITY_BATCHES"
     ) {
       const list = result as ListWorkScheduleAvailabilityBatchesResult;
       return {
@@ -528,14 +568,10 @@ export class ManagerWorkspaceAdminController extends SecureController {
       };
     }
     if (
-      command ===
-        "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_AVAILABILITY_BATCH" ||
-      command ===
-        "MANAGER_WORKSPACE_GET_WORK_SCHEDULE_AVAILABILITY_BATCH" ||
-      command ===
-        "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_BATCH" ||
-      command ===
-        "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_LINE"
+      command === "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_AVAILABILITY_BATCH" ||
+      command === "MANAGER_WORKSPACE_GET_WORK_SCHEDULE_AVAILABILITY_BATCH" ||
+      command === "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_BATCH" ||
+      command === "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_AVAILABILITY_LINE"
     ) {
       return {
         data: toPlainObject(
@@ -547,14 +583,10 @@ export class ManagerWorkspaceAdminController extends SecureController {
       };
     }
     if (
-      command ===
-        "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_REQUEST_BATCH" ||
-      command ===
-        "MANAGER_WORKSPACE_GET_WORK_SCHEDULE_REQUEST_BATCH" ||
-      command ===
-        "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_REQUEST_BATCH" ||
-      command ===
-        "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_REQUEST_LINE"
+      command === "MANAGER_WORKSPACE_SUBMIT_WORK_SCHEDULE_REQUEST_BATCH" ||
+      command === "MANAGER_WORKSPACE_GET_WORK_SCHEDULE_REQUEST_BATCH" ||
+      command === "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_REQUEST_BATCH" ||
+      command === "MANAGER_WORKSPACE_CANCEL_WORK_SCHEDULE_REQUEST_LINE"
     ) {
       return {
         data: toPlainObject(
@@ -587,11 +619,9 @@ function parseSubmitBatchCommand(
   return {
     periodMonth: body.periodMonth as string,
     clientToken: body.clientToken as string | null | undefined,
-    idempotencyKey:
-      body.idempotencyKey as string | null | undefined,
+    idempotencyKey: body.idempotencyKey as string | null | undefined,
     note: body.note as string | null | undefined,
-    lines:
-      body.lines as SubmitWorkScheduleRequestBatchCommand["lines"],
+    lines: body.lines as SubmitWorkScheduleRequestBatchCommand["lines"],
   };
 }
 
@@ -609,13 +639,11 @@ function parseSubmitAvailabilityBatchCommand(
     targetType: body.targetType as string,
     targetMode: body.targetMode as string | null | undefined,
     targetOrgUnitId: body.targetOrgUnitId as string | null | undefined,
-    targetTalentGroupId:
-      body.targetTalentGroupId as string | null | undefined,
+    targetTalentGroupId: body.targetTalentGroupId as string | null | undefined,
     clientToken: body.clientToken as string | null | undefined,
     idempotencyKey: body.idempotencyKey as string | null | undefined,
     note: body.note as string | null | undefined,
-    lines:
-      body.lines as SubmitWorkScheduleAvailabilityBatchCommand["lines"],
+    lines: body.lines as SubmitWorkScheduleAvailabilityBatchCommand["lines"],
   };
 }
 
@@ -623,11 +651,7 @@ function requireRecord(value: unknown): Record<string, unknown> {
   if (value === undefined) {
     return {};
   }
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value)
-  ) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new WorkScheduleValidationError(
       "Request body must be a plain object",
     );

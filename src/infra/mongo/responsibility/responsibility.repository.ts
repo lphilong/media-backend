@@ -88,7 +88,9 @@ const DEFAULT_LIMIT = 100;
 
 export class NativeMongoResponsibilityAssignmentRepository
   extends BaseRepository<ResponsibilityAssignmentDocument>
-  implements ResponsibilityAssignmentRepository, ResponsibilityManagedScopeReader
+  implements
+    ResponsibilityAssignmentRepository,
+    ResponsibilityManagedScopeReader
 {
   private readonly talents: Collection<TalentDocument>;
   private readonly talentGroups: Collection<TalentGroupDocument>;
@@ -109,7 +111,10 @@ export class NativeMongoResponsibilityAssignmentRepository
     assignment: ResponsibilityAssignmentRecord,
     session?: ClientSession,
   ): Promise<ResponsibilityAssignmentRecord> {
-    await this.collection.insertOne(toDocument(assignment), this.withSession(session));
+    await this.collection.insertOne(
+      toDocument(assignment),
+      this.withSession(session),
+    );
     return assignment;
   }
 
@@ -119,8 +124,11 @@ export class NativeMongoResponsibilityAssignmentRepository
   ): Promise<readonly ResponsibilityAssignmentView[]> {
     const assignments = await this.listCentral(filters, session);
     return Array.from(assignments)
-      .sort((left: ResponsibilityAssignmentView, right: ResponsibilityAssignmentView) =>
-        sortResponsibility(left, right),
+      .sort(
+        (
+          left: ResponsibilityAssignmentView,
+          right: ResponsibilityAssignmentView,
+        ) => sortResponsibility(left, right),
       )
       .slice(0, filters.limit ?? DEFAULT_LIMIT);
   }
@@ -180,8 +188,7 @@ export class NativeMongoResponsibilityAssignmentRepository
     const docs = await this.collection
       .find(
         {
-          responsibleEmploymentProfileId:
-            input.responsibleEmploymentProfileId,
+          responsibleEmploymentProfileId: input.responsibleEmploymentProfileId,
           status: "ACTIVE",
           effectiveAt: { $lte: input.asOf },
           $and: [
@@ -205,15 +212,29 @@ export class NativeMongoResponsibilityAssignmentRepository
       .sort({ subjectType: 1, subjectId: 1, _id: 1 })
       .toArray();
 
-    const talentGroupIds = uniqueNonEmpty(
-      docs
-        .filter(
-          (doc) =>
-            doc.subjectType === "TALENT_GROUP" &&
-            doc.responsibilityType === "TALENT_GROUP_MANAGER",
-        )
-        .map((doc) => doc.subjectId),
+    const talentGroupDocs = docs.filter(
+      (doc) =>
+        doc.subjectType === "TALENT_GROUP" &&
+        doc.responsibilityType === "TALENT_GROUP_MANAGER",
     );
+    const talentGroupIds = uniqueNonEmpty(
+      talentGroupDocs.map((doc) => doc.subjectId),
+    );
+    const talentGroupScopes = talentGroupIds.map((talentGroupId) => {
+      const matching = talentGroupDocs.filter(
+        (doc) => doc.subjectId === talentGroupId,
+      );
+      return {
+        talentGroupId,
+        role:
+          matching.find((doc) => doc.responsibilityRole)?.responsibilityRole ??
+          null,
+        actionMask: uniqueNonEmpty(
+          matching.flatMap((doc) => [...(doc.actionMask ?? [])]),
+        ),
+        isPrimary: matching.some((doc) => doc.isPrimary),
+      };
+    });
     const orgUnitScopes = uniqueManagedOrgUnitScopes(
       docs
         .filter(
@@ -245,11 +266,14 @@ export class NativeMongoResponsibilityAssignmentRepository
         )
         .map((scope) => scope.orgUnitId),
     );
-    const descendantOrgUnitIds =
-      await this.listActiveOrgUnitDescendantIds(descendantSourceIds, session);
+    const descendantOrgUnitIds = await this.listActiveOrgUnitDescendantIds(
+      descendantSourceIds,
+      session,
+    );
 
     return {
       talentGroupIds,
+      talentGroupScopes,
       orgUnitIds: uniqueNonEmpty([
         ...activeDirectOrgUnitIds,
         ...descendantOrgUnitIds,
@@ -371,7 +395,10 @@ export class NativeMongoResponsibilityAssignmentRepository
       { _id: employmentProfileId },
       this.withSession(session),
     );
-    if (!profile || !["ACTIVE", "ON_LEAVE"].includes(profile.employmentStatus)) {
+    if (
+      !profile ||
+      !["ACTIVE", "ON_LEAVE"].includes(profile.employmentStatus)
+    ) {
       return [];
     }
     if (!profile?.orgUnitId) {
@@ -399,7 +426,9 @@ export class NativeMongoResponsibilityAssignmentRepository
       );
       inherited.push(
         ...rows.filter(
-          (row) => row.subjectId === profile.orgUnitId || row.includeDescendants === true,
+          (row) =>
+            row.subjectId === profile.orgUnitId ||
+            row.includeDescendants === true,
         ),
       );
     }
@@ -428,7 +457,10 @@ export class NativeMongoResponsibilityAssignmentRepository
   ): Promise<ResponsibilityAssignmentView> {
     const [subjectRef, responsibleEmploymentProfileRef] = await Promise.all([
       this.findSubjectRef(record.subjectType, record.subjectId, session),
-      this.findEmploymentProfileRef(record.responsibleEmploymentProfileId, session),
+      this.findEmploymentProfileRef(
+        record.responsibleEmploymentProfileId,
+        session,
+      ),
     ]);
 
     const review = await this.resolveReviewState(record, session);
@@ -452,17 +484,35 @@ export class NativeMongoResponsibilityAssignmentRepository
         this.withSession(session),
       );
       return doc
-        ? { id: doc._id, code: doc.groupCode, name: doc.name, status: doc.status }
+        ? {
+            id: doc._id,
+            code: doc.groupCode,
+            name: doc.name,
+            status: doc.status,
+          }
         : null;
     }
     if (subjectType === "ORG_UNIT") {
-      const doc = await this.orgUnits.findOne({ _id: subjectId }, this.withSession(session));
-      return doc ? { id: doc._id, code: doc.code, name: doc.name, status: doc.status } : null;
+      const doc = await this.orgUnits.findOne(
+        { _id: subjectId },
+        this.withSession(session),
+      );
+      return doc
+        ? { id: doc._id, code: doc.code, name: doc.name, status: doc.status }
+        : null;
     }
     if (subjectType === "TALENT") {
-      const doc = await this.talents.findOne({ _id: subjectId }, this.withSession(session));
+      const doc = await this.talents.findOne(
+        { _id: subjectId },
+        this.withSession(session),
+      );
       return doc
-        ? { id: doc._id, code: doc.talentCode, name: doc.stageName, status: doc.operationalStatus }
+        ? {
+            id: doc._id,
+            code: doc.talentCode,
+            name: doc.stageName,
+            status: doc.operationalStatus,
+          }
         : null;
     }
     const profile = await this.employmentProfiles.findOne(
@@ -528,19 +578,36 @@ export class NativeMongoResponsibilityAssignmentRepository
   private async resolveReviewState(
     record: ResponsibilityAssignmentRecord,
     session?: ClientSession,
-  ): Promise<{ readonly reviewNeeded: boolean; readonly reviewReason: string | null }> {
+  ): Promise<{
+    readonly reviewNeeded: boolean;
+    readonly reviewReason: string | null;
+  }> {
     const responsible = await this.employmentProfiles.findOne(
       { _id: record.responsibleEmploymentProfileId },
       this.withSession(session),
     );
-    if (!responsible || !["ACTIVE", "ON_LEAVE"].includes(responsible.employmentStatus)) {
-      return { reviewNeeded: true, reviewReason: "RESPONSIBLE_PROFILE_NOT_ACTIVE" };
+    if (
+      !responsible ||
+      !["ACTIVE", "ON_LEAVE"].includes(responsible.employmentStatus)
+    ) {
+      return {
+        reviewNeeded: true,
+        reviewReason: "RESPONSIBLE_PROFILE_NOT_ACTIVE",
+      };
     }
-    const subject = await this.findSubjectRef(record.subjectType, record.subjectId, session);
+    const subject = await this.findSubjectRef(
+      record.subjectType,
+      record.subjectId,
+      session,
+    );
     if (!subject) {
       return { reviewNeeded: true, reviewReason: "SUBJECT_NOT_FOUND" };
     }
-    if (["INACTIVE", "TERMINATED", "ARCHIVED", "SUSPENDED"].includes(subject.status ?? "")) {
+    if (
+      ["INACTIVE", "TERMINATED", "ARCHIVED", "SUSPENDED"].includes(
+        subject.status ?? "",
+      )
+    ) {
       return { reviewNeeded: true, reviewReason: "SUBJECT_NOT_ACTIVE" };
     }
     return { reviewNeeded: false, reviewReason: null };
@@ -606,7 +673,9 @@ function toDocument(
   };
 }
 
-function toDomain(doc: ResponsibilityAssignmentDocument): ResponsibilityAssignmentRecord {
+function toDomain(
+  doc: ResponsibilityAssignmentDocument,
+): ResponsibilityAssignmentRecord {
   return {
     id: doc._id,
     subjectType: doc.subjectType,
@@ -647,7 +716,10 @@ function buildCentralFilter(
 
   return {
     ...(filters.responsibleEmploymentProfileId
-      ? { responsibleEmploymentProfileId: filters.responsibleEmploymentProfileId }
+      ? {
+          responsibleEmploymentProfileId:
+            filters.responsibleEmploymentProfileId,
+        }
       : {}),
     ...(filters.subjectType ? { subjectType: filters.subjectType } : {}),
     ...(filters.subjectId ? { subjectId: filters.subjectId } : {}),
@@ -692,7 +764,9 @@ function sortResponsibility(
   return right.updatedAt - left.updatedAt || left.id.localeCompare(right.id);
 }
 
-function employmentProfileRef(profile: EmploymentProfileDocument): ReferenceSummary {
+function employmentProfileRef(
+  profile: EmploymentProfileDocument,
+): ReferenceSummary {
   return {
     id: profile._id,
     code: profile.employeeCode,

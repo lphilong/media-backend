@@ -81,19 +81,41 @@ const UPDATE_KPI_DRAFT_CORE_BODY_FIELDS = [
   "externalRef",
 ] as const;
 
-const REPLACE_KPI_TARGET_METRICS_BODY_FIELDS = [
-  "targetMetrics",
-] as const;
+const REPLACE_KPI_TARGET_METRICS_BODY_FIELDS = ["targetMetrics"] as const;
 
 const REPLACE_KPI_ALLOCATIONS_BODY_FIELDS = ["allocations"] as const;
-const UPSERT_KPI_ALLOCATION_DRAFT_BODY_FIELDS = ["allocations"] as const;
-const APPROVE_KPI_ALLOCATION_BODY_FIELDS = ["approvalNote"] as const;
-const REJECT_KPI_ALLOCATION_BODY_FIELDS = ["rejectionReason"] as const;
+const ALLOCATION_VERSION_BODY_FIELDS = [
+  "expectedPlanVersion",
+  "expectedAllocationVersion",
+  "expectedMembershipSnapshotVersion",
+  "idempotencyKey",
+] as const;
+const UPSERT_KPI_ALLOCATION_DRAFT_BODY_FIELDS = [
+  "allocations",
+  ...ALLOCATION_VERSION_BODY_FIELDS,
+] as const;
+const SUBMIT_KPI_ALLOCATION_BODY_FIELDS = [
+  ...ALLOCATION_VERSION_BODY_FIELDS,
+  "reason",
+] as const;
+const APPROVE_KPI_ALLOCATION_BODY_FIELDS = [
+  "approvalNote",
+  ...ALLOCATION_VERSION_BODY_FIELDS,
+] as const;
+const REJECT_KPI_ALLOCATION_BODY_FIELDS = [
+  "rejectionReason",
+  ...ALLOCATION_VERSION_BODY_FIELDS,
+] as const;
+const PUBLISH_KPI_ALLOCATION_BODY_FIELDS = [
+  ...ALLOCATION_VERSION_BODY_FIELDS,
+] as const;
 const CREATE_KPI_ACTUAL_BODY_FIELDS = [
   "allocationId",
   "metricCode",
   "actualDate",
   "actualValue",
+  "evidenceRef",
+  "sourceFingerprint",
 ] as const;
 const MARK_KPI_ACTUAL_EXCUSE_BODY_FIELDS = [
   "allocationId",
@@ -104,7 +126,12 @@ const MARK_KPI_ACTUAL_EXCUSE_BODY_FIELDS = [
   "reasonText",
 ] as const;
 const UPDATE_KPI_ACTUAL_BODY_FIELDS = ["actualValue"] as const;
-const CORRECT_KPI_ACTUAL_BODY_FIELDS = ["correctedValue", "reason"] as const;
+const CORRECT_KPI_ACTUAL_BODY_FIELDS = [
+  "correctedValue",
+  "reason",
+  "expectedEntryVersion",
+  "idempotencyKey",
+] as const;
 
 export class KpiAdminController extends SecureController {
   constructor(private readonly service: KpiAdminService) {
@@ -153,11 +180,14 @@ export class KpiAdminController extends SecureController {
       case "KPI_ALLOCATION_SUBMIT":
         assertNoUnexpectedFields(
           requireRecord(req.body),
-          [],
+          SUBMIT_KPI_ALLOCATION_BODY_FIELDS,
           "submitKpiAllocationDraft",
         );
+        const submitBody = requireRecord(req.body);
         return this.service.submitKpiAllocationDraft(actor, {
           kpiPlanId: req.params.kpiPlanId,
+          ...parseAllocationVersionFields(submitBody),
+          reason: submitBody.reason as string | undefined,
         } satisfies SubmitKpiAllocationDraftCommand);
       case "KPI_ALLOCATION_APPROVE":
         return this.service.approveKpiAllocation(
@@ -170,13 +200,15 @@ export class KpiAdminController extends SecureController {
           parseRejectKpiAllocationCommand(req),
         );
       case "KPI_ALLOCATION_PUBLISH":
+        const publishBody = requireRecord(req.body);
         assertNoUnexpectedFields(
-          requireRecord(req.body),
-          [],
+          publishBody,
+          PUBLISH_KPI_ALLOCATION_BODY_FIELDS,
           "publishKpiAllocation",
         );
         return this.service.publishKpiAllocation(actor, {
           kpiPlanId: req.params.kpiPlanId,
+          ...parseAllocationVersionFields(publishBody),
         } satisfies PublishKpiAllocationCommand);
       case "KPI_PLAN_PUBLISH":
         assertNoUnexpectedFields(requireRecord(req.body), [], "publishKpiPlan");
@@ -249,7 +281,11 @@ export class KpiAdminController extends SecureController {
           parseCorrectKpiActualCommand(req),
         );
       case "KPI_PLAN_FINALIZE":
-        assertNoUnexpectedFields(requireRecord(req.body), [], "finalizeKpiPlan");
+        assertNoUnexpectedFields(
+          requireRecord(req.body),
+          [],
+          "finalizeKpiPlan",
+        );
         return this.service.finalizeKpiPlan(actor, {
           kpiPlanId: req.params.kpiPlanId,
         });
@@ -308,9 +344,7 @@ export class KpiAdminController extends SecureController {
       return {
         data: KpiPlanDetailExposure.expose(
           result as
-            | Awaited<
-                ReturnType<KpiAdminService["markKpiOrgUnitActualExcuse"]>
-              >
+            | Awaited<ReturnType<KpiAdminService["markKpiOrgUnitActualExcuse"]>>
             | Awaited<
                 ReturnType<KpiAdminService["removeKpiOrgUnitActualExcuse"]>
               >,
@@ -336,8 +370,7 @@ function parseCreateKpiPlanCommand(req: Request): CreateKpiPlanCommand {
     periodStartAt: body.periodStartAt as number,
     periodEndAt: body.periodEndAt as number,
     timezone: body.timezone as string | undefined,
-    targetMetrics:
-      body.targetMetrics as CreateKpiPlanCommand["targetMetrics"],
+    targetMetrics: body.targetMetrics as CreateKpiPlanCommand["targetMetrics"],
     externalRef: body.externalRef as string | null | undefined,
   };
 }
@@ -409,6 +442,7 @@ function parseUpsertKpiAllocationDraftCommand(
     kpiPlanId: req.params.kpiPlanId,
     allocations:
       body.allocations as UpsertKpiAllocationDraftCommand["allocations"],
+    ...parseAllocationVersionFields(body),
   };
 }
 
@@ -424,6 +458,7 @@ function parseApproveKpiAllocationCommand(
   return {
     kpiPlanId: req.params.kpiPlanId,
     approvalNote: body.approvalNote as string | null | undefined,
+    ...parseAllocationVersionFields(body),
   };
 }
 
@@ -439,7 +474,45 @@ function parseRejectKpiAllocationCommand(
   return {
     kpiPlanId: req.params.kpiPlanId,
     rejectionReason: body.rejectionReason as string,
+    ...parseAllocationVersionFields(body),
   };
+}
+
+function parseAllocationVersionFields(body: Record<string, unknown>) {
+  return {
+    expectedPlanVersion: requireNonNegativeInteger(
+      body.expectedPlanVersion,
+      "expectedPlanVersion",
+    ),
+    expectedAllocationVersion: requireNonNegativeInteger(
+      body.expectedAllocationVersion,
+      "expectedAllocationVersion",
+    ),
+    expectedMembershipSnapshotVersion: requireNonEmptyString(
+      body.expectedMembershipSnapshotVersion,
+      "expectedMembershipSnapshotVersion",
+    ),
+    idempotencyKey: requireNonEmptyString(
+      body.idempotencyKey,
+      "idempotencyKey",
+    ),
+  };
+}
+
+function requireNonNegativeInteger(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new KpiValidationError(
+      `${field} must be a non-negative safe integer`,
+    );
+  }
+  return value as number;
+}
+
+function requireNonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new KpiValidationError(`${field} is required`);
+  }
+  return value.trim();
 }
 
 function parseArchiveKpiPlanCommand(req: Request): ArchiveKpiPlanCommand {
@@ -460,6 +533,8 @@ function parseCreateKpiActualCommand(req: Request): CreateKpiActualCommand {
     metricCode: body.metricCode as string,
     actualDate: body.actualDate as string,
     actualValue: body.actualValue as number,
+    evidenceRef: body.evidenceRef as string | null | undefined,
+    sourceFingerprint: body.sourceFingerprint as string | null | undefined,
   };
 }
 
@@ -509,6 +584,14 @@ function parseCorrectKpiActualCommand(req: Request): CorrectKpiActualCommand {
     actualEntryId: req.params.actualEntryId,
     correctedValue: body.correctedValue as number,
     reason: body.reason as string,
+    expectedEntryVersion: requireNonNegativeInteger(
+      body.expectedEntryVersion,
+      "expectedEntryVersion",
+    ),
+    idempotencyKey: requireNonEmptyString(
+      body.idempotencyKey,
+      "idempotencyKey",
+    ),
   };
 }
 
@@ -516,11 +599,7 @@ function requireRecord(value: unknown): Record<string, unknown> {
   if (value === undefined) {
     return {};
   }
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value)
-  ) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new KpiValidationError("Request body must be a plain object");
   }
   return value as Record<string, unknown>;

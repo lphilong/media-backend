@@ -14,6 +14,7 @@ export interface FindKpiActualEntryIdentityInput {
 
 export interface UpdateKpiActualEntryDirectInput {
   readonly actualEntryId: string;
+  readonly expectedEntryVersion: number;
   readonly actualValue: number;
   readonly updatedAt: number;
   readonly updatedByActorId: string;
@@ -22,6 +23,8 @@ export interface UpdateKpiActualEntryDirectInput {
 
 export interface ApplyKpiActualCorrectionInput {
   readonly correction: KpiActualCorrection;
+  readonly expectedEntryVersion: number;
+  readonly applyAcceptedProjection: boolean;
   readonly updatedAt: number;
   readonly updatedByActorId: string;
 }

@@ -178,6 +178,7 @@ import { KpiAdminService } from "@modules/kpi/admin/admin.kpi.service";
 import { adminManagerWorkspaceRoutes } from "@modules/manager-workspace/admin/admin.manager-workspace.routes";
 import { ManagerWorkspaceAdminController } from "@modules/manager-workspace/admin/admin.manager-workspace.controller";
 import { ManagerWorkspaceAdminService } from "@modules/manager-workspace/admin/admin.manager-workspace.service";
+import { ManagerWorkspaceGroupAdminService } from "@modules/manager-workspace/admin/admin.manager-workspace-group.service";
 import { ManagerWorkspaceWorkScheduleAdminService } from "@modules/manager-workspace/admin/admin.manager-workspace-work-schedule.service";
 import { ManagerWorkspaceEventAdminService } from "@modules/manager-workspace/admin/admin.manager-workspace-event.service";
 import { ManagerWorkspaceRevenueAdminService } from "@modules/manager-workspace/admin/admin.manager-workspace-revenue.service";
@@ -302,9 +303,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
     actorSnapshotCacheInvalidator,
   );
 
-  const roleQueryService = new RoleAdminQueryService(
-    roleReadRepository,
-  );
+  const roleQueryService = new RoleAdminQueryService(roleReadRepository);
 
   const roleController = new AdminRoleController(roleService);
   const roleQueryController = new AdminRoleQueryController(roleQueryService);
@@ -318,9 +317,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   r.use(
     "/role-bundles",
     adminRoleBundleRoutes(
-      new AdminRoleBundleController(
-        new RoleBundleAdminService(),
-      ),
+      new AdminRoleBundleController(new RoleBundleAdminService()),
     ),
   );
   r.use(
@@ -498,7 +495,10 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   const responsibilityController = new ResponsibilityAdminController(
     responsibilityService,
   );
-  r.use("/responsibilities", adminResponsibilityRoutes(responsibilityController));
+  r.use(
+    "/responsibilities",
+    adminResponsibilityRoutes(responsibilityController),
+  );
 
   const orgUnitService = new OrgUnitAdminService(
     orgUnitRepository,
@@ -653,10 +653,7 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
 
   r.use(
     "/talent-groups",
-    adminTalentGroupRoutes(
-      talentGroupController,
-      talentGroupQueryController,
-    ),
+    adminTalentGroupRoutes(talentGroupController, talentGroupQueryController),
   );
 
   /* PLATFORM ACCOUNT */
@@ -1021,6 +1018,9 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       responsibilityAssignmentRepository,
       workShiftReadRepository,
       structuredScopeAuthority,
+      Date.now,
+      workScheduleAvailabilityBatchRepository,
+      workScheduleRequestBatchRepository,
     ),
     workScheduleRequestBatchService,
     workScheduleAvailabilityBatchService,
@@ -1040,6 +1040,18 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
       revenueLedgerBusinessCodeSequenceRepository,
       authoritativeAuditGuard,
       adminMutationBridge,
+      structuredScopeAuthority,
+    ),
+    new ManagerWorkspaceGroupAdminService(
+      employmentProfileRepository,
+      employmentProfileReadRepository,
+      orgUnitReadRepository,
+      talentGroupRepository,
+      talentGroupReadRepository,
+      talentRepository,
+      talentReadRepository,
+      kpiSubjectReadonlyAccess,
+      responsibilityAssignmentRepository,
       structuredScopeAuthority,
     ),
   );
