@@ -7,6 +7,21 @@ import {
   MongoClientOptions,
   ReadPreference,
 } from "mongodb";
+import { normalizeRisk001QueryValue } from "./risk-001-query-value-contract";
+import {
+  assertReadOnlyAggregatePipeline,
+  bindRisk001ReadOnlyGatewayCapabilities,
+  normalizeReadOnlyAggregateMaxTimeMS,
+  sanitizedFailure,
+} from "./risk-001-read-only-gateway-capabilities";
+import { Risk001SanitizedError } from "./risk-001-sanitized-error";
+export {
+  assertReadOnlyAggregatePipeline,
+  normalizeReadOnlyAggregateMaxTimeMS,
+  sanitizedFailure,
+} from "./risk-001-read-only-gateway-capabilities";
+export { Risk001SanitizedError, sanitizeSensitiveText } from "./risk-001-sanitized-error";
+export type { Risk001GatewayFailureCategory as Risk001FailureCategory } from "./risk-001-sanitized-error";
 
 export type ReadOnlyDocument = object;
 export type ReadOnlyFilter = Readonly<Record<string, unknown>>;
@@ -52,144 +67,16 @@ export interface ReadOnlyMongoGateway {
   ): Promise<readonly T[]>;
 }
 
-export type Risk001FailureCategory =
-  | "CONFIGURATION_FAILED"
-  | "CONNECTION_FAILED"
-  | "READ_FAILED"
-  | "VALIDATION_FAILED"
-  | "MANUAL_SCOPE_ESCALATION_REQUIRED"
-  | "OUTPUT_FAILED";
-
-export class Risk001SanitizedError extends Error {
-  constructor(
-    readonly category: Risk001FailureCategory,
-    message: string,
-  ) {
-    super(sanitizeSensitiveText(message));
-    this.name = "Risk001SanitizedError";
-  }
-}
-
-const READ_ONLY_AGGREGATE_STAGES = new Set([
-  "$addFields",
-  "$bucket",
-  "$bucketAuto",
-  "$count",
-  "$densify",
-  "$facet",
-  "$fill",
-  "$geoNear",
-  "$group",
-  "$limit",
-  "$lookup",
-  "$match",
-  "$project",
-  "$redact",
-  "$replaceRoot",
-  "$replaceWith",
-  "$sample",
-  "$set",
-  "$setWindowFields",
-  "$skip",
-  "$sort",
-  "$sortByCount",
-  "$unionWith",
-  "$unset",
-  "$unwind",
-]);
-
-const PROHIBITED_AGGREGATE_STAGES = new Set(["$out", "$merge"]);
-
-export function assertReadOnlyAggregatePipeline(
-  pipeline: readonly ReadOnlyDocument[],
-): void {
-  let boundedLimit = false;
-  for (const [index, stage] of pipeline.entries()) {
-    assertNoNestedWriteStage(stage);
-    const keys = Object.keys(stage);
-    if (keys.length !== 1) {
-      throw new Risk001SanitizedError(
-        "VALIDATION_FAILED",
-        `Aggregate stage ${index} must contain exactly one operator`,
-      );
-    }
-    const operator = keys[0] as string;
-    if (
-      PROHIBITED_AGGREGATE_STAGES.has(operator) ||
-      !READ_ONLY_AGGREGATE_STAGES.has(operator)
-    ) {
-      throw new Risk001SanitizedError(
-        "VALIDATION_FAILED",
-        `Aggregate stage ${operator} is not allowed in read-only mode`,
-      );
-    }
-    if (operator === "$limit") {
-      const limit = (stage as { readonly $limit?: unknown }).$limit;
-      boundedLimit =
-        typeof limit === "number" &&
-        Number.isInteger(limit) &&
-        limit >= 1 &&
-        limit <= 10_000;
-      if (!boundedLimit) {
-        throw new Risk001SanitizedError(
-          "VALIDATION_FAILED",
-          "Aggregate result limit must be an integer from 1 through 10000",
-        );
-      }
-    }
-  }
-  const finalStage = pipeline[pipeline.length - 1];
-  if (!boundedLimit || !finalStage || Object.keys(finalStage)[0] !== "$limit") {
-    throw new Risk001SanitizedError(
-      "VALIDATION_FAILED",
-      "Read-only aggregate pipeline requires a bounded final $limit stage",
-    );
-  }
-}
-
-function assertNoNestedWriteStage(value: unknown): void {
-  if (!value || typeof value !== "object") return;
-  if (Array.isArray(value)) {
-    value.forEach(assertNoNestedWriteStage);
-    return;
-  }
-  for (const [key, child] of Object.entries(value)) {
-    if (PROHIBITED_AGGREGATE_STAGES.has(key)) {
-      throw new Risk001SanitizedError(
-        "VALIDATION_FAILED",
-        `Aggregate stage ${key} is not allowed in read-only mode`,
-      );
-    }
-    assertNoNestedWriteStage(child);
-  }
-}
-
-export function sanitizeSensitiveText(value: unknown): string {
-  const source = value instanceof Error ? value.message : String(value);
-  return source
-    .replace(/mongodb(?:\+srv)?:\/\/[^\s"'<>]+/giu, "[REDACTED_MONGO_URI]")
-    .replace(/\b(?:MONGO_URI|MONGO_URL|AUTH0_CLIENT_SECRET|PASSWORD)\s*[=:]\s*[^\s,;]+/giu, "$1=[REDACTED]")
-    .replace(/\b[\w.+-]+:[^@\s]+@(?=[\w.-]+)/gu, "[REDACTED_CREDENTIALS]@")
-    .replace(/\b[0-9a-f]{24}\b/giu, "[REDACTED_OBJECT_ID]");
-}
-
-export function sanitizedFailure(
-  category: Risk001FailureCategory,
-  error: unknown,
-): Risk001SanitizedError {
-  if (error instanceof Risk001SanitizedError) {
-    return error;
-  }
-  const safeMessage = sanitizeSensitiveText(error);
-  return new Risk001SanitizedError(category, safeMessage || category);
-}
-
 export class NativeReadOnlyMongoGateway implements ReadOnlyMongoGateway {
-  constructor(private readonly db: Db) {}
+  readonly #db: Db;
+
+  constructor(db: Db) {
+    this.#db = db;
+  }
 
   async ping(): Promise<void> {
     try {
-      await this.db.command({ ping: 1 });
+      await this.#db.command({ ping: 1 });
     } catch (error) {
       throw sanitizedFailure("CONNECTION_FAILED", error);
     }
@@ -200,10 +87,12 @@ export class NativeReadOnlyMongoGateway implements ReadOnlyMongoGateway {
     filter: ReadOnlyFilter,
     projection: ReadOnlyProjection,
   ): Promise<T | null> {
+    const normalizedFilter = normalizeRisk001QueryValue(filter) as ReadOnlyFilter;
+    const normalizedProjection = normalizeRisk001QueryValue(projection) as ReadOnlyProjection;
     try {
-      return (await this.db
+      return (await this.#db
         .collection<Document>(assertCollectionName(collectionName))
-        .findOne(filter as Filter<Document>, { projection })) as T | null;
+        .findOne(normalizedFilter as Filter<Document>, { projection: normalizedProjection })) as T | null;
     } catch (error) {
       throw sanitizedFailure("READ_FAILED", error);
     }
@@ -215,13 +104,16 @@ export class NativeReadOnlyMongoGateway implements ReadOnlyMongoGateway {
     options: ReadOnlyFindOptions,
   ): Promise<readonly T[]> {
     assertPositiveLimit(options.limit);
+    const normalizedFilter = normalizeRisk001QueryValue(filter) as ReadOnlyFilter;
+    const normalizedProjection = normalizeRisk001QueryValue(options.projection) as ReadOnlyProjection;
+    const normalizedSort = normalizeRisk001QueryValue(options.sort) as ReadOnlySort;
     try {
-      return (await this.db
+      return (await this.#db
         .collection<Document>(assertCollectionName(collectionName))
-        .find(filter as Filter<Document>, {
-          projection: options.projection,
+        .find(normalizedFilter as Filter<Document>, {
+          projection: normalizedProjection,
         } as FindOptions<Document>)
-        .sort(options.sort)
+        .sort(normalizedSort)
         .limit(options.limit)
         .toArray()) as T[];
     } catch (error) {
@@ -233,10 +125,11 @@ export class NativeReadOnlyMongoGateway implements ReadOnlyMongoGateway {
     collectionName: string,
     filter: ReadOnlyFilter,
   ): Promise<number> {
+    const normalizedFilter = normalizeRisk001QueryValue(filter) as ReadOnlyFilter;
     try {
-      return await this.db
+      return await this.#db
         .collection<Document>(assertCollectionName(collectionName))
-        .countDocuments(filter as Filter<Document>);
+        .countDocuments(normalizedFilter as Filter<Document>);
     } catch (error) {
       throw sanitizedFailure("READ_FAILED", error);
     }
@@ -253,10 +146,11 @@ export class NativeReadOnlyMongoGateway implements ReadOnlyMongoGateway {
         "Invalid distinct field",
       );
     }
+    const normalizedFilter = normalizeRisk001QueryValue(filter) as ReadOnlyFilter;
     try {
-      return (await this.db
+      return (await this.#db
         .collection<Document>(assertCollectionName(collectionName))
-        .distinct(field, filter as Filter<Document>)) as T[];
+        .distinct(field, normalizedFilter as Filter<Document>)) as T[];
     } catch (error) {
       throw sanitizedFailure("READ_FAILED", error);
     }
@@ -267,13 +161,15 @@ export class NativeReadOnlyMongoGateway implements ReadOnlyMongoGateway {
     pipeline: readonly ReadOnlyDocument[],
     options: ReadOnlyAggregateOptions = {},
   ): Promise<readonly T[]> {
-    assertReadOnlyAggregatePipeline(pipeline);
+    const normalizedPipeline = normalizeRisk001QueryValue(pipeline) as readonly ReadOnlyDocument[];
+    assertReadOnlyAggregatePipeline(normalizedPipeline);
+    const maxTimeMS = normalizeReadOnlyAggregateMaxTimeMS(options.maxTimeMS);
     try {
-      return (await this.db
+      return (await this.#db
         .collection<Document>(assertCollectionName(collectionName))
-        .aggregate(pipeline as Document[], {
+        .aggregate(normalizedPipeline as Document[], {
           allowDiskUse: false,
-          maxTimeMS: options.maxTimeMS ?? 10_000,
+          maxTimeMS,
         })
         .toArray()) as T[];
     } catch (error) {
@@ -281,6 +177,11 @@ export class NativeReadOnlyMongoGateway implements ReadOnlyMongoGateway {
     }
   }
 }
+
+/** Import-safe binding: concrete production gateway may expose only the seam descriptor's methods. */
+export const NATIVE_READ_ONLY_MONGO_GATEWAY_CAPABILITIES = bindRisk001ReadOnlyGatewayCapabilities(
+  NativeReadOnlyMongoGateway.prototype,
+);
 
 interface ReadOnlyMongoClientLike {
   connect(): Promise<unknown>;

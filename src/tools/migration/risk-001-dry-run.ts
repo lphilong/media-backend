@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fsSync from "node:fs";
-import fs from "node:fs/promises";
 import path from "node:path";
 import dotenv from "dotenv";
 import {
@@ -10,84 +9,40 @@ import {
   RISK001_DEFAULT_SAFETY_CEILING,
 } from "./risk-001-data-loaders";
 import {
-  Risk001SanitizedError,
   sanitizedFailure,
   withReadOnlyMongoGateway,
 } from "./read-only-mongo.gateway";
+import { Risk001SanitizedError } from "./risk-001-sanitized-error";
 import {
-  buildRisk001DryRunManifest,
-  renderRisk001Summary,
+  parseRisk001CliArgs,
+  type Risk001CliOptions,
+} from "./risk-001-cli-contract";
+import {
+  acquireRisk001OutputDirectory,
+  cleanupRisk001OwnedOutputDirectory,
+  preflightRisk001OutputDirectory,
+  writeExactlyTwoOutputsAtomically,
+  type Risk001OwnedOutputDirectory,
+  type Risk001OutputPreflight,
+} from "./risk-001-output-publication";
+import {
+  prepareRisk001CompletedArtifacts,
   SourceVersionEvidence,
 } from "./risk-001-output";
 
-export interface Risk001CliOptions {
-  readonly outputDir: string;
-  readonly maxSamples: number;
-  readonly pretty: boolean;
-  readonly runLabel?: string;
-}
+export {
+  acquireRisk001OutputDirectory,
+  parseRisk001CliArgs,
+  preflightRisk001OutputDirectory,
+  writeExactlyTwoOutputsAtomically,
+};
+export type { Risk001CliOptions, Risk001OutputPreflight, Risk001OwnedOutputDirectory };
 
-interface Risk001RuntimeConfig {
+export interface Risk001RuntimeConfig {
   readonly mongoUri: string;
   readonly mongoDbName: string;
 }
 
-const MUTATION_LIKE_ARGUMENT = /(?:write|apply|execute|repair|sync|cleanup|seed|migrate|delete|update|insert|replace|drop|create-index)/iu;
-
-export function parseRisk001CliArgs(
-  args: readonly string[],
-  backendRoot: string = process.cwd(),
-): Risk001CliOptions {
-  let outputDir: string | undefined;
-  let maxSamples = 5;
-  let pretty = false;
-  let runLabel: string | undefined;
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index] as string;
-    if (MUTATION_LIKE_ARGUMENT.test(arg)) {
-      throw new Risk001SanitizedError("VALIDATION_FAILED", `Mutation-like argument is prohibited: ${arg}`);
-    }
-    switch (arg) {
-      case "--output-dir":
-        outputDir = requiredValue(args, ++index, arg);
-        break;
-      case "--max-samples": {
-        const value = Number(requiredValue(args, ++index, arg));
-        if (!Number.isInteger(value) || value < 1 || value > 10) {
-          throw new Risk001SanitizedError("VALIDATION_FAILED", "--max-samples must be an integer from 1 through 10");
-        }
-        maxSamples = value;
-        break;
-      }
-      case "--pretty":
-        pretty = true;
-        break;
-      case "--run-label": {
-        const value = requiredValue(args, ++index, arg);
-        if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u.test(value)) {
-          throw new Risk001SanitizedError("VALIDATION_FAILED", "--run-label must be a sanitized label of at most 64 characters");
-        }
-        runLabel = value;
-        break;
-      }
-      default:
-        throw new Risk001SanitizedError("VALIDATION_FAILED", `Unknown argument: ${arg}`);
-    }
-  }
-  if (!outputDir) {
-    throw new Risk001SanitizedError("VALIDATION_FAILED", "--output-dir is required");
-  }
-  if (!path.isAbsolute(outputDir)) {
-    throw new Risk001SanitizedError("VALIDATION_FAILED", "--output-dir must be absolute");
-  }
-  const resolvedOutput = path.resolve(outputDir);
-  const resolvedBackend = path.resolve(backendRoot);
-  const relative = path.relative(resolvedBackend, resolvedOutput);
-  if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
-    throw new Risk001SanitizedError("VALIDATION_FAILED", "Output directory must be outside the backend source tree");
-  }
-  return Object.freeze({ outputDir: resolvedOutput, maxSamples, pretty, ...(runLabel ? { runLabel } : {}) });
-}
 
 export function loadRisk001RuntimeConfig(
   backendRoot: string,
@@ -122,35 +77,66 @@ export async function runRisk001DryRunCli(params: {
   readonly backendRoot?: string;
   readonly observedAt?: number;
 }): Promise<{ readonly manifestPath: string; readonly summaryPath: string }> {
+  const prepared = await prepareRisk001DryRunCli(params);
+  const { backendRoot, options, outputOwnership, runtime } = prepared;
+  try {
+    const observedAt = params.observedAt ?? Date.now();
+    const source = resolveSourceVersion(backendRoot);
+    const artifacts = await withReadOnlyMongoGateway(
+      { mongoUri: runtime.mongoUri, mongoDbName: runtime.mongoDbName },
+      async (gateway) => {
+        const loaded = await loadAllRisk001PlannerInputs(gateway, {
+          observedAt,
+          pageSize: RISK001_DEFAULT_PAGE_SIZE,
+          safetyCeiling: RISK001_DEFAULT_SAFETY_CEILING,
+        });
+        return prepareRisk001CompletedArtifacts({
+          loaded,
+          source,
+          databaseName: runtime.mongoDbName,
+          observedAt,
+          maxSamples: options.maxSamples,
+          ...(options.runLabel ? { runLabel: options.runLabel } : {}),
+        }, options.pretty);
+      },
+    );
+    const manifestPath = path.join(options.outputDir, "manifest.json");
+    const summaryPath = path.join(options.outputDir, "SUMMARY.md");
+    await writeExactlyTwoOutputsAtomically(
+      outputOwnership,
+      artifacts.manifestText,
+      artifacts.summaryText,
+    );
+    return Object.freeze({ manifestPath, summaryPath });
+  } catch (error) {
+    await cleanupRisk001OwnedOutputDirectory(outputOwnership);
+    throw error;
+  }
+}
+
+export async function prepareRisk001DryRunCli(
+  params: {
+    readonly args: readonly string[];
+    readonly backendRoot?: string;
+  },
+  configLoader: (backendRoot: string) => Risk001RuntimeConfig = loadRisk001RuntimeConfig,
+): Promise<{
+  readonly backendRoot: string;
+  readonly options: Risk001CliOptions;
+  readonly outputOwnership: Risk001OwnedOutputDirectory;
+  readonly runtime: Risk001RuntimeConfig;
+}> {
   const backendRoot = path.resolve(params.backendRoot ?? process.cwd());
   const options = parseRisk001CliArgs(params.args, backendRoot);
-  const runtime = loadRisk001RuntimeConfig(backendRoot);
-  const observedAt = params.observedAt ?? Date.now();
-  const source = resolveSourceVersion(backendRoot);
-  const manifest = await withReadOnlyMongoGateway(
-    { mongoUri: runtime.mongoUri, mongoDbName: runtime.mongoDbName },
-    async (gateway) => {
-      const loaded = await loadAllRisk001PlannerInputs(gateway, {
-        observedAt,
-        pageSize: RISK001_DEFAULT_PAGE_SIZE,
-        safetyCeiling: RISK001_DEFAULT_SAFETY_CEILING,
-      });
-      return buildRisk001DryRunManifest({
-        loaded,
-        source,
-        databaseName: runtime.mongoDbName,
-        observedAt,
-        maxSamples: options.maxSamples,
-        ...(options.runLabel ? { runLabel: options.runLabel } : {}),
-      });
-    },
-  );
-  const manifestText = `${JSON.stringify(manifest, null, options.pretty ? 2 : 0)}\n`;
-  const summaryText = renderRisk001Summary(manifest);
-  const manifestPath = path.join(options.outputDir, "manifest.json");
-  const summaryPath = path.join(options.outputDir, "SUMMARY.md");
-  await writeExactlyTwoOutputsAtomically(options.outputDir, manifestText, summaryText);
-  return Object.freeze({ manifestPath, summaryPath });
+  const outputPreflight = await preflightRisk001OutputDirectory(options.outputDir, backendRoot);
+  const outputOwnership = await acquireRisk001OutputDirectory(outputPreflight);
+  try {
+    const runtime = configLoader(backendRoot);
+    return Object.freeze({ backendRoot, options, outputOwnership, runtime });
+  } catch (error) {
+    await cleanupRisk001OwnedOutputDirectory(outputOwnership);
+    throw error;
+  }
 }
 
 export function resolveSourceVersion(backendRoot: string): SourceVersionEvidence {
@@ -187,51 +173,10 @@ export function resolveSourceVersion(backendRoot: string): SourceVersionEvidence
   });
 }
 
-async function writeExactlyTwoOutputsAtomically(
-  outputDir: string,
-  manifestText: string,
-  summaryText: string,
-): Promise<void> {
-  const manifestPath = path.join(outputDir, "manifest.json");
-  const summaryPath = path.join(outputDir, "SUMMARY.md");
-  const manifestTemp = path.join(outputDir, ".manifest.json.tmp");
-  const summaryTemp = path.join(outputDir, ".SUMMARY.md.tmp");
-  try {
-    await fs.mkdir(outputDir, { recursive: true });
-    const existing = await fs.readdir(outputDir);
-    const unexpected = existing.filter((name) => !["manifest.json", "SUMMARY.md"].includes(name));
-    if (unexpected.length > 0) {
-      throw new Risk001SanitizedError("OUTPUT_FAILED", "Output directory must be empty or contain only prior RISK-001 outputs");
-    }
-    await fs.writeFile(manifestTemp, manifestText, { encoding: "utf8", flag: "wx" });
-    await fs.writeFile(summaryTemp, summaryText, { encoding: "utf8", flag: "wx" });
-    // Absence of manifest.json is the incomplete-run marker. Publish it last.
-    await fs.rm(manifestPath, { force: true });
-    await replaceFile(summaryTemp, summaryPath);
-    await fs.rename(manifestTemp, manifestPath);
-  } catch (error) {
-    await Promise.all([fs.rm(manifestTemp, { force: true }), fs.rm(summaryTemp, { force: true })]);
-    throw sanitizedFailure("OUTPUT_FAILED", error);
-  }
-}
-
-async function replaceFile(tempPath: string, targetPath: string): Promise<void> {
-  await fs.rm(targetPath, { force: true });
-  await fs.rename(tempPath, targetPath);
-}
-
 function runGit(backendRoot: string, args: readonly string[]): string {
   const result = spawnSync("git", args, { cwd: backendRoot, encoding: "utf8", windowsHide: true });
   if (result.status !== 0) return "";
   return result.stdout.trim();
-}
-
-function requiredValue(args: readonly string[], index: number, flag: string): string {
-  const value = args[index];
-  if (!value || value.startsWith("--")) {
-    throw new Risk001SanitizedError("VALIDATION_FAILED", `${flag} requires a value`);
-  }
-  return value;
 }
 
 async function main(): Promise<void> {

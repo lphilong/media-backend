@@ -1,5 +1,14 @@
 import { AccountContext } from "@modules/account-context/domain/account-context.types";
 
+export const PEOPLE_READINESS_OPERATIONAL_EMPLOYMENT_STATUSES = Object.freeze([
+  "ACTIVE",
+  "ON_LEAVE",
+] as const);
+
+export function isPeopleReadinessEmploymentStatusOperational(status: string): boolean {
+  return (PEOPLE_READINESS_OPERATIONAL_EMPLOYMENT_STATUSES as readonly string[]).includes(status);
+}
+
 export const PEOPLE_READINESS_CATEGORIES = [
   "ACCOUNT_LOGIN_READY",
   "EMPLOYMENT_PROFILE_LIFECYCLE",

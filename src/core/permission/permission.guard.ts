@@ -13,6 +13,21 @@ import {
 import { PermissionContract } from "./permission.contract";
 import { SystemInvariantError } from "../error/system-error";
 
+/** Versioned evidence for the remaining coarse ActorScopeGrants.kpi compatibility reader. */
+export const KPI_COARSE_SCOPE_COMPATIBILITY_INVENTORY = Object.freeze({
+  contract: "actor-scope-grants.kpi/compatibility",
+  version: "2026-07-15.v1",
+  sourceOwner: "PermissionGuard.resolveKpiScopeGrants",
+  consumers: Object.freeze([
+    Object.freeze({
+      id: "PERMISSION_GUARD_RESOLVE_KPI_SCOPE_GRANTS",
+      descriptor: "normalizes persisted coarse KPI grants for compatibility reads",
+    }),
+  ]),
+  retirementCondition:
+    "Remove only after every production authorization path uses exact structured KPI authority and the compatibility reader is deleted.",
+});
+
 const WORK_SCHEDULE_SCOPE_GRANTS_ORDER: readonly WorkScheduleActorScopeGrant[] =
   Object.freeze([
     "self",

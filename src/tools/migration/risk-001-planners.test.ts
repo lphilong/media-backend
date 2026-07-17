@@ -157,12 +157,12 @@ test("RISK-001 registry orders dependencies and produces deterministic sanitized
   const inputs = {
     RISK001_ROLE_DRIFT: [{ id: "secret-role-id", code: template.code, templateCode: template.code, templateVersion: template.version, permissions: template.permissions.slice(1), activeAccountCount: 1, template }],
     RISK001_LEGACY_ROLE_RETIREMENT: [{ id: "legacy-secret", code: "ADMIN_FULL", activeAssignmentCount: 1, bundleParentCount: 0, bundleChildCount: 0, accountContextDependencyCount: 1, effectivePermissions: ["role:list"], replacementRoleCodes: ["OWNER_ADMIN"] }],
-    RISK001_BUNDLE_CONSISTENCY: [{ parentId: "bundle-secret", status: "ACTIVE", expectedChildIds: ["child"], activeChildIds: [], revokedChildIds: ["child"], provenanceComplete: true }],
+    RISK001_BUNDLE_CONSISTENCY: [{ parentId: "bundle-secret", status: "ACTIVE", bundleCode: "STAFF_CONSOLE_BUNDLE", persistedCatalogVersion: "old", canonicalCatalogVersion: "new", expectedRoleCodes: ["STAFF_CONSOLE_USER"], persistedChildIds: ["child"], childRoleCodes: ["STAFF_CONSOLE_USER"], activeChildIds: [], revokedChildIds: ["child"], provenanceComplete: true, classifications: ["REVOKED_OR_INEFFECTIVE_CHILD"] }],
     RISK001_SCOPE_FINGERPRINT: [{ assignmentId: "assignment-secret", grants: [grant], storedFingerprint: "wrong", subjectsExist: true }],
-    RISK001_ACCOUNT_CONTEXT_READINESS: [{ userId: "user-secret", activeRoleCodes: ["TALENT_GROUP_MANAGER"], currentContexts: [], recommendedContexts: ["MANAGER_CONSOLE"], eligibilityProven: false }],
-    RISK001_TALENT_IDENTITY_READINESS: [{ talentId: "talent-secret", activeMembershipCount: 1, externalOnly: false, evidenceUnambiguous: false }],
-    RISK001_COARSE_KPI_SCOPE: [{ assignmentId: "assignment-secret", coarseScopes: ["managedGroup"], structuredGrantCount: 1, productionCallerCount: 0 }],
-    RISK001_STALE_KPI_DATA: [{ id: "kpi-secret", kind: "ACTUAL" as const, reconstructible: false, dependencyCount: 1, historicalTruthKnown: false, downstreamReferences: ["audit", "allocation"] }],
+    RISK001_ACCOUNT_CONTEXT_READINESS: [{ userId: "user-secret", activeRoleCodes: ["TALENT_GROUP_MANAGER"], currentContexts: [], recommendedContexts: ["MANAGER_CONSOLE"], operationalProfileStatuses: [], ineligibleProfileStatuses: ["SUSPENDED"], linkedProfileCount: 2, policyOwnerKnown: true, ambiguityReasons: ["AMBIGUOUS_PROFILE_LINKAGE"], eligibilityProven: false }],
+    RISK001_TALENT_IDENTITY_READINESS: [{ talentId: "talent-secret", activeMembershipCount: 1, operationalMembershipCount: 0, externalOnly: false, evidenceUnambiguous: false, talentOperationalStatus: "ACTIVE", employmentProfileStatus: null, readinessClassification: "MISSING_EMPLOYMENT_PROFILE" as const }],
+    RISK001_COARSE_KPI_SCOPE: [{ assignmentId: "assignment-secret", coarseScopes: ["managedGroup"], structuredGrantCount: 1, compatibilityOwner: "owner", compatibilityContract: "contract", compatibilityVersion: "v1", consumerIds: [], productionCallerCount: 0, retirementBlocker: "retire after validation" }],
+    RISK001_STALE_KPI_DATA: [{ id: "kpi-secret", kind: "ACTUAL" as const, sourceClassification: "HISTORICAL_UNKNOWN" as const, dependencyCount: 1, historicalTruthKnown: false, downstreamReferences: ["audit", "allocation"], missingMaterialFields: ["policyVersion"], materialIssues: ["ACTUAL_POLICY_SNAPSHOT_MISMATCH"], materialSummary: { lifecycleStatus: "ACCEPTED", sourceLineageRepresented: false }, boundedExternalDependencyEvidence: "NO_REVENUE_OR_COMMISSION_KPI_ID_REFERENCE_IN_CURRENT_SOURCE" as const }],
   };
   const first = buildDryRunManifest({ registry: createRisk001Registry(), inputs });
   const second = buildDryRunManifest({ registry: createRisk001Registry(), inputs });
@@ -171,7 +171,13 @@ test("RISK-001 registry orders dependencies and produces deterministic sanitized
   assert.equal(first.writeExecutorStatus, "NOT_IMPLEMENTED_OR_NOT_ENABLED_PENDING_APPROVED_DRY_RUN");
   assert.equal(first.orderedMigrations.indexOf("RISK001_ROLE_DRIFT") < first.orderedMigrations.indexOf("RISK001_LEGACY_ROLE_RETIREMENT"), true);
   assert.equal(JSON.stringify(first).includes("secret-role-id"), false);
-  assert.equal(first.actions.some((action) => action.reasonCode === "SCOPE_FINGERPRINT_REPAIR"), true);
+  assert.equal(first.actions.some((action) => action.reasonCode === "FINGERPRINT_MISMATCH"), true);
+  const accountContext = first.actions.find((action) => action.recordClass === "ACCOUNT_CONTEXT");
+  assert.equal(accountContext?.classification, "AMBIGUOUS_MANUAL_REVIEW");
+  assert.equal(accountContext?.proposedAction, "PRESERVE_ACCOUNT_CONTEXT_FOR_MANUAL_REVIEW");
+  const staleKpi = first.actions.find((action) => action.recordClass === "STALE_KPI");
+  assert.deepEqual(staleKpi?.currentStateSummary.materialIssues, ["ACTUAL_POLICY_SNAPSHOT_MISMATCH"]);
+  assert.equal((staleKpi?.currentStateSummary.materialSummary as Record<string, unknown>)?.sourceLineageRepresented, false);
   assert.equal(first.actions.some((action) => action.classification === "HISTORICAL_UNKNOWN_PRESERVE_AS_UNKNOWN"), true);
   assert.equal(buildRoleAssignmentScopeFingerprint([grant]).length > 0, true);
 });

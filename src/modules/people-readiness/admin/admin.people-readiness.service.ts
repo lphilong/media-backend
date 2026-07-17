@@ -7,6 +7,7 @@ import {
   PEOPLE_READINESS_CATEGORIES,
   PEOPLE_READINESS_ISSUE_CODES,
   PEOPLE_READINESS_SEVERITIES,
+  isPeopleReadinessEmploymentStatusOperational,
   PeopleReadinessCategory,
   PeopleReadinessEmploymentProfile,
   PeopleReadinessEntityType,
@@ -40,7 +41,6 @@ import { normalizeAccountContexts } from "@modules/account-context/domain/accoun
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
-const OPERATIONALLY_READY_STATUSES = new Set(["ACTIVE", "ON_LEAVE"]);
 const COVERAGE_NOTES = Object.freeze([
   "Exact counts cover the supported issue codes generated from full projected repository snapshots.",
   "The B1 read repository uses projected full-collection snapshots; aggregation or indexed summary queries may be needed at larger runtime scale.",
@@ -625,7 +625,7 @@ function repair(entity: PeopleReadinessSafeEntitySummary, suggestedAction: strin
 }
 
 function isProfileReady(profile: PeopleReadinessEmploymentProfile): boolean {
-  return OPERATIONALLY_READY_STATUSES.has(profile.employmentStatus);
+  return isPeopleReadinessEmploymentStatusOperational(profile.employmentStatus);
 }
 function withCanonicalInternalTalentDisplay(
   talent: PeopleReadinessTalent,
