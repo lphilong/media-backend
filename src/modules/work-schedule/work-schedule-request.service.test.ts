@@ -355,6 +355,7 @@ function createService(params?: {
   readonly requestRepository?: MemoryRequestRepository;
   readonly workShiftRepository?: MemoryWorkShiftRepository;
   readonly audit?: AuditCapture;
+  readonly mutationBridge?: AuthoritativeAdminMutationBridge;
 }): WorkScheduleRequestAdminService {
   return new WorkScheduleRequestAdminService(
     params?.requestRepository ??
@@ -366,7 +367,7 @@ function createService(params?: {
     studioResourceReadonlyAccess,
     managedScopeReader,
     (params?.audit ?? new AuditCapture()) as unknown as AuditGuard,
-    mutationBridge,
+    params?.mutationBridge ?? mutationBridge,
   );
 }
 
@@ -473,6 +474,30 @@ function productionOpsActor(): Actor {
     type: "admin",
     context: "ADMIN",
     accountContexts: ["ADMIN_CONSOLE"],
+    roles: ["PRODUCTION_OPS"],
+    permissions: [
+      Permission.WORK_SCHEDULE_READ,
+      Permission.WORK_SCHEDULE_CREATE,
+      Permission.WORK_SCHEDULE_UPDATE,
+      Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+    ],
+    scopeGrants: {
+      workSchedule: ["global"],
+    },
+    isActive: true,
+  });
+}
+
+function sameCanonicalUserCheckerActor(
+  accountContexts: readonly ("ADMIN_CONSOLE" | "MANAGER_CONSOLE")[] = [
+    "ADMIN_CONSOLE",
+  ],
+): Actor {
+  return new Actor({
+    id: "manager-user",
+    type: "admin",
+    context: "ADMIN",
+    accountContexts,
     roles: ["PRODUCTION_OPS"],
     permissions: [
       Permission.WORK_SCHEDULE_READ,
@@ -654,28 +679,183 @@ test("TEAM_MANAGER cannot approve or reject requests", async () => {
   );
 });
 
-test("TEAM_MANAGER can cancel own PENDING request but not approved request", async () => {
+test("same canonical User cannot cancel own PENDING request", async () => {
   const requestRepository =
     new MemoryRequestRepository();
-  const service = createService({ requestRepository });
+  const workShiftRepository = new MemoryWorkShiftRepository();
+  const audit = new AuditCapture();
+  let mutationCalls = 0;
+  const capturingMutationBridge: AuthoritativeAdminMutationBridge = {
+    async execute(_params, mutate) {
+      mutationCalls += 1;
+      return mutate({} as ClientSession, {
+        markAuthSecurityTruthChanged() {},
+        markExplicitNoOpSuccess() {},
+      });
+    },
+  };
+  const service = createService({
+    requestRepository,
+    workShiftRepository,
+    audit,
+    mutationBridge: capturingMutationBridge,
+  });
   const pending = await withTrace(() =>
     service.createRequest(
       teamManagerActor(),
       createRequestPayload(),
     ),
   );
+  const beforeRequest = structuredClone(requestRepository.records);
+  const beforeShifts = structuredClone(workShiftRepository.records);
+  const beforeAuditCount = audit.records.length;
+  const beforeMutationCalls = mutationCalls;
+
+  await assert.rejects(
+    withTrace(() =>
+      service.cancelRequest(teamManagerActor(), {
+        requestId: pending.id,
+        cancellationReason: "Replacing details",
+      }),
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+  assert.deepEqual(requestRepository.records, beforeRequest);
+  assert.deepEqual(workShiftRepository.records, beforeShifts);
+  assert.equal(audit.records.length, beforeAuditCount);
+  assert.equal(mutationCalls, beforeMutationCalls);
+});
+
+test("same canonical User cannot approve, reject, or cancel after Account Context switch", async () => {
+  const requestRepository = new MemoryRequestRepository();
+  const workShiftRepository = new MemoryWorkShiftRepository();
+  const audit = new AuditCapture();
+  let mutationCalls = 0;
+  const capturingMutationBridge: AuthoritativeAdminMutationBridge = {
+    async execute(_params, mutate) {
+      mutationCalls += 1;
+      return mutate({} as ClientSession, {
+        markAuthSecurityTruthChanged() {},
+        markExplicitNoOpSuccess() {},
+      });
+    },
+  };
+  const service = createService({
+    requestRepository,
+    workShiftRepository,
+    audit,
+    mutationBridge: capturingMutationBridge,
+  });
+  const requests = await Promise.all(
+    ["approve", "reject", "cancel"].map(() =>
+      withTrace(() => service.createRequest(teamManagerActor(), createRequestPayload())),
+    ),
+  );
+  const checker = sameCanonicalUserCheckerActor([
+    "ADMIN_CONSOLE",
+    "MANAGER_CONSOLE",
+  ]);
+  const beforeRequests = structuredClone(requestRepository.records);
+  const beforeShifts = structuredClone(workShiftRepository.records);
+  const beforeAuditCount = audit.records.length;
+  const beforeMutationCalls = mutationCalls;
+
+  await assert.rejects(
+    withTrace(() => service.approveRequest(checker, { requestId: requests[0]!.id })),
+    WorkSchedulePermissionScopeError,
+  );
+  await assert.rejects(
+    withTrace(() =>
+      service.rejectRequest(checker, {
+        requestId: requests[1]!.id,
+        rejectionReason: "Same User cannot reject this request",
+      }),
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+  await assert.rejects(
+    withTrace(() =>
+      service.cancelRequest(checker, {
+        requestId: requests[2]!.id,
+        cancellationReason: "Same User cannot cancel this request",
+      }),
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+
+  assert.deepEqual(requestRepository.records, beforeRequests);
+  assert.deepEqual(workShiftRepository.records, beforeShifts);
+  assert.equal(audit.records.length, beforeAuditCount);
+  assert.equal(mutationCalls, beforeMutationCalls);
+});
+
+test("missing, null, blank, and malformed individual request maker identity fail closed", async () => {
+  const invalidMakerIds: readonly unknown[] = [undefined, null, "", "   ", " manager-user"];
+
+  for (const invalidMakerId of invalidMakerIds) {
+    const requestRepository = new MemoryRequestRepository();
+    const workShiftRepository = new MemoryWorkShiftRepository();
+    const audit = new AuditCapture();
+    let mutationCalls = 0;
+    const service = createService({
+      requestRepository,
+      workShiftRepository,
+      audit,
+      mutationBridge: {
+        async execute(_params, mutate) {
+          mutationCalls += 1;
+          return mutate({} as ClientSession, {
+            markAuthSecurityTruthChanged() {},
+            markExplicitNoOpSuccess() {},
+          });
+        },
+      },
+    });
+    const created = await withTrace(() =>
+      service.createRequest(teamManagerActor(), createRequestPayload()),
+    );
+    requestRepository.records[0] = {
+      ...requestRepository.records[0]!,
+      requestedByUserId: invalidMakerId as string,
+    };
+    const beforeRequest = structuredClone(requestRepository.records);
+    const beforeAuditCount = audit.records.length;
+    const beforeMutationCalls = mutationCalls;
+
+    await assert.rejects(
+      withTrace(() =>
+        service.approveRequest(productionOpsActor(), { requestId: created.id }),
+      ),
+      WorkSchedulePermissionScopeError,
+    );
+    assert.deepEqual(requestRepository.records, beforeRequest);
+    assert.equal(workShiftRepository.records.length, 0);
+    assert.equal(audit.records.length, beforeAuditCount);
+    assert.equal(mutationCalls, beforeMutationCalls);
+  }
+});
+
+test("distinct authorized checker can cancel a pending individual request", async () => {
+  const requestRepository = new MemoryRequestRepository();
+  const service = createService({ requestRepository });
+  const pending = await withTrace(() =>
+    service.createRequest(teamManagerActor(), createRequestPayload()),
+  );
 
   const cancelled = await withTrace(() =>
-    service.cancelRequest(teamManagerActor(), {
+    service.cancelRequest(productionOpsActor(), {
       requestId: pending.id,
-      cancellationReason: "Replacing details",
+      cancellationReason: "Distinct checker cancelled the request",
     }),
   );
+
   assert.equal(cancelled.status, "CANCELLED");
-  assert.equal(
-    cancelled.cancelledByUserId,
-    "manager-user",
-  );
+  assert.equal(cancelled.cancelledByUserId, "ops-user");
+});
+
+test("maker guard still precedes lifecycle handling for an approved request", async () => {
+  const requestRepository = new MemoryRequestRepository();
+  const service = createService({ requestRepository });
 
   const approved = await withTrace(async () => {
     const created = await service.createRequest(
@@ -689,11 +869,11 @@ test("TEAM_MANAGER can cancel own PENDING request but not approved request", asy
 
   await assert.rejects(
     withTrace(() =>
-      service.cancelRequest(teamManagerActor(), {
+      service.cancelRequest(sameCanonicalUserCheckerActor(), {
         requestId: approved.id,
       }),
     ),
-    WorkScheduleStateError,
+    WorkSchedulePermissionScopeError,
   );
 });
 
@@ -870,7 +1050,7 @@ test("rejected request cannot be cancelled", async () => {
 
   await assert.rejects(
     withTrace(() =>
-      service.cancelRequest(teamManagerActor(), {
+      service.cancelRequest(adminFullActor(), {
         requestId: rejected.id,
       }),
     ),

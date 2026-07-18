@@ -24,6 +24,7 @@ import {
   WorkScheduleValidationError,
 } from "@modules/work-schedule/domain/work-schedule.errors";
 import { WorkScheduleCodeSequenceRepository } from "@modules/work-schedule/domain/work-schedule-code-sequence.repository";
+import { assertWorkScheduleMakerCheckerSeparation } from "@modules/work-schedule/domain/work-schedule-maker-checker";
 import {
   WorkScheduleEmploymentProfileReadonlyAccess,
   WorkScheduleReferencedEmploymentProfile,
@@ -282,6 +283,11 @@ export class WorkScheduleRequestAdminService {
         command.approvalNote,
         "approvalNote",
       ) ?? null;
+    const preflightRequest = await this.requireRequest(requestId);
+    assertWorkScheduleMakerCheckerSeparation(
+      preflightRequest.requestedByUserId,
+      actor.id,
+    );
 
     return this.executeMutation(
       actor,
@@ -292,6 +298,10 @@ export class WorkScheduleRequestAdminService {
         const request = await this.requireRequest(
           requestId,
           session,
+        );
+        assertWorkScheduleMakerCheckerSeparation(
+          request.requestedByUserId,
+          actor.id,
         );
         assertPendingRequest(request);
         assertNotApplied(request);
@@ -364,6 +374,11 @@ export class WorkScheduleRequestAdminService {
       command.rejectionReason,
       "rejectionReason",
     );
+    const preflightRequest = await this.requireRequest(requestId);
+    assertWorkScheduleMakerCheckerSeparation(
+      preflightRequest.requestedByUserId,
+      actor.id,
+    );
 
     return this.executeMutation(
       actor,
@@ -374,6 +389,10 @@ export class WorkScheduleRequestAdminService {
         const request = await this.requireRequest(
           requestId,
           session,
+        );
+        assertWorkScheduleMakerCheckerSeparation(
+          request.requestedByUserId,
+          actor.id,
         );
         assertPendingRequest(request);
         const now = Date.now();
@@ -420,10 +439,6 @@ export class WorkScheduleRequestAdminService {
     actor: Actor,
     command: CancelWorkScheduleRequestCommand,
   ): Promise<WorkScheduleRequestMutationResult> {
-    const permission = this.assertPermission(
-      actor,
-      Permission.WORK_SCHEDULE_READ,
-    );
     const requestId = normalizeRequiredText(
       command.requestId,
       "requestId",
@@ -433,6 +448,16 @@ export class WorkScheduleRequestAdminService {
         command.cancellationReason,
         "cancellationReason",
       ) ?? null;
+    const preflightRequest = await this.requireRequest(requestId);
+    assertWorkScheduleMakerCheckerSeparation(
+      preflightRequest.requestedByUserId,
+      actor.id,
+    );
+    const permission = this.assertPermission(
+      actor,
+      Permission.WORK_SCHEDULE_UPDATE,
+    );
+    this.assertGlobalScheduleAuthority(actor);
 
     return this.executeMutation(
       actor,
@@ -444,21 +469,11 @@ export class WorkScheduleRequestAdminService {
           requestId,
           session,
         );
+        assertWorkScheduleMakerCheckerSeparation(
+          request.requestedByUserId,
+          actor.id,
+        );
         assertPendingRequest(request);
-
-        if (request.requestedByUserId === actor.id) {
-          await this.assertRequestVisible(
-            actor,
-            request,
-            session,
-          );
-        } else {
-          this.assertPermission(
-            actor,
-            Permission.WORK_SCHEDULE_UPDATE,
-          );
-          this.assertGlobalScheduleAuthority(actor);
-        }
 
         const now = Date.now();
         const updated =

@@ -20,7 +20,6 @@ import { WorkScheduleRequestBatchAdminService } from "@modules/work-schedule/adm
 import {
   WorkScheduleConflictError,
   WorkSchedulePermissionScopeError,
-  WorkScheduleStateError,
   WorkScheduleValidationError,
 } from "@modules/work-schedule/domain/work-schedule.errors";
 import type { WorkScheduleCodeSequenceRepository } from "@modules/work-schedule/domain/work-schedule-code-sequence.repository";
@@ -372,6 +371,7 @@ function createService(params?: {
   readonly structuredAuthority?: StructuredScopeAuthorityService;
   readonly employmentProfileAccess?: WorkScheduleEmploymentProfileReadonlyAccess;
   readonly managedScope?: ResponsibilityManagedScopeReader;
+  readonly mutationBridge?: AuthoritativeAdminMutationBridge;
 }): WorkScheduleRequestBatchAdminService {
   return new WorkScheduleRequestBatchAdminService(
     params?.batchRepository ?? new MemoryBatchRepository(),
@@ -381,7 +381,7 @@ function createService(params?: {
     studioResourceReadonlyAccess,
     params?.managedScope ?? managedScopeReader,
     (params?.audit ?? new AuditCapture()) as unknown as AuditGuard,
-    mutationBridge,
+    params?.mutationBridge ?? mutationBridge,
     params?.structuredAuthority ?? defaultStructuredAuthority(),
     () => NOW,
   );
@@ -684,6 +684,24 @@ function opsActor(): Actor {
   });
 }
 
+function sameCanonicalUserOpsActor(): Actor {
+  return new Actor({
+    id: "manager-user",
+    type: "admin",
+    context: "ADMIN",
+    accountContexts: ["MANAGER_CONSOLE", "ADMIN_CONSOLE"],
+    roles: ["TEAM_MANAGER", "PRODUCTION_OPS"],
+    permissions: [
+      Permission.WORK_SCHEDULE_READ,
+      Permission.WORK_SCHEDULE_CREATE,
+      Permission.WORK_SCHEDULE_UPDATE,
+      Permission.WORK_SCHEDULE_MANAGE_LIFECYCLE,
+    ],
+    scopeGrants: { workSchedule: ["team", "global"] },
+    isActive: true,
+  });
+}
+
 function createLine(params?: {
   readonly memberEmploymentProfileId?: string;
   readonly startAt?: number;
@@ -887,9 +905,25 @@ test("manager unified scope allows exact OrgUnit and TalentGroup members while d
   );
 });
 
-test("manager cancels own pending line and batch but cannot cancel another manager batch or terminal lines", async () => {
+test("maker Manager cannot cancel own pending request batch or line", async () => {
   const batchRepository = new MemoryBatchRepository();
-  const service = createService({ batchRepository });
+  const workShiftRepository = new MemoryWorkShiftRepository();
+  const audit = new AuditCapture();
+  let mutationCalls = 0;
+  const service = createService({
+    batchRepository,
+    workShiftRepository,
+    audit,
+    mutationBridge: {
+      async execute(_params, mutate) {
+        mutationCalls += 1;
+        return mutate({} as ClientSession, {
+          markAuthSecurityTruthChanged() {},
+          markExplicitNoOpSuccess() {},
+        });
+      },
+    },
+  });
   const batch = await withTrace(() =>
     service.submitManagerBatch(
       managerActor(),
@@ -901,14 +935,11 @@ test("manager cancels own pending line and batch but cannot cancel another manag
   );
 
   const lineId = batch.lines[0]!.id;
-  const afterLineCancel = await withTrace(() =>
-    service.cancelManagerLine(managerActor(), {
-      batchId: batch.id,
-      lineId,
-      cancellationReason: "Cancel this line because staffing changed",
-    }),
-  );
-  assert.equal(afterLineCancel.lines[0]?.status, "CANCELLED");
+  const beforeBatches = structuredClone(batchRepository.batches);
+  const beforeLines = structuredClone(batchRepository.lines);
+  const beforeShifts = structuredClone(workShiftRepository.records);
+  const beforeAuditCount = audit.records.length;
+  const beforeMutationCalls = mutationCalls;
 
   await assert.rejects(
     withTrace(() =>
@@ -918,7 +949,31 @@ test("manager cancels own pending line and batch but cannot cancel another manag
         cancellationReason: "Cancel this line because staffing changed",
       }),
     ),
-    WorkScheduleStateError,
+    WorkSchedulePermissionScopeError,
+  );
+
+  await assert.rejects(
+    withTrace(() =>
+      service.cancelManagerBatch(managerActor(), {
+        batchId: batch.id,
+        cancellationReason: "Cancel entire batch because staffing changed",
+      }),
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+
+  assert.deepEqual(batchRepository.batches, beforeBatches);
+  assert.deepEqual(batchRepository.lines, beforeLines);
+  assert.deepEqual(workShiftRepository.records, beforeShifts);
+  assert.equal(audit.records.length, beforeAuditCount);
+  assert.equal(mutationCalls, beforeMutationCalls);
+});
+
+test("a different Manager still cannot cancel another Manager request batch", async () => {
+  const batchRepository = new MemoryBatchRepository();
+  const service = createService({ batchRepository });
+  const batch = await withTrace(() =>
+    service.submitManagerBatch(managerActor(), submitPayload([createLine()])),
   );
 
   await assert.rejects(
@@ -930,21 +985,6 @@ test("manager cancels own pending line and batch but cannot cancel another manag
     ),
     WorkSchedulePermissionScopeError,
   );
-
-  const ownPending = await withTrace(() =>
-    service.submitManagerBatch(
-      managerActor(),
-      submitPayload([createLine({ startAt: JUNE_START + 8 * 60 * 60 * 1000 })]),
-    ),
-  );
-  const cancelled = await withTrace(() =>
-    service.cancelManagerBatch(managerActor(), {
-      batchId: ownPending.id,
-      cancellationReason: "Cancel entire batch because plan changed",
-    }),
-  );
-  assert.equal(cancelled.status, "CANCELLED");
-  assert.equal(cancelled.lineCounts.cancelled, 1);
 });
 
 test("unauthorized Manager request submission and cancellation perform no repository mutation", async () => {
@@ -1131,13 +1171,181 @@ test("shared members cannot bridge Manager request history or cancellation to an
         ]),
       ),
     );
-    const cancelled = await withTrace(() =>
-      exactTargetService.cancelManagerBatch(managerActor(), {
-        batchId: authorizedBatch.id,
-        cancellationReason: "Exact Target B authority remains active",
-      }),
+    await assert.rejects(
+      withTrace(() =>
+        exactTargetService.cancelManagerBatch(managerActor(), {
+          batchId: authorizedBatch.id,
+          cancellationReason: "Maker cancellation remains prohibited",
+        }),
+      ),
+      WorkSchedulePermissionScopeError,
     );
-    assert.equal(cancelled.status, "CANCELLED");
+  }
+});
+
+test("same canonical User Admin decisions fail before replay and all request-batch mutation", async () => {
+  const batchRepository = new MemoryBatchRepository();
+  const workShiftRepository = new MemoryWorkShiftRepository();
+  const audit = new AuditCapture();
+  let mutationCalls = 0;
+  const service = createService({
+    batchRepository,
+    workShiftRepository,
+    audit,
+    mutationBridge: {
+      async execute(_params, mutate) {
+        mutationCalls += 1;
+        return mutate({} as ClientSession, {
+          markAuthSecurityTruthChanged() {},
+          markExplicitNoOpSuccess() {},
+        });
+      },
+    },
+  });
+  const batch = await withTrace(() =>
+    service.submitManagerBatch(
+      managerActor(),
+      submitPayload([
+        createLine({ startAt: JUNE_START }),
+        createLine({ startAt: JUNE_START + 3 * 60 * 60 * 1000 }),
+      ]),
+    ),
+  );
+  const checker = sameCanonicalUserOpsActor();
+  const command = {
+    batchId: batch.id,
+    lineIds: batch.lines.map((line) => line.id),
+    expectedRequestVersions: Object.fromEntries(
+      batch.lines.map((line) => [line.id, line.updatedAt]),
+    ),
+    idempotencyKey: "same-user-batch-decision",
+  };
+  const beforeBatches = structuredClone(batchRepository.batches);
+  const beforeLines = structuredClone(batchRepository.lines);
+  const beforeShifts = structuredClone(workShiftRepository.records);
+  const beforeAuditCount = audit.records.length;
+  const beforeMutationCalls = mutationCalls;
+
+  await assert.rejects(
+    withTrace(() => service.approveAdminLines(checker, command)),
+    WorkSchedulePermissionScopeError,
+  );
+  await assert.rejects(
+    withTrace(() =>
+      service.rejectAdminLines(checker, {
+        ...command,
+        rejectionReason: "Same maker cannot reject selected lines",
+      }),
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+  await assert.rejects(
+    withTrace(() =>
+      service.cancelAdminLines(checker, {
+        ...command,
+        cancellationReason: "Same maker cannot cancel selected lines",
+      }),
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+
+  assert.deepEqual(batchRepository.batches, beforeBatches);
+  assert.deepEqual(batchRepository.lines, beforeLines);
+  assert.deepEqual(workShiftRepository.records, beforeShifts);
+  assert.equal(audit.records.length, beforeAuditCount);
+  assert.equal(mutationCalls, beforeMutationCalls);
+});
+
+test("same canonical User request-batch approval is denied before exact replay success", async () => {
+  const batchRepository = new MemoryBatchRepository();
+  const workShiftRepository = new MemoryWorkShiftRepository();
+  const audit = new AuditCapture();
+  let mutationCalls = 0;
+  const service = createService({
+    batchRepository,
+    workShiftRepository,
+    audit,
+    mutationBridge: {
+      async execute(_params, mutate) {
+        mutationCalls += 1;
+        return mutate({} as ClientSession, {
+          markAuthSecurityTruthChanged() {},
+          markExplicitNoOpSuccess() {},
+        });
+      },
+    },
+  });
+  const batch = await withTrace(() =>
+    service.submitManagerBatch(managerActor(), submitPayload([createLine()])),
+  );
+  const replayCommand = {
+    batchId: batch.id,
+    lineIds: [batch.lines[0]!.id],
+    expectedRequestVersions: {
+      [batch.lines[0]!.id]: batch.lines[0]!.updatedAt,
+    },
+    idempotencyKey: "same-user-replay-guard",
+  };
+  await withTrace(() => service.approveAdminLines(opsActor(), replayCommand));
+  const beforeBatches = structuredClone(batchRepository.batches);
+  const beforeLines = structuredClone(batchRepository.lines);
+  const beforeShifts = structuredClone(workShiftRepository.records);
+  const beforeAuditCount = audit.records.length;
+  const beforeMutationCalls = mutationCalls;
+
+  await assert.rejects(
+    withTrace(() =>
+      service.approveAdminLines(sameCanonicalUserOpsActor(), replayCommand),
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+  assert.deepEqual(batchRepository.batches, beforeBatches);
+  assert.deepEqual(batchRepository.lines, beforeLines);
+  assert.deepEqual(workShiftRepository.records, beforeShifts);
+  assert.equal(audit.records.length, beforeAuditCount);
+  assert.equal(mutationCalls, beforeMutationCalls);
+});
+
+test("invalid request-batch maker identity fails closed before Admin mutation", async () => {
+  for (const invalidMakerId of [undefined, null, "", "   ", " manager-user"] as const) {
+    const batchRepository = new MemoryBatchRepository();
+    let mutationCalls = 0;
+    const service = createService({
+      batchRepository,
+      mutationBridge: {
+        async execute(_params, mutate) {
+          mutationCalls += 1;
+          return mutate({} as ClientSession, {
+            markAuthSecurityTruthChanged() {},
+            markExplicitNoOpSuccess() {},
+          });
+        },
+      },
+    });
+    const batch = await withTrace(() =>
+      service.submitManagerBatch(managerActor(), submitPayload([createLine()])),
+    );
+    batchRepository.batches[0] = {
+      ...batchRepository.batches[0]!,
+      submittedByActorId: invalidMakerId as string,
+    };
+    const beforeBatches = structuredClone(batchRepository.batches);
+    const beforeLines = structuredClone(batchRepository.lines);
+    const beforeMutationCalls = mutationCalls;
+
+    await assert.rejects(
+      withTrace(() =>
+        service.rejectAdminLines(opsActor(), {
+          batchId: batch.id,
+          lineIds: [batch.lines[0]!.id],
+          rejectionReason: "Invalid maker must fail closed",
+        }),
+      ),
+      WorkSchedulePermissionScopeError,
+    );
+    assert.deepEqual(batchRepository.batches, beforeBatches);
+    assert.deepEqual(batchRepository.lines, beforeLines);
+    assert.equal(mutationCalls, beforeMutationCalls);
   }
 });
 

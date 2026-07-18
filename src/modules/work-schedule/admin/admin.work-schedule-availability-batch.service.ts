@@ -21,6 +21,7 @@ import {
   WorkScheduleValidationError,
 } from "../domain/work-schedule.errors";
 import { WorkScheduleCodeSequenceRepository } from "../domain/work-schedule-code-sequence.repository";
+import { assertWorkScheduleMakerCheckerSeparation } from "../domain/work-schedule-maker-checker";
 import {
   WorkScheduleEmploymentProfileReadonlyAccess,
   WorkScheduleReferencedEmploymentProfile,
@@ -377,6 +378,11 @@ export class WorkScheduleAvailabilityBatchAdminService {
       "cancellationReason",
     );
     const manager = await this.requireManagerProfile(actor.id);
+    const preflightBatch = await this.requireBatch(command.batchId);
+    assertWorkScheduleMakerCheckerSeparation(
+      preflightBatch.submittedByActorId,
+      actor.id,
+    );
     return this.executeMutation(
       actor,
       permission,
@@ -389,6 +395,10 @@ export class WorkScheduleAvailabilityBatchAdminService {
           session,
         );
         const batch = await this.requireBatch(command.batchId, session);
+        assertWorkScheduleMakerCheckerSeparation(
+          batch.submittedByActorId,
+          actor.id,
+        );
         this.assertBatchAuthorized(authority, batch);
         this.assertOwnedBy(batch, manager.id, "cancel");
         if (batch.status !== "PENDING") {
@@ -445,6 +455,11 @@ export class WorkScheduleAvailabilityBatchAdminService {
       "cancellationReason",
     );
     const manager = await this.requireManagerProfile(actor.id);
+    const preflightBatch = await this.requireBatch(command.batchId);
+    assertWorkScheduleMakerCheckerSeparation(
+      preflightBatch.submittedByActorId,
+      actor.id,
+    );
     return this.executeMutation(
       actor,
       permission,
@@ -457,6 +472,10 @@ export class WorkScheduleAvailabilityBatchAdminService {
           session,
         );
         const batch = await this.requireBatch(command.batchId, session);
+        assertWorkScheduleMakerCheckerSeparation(
+          batch.submittedByActorId,
+          actor.id,
+        );
         this.assertBatchAuthorized(authority, batch);
         this.assertOwnedBy(batch, manager.id, "cancel");
         const line = await this.requireLine(batch.id, command.lineId, session);
@@ -572,6 +591,11 @@ export class WorkScheduleAvailabilityBatchAdminService {
         : status === "REJECTED"
           ? "work-schedule.request.reject"
           : "work-schedule.request.cancel";
+    const preflightBatch = await this.requireBatch(command.batchId);
+    assertWorkScheduleMakerCheckerSeparation(
+      preflightBatch.submittedByActorId,
+      actor.id,
+    );
 
     return this.executeMutation(
       actor,
@@ -580,6 +604,10 @@ export class WorkScheduleAvailabilityBatchAdminService {
       { batchId: command.batchId, lineCount: lineIds.length },
       async (session) => {
         const batch = await this.requireBatch(command.batchId, session);
+        assertWorkScheduleMakerCheckerSeparation(
+          batch.submittedByActorId,
+          actor.id,
+        );
         await this.assertAdminStructuredAuthorityForBatch(
           actor,
           Permission.WORK_SCHEDULE_UPDATE,

@@ -71,6 +71,10 @@ import type {
 } from "@modules/work-schedule/domain/work-schedule.types";
 import { MonthlyRosterAdminExposure } from "@modules/work-schedule/shared/work-schedule.exposure";
 import { NativeMongoMonthlyRosterReadRepository } from "@infra/mongo/work-schedule/monthly-roster.read-repository";
+import type {
+  LogEvent,
+  StructuredLogger,
+} from "@infra/logger.adapter";
 
 class MemoryMonthlyRosterRepository implements MonthlyRosterRepository {
   readonly records: MonthlyRosterRecord[] = [];
@@ -729,6 +733,37 @@ const audit = {
   async record() {},
 } as unknown as AuditGuard;
 
+class MonthlyRosterAuditCapture {
+  readonly records: unknown[] = [];
+
+  async record(...args: unknown[]) {
+    this.records.push(args);
+  }
+}
+
+class MonthlyRosterLoggerCapture implements StructuredLogger {
+  readonly infoEvents: LogEvent[] = [];
+  readonly warnEvents: LogEvent[] = [];
+  readonly errorEvents: LogEvent[] = [];
+  readonly fatalEvents: LogEvent[] = [];
+
+  info(event: LogEvent): void {
+    this.infoEvents.push(event);
+  }
+
+  warn(event: LogEvent): void {
+    this.warnEvents.push(event);
+  }
+
+  error(event: LogEvent): void {
+    this.errorEvents.push(event);
+  }
+
+  fatal(event: LogEvent): void {
+    this.fatalEvents.push(event);
+  }
+}
+
 function createActor(
   permissions: readonly Permission[],
   workScheduleScopes: readonly string[] = ["global"],
@@ -1004,6 +1039,7 @@ function seedRosterException(
 function seedAvailabilityBatch(
   params: {
     readonly id?: string;
+    readonly submittedByActorId?: string;
     readonly periodMonth?: string;
     readonly targetType?: MonthlyRosterRecord["targetType"];
     readonly targetOrgUnitId?: string | null;
@@ -1014,7 +1050,7 @@ function seedAvailabilityBatch(
   return {
     id: params.id ?? "availability-batch-1",
     availabilityBatchCode: "WSAB-202605-000001",
-    submittedByActorId: "manager-user",
+    submittedByActorId: params.submittedByActorId ?? "manager-user",
     submittedByEmploymentProfileId: "manager-profile",
     periodMonth: params.periodMonth ?? "2026-05",
     targetType,
@@ -1134,6 +1170,9 @@ function createService(
     readonly codeSequenceRepository?: WorkScheduleCodeSequenceRepository;
     readonly now?: () => number;
     readonly structuredAuthority?: StructuredScopeAuthorityService;
+    readonly audit?: AuditGuard;
+    readonly mutationBridge?: AuthoritativeAdminMutationBridge;
+    readonly logger?: StructuredLogger;
   } = {},
 ): MonthlyRosterAdminService {
   const orgUnits = params.orgUnits ?? [
@@ -1211,18 +1250,18 @@ function createService(
       findById: async (id: string) =>
         resources.find((resource) => resource.id === id) ?? null,
     },
-    audit,
-    mutationBridge,
+    params.audit ?? audit,
+    params.mutationBridge ?? mutationBridge,
     {
       findById: async (id: string) =>
         talentGroups.find((group) => group.id === id) ?? null,
     },
-    {
+    params.logger ?? {
       info() {},
       warn() {},
       error() {},
-      debug() {},
-    } as never,
+      fatal() {},
+    },
     params.now ?? (() => Date.parse("2026-05-15T00:00:00.000Z")),
     params.availabilityRepository ?? new MemoryAvailabilityRepository(),
     params.structuredAuthority ?? createStructuredAuthority(),
@@ -2592,6 +2631,326 @@ test("Admin applies approved availability lines to a DRAFT Monthly Roster withou
       )?.applyStatus,
       "ADVISORY_ONLY",
     );
+  });
+});
+
+test("same canonical User atomic availability apply is denied before logging, bridge entry, replay, or mutation", async () => {
+  await bindTraceId("trace-roster-apply-availability-same-user", async () => {
+    const availabilityRepository = new MemoryAvailabilityRepository({
+      batches: [
+        seedAvailabilityBatch({ submittedByActorId: "admin-user-1" }),
+      ],
+      lines: [
+        seedAvailabilityLine({
+          id: "line-pending-same-user",
+          status: "PENDING",
+          dateRangeStart: "2026-05-04",
+        }),
+        seedAvailabilityLine({
+          id: "line-replay-same-user",
+          applyStatus: "APPLIED",
+          appliedRosterId: "roster-1",
+          appliedRosterExceptionId: "existing-source",
+          appliedRosterExceptionIds: ["existing-source"],
+          dateRangeStart: "2026-05-05",
+        }),
+      ],
+    });
+    const workShiftRepository = new MemoryWorkShiftRepository();
+    const auditCapture = new MonthlyRosterAuditCapture();
+    const loggerCapture = new MonthlyRosterLoggerCapture();
+    let mutationBridgeCalls = 0;
+    const service = createService({
+      rosters: [
+        seedRoster({
+          exceptions: [
+            seedRosterException({
+              rosterExceptionId: "existing-source",
+              exceptionDate: "2026-05-05",
+              sourceAvailabilityLineId: "line-replay-same-user",
+            }),
+          ],
+        }),
+      ],
+      availabilityRepository,
+      workShiftRepository,
+      audit: auditCapture as unknown as AuditGuard,
+      logger: loggerCapture,
+      mutationBridge: {
+        async execute(_params, mutate) {
+          mutationBridgeCalls += 1;
+          return mutate({} as ClientSession, {
+            markAuthSecurityTruthChanged() {},
+            markExplicitNoOpSuccess() {},
+          });
+        },
+      },
+    });
+    const rosterRepository = (
+      service as unknown as {
+        rosterRepository: MemoryMonthlyRosterRepository;
+      }
+    ).rosterRepository;
+    const beforeRosters = structuredClone(rosterRepository.records);
+    const beforeBatches = structuredClone(availabilityRepository.batches);
+    const beforeLines = structuredClone(availabilityRepository.lines);
+    const beforeShifts = structuredClone(workShiftRepository.records);
+    const checker = new Actor({
+      id: "admin-user-1",
+      type: "admin",
+      context: "ADMIN",
+      accountContexts: ["MANAGER_CONSOLE", "ADMIN_CONSOLE"],
+      roles: ["PRODUCTION_OPS"],
+      permissions: [Permission.WORK_SCHEDULE_UPDATE],
+      scopeGrants: { workSchedule: ["global"] },
+      isActive: true,
+    });
+
+    await assert.rejects(
+      service.applyAvailabilityLinesToMonthlyRoster(checker, {
+        monthlyRosterId: "roster-1",
+        availabilityLineIds: [
+          "line-pending-same-user",
+          "line-replay-same-user",
+        ],
+        idempotencyKey: "same-user-replay-guard",
+      }),
+      WorkSchedulePermissionScopeError,
+    );
+
+    assert.deepEqual(rosterRepository.records, beforeRosters);
+    assert.deepEqual(availabilityRepository.batches, beforeBatches);
+    assert.deepEqual(availabilityRepository.lines, beforeLines);
+    assert.deepEqual(workShiftRepository.records, beforeShifts);
+    assert.equal(auditCapture.records.length, 0);
+    assert.equal(mutationBridgeCalls, 0);
+    assert.equal(loggerCapture.infoEvents.length, 0);
+    assert.equal(loggerCapture.warnEvents.length, 0);
+  });
+});
+
+test("multi-parent availability apply is entirely denied when any parent maker is the checker", async () => {
+  await bindTraceId("trace-roster-apply-availability-multi-parent-sod", async () => {
+    const availabilityRepository = new MemoryAvailabilityRepository({
+      batches: [
+        seedAvailabilityBatch({
+          id: "batch-distinct-maker",
+          submittedByActorId: "manager-user",
+        }),
+        seedAvailabilityBatch({
+          id: "batch-same-maker",
+          submittedByActorId: "admin-user-1",
+        }),
+      ],
+      lines: [
+        seedAvailabilityLine({
+          id: "line-distinct-parent",
+          batchId: "batch-distinct-maker",
+          status: "PENDING",
+          dateRangeStart: "2026-05-04",
+        }),
+        seedAvailabilityLine({
+          id: "line-same-parent",
+          batchId: "batch-same-maker",
+          status: "PENDING",
+          dateRangeStart: "2026-05-05",
+        }),
+      ],
+    });
+    const auditCapture = new MonthlyRosterAuditCapture();
+    const loggerCapture = new MonthlyRosterLoggerCapture();
+    let mutationBridgeCalls = 0;
+    const service = createService({
+      rosters: [seedRoster()],
+      availabilityRepository,
+      audit: auditCapture as unknown as AuditGuard,
+      logger: loggerCapture,
+      mutationBridge: {
+        async execute(_params, mutate) {
+          mutationBridgeCalls += 1;
+          return mutate({} as ClientSession, {
+            markAuthSecurityTruthChanged() {},
+            markExplicitNoOpSuccess() {},
+          });
+        },
+      },
+    });
+    const rosterRepository = (
+      service as unknown as {
+        rosterRepository: MemoryMonthlyRosterRepository;
+      }
+    ).rosterRepository;
+    const beforeRosters = structuredClone(rosterRepository.records);
+    const beforeBatches = structuredClone(availabilityRepository.batches);
+    const beforeLines = structuredClone(availabilityRepository.lines);
+
+    await assert.rejects(
+      service.applyAvailabilityLinesToMonthlyRoster(
+        createActor([Permission.WORK_SCHEDULE_UPDATE]),
+        {
+          monthlyRosterId: "roster-1",
+          availabilityLineIds: [
+            "line-distinct-parent",
+            "line-same-parent",
+          ],
+        },
+      ),
+      WorkSchedulePermissionScopeError,
+    );
+
+    assert.deepEqual(rosterRepository.records, beforeRosters);
+    assert.deepEqual(availabilityRepository.batches, beforeBatches);
+    assert.deepEqual(availabilityRepository.lines, beforeLines);
+    assert.equal(auditCapture.records.length, 0);
+    assert.equal(mutationBridgeCalls, 0);
+    assert.equal(loggerCapture.infoEvents.length, 0);
+  });
+});
+
+test("missing and malformed availability parent maker identity fail closed before atomic apply logging", async () => {
+  await bindTraceId("trace-roster-apply-availability-invalid-maker", async () => {
+    for (const invalidMakerId of [
+      undefined,
+      null,
+      "",
+      "   ",
+      " manager-user",
+    ] as const) {
+      const invalidBatch = {
+        ...seedAvailabilityBatch(),
+        submittedByActorId: invalidMakerId as string,
+      };
+      const availabilityRepository = new MemoryAvailabilityRepository({
+        batches: [invalidBatch],
+        lines: [seedAvailabilityLine({ id: "line-invalid-maker" })],
+      });
+      const loggerCapture = new MonthlyRosterLoggerCapture();
+      let mutationBridgeCalls = 0;
+      const service = createService({
+        rosters: [seedRoster()],
+        availabilityRepository,
+        logger: loggerCapture,
+        mutationBridge: {
+          async execute(_params, mutate) {
+            mutationBridgeCalls += 1;
+            return mutate({} as ClientSession, {
+              markAuthSecurityTruthChanged() {},
+              markExplicitNoOpSuccess() {},
+            });
+          },
+        },
+      });
+      const beforeBatches = structuredClone(availabilityRepository.batches);
+      const beforeLines = structuredClone(availabilityRepository.lines);
+
+      await assert.rejects(
+        service.applyAvailabilityLinesToMonthlyRoster(
+          createActor([Permission.WORK_SCHEDULE_UPDATE]),
+          {
+            monthlyRosterId: "roster-1",
+            availabilityLineIds: ["line-invalid-maker"],
+          },
+        ),
+        WorkSchedulePermissionScopeError,
+      );
+      assert.deepEqual(availabilityRepository.batches, beforeBatches);
+      assert.deepEqual(availabilityRepository.lines, beforeLines);
+      assert.equal(mutationBridgeCalls, 0);
+      assert.equal(loggerCapture.infoEvents.length, 0);
+      assert.equal(loggerCapture.warnEvents.length, 0);
+    }
+
+    const missingParentRepository = new MemoryAvailabilityRepository({
+      lines: [
+        seedAvailabilityLine({
+          id: "line-missing-parent",
+          batchId: "missing-parent",
+        }),
+      ],
+    });
+    const missingParentService = createService({
+      rosters: [seedRoster()],
+      availabilityRepository: missingParentRepository,
+    });
+    await assert.rejects(
+      missingParentService.applyAvailabilityLinesToMonthlyRoster(
+        createActor([Permission.WORK_SCHEDULE_UPDATE]),
+        {
+          monthlyRosterId: "roster-1",
+          availabilityLineIds: ["line-missing-parent"],
+        },
+      ),
+      WorkSchedulePermissionScopeError,
+    );
+  });
+});
+
+test("atomic apply callback revalidates parent maker before mutation execution", async () => {
+  await bindTraceId("trace-roster-apply-availability-retry-sod", async () => {
+    const availabilityRepository = new MemoryAvailabilityRepository({
+      batches: [seedAvailabilityBatch({ submittedByActorId: "manager-user" })],
+      lines: [
+        seedAvailabilityLine({
+          id: "line-retry-guard",
+          status: "PENDING",
+        }),
+      ],
+    });
+    const originalFindBatchById =
+      availabilityRepository.findBatchById.bind(availabilityRepository);
+    let batchReads = 0;
+    availabilityRepository.findBatchById = async (batchId: string) => {
+      batchReads += 1;
+      const batch = await originalFindBatchById(batchId);
+      return batchReads >= 2 && batch
+        ? { ...batch, submittedByActorId: "admin-user-1" }
+        : batch;
+    };
+    const auditCapture = new MonthlyRosterAuditCapture();
+    const loggerCapture = new MonthlyRosterLoggerCapture();
+    let mutationBridgeCalls = 0;
+    const service = createService({
+      rosters: [seedRoster()],
+      availabilityRepository,
+      audit: auditCapture as unknown as AuditGuard,
+      logger: loggerCapture,
+      mutationBridge: {
+        async execute(_params, mutate) {
+          mutationBridgeCalls += 1;
+          return mutate({} as ClientSession, {
+            markAuthSecurityTruthChanged() {},
+            markExplicitNoOpSuccess() {},
+          });
+        },
+      },
+    });
+    const rosterRepository = (
+      service as unknown as {
+        rosterRepository: MemoryMonthlyRosterRepository;
+      }
+    ).rosterRepository;
+    const beforeRosters = structuredClone(rosterRepository.records);
+    const beforeBatches = structuredClone(availabilityRepository.batches);
+    const beforeLines = structuredClone(availabilityRepository.lines);
+
+    await assert.rejects(
+      service.applyAvailabilityLinesToMonthlyRoster(
+        createActor([Permission.WORK_SCHEDULE_UPDATE]),
+        {
+          monthlyRosterId: "roster-1",
+          availabilityLineIds: ["line-retry-guard"],
+        },
+      ),
+      WorkSchedulePermissionScopeError,
+    );
+
+    assert.deepEqual(rosterRepository.records, beforeRosters);
+    assert.deepEqual(availabilityRepository.batches, beforeBatches);
+    assert.deepEqual(availabilityRepository.lines, beforeLines);
+    assert.equal(auditCapture.records.length, 0);
+    assert.equal(mutationBridgeCalls, 1);
+    assert.equal(loggerCapture.infoEvents.length, 1);
+    assert.equal(loggerCapture.warnEvents.length, 1);
   });
 });
 

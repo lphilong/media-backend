@@ -491,9 +491,21 @@ const mutationBridge: AuthoritativeAdminMutationBridge = {
 
 const audit = { async record() {} } as unknown as AuditGuard;
 
+class AuditCapture {
+  readonly records: unknown[] = [];
+
+  async record(...args: unknown[]) {
+    this.records.push(args);
+  }
+}
+
 function createService(
   repository = new MemoryAvailabilityRepository(),
   structuredAuthority = defaultStructuredAuthority(),
+  captures?: {
+    readonly audit?: AuditCapture;
+    readonly mutationBridge?: AuthoritativeAdminMutationBridge;
+  },
 ) {
   return {
     repository,
@@ -504,8 +516,8 @@ function createService(
       orgUnitAccess,
       talentGroupAccess,
       managedScopeReader,
-      audit,
-      mutationBridge,
+      (captures?.audit ?? audit) as AuditGuard,
+      captures?.mutationBridge ?? mutationBridge,
       structuredAuthority,
       () => NOW,
     ),
@@ -611,6 +623,22 @@ function opsActor(): Actor {
       Permission.WORK_SCHEDULE_UPDATE,
     ],
     scopeGrants: { workSchedule: ["global"] },
+    isActive: true,
+  });
+}
+
+function sameCanonicalUserOpsActor(): Actor {
+  return new Actor({
+    id: "manager-user",
+    type: "admin",
+    context: "ADMIN",
+    accountContexts: ["MANAGER_CONSOLE", "ADMIN_CONSOLE"],
+    roles: ["TEAM_MANAGER", "PRODUCTION_OPS"],
+    permissions: [
+      Permission.WORK_SCHEDULE_READ,
+      Permission.WORK_SCHEDULE_UPDATE,
+    ],
+    scopeGrants: { workSchedule: ["team", "global"] },
     isActive: true,
   });
 }
@@ -1125,8 +1153,26 @@ test("partial unique pendingDuplicateKey remains the atomic fallback when lookup
   assert.equal(repository.batches.length, 1);
 });
 
-test("manager cancels own pending line and batch but cannot cancel another manager or terminal line", async () => {
-  const { service } = createService();
+test("maker Manager cannot cancel own pending availability batch or line", async () => {
+  const repository = new MemoryAvailabilityRepository();
+  const auditCapture = new AuditCapture();
+  let mutationCalls = 0;
+  const { service } = createService(
+    repository,
+    defaultStructuredAuthority(),
+    {
+      audit: auditCapture,
+      mutationBridge: {
+        async execute(_params, mutate) {
+          mutationCalls += 1;
+          return mutate({} as ClientSession, {
+            markAuthSecurityTruthChanged() {},
+            markExplicitNoOpSuccess() {},
+          });
+        },
+      },
+    },
+  );
   const batch = await withTrace(() =>
     service.submitManagerBatch(
       managerActor(),
@@ -1154,29 +1200,47 @@ test("manager cancels own pending line and batch but cannot cancel another manag
     ).id,
     batch.id,
   );
-  const afterLine = await withTrace(() =>
-    service.cancelManagerLine(managerActor(), {
-      batchId: batch.id,
-      lineId: batch.lines[0]!.id,
-      cancellationReason: "Cancel line because member plan changed",
-    }),
-  );
-  assert.equal(afterLine.lineCounts.cancelled, 1);
+  const beforeBatches = structuredClone(repository.batches);
+  const beforeLines = structuredClone(repository.lines);
+  const beforeAuditCount = auditCapture.records.length;
+  const beforeMutationCalls = mutationCalls;
+
   await assert.rejects(
     withTrace(() =>
       service.cancelManagerLine(managerActor(), {
         batchId: batch.id,
         lineId: batch.lines[0]!.id,
-        cancellationReason: "Cannot cancel an already cancelled line",
+        cancellationReason: "Cancel line because member plan changed",
       }),
     ),
-    WorkScheduleStateError,
+    WorkSchedulePermissionScopeError,
+  );
+  await assert.rejects(
+    withTrace(() =>
+      service.cancelManagerBatch(managerActor(), {
+        batchId: batch.id,
+        cancellationReason: "Cancel batch because member plan changed",
+      }),
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+
+  assert.deepEqual(repository.batches, beforeBatches);
+  assert.deepEqual(repository.lines, beforeLines);
+  assert.equal(auditCapture.records.length, beforeAuditCount);
+  assert.equal(mutationCalls, beforeMutationCalls);
+});
+
+test("other Manager and invalid reasons remain denied on availability cancellation", async () => {
+  const { service } = createService();
+  const batch = await withTrace(() =>
+    service.submitManagerBatch(managerActor(), payload()),
   );
   await assert.rejects(
     withTrace(() =>
       service.cancelManagerLine(managerActor("other-manager-user"), {
         batchId: batch.id,
-        lineId: batch.lines[1]!.id,
+        lineId: batch.lines[0]!.id,
         cancellationReason: "Other manager must not cancel this line",
       }),
     ),
@@ -1204,23 +1268,12 @@ test("manager cancels own pending line and batch but cannot cancel another manag
     withTrace(() =>
       service.cancelManagerLine(managerActor(), {
         batchId: batch.id,
-        lineId: batch.lines[1]!.id,
+        lineId: batch.lines[0]!.id,
         cancellationReason: "",
       }),
     ),
     WorkScheduleValidationError,
   );
-
-  const pending = await withTrace(() =>
-    service.submitManagerBatch(managerActor(), payload()),
-  );
-  const cancelled = await withTrace(() =>
-    service.cancelManagerBatch(managerActor(), {
-      batchId: pending.id,
-      cancellationReason: "Cancel entire availability batch planning signal",
-    }),
-  );
-  assert.equal(cancelled.status, "CANCELLED");
 });
 
 test("unauthorized Manager availability submission and cancellation perform no repository mutation", async () => {
@@ -1298,7 +1351,7 @@ test("manager and Admin decisions reject every requested terminal availability t
         cancellationReason: "Manager cannot cancel a rejected line",
       }),
     ),
-    WorkScheduleStateError,
+    WorkSchedulePermissionScopeError,
   );
 
   const cancelledBatch = await withTrace(() =>
@@ -1326,7 +1379,7 @@ test("manager and Admin decisions reject every requested terminal availability t
         cancellationReason: "Manager cannot cancel a cancelled line",
       }),
     ),
-    WorkScheduleStateError,
+    WorkSchedulePermissionScopeError,
   );
   await assert.rejects(
     withTrace(() =>
@@ -1666,6 +1719,116 @@ test("legacy Admin approve-only service path fails closed without derived-status
   );
   assert.deepEqual(repository.batches, beforeBatches);
   assert.deepEqual(repository.lines, beforeLines);
+});
+
+test("same canonical User Admin reject/cancel availability decisions fail before mutation", async () => {
+  const repository = new MemoryAvailabilityRepository();
+  const auditCapture = new AuditCapture();
+  let mutationCalls = 0;
+  const { service } = createService(
+    repository,
+    defaultStructuredAuthority(),
+    {
+      audit: auditCapture,
+      mutationBridge: {
+        async execute(_params, mutate) {
+          mutationCalls += 1;
+          return mutate({} as ClientSession, {
+            markAuthSecurityTruthChanged() {},
+            markExplicitNoOpSuccess() {},
+          });
+        },
+      },
+    },
+  );
+  const batch = await withTrace(() =>
+    service.submitManagerBatch(
+      managerActor(),
+      payload({
+        lines: [
+          availabilityLineForDate("20", "First same-user decision line"),
+          availabilityLineForDate("21", "Second same-user decision line"),
+        ],
+      }),
+    ),
+  );
+  const checker = sameCanonicalUserOpsActor();
+  const beforeBatches = structuredClone(repository.batches);
+  const beforeLines = structuredClone(repository.lines);
+  const beforeAuditCount = auditCapture.records.length;
+  const beforeMutationCalls = mutationCalls;
+
+  await assert.rejects(
+    withTrace(() =>
+      service.rejectAdminLines(checker, {
+        batchId: batch.id,
+        lineIds: batch.lines.map((line) => line.id),
+        rejectionReason: "Maker cannot reject availability lines",
+      }),
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+  await assert.rejects(
+    withTrace(() =>
+      service.cancelAdminLines(checker, {
+        batchId: batch.id,
+        lineIds: batch.lines.map((line) => line.id),
+        cancellationReason: "Maker cannot cancel availability lines",
+      }),
+    ),
+    WorkSchedulePermissionScopeError,
+  );
+
+  assert.deepEqual(repository.batches, beforeBatches);
+  assert.deepEqual(repository.lines, beforeLines);
+  assert.equal(auditCapture.records.length, beforeAuditCount);
+  assert.equal(mutationCalls, beforeMutationCalls);
+});
+
+test("invalid availability-batch maker identity fails closed before Admin mutation", async () => {
+  for (const invalidMakerId of [undefined, null, "", "   ", " manager-user"] as const) {
+    const repository = new MemoryAvailabilityRepository();
+    let mutationCalls = 0;
+    const { service } = createService(
+      repository,
+      defaultStructuredAuthority(),
+      {
+        mutationBridge: {
+          async execute(_params, mutate) {
+            mutationCalls += 1;
+            return mutate({} as ClientSession, {
+              markAuthSecurityTruthChanged() {},
+              markExplicitNoOpSuccess() {},
+            });
+          },
+        },
+      },
+    );
+    const batch = await withTrace(() =>
+      service.submitManagerBatch(managerActor(), payload()),
+    );
+    repository.batches[0] = {
+      ...repository.batches[0]!,
+      submittedByActorId: invalidMakerId as string,
+    };
+    const beforeBatches = structuredClone(repository.batches);
+    const beforeLines = structuredClone(repository.lines);
+    const beforeMutationCalls = mutationCalls;
+
+    await assert.rejects(
+      withTrace(() =>
+        service.cancelAdminLines(opsActor(), {
+          batchId: batch.id,
+          lineIds: [batch.lines[0]!.id],
+          cancellationReason: "Invalid maker must fail closed",
+        }),
+      ),
+      WorkSchedulePermissionScopeError,
+    );
+    assert.deepEqual(repository.batches, beforeBatches);
+    assert.deepEqual(repository.lines, beforeLines);
+    assert.equal(mutationCalls, beforeMutationCalls);
+  }
 });
 
 test("admin reject/cancel require reasons and derive REJECTED and CANCELLED terminal states", async () => {

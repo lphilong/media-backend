@@ -51,6 +51,7 @@ import {
   WorkScheduleValidationError,
 } from "@modules/work-schedule/domain/work-schedule.errors";
 import { WorkScheduleCodeSequenceRepository } from "@modules/work-schedule/domain/work-schedule-code-sequence.repository";
+import { assertWorkScheduleMakerCheckerSeparation } from "@modules/work-schedule/domain/work-schedule-maker-checker";
 import { WorkScheduleAvailabilityBatchRepository } from "@modules/work-schedule/domain/work-schedule-availability.repository";
 import {
   WorkScheduleAvailabilityBatchRecord,
@@ -192,6 +193,12 @@ interface AvailabilityExceptionDraft {
   readonly exceptionType: "WORKING_TO_OFF" | "CHANGE_TIME";
   readonly startLocalTime: string | null;
   readonly endLocalTime: string | null;
+}
+
+interface AvailabilityMakerCheckerPreflight {
+  readonly lines: readonly WorkScheduleAvailabilityLineRecord[];
+  readonly lineById: ReadonlyMap<string, WorkScheduleAvailabilityLineRecord>;
+  readonly batchById: ReadonlyMap<string, WorkScheduleAvailabilityBatchRecord>;
 }
 
 interface NormalizedMonthlyRosterTarget {
@@ -819,6 +826,10 @@ export class MonthlyRosterAdminService {
       Permission.WORK_SCHEDULE_UPDATE,
     );
     const input = normalizeApplyAvailabilityLinesCommand(command);
+    await this.preflightAvailabilityMakerChecker(
+      actor,
+      input.availabilityLineIds,
+    );
 
     return this.executeMutation(
       actor,
@@ -832,6 +843,12 @@ export class MonthlyRosterAdminService {
         idempotencyKey: input.idempotencyKey,
       },
       async (session) => {
+        const makerCheckerPreflight =
+          await this.preflightAvailabilityMakerChecker(
+            actor,
+            input.availabilityLineIds,
+            session,
+          );
         let roster = await this.requireMonthlyRoster(
           input.monthlyRosterId,
           session,
@@ -870,15 +887,8 @@ export class MonthlyRosterAdminService {
         const eligibleProfileIds = new Set(
           members.eligibleProfiles.map((profile) => profile.id),
         );
-        const lines = await this.availabilityRepository.listLinesByIds(
-          input.availabilityLineIds,
-          session,
-        );
-        const lineById = new Map(lines.map((line) => [line.id, line]));
-        const batchById = new Map<
-          string,
-          WorkScheduleAvailabilityBatchRecord | null
-        >();
+        const lineById = makerCheckerPreflight.lineById;
+        const batchById = makerCheckerPreflight.batchById;
         const results: ApplyAvailabilityLineResult[] = [];
         const requestVersions: Record<string, number> = {};
         const touchedBatchIds = new Set<string>();
@@ -938,14 +948,7 @@ export class MonthlyRosterAdminService {
             );
           }
 
-          let batch = batchById.get(line.batchId);
-          if (batch === undefined) {
-            batch = await this.availabilityRepository.findBatchById(
-              line.batchId,
-              session,
-            );
-            batchById.set(line.batchId, batch);
-          }
+          const batch = batchById.get(line.batchId) ?? null;
 
           const prepared = prepareAvailabilityApplyLine({
             line: effectiveLine,
@@ -2078,6 +2081,45 @@ export class MonthlyRosterAdminService {
     });
 
     return scope.scopeType;
+  }
+
+  private async preflightAvailabilityMakerChecker(
+    actor: Actor,
+    availabilityLineIds: readonly string[],
+    session?: ClientSession,
+  ): Promise<AvailabilityMakerCheckerPreflight> {
+    const lines = await this.availabilityRepository.listLinesByIds(
+      availabilityLineIds,
+      session,
+    );
+    const lineById = new Map(lines.map((line) => [line.id, line]));
+
+    if (lineById.size !== availabilityLineIds.length) {
+      assertWorkScheduleMakerCheckerSeparation(undefined, actor.id);
+    }
+
+    const batchIds = [...new Set(lines.map((line) => line.batchId))];
+    const batches = await Promise.all(
+      batchIds.map((batchId) =>
+        this.availabilityRepository.findBatchById(batchId, session),
+      ),
+    );
+    const batchById = new Map<string, WorkScheduleAvailabilityBatchRecord>();
+
+    for (let index = 0; index < batchIds.length; index += 1) {
+      const batch = batches[index];
+      assertWorkScheduleMakerCheckerSeparation(
+        batch?.submittedByActorId,
+        actor.id,
+      );
+      batchById.set(batchIds[index]!, batch!);
+    }
+
+    return {
+      lines,
+      lineById,
+      batchById,
+    };
   }
 
   private async recordAudit(params: {

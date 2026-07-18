@@ -25,6 +25,7 @@ import {
   WorkScheduleValidationError,
 } from "@modules/work-schedule/domain/work-schedule.errors";
 import { WorkScheduleCodeSequenceRepository } from "@modules/work-schedule/domain/work-schedule-code-sequence.repository";
+import { assertWorkScheduleMakerCheckerSeparation } from "@modules/work-schedule/domain/work-schedule-maker-checker";
 import {
   assertEmergencyOverride,
   classifyWorkScheduleLeadTime,
@@ -358,6 +359,11 @@ export class WorkScheduleRequestBatchAdminService {
     const managerProfile = await this.requireManagerReadyEmploymentProfile(
       actor.id,
     );
+    const preflightBatch = await this.requireBatch(command.batchId);
+    assertWorkScheduleMakerCheckerSeparation(
+      preflightBatch.submittedByActorId,
+      actor.id,
+    );
 
     return this.executeMutation(
       actor,
@@ -371,6 +377,10 @@ export class WorkScheduleRequestBatchAdminService {
           session,
         );
         const batch = await this.requireBatch(command.batchId, session);
+        assertWorkScheduleMakerCheckerSeparation(
+          batch.submittedByActorId,
+          actor.id,
+        );
         if (batch.submittedByEmploymentProfileId !== managerProfile.id) {
           throw new WorkSchedulePermissionScopeError(
             "Manager can cancel only own WorkSchedule request batches",
@@ -431,6 +441,11 @@ export class WorkScheduleRequestBatchAdminService {
     const managerProfile = await this.requireManagerReadyEmploymentProfile(
       actor.id,
     );
+    const preflightBatch = await this.requireBatch(command.batchId);
+    assertWorkScheduleMakerCheckerSeparation(
+      preflightBatch.submittedByActorId,
+      actor.id,
+    );
 
     return this.executeMutation(
       actor,
@@ -444,6 +459,10 @@ export class WorkScheduleRequestBatchAdminService {
           session,
         );
         const batch = await this.requireBatch(command.batchId, session);
+        assertWorkScheduleMakerCheckerSeparation(
+          batch.submittedByActorId,
+          actor.id,
+        );
         if (batch.submittedByEmploymentProfileId !== managerProfile.id) {
           throw new WorkSchedulePermissionScopeError(
             "Manager can cancel only own WorkSchedule request lines",
@@ -512,6 +531,8 @@ export class WorkScheduleRequestBatchAdminService {
     actor: Actor,
     command: DecideWorkScheduleRequestBatchLinesCommand,
   ): Promise<WorkScheduleRequestBatchMutationResult> {
+    this.assertPermission(actor, Permission.WORK_SCHEDULE_UPDATE);
+    this.assertGlobalScheduleAuthority(actor);
     const note =
       normalizeOptionalNullableText(command.approvalNote, "approvalNote") ??
       null;
@@ -525,6 +546,11 @@ export class WorkScheduleRequestBatchAdminService {
         command.emergencyOverrideReason,
         "emergencyOverrideReason",
       ) ?? null;
+    const preflightBatch = await this.requireBatch(command.batchId);
+    assertWorkScheduleMakerCheckerSeparation(
+      preflightBatch.submittedByActorId,
+      actor.id,
+    );
     let latest: WorkScheduleRequestBatchRecord | null = null;
 
     for (const lineId of lineIds) {
@@ -641,6 +667,10 @@ export class WorkScheduleRequestBatchAdminService {
     emergencyOverrideReason: string | null,
   ): Promise<WorkScheduleRequestBatchRecord> {
     const batch = await this.requireBatch(batchId);
+    assertWorkScheduleMakerCheckerSeparation(
+      batch.submittedByActorId,
+      actor.id,
+    );
     const line = await this.requireLine(batch.id, lineId);
     assertExpectedApplicationSourceVersions(
       line,
@@ -682,6 +712,10 @@ export class WorkScheduleRequestBatchAdminService {
         { batchId, lineId },
         async (session) => {
           const currentBatch = await this.requireBatch(batchId, session);
+          assertWorkScheduleMakerCheckerSeparation(
+            currentBatch.submittedByActorId,
+            actor.id,
+          );
           assertBatchNotCancelled(currentBatch);
           const currentLine = await this.requireLine(batchId, lineId, session);
           assertPendingLine(currentLine);
@@ -789,6 +823,11 @@ export class WorkScheduleRequestBatchAdminService {
       session: ClientSession,
     ) => Promise<void>,
   ): Promise<WorkScheduleRequestBatchMutationResult> {
+    const preflightBatch = await this.requireBatch(batchId);
+    assertWorkScheduleMakerCheckerSeparation(
+      preflightBatch.submittedByActorId,
+      actor.id,
+    );
     let latest: WorkScheduleRequestBatchRecord | null = null;
 
     for (const lineId of lineIds) {
@@ -799,6 +838,10 @@ export class WorkScheduleRequestBatchAdminService {
         { batchId, lineId },
         async (session) => {
           const batch = await this.requireBatch(batchId, session);
+          assertWorkScheduleMakerCheckerSeparation(
+            batch.submittedByActorId,
+            actor.id,
+          );
           assertBatchNotCancelled(batch);
           const line = await this.requireLine(batch.id, lineId, session);
           assertPendingLine(line);
@@ -843,6 +886,10 @@ export class WorkScheduleRequestBatchAdminService {
       { batchId, lineId, failedToApply: true },
       async (session) => {
         const batch = await this.requireBatch(batchId, session);
+        assertWorkScheduleMakerCheckerSeparation(
+          batch.submittedByActorId,
+          actor.id,
+        );
         assertBatchNotCancelled(batch);
         const line = await this.requireLine(batch.id, lineId, session);
         assertPendingLine(line);
