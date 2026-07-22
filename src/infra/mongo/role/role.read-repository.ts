@@ -76,6 +76,7 @@ interface RoleAssignmentDocument {
   readonly effectiveAt: number | null;
   readonly expiresAt?: number | null;
   readonly reviewAt?: number | null;
+  readonly lifecycle?: RoleAssignmentView["lifecycle"];
   readonly assignedBy?: string | null;
   readonly assignedAt?: number;
   readonly revokedAt: number | null;
@@ -538,6 +539,7 @@ function toRoleAssignmentView(
     effectiveAt: document.effectiveAt,
     expiresAt: document.expiresAt ?? null,
     reviewAt: document.reviewAt ?? null,
+    lifecycle: document.lifecycle ?? null,
     assignedBy: document.assignedBy ?? null,
     assignedAt: document.assignedAt ?? document.createdAt,
     revokedAt: document.revokedAt,

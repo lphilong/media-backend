@@ -15,6 +15,8 @@ import {
   AuthoritativeAdminMutationBridge,
   AuthoritativeMutationControls,
   AuthoritativeAdminMutationBridgeParams,
+  AuthoritativeSystemMutationBridge,
+  AuthoritativeSystemMutationBridgeParams,
   assertPersistableAdminMutationEvents,
 } from "@core/application/authoritative-admin-mutation.bridge";
 import {
@@ -44,6 +46,15 @@ import { PermissionGuard } from "@core/permission/permission.guard";
 import { PermissionContract } from "@core/permission/permission.contract";
 import { MongoAuditWriteRepository } from "@infra/mongo/audit/audit.write.repository";
 import { resolveAuthoritativePermissionForMutationIdentity } from "@core/application/authoritative-admin-mutation.permission-map";
+import { assertAuthoritativeSystemMutationBoundary } from "@core/application/authoritative-system-mutation.policy";
+import { ContextType } from "@core/context/context.types";
+
+type AuthoritativeMutationExecutionParams = {
+  readonly actor: AuthoritativeAdminMutationBridgeParams["actor"];
+  readonly traceId: string;
+  readonly mutationIdentity: string;
+  readonly mutationTargetDescriptor: string;
+};
 
 const TRANSACTION_OPTIONS: TransactionOptions = {
   readPreference: ReadPreference.primary,
@@ -285,7 +296,7 @@ function assertBoundaryAuthorization(
 
 function createAttemptAuditProof(params: {
   readonly attemptId: string;
-  readonly bridgeParams: AuthoritativeAdminMutationBridgeParams;
+  readonly bridgeParams: AuthoritativeMutationExecutionParams;
   readonly authoritativePermission: PermissionContract;
 }): AuditMutationAttemptProof {
   return Object.freeze({
@@ -304,6 +315,7 @@ async function safeAbortTransaction(params: {
   readonly logger: StructuredLogger;
   readonly traceId: string;
   readonly actorId: string;
+  readonly context: ContextType;
 }): Promise<void> {
   if (!params.session.inTransaction()) {
     return;
@@ -315,7 +327,7 @@ async function safeAbortTransaction(params: {
     params.logger.warn({
       traceId: params.traceId,
       actorId: params.actorId,
-      context: "ADMIN",
+      context: params.context,
       operation: "admin.authoritative-mutation.abort",
       status: "FAILED",
       timestamp: Date.now(),
@@ -333,6 +345,7 @@ function authorOutboxEnvelope(params: {
   readonly actorId: string;
   readonly traceId: string;
   readonly event: PersistableDomainEvent;
+  readonly context: ContextType;
 }) {
   return {
     eventId: crypto.randomUUID(),
@@ -346,7 +359,7 @@ function authorOutboxEnvelope(params: {
     traceId: params.traceId,
     trace: {
       actorId: params.actorId,
-      context: "ADMIN" as const,
+      context: params.context,
     },
   };
 }
@@ -360,11 +373,12 @@ function logRetryVisibility(params: {
   readonly classification:
     | "TransientTransactionError"
     | "UnknownTransactionCommitResult";
+  readonly context: ContextType;
 }): void {
   params.logger.warn({
     traceId: params.traceId,
     actorId: params.actorId,
-    context: "ADMIN",
+    context: params.context,
     operation: "admin.authoritative-mutation.retry",
     status: "RETRY_SCHEDULED",
     timestamp: Date.now(),
@@ -377,7 +391,7 @@ function logRetryVisibility(params: {
 }
 
 export class MongoAuthoritativeAdminMutationBridge
-  implements AuthoritativeAdminMutationBridge
+  implements AuthoritativeAdminMutationBridge, AuthoritativeSystemMutationBridge
 {
   private readonly logger: StructuredLogger;
   private readonly primaryDb: Db;
@@ -408,6 +422,48 @@ export class MongoAuthoritativeAdminMutationBridge
     assertAdminMutationParams(params);
     const authoritativePermission =
       assertBoundaryAuthorization(params);
+    return this.executeAuthorized(
+      params,
+      authoritativePermission,
+      "http",
+      mutate,
+    );
+  }
+
+  async executeSystem<T>(
+    params: AuthoritativeSystemMutationBridgeParams,
+    mutate: (
+      session: ClientSession,
+      controls: AuthoritativeMutationControls,
+      auditPermission: PermissionContract,
+    ) => Promise<T>,
+  ): Promise<T> {
+    if (!params.traceId || !params.mutationTargetDescriptor?.trim()) {
+      throw new SystemInvariantError(
+        "SYSTEM_INVARIANT_VIOLATION",
+        "Authoritative SYSTEM mutation requires trace and target descriptor",
+      );
+    }
+    const authoritativePermission =
+      assertAuthoritativeSystemMutationBoundary(params);
+    return this.executeAuthorized(
+      params,
+      authoritativePermission,
+      "system",
+      (session, controls) =>
+        mutate(session, controls, authoritativePermission),
+    );
+  }
+
+  private async executeAuthorized<T>(
+    params: AuthoritativeMutationExecutionParams,
+    authoritativePermission: PermissionContract,
+    runtime: "http" | "system",
+    mutate: (
+      session: ClientSession,
+      controls: AuthoritativeMutationControls,
+    ) => Promise<T>,
+  ): Promise<T> {
     assertNoNestedExecution();
     this.auditContext.assertScope();
 
@@ -506,6 +562,7 @@ export class MongoAuthoritativeAdminMutationBridge
                         actorId: params.actor.id,
                         traceId: params.traceId,
                         event,
+                        context: params.actor.context,
                       }),
                     );
 
@@ -526,7 +583,7 @@ export class MongoAuthoritativeAdminMutationBridge
         );
 
         observeMongoTransactionDuration({
-          runtime: "http",
+          runtime,
           durationMs: Date.now() - attemptStartedAt,
           result: "success",
         });
@@ -544,17 +601,18 @@ export class MongoAuthoritativeAdminMutationBridge
             logger: this.logger,
             traceId: params.traceId,
             actorId: params.actor.id,
+            context: params.actor.context,
           });
         }
 
         if (unknownCommitResult) {
           incrementMongoTransactionUtcr({
-            runtime: "http",
+            runtime,
           });
 
           if (persistedEventIds.length === 0) {
             observeMongoTransactionDuration({
-              runtime: "http",
+              runtime,
               durationMs: Date.now() - attemptStartedAt,
               result: "fail",
             });
@@ -571,7 +629,7 @@ export class MongoAuthoritativeAdminMutationBridge
 
           if (observable) {
             observeMongoTransactionDuration({
-              runtime: "http",
+              runtime,
               durationMs:
                 Date.now() - attemptStartedAt,
               result: "success",
@@ -591,15 +649,16 @@ export class MongoAuthoritativeAdminMutationBridge
               backoffMs,
               classification:
                 "UnknownTransactionCommitResult",
+              context: params.actor.context,
             });
 
             incrementMongoTransactionRetry({
-              runtime: "http",
+              runtime,
               classification:
                 "UnknownTransactionCommitResult",
             });
             observeMongoTransactionDuration({
-              runtime: "http",
+              runtime,
               durationMs:
                 Date.now() - attemptStartedAt,
               result: "fail",
@@ -622,15 +681,16 @@ export class MongoAuthoritativeAdminMutationBridge
             attempt,
             backoffMs,
             classification: "TransientTransactionError",
+            context: params.actor.context,
           });
 
           incrementMongoTransactionRetry({
-            runtime: "http",
+            runtime,
             classification:
               "TransientTransactionError",
           });
           observeMongoTransactionDuration({
-            runtime: "http",
+            runtime,
             durationMs: Date.now() - attemptStartedAt,
             result: "fail",
           });
@@ -639,7 +699,7 @@ export class MongoAuthoritativeAdminMutationBridge
         }
 
         observeMongoTransactionDuration({
-          runtime: "http",
+          runtime,
           durationMs: Date.now() - attemptStartedAt,
           result: "fail",
         });
@@ -651,7 +711,7 @@ export class MongoAuthoritativeAdminMutationBridge
 
     throw new InfrastructureError(
       "UNKNOWN_TRANSACTION_ERROR",
-      "Authoritative ADMIN mutation retry budget exhausted",
+      "Authoritative mutation retry budget exhausted",
     );
   }
 }

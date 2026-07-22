@@ -71,6 +71,14 @@ export class DomainEventDispatcher {
             break;
           }
 
+          case "role.assignment.deadline-suspended":
+          case "break-glass.deadline-expired": {
+            // Deadline reductions are already materialized transactionally.
+            // Their outbox contracts are evidence/notification seams and are
+            // intentionally ack-only until a bounded consumer is accepted.
+            break;
+          }
+
           /* =========================================================
              USER (BASELINE: OUTBOX ACK ONLY)
           ========================================================== */

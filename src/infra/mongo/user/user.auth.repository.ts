@@ -12,6 +12,7 @@ import {
   WorkScheduleActorScopeGrant,
 } from "@core/actor/actor";
 import { InfrastructureError } from "@infra/errors/infrastructure.error";
+import { Permission } from "@core/permission/permission.enum";
 import { AccountContext } from "@modules/account-context/domain/account-context.types";
 import {
   RoleMaxDelegatableBandForCapability,
@@ -23,6 +24,27 @@ import {
 } from "@modules/user/shared/user.actor-resolution.facade";
 import { UserMapper } from "./user.mapper";
 import { UserPersistence } from "./user.persistence";
+import {
+  ACCESS_REVIEW_DEFAULT_GRACE_MS,
+  ACCESS_REVIEW_MAXIMUM_GRACE_MS,
+} from "@modules/role/domain/role-assignment-lifecycle";
+import {
+  ownerAdminContributesAuthority,
+  parseAccessDeploymentEnvironment,
+} from "@modules/role/domain/access-environment-policy";
+import {
+  CANONICAL_HIGH_RISK_PERMISSIONS,
+  CANONICAL_HIGH_RISK_ROLE_CODES,
+  CANONICAL_PRIVILEGED_ACCESS_ROLE_CODES,
+  PRIVILEGED_ACCESS_REVIEW_WINDOW_DAYS,
+  SENSITIVE_ACCESS_DEFAULT_REVIEW_WINDOW_DAYS,
+} from "@modules/role/domain/sensitive-access-policy";
+import {
+  buildRoleAssignmentFutureSuccessorCutoverTransitionExpression,
+  buildRoleAssignmentSuccessorCutoverEligibilityExpression,
+} from "@infra/mongo/role/role-assignment-successor-cutover.expression";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const BASELINE_AUTH_SECURITY_VERSION = "bootstrap";
 const AUTH_SECURITY_VERSION_DOCUMENT_ID = "admin.auth-security-version";
@@ -46,6 +68,7 @@ const COMMISSION_SCOPE_GRANTS_ORDER: readonly CommissionActorScopeGrant[] =
 const DASHBOARD_LITE_SCOPE_GRANTS_ORDER: readonly DashboardLiteActorScopeGrant[] =
   Object.freeze(["global"]);
 const ADMIN_CONSOLE_ROLE_CODES: readonly string[] = Object.freeze([
+  "OWNER_GOVERNANCE",
   "OWNER_ADMIN",
   "ACCESS_ADMIN",
   "HR_OPERATIONS",
@@ -422,17 +445,7 @@ function buildAuthResolutionPipeline(authSubject: string): Document[] {
       $lookup: {
         from: "role_assignments",
         let: { userId: "$_id" },
-        pipeline: [
-          {
-            $match: {
-              $expr: {
-                $and: [
-                  { $eq: ["$userId", "$$userId"] },
-                  buildCurrentlyEffectiveRoleAssignmentExpression(now),
-                ],
-              },
-            },
-          },
+        pipeline: buildCurrentRoleAwareAssignmentPipeline(now, [
           {
             $sort: {
               roleId: 1,
@@ -446,11 +459,12 @@ function buildAuthResolutionPipeline(authSubject: string): Document[] {
               scopeGrants: 1,
             },
           },
-        ],
+        ]),
         as: "activeAssignments",
       },
     },
     buildNextRoleAssignmentLifecycleTransitionLookup(now),
+    buildActiveBreakGlassLookup(now),
     {
       $set: {
         assignmentRoleIds: {
@@ -478,6 +492,7 @@ function buildAuthResolutionPipeline(authSubject: string): Document[] {
                 $and: [
                   { $in: ["$_id", "$$roleIds"] },
                   { $eq: ["$state", "ACTIVE"] },
+                  buildRuntimeRoleEnvironmentExpression(),
                 ],
               },
             },
@@ -511,11 +526,22 @@ function buildAuthResolutionPipeline(authSubject: string): Document[] {
           ],
         },
         rolePermissions: {
-          $map: {
-            input: "$activeRoles",
-            as: "role",
-            in: "$$role.permissions",
-          },
+          $concatArrays: [
+            {
+              $map: {
+                input: "$activeRoles",
+                as: "role",
+                in: "$$role.permissions",
+              },
+            },
+            {
+              $map: {
+                input: "$activeBreakGlass",
+                as: "activation",
+                in: "$$activation.permissions",
+              },
+            },
+          ],
         },
         roleMaxDelegatableBands: {
           $map: {
@@ -546,7 +572,12 @@ function buildAuthResolutionPipeline(authSubject: string): Document[] {
         scopeGrants: 1,
         assignmentScopeGrants: 1,
         authorizationValidUntil: {
-          $arrayElemAt: ["$nextLifecycleTransitions.transitionAt", 0],
+          $min: {
+            $concatArrays: [
+              "$nextLifecycleTransitions.transitionAt",
+              "$activeBreakGlass.expiresAt",
+            ],
+          },
         },
       },
     },
@@ -568,17 +599,7 @@ function buildActivePermissionProjectionPipeline(): Document[] {
       $lookup: {
         from: "role_assignments",
         let: { userId: "$_id" },
-        pipeline: [
-          {
-            $match: {
-              $expr: {
-                $and: [
-                  { $eq: ["$userId", "$$userId"] },
-                  buildCurrentlyEffectiveRoleAssignmentExpression(now),
-                ],
-              },
-            },
-          },
+        pipeline: buildCurrentRoleAwareAssignmentPipeline(now, [
           {
             $sort: {
               roleId: 1,
@@ -591,7 +612,7 @@ function buildActivePermissionProjectionPipeline(): Document[] {
               roleId: 1,
             },
           },
-        ],
+        ]),
         as: "activeAssignments",
       },
     },
@@ -700,17 +721,7 @@ function buildActiveDelegationCeilingPipeline(userId: string): Document[] {
       $lookup: {
         from: "role_assignments",
         let: { userId: "$_id" },
-        pipeline: [
-          {
-            $match: {
-              $expr: {
-                $and: [
-                  { $eq: ["$userId", "$$userId"] },
-                  buildCurrentlyEffectiveRoleAssignmentExpression(now),
-                ],
-              },
-            },
-          },
+        pipeline: buildCurrentRoleAwareAssignmentPipeline(now, [
           {
             $sort: {
               roleId: 1,
@@ -723,7 +734,7 @@ function buildActiveDelegationCeilingPipeline(userId: string): Document[] {
               roleId: 1,
             },
           },
-        ],
+        ]),
         as: "activeAssignments",
       },
     },
@@ -820,17 +831,7 @@ function buildActiveRoleAssignmentProbePipeline(userId: string): Document[] {
       $lookup: {
         from: "role_assignments",
         let: { userId: "$_id" },
-        pipeline: [
-          {
-            $match: {
-              $expr: {
-                $and: [
-                  { $eq: ["$userId", "$$userId"] },
-                  buildCurrentlyEffectiveRoleAssignmentExpression(now),
-                ],
-              },
-            },
-          },
+        pipeline: buildCurrentRoleAwareAssignmentPipeline(now, [
           {
             $limit: 1,
           },
@@ -839,7 +840,7 @@ function buildActiveRoleAssignmentProbePipeline(userId: string): Document[] {
               _id: 1,
             },
           },
-        ],
+        ]),
         as: "activeAssignments",
       },
     },
@@ -869,24 +870,14 @@ function buildActiveAdminConsoleRoleCodePipeline(userId: string): Document[] {
       $lookup: {
         from: "role_assignments",
         let: { userId: "$_id" },
-        pipeline: [
-          {
-            $match: {
-              $expr: {
-                $and: [
-                  { $eq: ["$userId", "$$userId"] },
-                  buildCurrentlyEffectiveRoleAssignmentExpression(now),
-                ],
-              },
-            },
-          },
+        pipeline: buildCurrentRoleAwareAssignmentPipeline(now, [
           {
             $project: {
               _id: 0,
               roleId: 1,
             },
           },
-        ],
+        ]),
         as: "activeAssignments",
       },
     },
@@ -960,12 +951,82 @@ function buildActiveAdminConsoleRoleCodePipeline(userId: string): Document[] {
   ];
 }
 
+function buildCurrentRoleAwareAssignmentPipeline(
+  now: number,
+  tail: readonly Document[],
+): Document[] {
+  return [
+    {
+      $match: {
+        $expr: { $eq: ["$userId", "$$userId"] },
+      },
+    },
+    {
+      $lookup: {
+        from: "roles",
+        localField: "roleId",
+        foreignField: "_id",
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ["$state", "ACTIVE"] },
+                  buildRuntimeRoleEnvironmentExpression(),
+                ],
+              },
+            },
+          },
+          {
+            $project: {
+              _id: 1,
+              code: 1,
+              templateCode: 1,
+              permissions: 1,
+            },
+          },
+        ],
+        as: "currentRoles",
+      },
+    },
+    {
+      $set: {
+        currentRole: { $arrayElemAt: ["$currentRoles", 0] },
+      },
+    },
+    {
+      $match: {
+        $expr: {
+          $and: [
+            { $ne: [{ $ifNull: ["$currentRole", null] }, null] },
+            buildCurrentlyEffectiveRoleAssignmentExpression(now),
+          ],
+        },
+      },
+    },
+    ...tail,
+  ];
+}
+
 export function buildCurrentlyEffectiveRoleAssignmentExpression(
   now: number,
 ): Document {
   return {
     $and: [
-      { $eq: ["$state", "ACTIVE"] },
+      { $in: ["$state", ["ACTIVE", "SCHEDULED"]] },
+      buildRoleAssignmentSuccessorCutoverEligibilityExpression(now),
+      {
+        $or: [
+          { $eq: ["$state", "ACTIVE"] },
+          {
+            $and: [
+              { $eq: ["$state", "SCHEDULED"] },
+              { $isNumber: "$effectiveAt" },
+              { $lte: ["$effectiveAt", now] },
+            ],
+          },
+        ],
+      },
       {
         $or: [
           { $eq: [{ $ifNull: ["$effectiveAt", null] }, null] },
@@ -978,11 +1039,201 @@ export function buildCurrentlyEffectiveRoleAssignmentExpression(
           { $gt: ["$expiresAt", now] },
         ],
       },
+      {
+        $let: {
+          vars: {
+            reviewEnd: buildRoleAssignmentReviewAuthorityEndExpression(
+              buildCurrentRoleRiskTierExpression(),
+              buildCurrentRoleReviewDeadlineExpression(),
+            ),
+          },
+          in: {
+            $or: [
+              { $eq: ["$$reviewEnd", null] },
+              {
+                $and: [
+                  { $isNumber: "$$reviewEnd" },
+                  { $gt: ["$$reviewEnd", now] },
+                ],
+              },
+            ],
+          },
+        },
+      },
     ],
   };
 }
 
-function buildNextRoleAssignmentLifecycleTransitionLookup(now: number): Document {
+export function buildRoleAssignmentReviewAuthorityEndExpression(
+  currentRiskTier: Document | string = "$lifecycle.riskTier",
+  currentReviewDeadline: Document | null = null,
+): Document {
+  const durableReviewDeadline = {
+    $ifNull: ["$lifecycle.reviewDeadline", { $ifNull: ["$reviewAt", null] }],
+  };
+  const reviewDeadline = currentReviewDeadline ?? durableReviewDeadline;
+  const maximumGraceEnd = {
+    $add: [reviewDeadline, ACCESS_REVIEW_MAXIMUM_GRACE_MS],
+  };
+  const defaultGraceEnd = {
+    $add: [reviewDeadline, ACCESS_REVIEW_DEFAULT_GRACE_MS],
+  };
+  return {
+    $cond: [
+      { $eq: [reviewDeadline, null] },
+      { $cond: [{ $eq: [currentRiskTier, "HIGH"] }, 0, null] },
+      {
+        $cond: [
+          {
+            $and: [
+              { $eq: ["$lifecycle.riskTier", "LOW"] },
+              { $eq: [currentRiskTier, "LOW"] },
+            ],
+          },
+          {
+            $cond: [
+              {
+                $and: [
+                  { $isNumber: "$lifecycle.graceExceptionExpiresAt" },
+                  {
+                    $gt: ["$lifecycle.graceExceptionExpiresAt", reviewDeadline],
+                  },
+                ],
+              },
+              { $min: ["$lifecycle.graceExceptionExpiresAt", maximumGraceEnd] },
+              defaultGraceEnd,
+            ],
+          },
+          reviewDeadline,
+        ],
+      },
+    ],
+  };
+}
+
+export function buildCurrentRoleRequiresReviewExpression(): Document {
+  return {
+    $or: [
+      {
+        $in: [
+          { $ifNull: ["$currentRole.code", ""] },
+          CANONICAL_HIGH_RISK_ROLE_CODES,
+        ],
+      },
+      {
+        $in: [
+          { $ifNull: ["$currentRole.templateCode", ""] },
+          CANONICAL_HIGH_RISK_ROLE_CODES,
+        ],
+      },
+      {
+        $gt: [
+          {
+            $size: {
+              $setIntersection: [
+                { $ifNull: ["$currentRole.permissions", []] },
+                CANONICAL_HIGH_RISK_PERMISSIONS,
+              ],
+            },
+          },
+          0,
+        ],
+      },
+      {
+        $gt: [
+          {
+            $size: {
+              $filter: {
+                input: { $ifNull: ["$structuredScopeGrants", []] },
+                as: "grant",
+                cond: {
+                  $in: ["$$grant.scopeType", ["global", "financeGlobal"]],
+                },
+              },
+            },
+          },
+          0,
+        ],
+      },
+    ],
+  };
+}
+
+export function buildCurrentRoleRiskTierExpression(): Document {
+  return {
+    $cond: [buildCurrentRoleRequiresReviewExpression(), "HIGH", "LOW"],
+  };
+}
+
+export function buildCurrentRoleReviewDeadlineExpression(): Document {
+  const durableReviewDeadline = {
+    $ifNull: ["$lifecycle.reviewDeadline", { $ifNull: ["$reviewAt", null] }],
+  };
+  const privileged = {
+    $or: [
+      {
+        $in: [
+          { $ifNull: ["$currentRole.code", ""] },
+          CANONICAL_PRIVILEGED_ACCESS_ROLE_CODES,
+        ],
+      },
+      {
+        $in: [
+          { $ifNull: ["$currentRole.templateCode", ""] },
+          CANONICAL_PRIVILEGED_ACCESS_ROLE_CODES,
+        ],
+      },
+    ],
+  };
+  return {
+    $cond: [
+      {
+        $and: [
+          { $isNumber: durableReviewDeadline },
+          {
+            $eq: [
+              { $ifNull: ["$lifecycle.riskTier", "HIGH"] },
+              buildCurrentRoleRiskTierExpression(),
+            ],
+          },
+        ],
+      },
+      durableReviewDeadline,
+      {
+        $cond: [
+          {
+            $and: [
+              { $isNumber: "$effectiveAt" },
+              buildCurrentRoleRequiresReviewExpression(),
+            ],
+          },
+          {
+            $add: [
+              "$effectiveAt",
+              {
+                $multiply: [
+                  {
+                    $cond: [
+                      privileged,
+                      PRIVILEGED_ACCESS_REVIEW_WINDOW_DAYS,
+                      SENSITIVE_ACCESS_DEFAULT_REVIEW_WINDOW_DAYS,
+                    ],
+                  },
+                  DAY_MS,
+                ],
+              },
+            ],
+          },
+          null,
+        ],
+      },
+    ],
+  };
+}
+
+function buildNextRoleAssignmentLifecycleTransitionLookup(
+  now: number,
+): Document {
   return {
     $lookup: {
       from: "role_assignments",
@@ -993,9 +1244,38 @@ function buildNextRoleAssignmentLifecycleTransitionLookup(now: number): Document
             $expr: {
               $and: [
                 { $eq: ["$userId", "$$userId"] },
-                { $eq: ["$state", "ACTIVE"] },
+                { $in: ["$state", ["ACTIVE", "SCHEDULED"]] },
               ],
             },
+          },
+        },
+        {
+          $lookup: {
+            from: "roles",
+            localField: "roleId",
+            foreignField: "_id",
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: ["$state", "ACTIVE"] },
+                      buildRuntimeRoleEnvironmentExpression(),
+                    ],
+                  },
+                },
+              },
+              {
+                $project: { _id: 1, code: 1, templateCode: 1, permissions: 1 },
+              },
+            ],
+            as: "currentRoles",
+          },
+        },
+        { $set: { currentRole: { $arrayElemAt: ["$currentRoles", 0] } } },
+        {
+          $match: {
+            $expr: { $ne: [{ $ifNull: ["$currentRole", null] }, null] },
           },
         },
         {
@@ -1017,6 +1297,32 @@ function buildNextRoleAssignmentLifecycleTransitionLookup(now: number): Document
                       null,
                     ],
                   },
+                  buildRoleAssignmentFutureSuccessorCutoverTransitionExpression(
+                    now,
+                  ),
+                  {
+                    $let: {
+                      vars: {
+                        reviewEnd:
+                          buildRoleAssignmentReviewAuthorityEndExpression(
+                            buildCurrentRoleRiskTierExpression(),
+                            buildCurrentRoleReviewDeadlineExpression(),
+                          ),
+                      },
+                      in: {
+                        $cond: [
+                          {
+                            $and: [
+                              { $isNumber: "$$reviewEnd" },
+                              { $gt: ["$$reviewEnd", now] },
+                            ],
+                          },
+                          "$$reviewEnd",
+                          null,
+                        ],
+                      },
+                    },
+                  },
                 ],
                 as: "transition",
                 cond: { $ne: ["$$transition", null] },
@@ -1031,6 +1337,54 @@ function buildNextRoleAssignmentLifecycleTransitionLookup(now: number): Document
       ],
       as: "nextLifecycleTransitions",
     },
+  };
+}
+
+function buildActiveBreakGlassLookup(now: number): Document {
+  return {
+    $lookup: {
+      from: "break_glass_activations",
+      let: { userId: "$_id" },
+      pipeline: [
+        {
+          $match: {
+            $expr: {
+              $and: [
+                { $eq: ["$targetUserId", "$$userId"] },
+                { $eq: ["$status", "ACTIVE"] },
+                { $lte: ["$activatedAt", now] },
+                { $gt: ["$expiresAt", now] },
+                { $in: ["$stepUpState", ["SATISFIED", "NOT_SUPPORTED"]] },
+              ],
+            },
+          },
+        },
+        { $sort: { expiresAt: 1, _id: 1 } },
+        {
+          $project: {
+            _id: 0,
+            permissions: {
+              $setUnion: ["$permissions", [Permission.BREAK_GLASS_END]],
+            },
+            expiresAt: 1,
+          },
+        },
+      ],
+      as: "activeBreakGlass",
+    },
+  };
+}
+
+function buildRuntimeRoleEnvironmentExpression(): Document {
+  const environment = parseAccessDeploymentEnvironment(process.env.NODE_ENV);
+  if (ownerAdminContributesAuthority(environment)) {
+    return { $eq: [1, 1] };
+  }
+  return {
+    $and: [
+      { $ne: ["$code", "OWNER_ADMIN"] },
+      { $ne: [{ $ifNull: ["$templateCode", ""] }, "OWNER_ADMIN"] },
+    ],
   };
 }
 

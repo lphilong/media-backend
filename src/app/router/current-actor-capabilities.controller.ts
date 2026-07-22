@@ -28,6 +28,8 @@ interface CurrentActorCapabilitiesSnapshot {
   readonly accountContexts: readonly AccountContext[];
   readonly workspaceAvailability: WorkspaceAvailability;
   readonly generatedAt: string;
+  readonly nextAuthorityTransitionAt: number | null;
+  readonly capabilityRefreshAt: number | null;
 }
 
 export class CurrentActorCapabilitiesController extends SecureController {
@@ -63,6 +65,8 @@ export class CurrentActorCapabilitiesController extends SecureController {
           actor.permissions.includes(Permission.ROLE_ASSIGNMENT_VIEW),
       }),
       generatedAt: new Date().toISOString(),
+      nextAuthorityTransitionAt: actor.authorizationValidUntil ?? null,
+      capabilityRefreshAt: actor.authorizationValidUntil ?? null,
     };
   }
 

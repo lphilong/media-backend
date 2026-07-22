@@ -9,6 +9,7 @@ import {
   RoleAssignmentState,
   UserRoleAssignmentRecord,
 } from "@modules/role/domain/role.types";
+import { BreakGlassActivationRecord } from "@modules/role/domain/break-glass";
 
 interface RoleAssignmentDocument {
   readonly _id: string;
@@ -21,6 +22,7 @@ interface RoleAssignmentDocument {
   readonly effectiveAt: number | null;
   readonly expiresAt?: number | null;
   readonly reviewAt?: number | null;
+  readonly lifecycle?: UserRoleAssignmentRecord["lifecycle"];
   readonly assignedBy?: string | null;
   readonly assignedAt?: number;
   readonly revokedAt: number | null;
@@ -36,6 +38,8 @@ interface RoleAssignmentDocument {
 interface RoleDocument {
   readonly _id: string;
   readonly state: string;
+  readonly code?: string | null;
+  readonly templateCode?: string | null;
   readonly permissions: readonly string[];
 }
 
@@ -44,11 +48,15 @@ export class NativeMongoStructuredScopeAuthorityReader
 {
   private readonly assignmentCollection: Collection<RoleAssignmentDocument>;
   private readonly roleCollection: Collection<RoleDocument>;
+  private readonly breakGlassActivationCollection: Collection<BreakGlassActivationRecord & { readonly _id: string }>;
 
   constructor(db: Db) {
     this.assignmentCollection =
       db.collection<RoleAssignmentDocument>("role_assignments");
     this.roleCollection = db.collection<RoleDocument>("roles");
+    this.breakGlassActivationCollection = db.collection(
+      "break_glass_activations",
+    );
   }
 
   async listByUserId(
@@ -74,11 +82,34 @@ export class NativeMongoStructuredScopeAuthorityReader
         ? {
             id: assignment.roleId,
             state: roleById.get(assignment.roleId)?.state ?? "MISSING",
+            code: roleById.get(assignment.roleId)?.code ?? null,
+            templateCode:
+              roleById.get(assignment.roleId)?.templateCode ?? null,
             permissions: [
               ...(roleById.get(assignment.roleId)?.permissions ?? []),
             ],
           }
         : null,
+    }));
+  }
+
+  async listBreakGlassByUserId(
+    userId: string,
+    now: number,
+  ): Promise<readonly BreakGlassActivationRecord[]> {
+    const documents = await this.breakGlassActivationCollection
+      .find({
+        targetUserId: userId,
+        status: "ACTIVE",
+        activatedAt: { $lte: now },
+        expiresAt: { $gt: now },
+        stepUpState: { $in: ["SATISFIED", "NOT_SUPPORTED"] },
+      })
+      .sort({ expiresAt: 1, _id: 1 })
+      .toArray();
+    return documents.map(({ _id, ...record }) => ({
+      ...record,
+      activationId: _id,
     }));
   }
 }
@@ -101,6 +132,7 @@ function toAssignmentRecord(
     effectiveAt: document.effectiveAt,
     expiresAt: document.expiresAt ?? null,
     reviewAt: document.reviewAt ?? null,
+    lifecycle: document.lifecycle ?? null,
     assignedBy: document.assignedBy ?? null,
     assignedAt: document.assignedAt ?? document.createdAt,
     revokedAt: document.revokedAt,

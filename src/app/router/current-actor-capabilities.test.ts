@@ -13,10 +13,7 @@ import { withCommand } from "@app/base/command.middleware";
 import { createSecureRouter } from "@app/router/secure-router";
 import { CurrentActorCapabilitiesController } from "./current-actor-capabilities.controller";
 import { Actor } from "@core/actor/actor";
-import {
-  bindActor,
-  getActor,
-} from "@core/actor/actor-context";
+import { bindActor, getActor } from "@core/actor/actor-context";
 import { contextMiddleware } from "@core/context/context.middleware.adapter";
 import { Permission } from "@core/permission/permission.enum";
 import { PermissionGuard } from "@core/permission/permission.guard";
@@ -65,9 +62,9 @@ async function close(server: Server): Promise<void> {
   });
 }
 
-function createRejectingActorResolver(
-  calls: { count: number },
-): Auth0ActorResolver {
+function createRejectingActorResolver(calls: {
+  count: number;
+}): Auth0ActorResolver {
   return {
     async resolve() {
       calls.count += 1;
@@ -77,8 +74,7 @@ function createRejectingActorResolver(
 }
 
 function createCapabilitiesRoutes(): Router {
-  const controller =
-    new CurrentActorCapabilitiesController();
+  const controller = new CurrentActorCapabilitiesController();
   return Router().get(
     "/me/capabilities",
     withCommand("CURRENT_ACTOR_CAPABILITIES"),
@@ -112,9 +108,7 @@ function createLocalMockApp(options: {
     createSecureRouter({
       context: "ADMIN",
       auth0: AUTH0_OPTIONS,
-      actorResolver: createRejectingActorResolver(
-        options.resolverCalls,
-      ),
+      actorResolver: createRejectingActorResolver(options.resolverCalls),
       localMockAuth: createLocalMockAuthConfig({
         enabled: true,
         actorId: "local-capabilities-admin",
@@ -150,14 +144,11 @@ test("GET /admin/me/capabilities returns the current materialized admin actor sn
   );
 
   try {
-    const response = await fetch(
-      `${baseUrl}/admin/me/capabilities`,
-      {
-        headers: {
-          authorization: `Bearer ${LOCAL_MOCK_AUTH_BEARER_TOKEN}`,
-        },
+    const response = await fetch(`${baseUrl}/admin/me/capabilities`, {
+      headers: {
+        authorization: `Bearer ${LOCAL_MOCK_AUTH_BEARER_TOKEN}`,
       },
-    );
+    });
     const body = await response.json();
 
     assert.equal(response.status, 200);
@@ -289,6 +280,8 @@ test("GET /admin/me/capabilities exposes only currently effective role permissio
 
     assert.equal(response.status, 200);
     assert.deepEqual(body.data.permissions, [Permission.USER_VIEW]);
+    assert.equal(body.data.nextAuthorityTransitionAt, now + 60_000);
+    assert.equal(body.data.capabilityRefreshAt, now + 60_000);
     assert.equal(body.data.workspaceAvailability.primaryWorkspace, null);
     assert.deepEqual(
       body.data.workspaceAvailability.availableWorkspaces
@@ -308,14 +301,11 @@ test("GET /admin/me/capabilities excludes sensitive auth transport fields", asyn
   );
 
   try {
-    const response = await fetch(
-      `${baseUrl}/admin/me/capabilities`,
-      {
-        headers: {
-          authorization: `Bearer ${LOCAL_MOCK_AUTH_BEARER_TOKEN}`,
-        },
+    const response = await fetch(`${baseUrl}/admin/me/capabilities`, {
+      headers: {
+        authorization: `Bearer ${LOCAL_MOCK_AUTH_BEARER_TOKEN}`,
       },
-    );
+    });
     const body = await response.json();
     const serialized = JSON.stringify(body);
 
@@ -357,9 +347,7 @@ test("GET /admin/me/capabilities does not mutate the bound actor", async () => {
   const { server, baseUrl } = await listen(app);
 
   try {
-    const response = await fetch(
-      `${baseUrl}/admin/me/capabilities`,
-    );
+    const response = await fetch(`${baseUrl}/admin/me/capabilities`);
     const body = await response.json();
 
     assert.equal(response.status, 200);
@@ -386,8 +374,7 @@ test("GET /admin/me/capabilities follows the existing unauthenticated admin boun
     createSecureRouter({
       context: "ADMIN",
       auth0: AUTH0_OPTIONS,
-      actorResolver:
-        createRejectingActorResolver(resolverCalls),
+      actorResolver: createRejectingActorResolver(resolverCalls),
     }),
     createCapabilitiesRoutes(),
   );
@@ -396,9 +383,7 @@ test("GET /admin/me/capabilities follows the existing unauthenticated admin boun
   const { server, baseUrl } = await listen(app);
 
   try {
-    const response = await fetch(
-      `${baseUrl}/admin/me/capabilities`,
-    );
+    const response = await fetch(`${baseUrl}/admin/me/capabilities`);
     const body = await response.json();
 
     assert.equal(response.status, 401);
@@ -441,9 +426,7 @@ test("GET /admin/me/capabilities returns self snapshot for non-admin actors with
   const { server, baseUrl } = await listen(app);
 
   try {
-    const response = await fetch(
-      `${baseUrl}/admin/me/capabilities`,
-    );
+    const response = await fetch(`${baseUrl}/admin/me/capabilities`);
     const body = await response.json();
 
     assert.equal(response.status, 200);
@@ -543,14 +526,11 @@ test("current capabilities endpoint does not change existing backend permission 
   );
 
   try {
-    const capabilities = await fetch(
-      `${baseUrl}/admin/me/capabilities`,
-      {
-        headers: {
-          authorization: `Bearer ${LOCAL_MOCK_AUTH_BEARER_TOKEN}`,
-        },
+    const capabilities = await fetch(`${baseUrl}/admin/me/capabilities`, {
+      headers: {
+        authorization: `Bearer ${LOCAL_MOCK_AUTH_BEARER_TOKEN}`,
       },
-    );
+    });
     assert.equal(capabilities.status, 200);
 
     const mutation = await fetch(`${baseUrl}/admin/roles`, {

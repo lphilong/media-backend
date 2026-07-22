@@ -8,10 +8,7 @@ export interface DomainEventEnvelopeMetadata {
   readonly occurredAt: number;
 }
 
-type AuthoritativeDomainEvent<
-  TType extends string,
-  TPayload,
-> = Readonly<
+type AuthoritativeDomainEvent<TType extends string, TPayload> = Readonly<
   DomainEventEnvelopeMetadata & {
     type: TType;
     payload: TPayload;
@@ -19,10 +16,7 @@ type AuthoritativeDomainEvent<
 >;
 
 export type DomainEvent =
-  | AuthoritativeDomainEvent<
-      "user.created",
-      { userId: string }
-    >
+  | AuthoritativeDomainEvent<"user.created", { userId: string }>
   | AuthoritativeDomainEvent<
       "user.updated",
       {
@@ -50,14 +44,8 @@ export type DomainEvent =
         subject: string;
       }
     >
-  | AuthoritativeDomainEvent<
-      "role.created",
-      { roleId: string }
-    >
-  | AuthoritativeDomainEvent<
-      "role.updated",
-      { roleId: string }
-    >
+  | AuthoritativeDomainEvent<"role.created", { roleId: string }>
+  | AuthoritativeDomainEvent<"role.updated", { roleId: string }>
   | AuthoritativeDomainEvent<
       "role.activated",
       { roleId: string; state: "ACTIVE" }
@@ -102,6 +90,41 @@ export type DomainEvent =
         state: "REVOKED";
       }
     >
+  | AuthoritativeDomainEvent<
+      "role.assignment.deadline-suspended",
+      {
+        assignmentId: string;
+        userId: string;
+        cycleId: string;
+        deadline: number;
+        reason:
+          | "EXPIRED"
+          | "MALFORMED_SUCCESSOR"
+          | "REVIEW_DEADLINE_UNRESOLVABLE"
+          | "REVIEW_OVERDUE"
+          | "GRACE_EXPIRED";
+        transitionId: string;
+      }
+    >
+  | AuthoritativeDomainEvent<
+      "break-glass.deadline-expired",
+      {
+        activationId: string;
+        targetUserId: string;
+        deadline: number;
+        transitionId: string;
+      }
+    >
+  | AuthoritativeDomainEvent<
+      "break-glass.manually-ended",
+      {
+        activationId: string;
+        targetUserId: string;
+        endedAt: number;
+        endedByUserId: string;
+        originalExpiresAt: number;
+      }
+    >;
 
 export type PersistableDomainEvent = Extract<
   DomainEvent,
@@ -111,8 +134,7 @@ export type PersistableDomainEvent = Extract<
 export function isPersistableDomainEvent(
   event: DomainEvent,
 ): event is PersistableDomainEvent {
-  const candidate =
-    event as Partial<DomainEventEnvelopeMetadata>;
+  const candidate = event as Partial<DomainEventEnvelopeMetadata>;
 
   return (
     typeof candidate.aggregateId === "string" &&

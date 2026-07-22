@@ -63,9 +63,18 @@ import { AdminAccessAssignmentPreviewController } from "@modules/role/admin/admi
 import { AccessAssignmentPreviewAdminService } from "@modules/role/admin/admin.access-assignment-preview.service";
 import { AccessAssignmentApplyAdminService } from "@modules/role/admin/admin.access-assignment-apply.service";
 import { AccessAssignmentLifecycleAdminService } from "@modules/role/admin/admin.access-assignment-lifecycle.service";
+import { AccessLifecycleP2AdminService } from "@modules/role/admin/admin.access-lifecycle-p2.service";
+import { AccessBreakGlassAdminService } from "@modules/role/admin/admin.break-glass.service";
+import { GovernancePrincipalAdminService } from "@modules/role/admin/admin.governance-principal.service";
 import { adminAccessAssignmentPreviewRoutes } from "@modules/role/admin/admin.access-assignment-preview.routes";
 import { StructuredScopeAuthorityService } from "@modules/role/domain/structured-scope-authority";
 import { NativeMongoStructuredScopeAuthorityReader } from "@infra/mongo/role/structured-scope-authority.repository";
+import { env } from "@config/env";
+import { buildGovernanceBusinessCalendar } from "@modules/role/domain/governance-business-calendar";
+import {
+  AccessGovernanceQueueCursorCodec,
+  deriveAccessGovernanceCursorKey,
+} from "@modules/role/admin/access-governance-queue-cursor";
 
 /* ORG UNIT */
 import { adminOrgUnitRoutes } from "@modules/org-unit/admin/admin.org-unit.routes";
@@ -312,6 +321,10 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
   r.use("/roles", adminRoleRoutes(roleController, roleQueryController));
 
   r.use("/role-templates", adminRoleTemplateRoutes(roleTemplateController));
+  const accessGovernanceQueueCursorCodec =
+    new AccessGovernanceQueueCursorCodec(
+      deriveAccessGovernanceCursorKey(env.ENCRYPTION_KEY),
+    );
   r.use(
     "/role-bundles",
     adminRoleBundleRoutes(
@@ -338,6 +351,38 @@ export async function createAdminRoutes(infra: InfraModule): Promise<Router> {
           actorSnapshotCacheInvalidator,
         ),
         new AccessAssignmentLifecycleAdminService(
+          infra.primaryDb,
+          authoritativeAuditGuard,
+          adminMutationBridge,
+          actorSnapshotCacheInvalidator,
+        ),
+        new AccessLifecycleP2AdminService(
+          infra.primaryDb,
+          authoritativeAuditGuard,
+          adminMutationBridge,
+          actorSnapshotCacheInvalidator,
+          structuredScopeAuthority,
+          undefined,
+          Date.now,
+          accessGovernanceQueueCursorCodec,
+        ),
+        new AccessBreakGlassAdminService(
+          infra.primaryDb,
+          authoritativeAuditGuard,
+          adminMutationBridge,
+          actorSnapshotCacheInvalidator,
+          undefined,
+          async () =>
+            buildGovernanceBusinessCalendar({
+              version: env.GOVERNANCE_CALENDAR_VERSION,
+              holidayDates: env.GOVERNANCE_HOLIDAY_DATES,
+            }),
+          structuredScopeAuthority,
+          undefined,
+          Date.now,
+          accessGovernanceQueueCursorCodec,
+        ),
+        new GovernancePrincipalAdminService(
           infra.primaryDb,
           authoritativeAuditGuard,
           adminMutationBridge,

@@ -24,6 +24,21 @@ import {
   UserRoleAssignmentRepository,
 } from "@modules/role/domain/user-role-assignment.repository";
 import {
+  buildRoleAssignmentScopeFingerprint,
+  normalizeRoleAssignmentScopeGrants,
+} from "@modules/role/domain/role-assignment-scope";
+import {
+  NON_PRODUCTION_OWNER_ADMIN_REVIEW_MS,
+  ownerAdminBootstrapAllowed,
+  parseAccessDeploymentEnvironment,
+} from "@modules/role/domain/access-environment-policy";
+import { NativeMongoGovernancePrincipalRepository } from "@infra/mongo/role/access-lifecycle.repository";
+import {
+  NativeMongoAccessLifecycleRepository,
+} from "@infra/mongo/role/access-lifecycle.repository";
+import type { AccessLifecycleRepository } from "@modules/role/domain/access-lifecycle.repositories";
+import type { AssignmentReviewCycleRecord } from "@modules/role/domain/access-lifecycle-policy";
+import {
   RoleRecord,
   UserRoleAssignmentRecord,
 } from "@modules/role/domain/role.types";
@@ -182,7 +197,13 @@ interface FirstAdminBootstrapDependencies {
   readonly roleRepository: FirstAdminBootstrapRoleRepository;
   readonly userRepository: FirstAdminBootstrapUserRepository;
   readonly assignmentRepository: FirstAdminBootstrapAssignmentRepository;
+  readonly lifecycleRepository: Pick<AccessLifecycleRepository, "insertReviewCycle">;
   readonly transactionRunner: FirstAdminBootstrapTransactionRunner;
+  readonly isActivePrimaryOwner: (
+    userId: string,
+    now: number,
+    session: ClientSession,
+  ) => Promise<boolean>;
   readonly now?: () => number;
   readonly idFactory?: () => string;
 }
@@ -210,6 +231,12 @@ if (!NORMALIZED_REQUIRED_OWNER_ADMIN_SCOPE_GRANTS) {
 
 export const REQUIRED_OWNER_ADMIN_SCOPE_GRANTS: ActorScopeGrants =
   NORMALIZED_REQUIRED_OWNER_ADMIN_SCOPE_GRANTS;
+export const REQUIRED_OWNER_ADMIN_STRUCTURED_SCOPE_GRANTS = Object.freeze(
+  normalizeRoleAssignmentScopeGrants([
+    { scopeType: "global" },
+    { scopeType: "financeGlobal" },
+  ]) ?? [],
+);
 
 export class FirstAdminBootstrapService {
   constructor(
@@ -229,6 +256,17 @@ export class FirstAdminBootstrapService {
     const email = normalizeEmail(input.email);
     const maskedEmail = maskEmail(email);
     const mode = input.mode;
+    if (
+      mode === "write" &&
+      !ownerAdminBootstrapAllowed(
+        parseAccessDeploymentEnvironment(process.env.NODE_ENV),
+      )
+    ) {
+      throw new FirstAdminBootstrapError(
+        "FIRST_ADMIN_OWNER_ADMIN_ENVIRONMENT_FORBIDDEN",
+        "OWNER_ADMIN bootstrap is allowed only in development, test, or staging.",
+      );
+    }
 
     return this.deps.transactionRunner.run(async (session) => {
       const auth0User = await this.findSingleAuth0User(email);
@@ -642,6 +680,19 @@ export class FirstAdminBootstrapService {
     readonly mode: FirstAdminBootstrapMode;
     readonly session: ClientSession;
   }): Promise<FirstAdminBootstrapSummary["assignment"]> {
+    const now = this.now();
+    if (
+      !(await this.deps.isActivePrimaryOwner(
+        params.userId,
+        now,
+        params.session,
+      ))
+    ) {
+      throw new FirstAdminBootstrapError(
+        "FIRST_ADMIN_PRIMARY_OWNER_REQUIRED",
+        "OWNER_ADMIN bootstrap target must be the active PRIMARY_OWNER governance principal.",
+      );
+    }
     const activeAssignments =
       await this.deps.assignmentRepository.findActiveManyByRoleAndUser(
         params.roleId,
@@ -661,20 +712,65 @@ export class FirstAdminBootstrapService {
         return { action: "would-create", assignmentId: null };
       }
 
-      const now = this.now();
+      const cycleId = this.id();
       const assignment = await this.deps.assignmentRepository.insert(
         {
           assignmentId: this.id(),
           roleId: params.roleId,
           userId: params.userId,
           scopeGrants: REQUIRED_OWNER_ADMIN_SCOPE_GRANTS,
+          structuredScopeGrants: REQUIRED_OWNER_ADMIN_STRUCTURED_SCOPE_GRANTS,
+          scopeFingerprint: buildRoleAssignmentScopeFingerprint(
+            REQUIRED_OWNER_ADMIN_STRUCTURED_SCOPE_GRANTS,
+          ),
           state: "ACTIVE",
           effectiveAt: now,
+          reviewAt: now + NON_PRODUCTION_OWNER_ADMIN_REVIEW_MS,
+          lifecycle: {
+            cycleId,
+            riskTier: "HIGH",
+            riskReasons: ["Non-production Owner Admin privileged test access"],
+            riskAssessedAt: now,
+            reviewDeadline: now + NON_PRODUCTION_OWNER_ADMIN_REVIEW_MS,
+            graceExceptionExpiresAt: null,
+            suspendedAt: null,
+            suspensionCause: null,
+            predecessorAssignmentId: null,
+            successorAssignmentId: null,
+            lineageAction: null,
+          },
           revokedAt: null,
           reason: BOOTSTRAP_ASSIGNMENT_REASON,
           createdAt: now,
           updatedAt: now,
         },
+        params.session,
+      );
+      const reviewCycle: AssignmentReviewCycleRecord = {
+        cycleId,
+        assignmentId: assignment.assignmentId,
+        targetUserId: params.userId,
+        requestedBy: params.userId,
+        requestedAt: now,
+        riskSnapshot: {
+          tier: "HIGH",
+          reasons: ["Non-production Owner Admin privileged test access"],
+          assessedAt: now,
+          permissionFingerprint: getRoleTemplate(OWNER_ADMIN_CODE)?.permissionFingerprint ?? "",
+          scopeFingerprint: buildRoleAssignmentScopeFingerprint(
+            REQUIRED_OWNER_ADMIN_STRUCTURED_SCOPE_GRANTS,
+          ),
+        },
+        reviewDeadline: now + NON_PRODUCTION_OWNER_ADMIN_REVIEW_MS,
+        state: "APPROVED",
+        approvals: [],
+        decidedAt: now,
+        nextReviewDeadline: now + NON_PRODUCTION_OWNER_ADMIN_REVIEW_MS,
+        reason: BOOTSTRAP_ASSIGNMENT_REASON,
+        createdAt: now,
+      };
+      await this.deps.lifecycleRepository.insertReviewCycle(
+        reviewCycle,
         params.session,
       );
 
@@ -688,6 +784,19 @@ export class FirstAdminBootstrapService {
       existing.scopeGrants,
       REQUIRED_OWNER_ADMIN_SCOPE_GRANTS,
     );
+    if (
+      existing.scopeFingerprint !==
+        buildRoleAssignmentScopeFingerprint(
+          REQUIRED_OWNER_ADMIN_STRUCTURED_SCOPE_GRANTS,
+        ) ||
+      existing.lifecycle?.riskTier !== "HIGH" ||
+      existing.lifecycle.reviewDeadline <= now
+    ) {
+      throw new FirstAdminBootstrapError(
+        "FIRST_ADMIN_LEGACY_OWNER_AUTHORITY_BLOCKED",
+        "Existing OWNER_ADMIN authority lacks exact structured scope or current immutable review evidence.",
+      );
+    }
 
     if (scopeGrantsEqual(existing.scopeGrants, merged)) {
       return {
@@ -766,12 +875,26 @@ export function createFirstAdminBootstrapService(params: {
   const roleRepository = new NativeMongoRoleRepository(db);
   const assignmentRepository =
     new NativeMongoUserRoleAssignmentRepository(db);
+  const governancePrincipalRepository =
+    new NativeMongoGovernancePrincipalRepository(db);
+  const lifecycleRepository = new NativeMongoAccessLifecycleRepository(db);
 
   return new FirstAdminBootstrapService({
     auth0Management: new Auth0ManagementHttpClient(params.auth0Config),
     roleRepository,
     userRepository: new UserRepository(db),
     assignmentRepository,
+    lifecycleRepository,
+    isActivePrimaryOwner: async (userId, now, session) => {
+      const principal = await governancePrincipalRepository.findActivePrimaryOwner(
+        session,
+      );
+      return (
+        principal?.userId === userId &&
+        principal.effectiveAt <= now &&
+        (principal.expiresAt === null || principal.expiresAt > now)
+      );
+    },
     transactionRunner: new MongoTransactionRunner(params.mongoClient),
   });
 }
@@ -1136,8 +1259,11 @@ function helpText(): string {
 }
 
 function assertSafeRuntimeForWrite(): void {
-  const nodeEnv = process.env.NODE_ENV?.trim().toLowerCase();
-  if (nodeEnv === "production") {
+  if (
+    !ownerAdminBootstrapAllowed(
+      parseAccessDeploymentEnvironment(process.env.NODE_ENV),
+    )
+  ) {
     throw new FirstAdminBootstrapError(
       "FIRST_ADMIN_PRODUCTION_FORBIDDEN",
       "First admin bootstrap write mode is forbidden when NODE_ENV=production",

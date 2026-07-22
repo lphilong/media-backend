@@ -390,120 +390,18 @@ export function buildExpectedRoleAssignmentDocument(
 }
 
 export async function runSmokeSeed(
-  collections: SmokeSeedCollections,
-  input: SmokeSeedInput,
-  options: {
+  _collections: SmokeSeedCollections,
+  _input: SmokeSeedInput,
+  _options: {
     readonly mode: SeedMode;
     readonly now?: number;
     readonly randomUUID?: () => string;
   },
 ): Promise<SmokeSeedPlan> {
-  const now = options.now ?? Date.now();
-  const randomUUID = options.randomUUID ?? crypto.randomUUID;
-
-  validateCanonicalPermissions(
-    SMOKE_FIRST_ADMIN_PERMISSIONS,
+  throw new SmokeSeedError(
+    "SMOKE_SEED_RETIRED_USE_FIRST_ADMIN_BOOTSTRAP",
+    "This legacy coarse-authority writer is retired; use the reviewed OWNER_ADMIN first-admin bootstrap.",
   );
-  validateCanonicalScopeGrants(
-    SMOKE_FIRST_ADMIN_SCOPE_GRANTS,
-  );
-
-  const candidateUser = buildExpectedUserDocument(
-    input,
-    randomUUID(),
-    now,
-  );
-  const existingUser = await collections.users.findOne({
-    "authLinkage.provider": "auth0",
-    "authLinkage.subject": input.auth0Sub,
-  });
-
-  let userId = candidateUser._id;
-  let userAction: SeedAction = "create";
-
-  if (existingUser) {
-    assertStableUserMatch(existingUser, input);
-    userId = existingUser._id;
-    userAction = "no-op";
-    await assertUserActiveAssignmentsReferenceActiveRoles(
-      collections,
-      userId,
-    );
-  }
-
-  const candidateRole = buildExpectedRoleDocument(
-    input,
-    randomUUID(),
-    now,
-  );
-  const existingRole = await collections.roles.findOne({
-    code: input.roleCode,
-  });
-
-  let roleId = candidateRole._id;
-  let roleAction: SeedAction = "create";
-
-  if (existingRole) {
-    assertStableRoleMatch(existingRole, input);
-    roleId = existingRole._id;
-    roleAction = "no-op";
-  }
-
-  const candidateAssignment =
-    buildExpectedRoleAssignmentDocument(
-      {
-        assignmentId: randomUUID(),
-        roleId,
-        userId,
-      },
-      now,
-    );
-  const existingAssignment =
-    await collections.roleAssignments.findOne({
-      roleId,
-      userId,
-    });
-
-  let assignmentId = candidateAssignment._id;
-  let assignmentAction: SeedAction = "create";
-
-  if (existingAssignment) {
-    assertStableAssignmentMatch(existingAssignment, {
-      roleId,
-      userId,
-    });
-    assignmentId = existingAssignment._id;
-    assignmentAction = "no-op";
-  }
-
-  if (options.mode === "write") {
-    if (userAction === "create") {
-      await collections.users.insertOne(candidateUser);
-    }
-
-    if (roleAction === "create") {
-      await collections.roles.insertOne(candidateRole);
-    }
-
-    if (assignmentAction === "create") {
-      await collections.roleAssignments.insertOne(
-        candidateAssignment,
-      );
-    }
-  }
-
-  return {
-    mode: options.mode,
-    dbNameClass: input.dbNameClass,
-    actions: {
-      user: userAction,
-      role: roleAction,
-      assignment: assignmentAction,
-    },
-    userId,
-    roleId,
-    assignmentId,
-  };
 }
 
 export function createMongoSeedCollections(

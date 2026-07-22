@@ -2,9 +2,7 @@ import crypto from "crypto";
 import { ClientSession, Collection, Db, MongoServerError } from "mongodb";
 import { Actor } from "@core/actor/actor";
 import { AuditGuard } from "@core/audit/audit.guard";
-import {
-  AuthoritativeAdminMutationBridge,
-} from "@core/application/authoritative-admin-mutation.bridge";
+import { AuthoritativeAdminMutationBridge } from "@core/application/authoritative-admin-mutation.bridge";
 import { getTraceIdOrThrow } from "@core/trace/trace.context";
 import { Permission } from "@core/permission/permission.enum";
 import { PermissionResolver } from "@core/permission/permission.resolver";
@@ -12,18 +10,33 @@ import { ActorSnapshotCacheInvalidator } from "@infra/cache/actor.snapshot.cache
 import { getCurrentDomainEventCollector } from "@system/event-bridge/domain-event.types";
 import { createRoleAssignedToUserEvent } from "@modules/role/domain/role.events";
 import { isRoleAssignmentCurrentlyEffective } from "@modules/role/domain/role-assignment-lifecycle";
-import { RoleAssignmentScopeGrant } from "@modules/role/domain/role-assignment-scope";
+import {
+  RoleAssignmentScopeGrant,
+  buildRoleAssignmentScopeFingerprint,
+} from "@modules/role/domain/role-assignment-scope";
 import {
   RoleAssignmentConflictError,
   RoleDependencyError,
   RoleValidationError,
 } from "@modules/role/domain/role.errors";
-import { RoleDelegationBand, RoleMaxDelegatableBand } from "@modules/role/domain/role.types";
+import {
+  RoleDelegationBand,
+  RoleMaxDelegatableBand,
+} from "@modules/role/domain/role.types";
+import { RoleAssignmentLifecycleSnapshot } from "@modules/role/domain/role.types";
+import {
+  buildAccessRiskSnapshot,
+  buildCurrentRoleAssignmentPolicy,
+} from "@modules/role/domain/sensitive-access-policy";
+import { AssignmentReviewCycleRecord } from "@modules/role/domain/access-lifecycle-policy";
 import {
   AccessAssignmentPreviewAdminService,
   AccessAssignmentPreviewCommand,
 } from "./admin.access-assignment-preview.service";
 import { EffectiveAccessAdminService } from "./admin.effective-access.service";
+import { buildAuthoritySlotIdentity } from "@modules/role/domain/authority-slot";
+import { NativeMongoAuthoritySlotRepository } from "@infra/mongo/role/authority-slot.repository";
+import { findOperationalAssignmentOccupant } from "./access-assignment-occupancy";
 
 type AssignmentOrigin = "DIRECT" | "BUNDLE";
 
@@ -50,6 +63,8 @@ interface RoleDocument {
   readonly _id: string;
   readonly code: string;
   readonly state: string;
+  readonly permissions: readonly string[];
+  readonly templateCode?: string;
   readonly delegationBand?: RoleDelegationBand;
   readonly maxDelegatableBand?: RoleMaxDelegatableBand;
 }
@@ -60,10 +75,12 @@ interface AssignmentDocument {
   readonly userId: string;
   readonly structuredScopeGrants?: readonly RoleAssignmentScopeGrant[];
   readonly scopeFingerprint?: string;
-  readonly state: "ACTIVE" | "REVOKED";
+  readonly state:
+    "ACTIVE" | "SCHEDULED" | "SUSPENDED" | "SUPERSEDED" | "REVOKED";
   readonly effectiveAt: number | null;
   readonly expiresAt?: number | null;
   readonly reviewAt?: number | null;
+  readonly lifecycle?: RoleAssignmentLifecycleSnapshot | null;
   readonly assignedBy?: string | null;
   readonly assignedAt?: number;
   readonly revokedAt: number | null;
@@ -134,14 +151,30 @@ interface ResponsibilityAssignmentDocument {
   readonly revokedReason: string | null;
 }
 
+interface GeneratedAccessPrerequisiteDocument {
+  readonly _id: string;
+  readonly targetUserId: string;
+  readonly sourceRoleAssignmentIds: readonly string[];
+  readonly kind: "ACCOUNT_CONTEXT" | "RESPONSIBILITY";
+  readonly value: string;
+  readonly status: "ACTIVE" | "REVOKED";
+  readonly createdAt: number;
+  readonly revokedAt: number | null;
+}
+
 export class AccessAssignmentApplyAdminService {
   private readonly previewService: AccessAssignmentPreviewAdminService;
   private readonly users: Collection<ApplyUserDocument>;
   private readonly roles: Collection<RoleDocument>;
+  private readonly reviewCycles: Collection<
+    Omit<AssignmentReviewCycleRecord, "cycleId"> & { readonly _id: string }
+  >;
   private readonly assignments: Collection<AssignmentDocument>;
   private readonly assignmentRules: Collection<AssignmentRuleDocument>;
   private readonly bundleAssignments: Collection<BundleAssignmentDocument>;
   private readonly responsibilities: Collection<ResponsibilityAssignmentDocument>;
+  private readonly generatedPrerequisites: Collection<GeneratedAccessPrerequisiteDocument>;
+  private readonly authoritySlots: NativeMongoAuthoritySlotRepository;
 
   constructor(
     private readonly db: Db,
@@ -152,21 +185,30 @@ export class AccessAssignmentApplyAdminService {
     this.previewService = new AccessAssignmentPreviewAdminService(db);
     this.users = db.collection<ApplyUserDocument>("users");
     this.roles = db.collection<RoleDocument>("roles");
+    this.reviewCycles = db.collection("assignment_review_cycles");
     this.assignments = db.collection<AssignmentDocument>("role_assignments");
     this.assignmentRules = db.collection<AssignmentRuleDocument>(
       "role_assignment_rules",
     );
     this.bundleAssignments =
       db.collection<BundleAssignmentDocument>("bundle_assignments");
-    this.responsibilities =
-      db.collection<ResponsibilityAssignmentDocument>("responsibility_assignments");
+    this.responsibilities = db.collection<ResponsibilityAssignmentDocument>(
+      "responsibility_assignments",
+    );
+    this.generatedPrerequisites =
+      db.collection<GeneratedAccessPrerequisiteDocument>(
+        "generated_access_prerequisites",
+      );
+    this.authoritySlots = new NativeMongoAuthoritySlotRepository(db);
   }
 
   async apply(
     actor: Actor,
     command: AccessAssignmentPreviewCommand,
   ): Promise<Record<string, unknown>> {
-    const permission = PermissionResolver.resolve(Permission.ROLE_ASSIGN_TO_USER);
+    const permission = PermissionResolver.resolve(
+      Permission.ROLE_ASSIGN_TO_USER,
+    );
     const result = await this.mutationBridge.execute(
       {
         actor,
@@ -187,7 +229,12 @@ export class AccessAssignmentApplyAdminService {
         const reason = normalizeReason(command.reason);
 
         if (!reason) {
-          blockers.push(blocker("REASON_REQUIRED", "Reason is required for all access assignment apply requests."));
+          blockers.push(
+            blocker(
+              "REASON_REQUIRED",
+              "Reason is required for all access assignment apply requests.",
+            ),
+          );
         }
 
         if (blockers.length > 0) {
@@ -203,13 +250,21 @@ export class AccessAssignmentApplyAdminService {
         if (proposedAssignments.length === 0) {
           controls.markExplicitNoOpSuccess();
           return buildBlockedApplyResult(preview, [
-            blocker("NO_ASSIGNMENTS_TO_APPLY", "No child role assignments were resolved for apply."),
+            blocker(
+              "NO_ASSIGNMENTS_TO_APPLY",
+              "No child role assignments were resolved for apply.",
+            ),
           ]);
         }
 
         await this.assertActorActiveForApply(actor, session);
         const now = Date.now();
         const appliedAssignments: AssignmentDocument[] = [];
+        const reviewCycleDocuments: Array<
+          Omit<AssignmentReviewCycleRecord, "cycleId"> & {
+            readonly _id: string;
+          }
+        > = [];
         const trackedRoleIds = new Set<string>();
         const bundleAssignment = buildBundleAssignmentDocument({
           preview,
@@ -238,11 +293,13 @@ export class AccessAssignmentApplyAdminService {
 
         for (const proposed of proposedAssignments) {
           const role = await this.requireActiveRole(proposed.roleId, session);
-          this.assertRoleDelegationAllowed(role);
-          await this.assertActorCanDelegateRoleBand(
+          assertRoleDelegationAllowed(role);
+          await assertActorCanDelegateRoleBand(
             actor.id,
             role.delegationBand ?? "LIMITED",
             role._id,
+            this.assignments,
+            this.roles,
             session,
           );
           await this.assertAssignmentRulesAllow({
@@ -252,14 +309,17 @@ export class AccessAssignmentApplyAdminService {
             session,
           });
 
-          const existing = await this.assignments.findOne(
+          const existing = await findOperationalAssignmentOccupant(
+            this.db,
             {
-              roleId: proposed.roleId,
               userId: command.targetUserId,
+              roleId: proposed.roleId,
+              roleCode: proposed.roleCode,
+              structuredScopeGrants: proposed.structuredScopeGrants,
               scopeFingerprint: proposed.scopeFingerprint,
-              state: "ACTIVE",
             },
-            { session },
+            now,
+            session,
           );
           if (existing) {
             throw new RoleAssignmentConflictError(
@@ -267,8 +327,42 @@ export class AccessAssignmentApplyAdminService {
             );
           }
 
+          const riskSnapshot = buildAccessRiskSnapshot({
+            assignments: [
+              {
+                roleCode: proposed.roleCode,
+                roleTemplateCode: proposed.roleCode,
+                permissions: proposed.permissions,
+                structuredScopeGrants: proposed.structuredScopeGrants,
+                bundleCode: proposed.bundleOrigin?.bundleCode ?? null,
+              },
+            ],
+            assessedAt: now,
+            scopeFingerprint: proposed.scopeFingerprint,
+          });
+          const cycleId =
+            proposed.reviewAt === null ? null : crypto.randomUUID();
+          const lifecycle: RoleAssignmentLifecycleSnapshot | null =
+            cycleId && proposed.reviewAt !== null
+              ? {
+                  cycleId,
+                  riskTier: riskSnapshot.tier,
+                  riskReasons: riskSnapshot.reasons,
+                  riskAssessedAt: riskSnapshot.assessedAt,
+                  permissionFingerprint: riskSnapshot.permissionFingerprint,
+                  scopeFingerprint: riskSnapshot.scopeFingerprint,
+                  reviewDeadline: proposed.reviewAt,
+                  graceExceptionExpiresAt: null,
+                  suspendedAt: null,
+                  suspensionCause: null,
+                  predecessorAssignmentId: null,
+                  successorAssignmentId: null,
+                  lineageAction: null,
+                }
+              : null;
+          const assignmentId = crypto.randomUUID();
           const assignment: AssignmentDocument = {
-            _id: crypto.randomUUID(),
+            _id: assignmentId,
             roleId: proposed.roleId,
             userId: command.targetUserId,
             structuredScopeGrants: [...proposed.structuredScopeGrants],
@@ -277,6 +371,7 @@ export class AccessAssignmentApplyAdminService {
             effectiveAt: proposed.effectiveAt,
             expiresAt: proposed.expiresAt,
             reviewAt: proposed.reviewAt,
+            lifecycle,
             assignedBy: actor.id,
             assignedAt: now,
             revokedAt: null,
@@ -295,7 +390,41 @@ export class AccessAssignmentApplyAdminService {
             createdAt: now,
             updatedAt: now,
           };
+          const slot = buildAuthoritySlotIdentity({
+            userId: assignment.userId,
+            roleId: assignment.roleId,
+            structuredScopeGrants: assignment.structuredScopeGrants,
+            scopeFingerprint: assignment.scopeFingerprint,
+          });
+          await this.authoritySlots.reserve(
+            {
+              ...slot,
+              lineageId: assignmentId,
+              assignmentId,
+              assignmentExpiresAt: assignment.expiresAt,
+              transitionIdentity: `role.assign-to-user:${assignmentId}`,
+              now,
+            },
+            session,
+          );
           appliedAssignments.push(assignment);
+          if (cycleId && proposed.reviewAt !== null) {
+            reviewCycleDocuments.push({
+              _id: cycleId,
+              assignmentId,
+              targetUserId: command.targetUserId,
+              requestedBy: actor.id,
+              requestedAt: now,
+              riskSnapshot,
+              reviewDeadline: proposed.reviewAt,
+              state: "PENDING",
+              approvals: [],
+              decidedAt: null,
+              nextReviewDeadline: null,
+              reason: applyReason,
+              createdAt: now,
+            });
+          }
           trackedRoleIds.add(proposed.roleId);
         }
 
@@ -320,6 +449,51 @@ export class AccessAssignmentApplyAdminService {
           }
           throw error;
         }
+        if (reviewCycleDocuments.length > 0) {
+          await this.reviewCycles.insertMany(reviewCycleDocuments, {
+            ordered: true,
+            session,
+          });
+        }
+        const sourceRoleAssignmentIds = appliedAssignments.map(
+          (item) => item._id,
+        );
+        const generatedPrerequisites: GeneratedAccessPrerequisiteDocument[] = [
+          ...accountContextResult.appliedAccountContexts.map((context) => ({
+            _id: crypto.randomUUID(),
+            targetUserId: command.targetUserId,
+            sourceRoleAssignmentIds,
+            kind: "ACCOUNT_CONTEXT" as const,
+            value: context,
+            status: "ACTIVE" as const,
+            createdAt: now,
+            revokedAt: null,
+          })),
+          ...responsibilityOperationResult.items
+            .filter(
+              (
+                item,
+              ): item is typeof item & { responsibilityAssignmentId: string } =>
+                item.operation === "CREATE" &&
+                item.responsibilityAssignmentId !== null,
+            )
+            .map((item) => ({
+              _id: crypto.randomUUID(),
+              targetUserId: command.targetUserId,
+              sourceRoleAssignmentIds,
+              kind: "RESPONSIBILITY" as const,
+              value: item.responsibilityAssignmentId,
+              status: "ACTIVE" as const,
+              createdAt: now,
+              revokedAt: null,
+            })),
+        ];
+        if (generatedPrerequisites.length > 0) {
+          await this.generatedPrerequisites.insertMany(generatedPrerequisites, {
+            ordered: true,
+            session,
+          });
+        }
 
         for (const roleId of trackedRoleIds) {
           await this.roles.updateOne(
@@ -340,13 +514,17 @@ export class AccessAssignmentApplyAdminService {
             assignmentTarget: preview.assignmentTarget,
             assignmentIds: appliedAssignments.map((item) => item._id),
             roleIds: appliedAssignments.map((item) => item.roleId),
-            scopeFingerprints: appliedAssignments.map((item) => item.scopeFingerprint),
+            scopeFingerprints: appliedAssignments.map(
+              (item) => item.scopeFingerprint,
+            ),
             reason: applyReason,
             bundleExpansion: preview.bundleExpansion ?? null,
             bundleAssignmentId: bundleAssignment?._id ?? null,
-            responsibilityRequirements: preview.responsibilityRequirements ?? [],
+            responsibilityRequirements:
+              preview.responsibilityRequirements ?? [],
             responsibilityOperationResult,
-            accountContextRequirement: preview.accountContextRequirement ?? null,
+            accountContextRequirement:
+              preview.accountContextRequirement ?? null,
             accountContextResult,
             sensitiveAccess: preview.sensitiveAccess ?? null,
             sourceTrace: preview.sourceTrace ?? null,
@@ -389,6 +567,7 @@ export class AccessAssignmentApplyAdminService {
             effectiveAt: assignment.effectiveAt,
             expiresAt: assignment.expiresAt ?? null,
             reviewAt: assignment.reviewAt ?? null,
+            lifecycle: assignment.lifecycle ?? null,
             assignedBy: assignment.assignedBy,
             assignedAt: assignment.assignedAt,
             origin: assignment.origin,
@@ -452,7 +631,9 @@ export class AccessAssignmentApplyAdminService {
     session: ClientSession,
   ): Promise<void> {
     if (!actor.isActive) {
-      throw new RoleDependencyError(`Assignment actor is not ACTIVE: ${actor.id}`);
+      throw new RoleDependencyError(
+        `Assignment actor is not ACTIVE: ${actor.id}`,
+      );
     }
     const actorUser = await this.users.findOne(
       {
@@ -464,7 +645,9 @@ export class AccessAssignmentApplyAdminService {
       { session },
     );
     if (!actorUser) {
-      throw new RoleDependencyError(`Assignment actor is not assignable: ${actor.id}`);
+      throw new RoleDependencyError(
+        `Assignment actor is not assignable: ${actor.id}`,
+      );
     }
   }
 
@@ -718,50 +901,11 @@ export class AccessAssignmentApplyAdminService {
   ): Promise<RoleDocument> {
     const role = await this.roles.findOne({ _id: roleId }, { session });
     if (!role || role.state !== "ACTIVE") {
-      throw new RoleDependencyError(`Role must be ACTIVE to apply assignment: ${roleId}`);
-    }
-    return role;
-  }
-
-  private assertRoleDelegationAllowed(role: RoleDocument): void {
-    if ((role.delegationBand ?? "LIMITED") === "FOUNDATION") {
       throw new RoleDependencyError(
-        `Role ${role._id} in delegation band FOUNDATION cannot be assigned on apply path`,
+        `Role must be ACTIVE to apply assignment: ${roleId}`,
       );
     }
-  }
-
-  private async assertActorCanDelegateRoleBand(
-    actorId: string,
-    targetBand: RoleDelegationBand,
-    roleId: string,
-    session: ClientSession,
-  ): Promise<void> {
-    const actorAssignments = await this.assignments
-      .find({ userId: actorId, state: "ACTIVE" }, { session })
-      .toArray();
-    const now = Date.now();
-    const activeActorAssignments = actorAssignments.filter((assignment) =>
-      isRoleAssignmentCurrentlyEffective(assignment, now),
-    );
-    const actorRoleIds = [...new Set(activeActorAssignments.map((item) => item.roleId))];
-    const actorRoles = actorRoleIds.length
-      ? await this.roles
-          .find({ _id: { $in: actorRoleIds }, state: "ACTIVE" }, { session })
-          .toArray()
-      : [];
-
-    if (
-      actorRoles.some((role) =>
-        isDelegationCeilingSufficient(role.maxDelegatableBand ?? "NONE", targetBand),
-      )
-    ) {
-      return;
-    }
-
-    throw new RoleDependencyError(
-      `Delegation denied: actor ${actorId} lacks active role delegation ceiling for role ${roleId} band ${targetBand}`,
-    );
+    return role;
   }
 
   private async assertAssignmentRulesAllow(params: {
@@ -802,6 +946,97 @@ export class AccessAssignmentApplyAdminService {
   }
 }
 
+export function assertRoleDelegationAllowed(role: {
+  readonly _id: string;
+  readonly delegationBand?: RoleDelegationBand;
+}): void {
+  if ((role.delegationBand ?? "LIMITED") === "FOUNDATION") {
+    throw new RoleDependencyError(
+      `Role ${role._id} in delegation band FOUNDATION cannot be assigned on apply path`,
+    );
+  }
+}
+
+export async function assertActorCanDelegateRoleBand(
+  actorId: string,
+  targetBand: RoleDelegationBand,
+  roleId: string,
+  assignments: DelegationCollection<AssignmentDocument>,
+  roles: DelegationCollection<RoleDocument>,
+  session?: ClientSession,
+  now: number = Date.now(),
+): Promise<void> {
+  const actorAssignments = await assignments
+    .find(
+      { userId: actorId, state: { $in: ["ACTIVE", "SCHEDULED"] } },
+      session ? { session } : {},
+    )
+    .toArray();
+  const actorRoleIds = [
+    ...new Set(actorAssignments.map((item) => item.roleId)),
+  ];
+  const actorRoles = actorRoleIds.length
+    ? await roles
+        .find(
+          { _id: { $in: actorRoleIds }, state: "ACTIVE" },
+          session ? { session } : {},
+        )
+        .toArray()
+    : [];
+  const actorRoleById = new Map(actorRoles.map((role) => [role._id, role]));
+  const activeActorAssignments = actorAssignments.filter((assignment) => {
+    const role = actorRoleById.get(assignment.roleId);
+    if (!role) return false;
+    const scopeFingerprint =
+      assignment.scopeFingerprint ??
+      buildRoleAssignmentScopeFingerprint(assignment.structuredScopeGrants);
+    const currentPolicy = buildCurrentRoleAssignmentPolicy({
+      roleCode: role.code,
+      roleTemplateCode: role.templateCode ?? role.code,
+      permissions: role.permissions,
+      structuredScopeGrants: assignment.structuredScopeGrants,
+      effectiveAt: assignment.effectiveAt,
+      durableReviewDeadline:
+        assignment.lifecycle?.reviewDeadline ?? assignment.reviewAt,
+      durableRiskTier: assignment.lifecycle?.riskTier ?? null,
+      storedPermissionFingerprint:
+        assignment.lifecycle?.permissionFingerprint ?? null,
+      assessedAt: now,
+      scopeFingerprint,
+    });
+    return isRoleAssignmentCurrentlyEffective(assignment, now, currentPolicy);
+  });
+  const activeActorRoleIds = new Set(
+    activeActorAssignments.map((assignment) => assignment.roleId),
+  );
+
+  if (
+    actorRoles.some(
+      (role) =>
+        activeActorRoleIds.has(role._id) &&
+        isDelegationCeilingSufficient(
+          role.maxDelegatableBand ?? "NONE",
+          targetBand,
+        ),
+    )
+  ) {
+    return;
+  }
+
+  throw new RoleDependencyError(
+    `Delegation denied: actor ${actorId} lacks active role delegation ceiling for role ${roleId} band ${targetBand}`,
+  );
+}
+
+interface DelegationCollection<T> {
+  find(
+    filter: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ): {
+    toArray(): Promise<T[]>;
+  };
+}
+
 function buildBlockedApplyResult(
   preview: Record<string, unknown>,
   blockers: readonly Record<string, unknown>[],
@@ -822,9 +1057,11 @@ function buildBlockedApplyResult(
       materialized: false,
       materializationPolicy: "NOT_APPLIED_BLOCKED",
       requirement: preview.accountContextRequirement ?? null,
-      previousAccountContexts: readAccountContextRequirement(preview).currentAccountContexts,
+      previousAccountContexts:
+        readAccountContextRequirement(preview).currentAccountContexts,
       appliedAccountContexts: [],
-      resultingAccountContexts: readAccountContextRequirement(preview).currentAccountContexts,
+      resultingAccountContexts:
+        readAccountContextRequirement(preview).currentAccountContexts,
       grantsAuthorityByItself: false,
     },
     consoleEntitlementResult: preview.consoleEntitlementPreview ?? null,
@@ -850,21 +1087,41 @@ function readProposedAssignments(
   }
   return preview.proposedAssignments.map((item, index) => {
     if (!isRecord(item)) {
-      throw new RoleValidationError(`proposedAssignments[${index}] must be an object`);
+      throw new RoleValidationError(
+        `proposedAssignments[${index}] must be an object`,
+      );
     }
     return {
-      roleId: readRequiredString(item.roleId, `proposedAssignments[${index}].roleId`),
-      roleCode: readRequiredString(item.roleCode, `proposedAssignments[${index}].roleCode`),
-      roleName: readRequiredString(item.roleName, `proposedAssignments[${index}].roleName`),
+      roleId: readRequiredString(
+        item.roleId,
+        `proposedAssignments[${index}].roleId`,
+      ),
+      roleCode: readRequiredString(
+        item.roleCode,
+        `proposedAssignments[${index}].roleCode`,
+      ),
+      roleName: readRequiredString(
+        item.roleName,
+        `proposedAssignments[${index}].roleName`,
+      ),
       permissions: readStringArray(item.permissions),
       structuredScopeGrants: readScopeGrants(item.structuredScopeGrants),
       scopeFingerprint: readRequiredString(
         item.scopeFingerprint,
         `proposedAssignments[${index}].scopeFingerprint`,
       ),
-      effectiveAt: readRequiredNumber(item.effectiveAt, `proposedAssignments[${index}].effectiveAt`),
-      expiresAt: readNullableNumber(item.expiresAt, `proposedAssignments[${index}].expiresAt`),
-      reviewAt: readNullableNumber(item.reviewAt, `proposedAssignments[${index}].reviewAt`),
+      effectiveAt: readRequiredNumber(
+        item.effectiveAt,
+        `proposedAssignments[${index}].effectiveAt`,
+      ),
+      expiresAt: readNullableNumber(
+        item.expiresAt,
+        `proposedAssignments[${index}].expiresAt`,
+      ),
+      reviewAt: readNullableNumber(
+        item.reviewAt,
+        `proposedAssignments[${index}].reviewAt`,
+      ),
       origin: item.origin === "BUNDLE" ? "BUNDLE" : "DIRECT",
       bundleOrigin: isRecord(item.bundleOrigin)
         ? {
@@ -978,14 +1235,11 @@ function readAccountContextRequirement(preview: Record<string, unknown>): {
     ? preview.accountContextRequirement
     : {};
   return {
-    status:
-      typeof requirement.status === "string" ? requirement.status : null,
+    status: typeof requirement.status === "string" ? requirement.status : null,
     requiredAccountContexts: readStringArray(
       requirement.requiredAccountContexts,
     ),
-    currentAccountContexts: readStringArray(
-      requirement.currentAccountContexts,
-    ),
+    currentAccountContexts: readStringArray(requirement.currentAccountContexts),
     proposedAccountContexts: readStringArray(
       requirement.proposedAccountContexts,
     ),

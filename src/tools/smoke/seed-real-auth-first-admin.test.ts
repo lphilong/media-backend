@@ -400,129 +400,23 @@ test("seed builders construct expected stable user, role, and assignment shapes"
   });
 });
 
-test("dry-run plans missing records without writes", async () => {
+test("legacy smoke seed is retired before reads or writes", async () => {
   const fake = createFakeCollections();
-  const plan = await runSmokeSeed(
-    fake.collections,
-    baseInput(),
-    { mode: "dry-run", now: NOW, randomUUID: ids() },
+  await assert.rejects(
+    runSmokeSeed(fake.collections, baseInput(), {
+      mode: "write",
+      now: NOW,
+      randomUUID: ids(),
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof SmokeSeedError);
+      assert.equal(error.code, "SMOKE_SEED_RETIRED_USE_FIRST_ADMIN_BOOTSTRAP");
+      return true;
+    },
   );
-
-  assert.deepEqual(plan.actions, {
-    user: "create",
-    role: "create",
-    assignment: "create",
-  });
   assert.equal(fake.users.inserted.length, 0);
   assert.equal(fake.roles.inserted.length, 0);
   assert.equal(fake.assignments.inserted.length, 0);
-});
-
-test("write mode creates missing user, role, and role assignment", async () => {
-  const fake = createFakeCollections();
-  const plan = await runSmokeSeed(
-    fake.collections,
-    baseInput(),
-    { mode: "write", now: NOW, randomUUID: ids() },
-  );
-
-  const expected = exactSeedDocuments();
-  assert.deepEqual(plan.actions, {
-    user: "create",
-    role: "create",
-    assignment: "create",
-  });
-  assert.deepEqual(fake.users.inserted, [expected.user]);
-  assert.deepEqual(fake.roles.inserted, [expected.role]);
-  assert.deepEqual(fake.assignments.inserted, [
-    expected.assignment,
-  ]);
-});
-
-test("exact existing seed data is no-op", async () => {
-  const expected = exactSeedDocuments();
-  const fake = createFakeCollections({
-    users: [expected.user],
-    roles: [expected.role],
-    assignments: [expected.assignment],
-  });
-
-  const plan = await runSmokeSeed(
-    fake.collections,
-    baseInput(),
-    { mode: "write", now: NOW, randomUUID: ids() },
-  );
-
-  assert.deepEqual(plan.actions, {
-    user: "no-op",
-    role: "no-op",
-    assignment: "no-op",
-  });
-  assert.equal(fake.users.inserted.length, 0);
-  assert.equal(fake.roles.inserted.length, 0);
-  assert.equal(fake.assignments.inserted.length, 0);
-});
-
-test("divergent existing linked user fails closed", async () => {
-  const expected = exactSeedDocuments();
-  const divergentUser = {
-    ...expected.user,
-    accountStatus: "DISABLED",
-  } as UserSeedDocument;
-  const fake = createFakeCollections({
-    users: [divergentUser],
-  });
-
-  await assert.rejects(
-    runSmokeSeed(fake.collections, baseInput(), {
-      mode: "dry-run",
-      now: NOW,
-      randomUUID: ids(),
-    }),
-    /Linked Auth0 user exists but does not match/u,
-  );
-});
-
-test("divergent existing smoke role code fails closed", async () => {
-  const expected = exactSeedDocuments();
-  const divergentRole = {
-    ...expected.role,
-    permissions: [Permission.USER_VIEW],
-  };
-  const fake = createFakeCollections({
-    roles: [divergentRole],
-  });
-
-  await assert.rejects(
-    runSmokeSeed(fake.collections, baseInput(), {
-      mode: "dry-run",
-      now: NOW,
-      randomUUID: ids(),
-    }),
-    /Smoke role code exists but does not match/u,
-  );
-});
-
-test("active assignment to missing role fails closed", async () => {
-  const expected = exactSeedDocuments();
-  const fake = createFakeCollections({
-    users: [expected.user],
-    assignments: [
-      {
-        ...expected.assignment,
-        roleId: "missing-role-id",
-      },
-    ],
-  });
-
-  await assert.rejects(
-    runSmokeSeed(fake.collections, baseInput(), {
-      mode: "dry-run",
-      now: NOW,
-      randomUUID: ids(),
-    }),
-    /Active role assignment points to a missing or inactive role/u,
-  );
 });
 
 test("runtime collection factory touches only allowed seed collections", async () => {
@@ -544,11 +438,7 @@ test("runtime collection factory touches only allowed seed collections", async (
     },
   };
 
-  await runSmokeSeed(
-    createMongoSeedCollections(db as never),
-    baseInput(),
-    { mode: "dry-run", now: NOW, randomUUID: ids() },
-  );
+  createMongoSeedCollections(db as never);
 
   assert.deepEqual(touched, [
     "users",
@@ -750,7 +640,7 @@ test("first-admin bootstrap assigns OWNER_ADMIN and scope grants", async () => {
   });
 });
 
-test("first-admin bootstrap repairs missing scopes and preserves existing scopes", async () => {
+test("first-admin bootstrap fails closed instead of repairing legacy coarse OWNER_ADMIN authority", async () => {
   const fixture = createFirstAdminFixture();
   fixture.roles.addRuntimeRoles();
   fixture.users.records.push(makeBootstrapUser({ id: "existing-user" }));
@@ -772,19 +662,11 @@ test("first-admin bootstrap repairs missing scopes and preserves existing scopes
     updatedAt: 1,
   });
 
-  const summary = await fixture.run();
-
-  assert.equal(summary.assignment.action, "updated");
-  assert.deepEqual(fixture.assignments.records[0]?.scopeGrants, {
-    workSchedule: ["self", "global"],
-    eventAssignment: ["global"],
-    contractRegistry: ["global"],
-    talentKpi: ["global"],
-    kpi: ["global", "self"],
-    revenueLedger: ["global"],
-    commission: ["global"],
-    dashboardLite: ["global"],
-  });
+  await assert.rejects(
+    () => fixture.run(),
+    bootstrapErrorWithCode("FIRST_ADMIN_LEGACY_OWNER_AUTHORITY_BLOCKED"),
+  );
+  assert.equal(fixture.assignments.updateScopeGrantsCalls, 0);
 });
 
 test("first-admin bootstrap rerun is idempotent and creates no six-account set", async () => {
@@ -1012,6 +894,10 @@ function createFirstAdminFixture() {
     roleRepository: roles,
     userRepository: users,
     assignmentRepository: assignments,
+    lifecycleRepository: {
+      insertReviewCycle: async (record) => record,
+    },
+    isActivePrimaryOwner: async () => true,
     transactionRunner: new BootstrapFakeTransactionRunner(),
     now: () => NOW,
     idFactory: () => `first-admin-id-${nextId++}`,

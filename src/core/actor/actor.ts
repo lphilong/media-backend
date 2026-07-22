@@ -125,6 +125,7 @@ export class Actor {
   readonly accountContexts: readonly AccountContext[];
   readonly trace?: ActorTrace;
   readonly isActive: boolean;
+  readonly authorizationValidUntil?: number;
 
   constructor(params: {
     id: string;
@@ -136,6 +137,7 @@ export class Actor {
     accountContexts?: readonly AccountContext[];
     trace?: ActorTrace;
     isActive: boolean;
+    authorizationValidUntil?: number;
   }) {
     if (!params.id) {
       throw new SystemInvariantError(
@@ -155,6 +157,17 @@ export class Actor {
     this.accountContexts = normalizeAccountContexts(params.accountContexts);
     this.trace = params.trace;
     this.isActive = params.isActive;
+    if (
+      params.authorizationValidUntil !== undefined &&
+      (!Number.isFinite(params.authorizationValidUntil) ||
+        params.authorizationValidUntil <= 0)
+    ) {
+      throw new SystemInvariantError(
+        "ACTOR_INVALID_PAYLOAD",
+        "Actor authorizationValidUntil must be a positive finite timestamp",
+      );
+    }
+    this.authorizationValidUntil = params.authorizationValidUntil;
 
     Object.freeze(this);
   }

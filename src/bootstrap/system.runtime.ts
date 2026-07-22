@@ -38,6 +38,12 @@ import { writeCanonicalHttpErrorResponse } from "@app/http/http-error-response.c
 import { getSystemWorkerRegistrations } from "./system-worker.registrar";
 import { RunningSystemWorker } from "./system-worker.contract";
 import { measureStartupStage } from "./startup-timing";
+import { MongoAuthoritativeAdminMutationBridge } from "@core/application/mongo-authoritative-admin-mutation.bridge";
+import { AuditGuard } from "@core/audit/audit.guard";
+import { AuditContext } from "@core/audit/audit.context";
+import { MongoAuditLogger } from "@core/audit/mongo.audit.logger";
+import { MongoAuditWriteRepository } from "@infra/mongo/audit/audit.write.repository";
+import { AccessDeadlineWorkerService } from "@modules/role/admin/admin.access-deadline-worker.service";
 
 type RuntimeProcess = {
   readonly pid: number;
@@ -133,6 +139,7 @@ const defaultSystemRuntimeDependencies: SystemRuntimeDependencies = {
 
 const POLL_BATCH_SIZE = 20;
 const POLL_IDLE_DELAY_MS = 500;
+const ACCESS_DEADLINE_POLL_DELAY_MS = 30_000;
 const SHUTDOWN_TIMEOUT_MS = 30_000;
 const CRASH_RATE_WINDOW_MS = env.WORKER_CRASH_WINDOW_MS;
 const CRASH_RATE_THRESHOLD = env.WORKER_CRASH_THRESHOLD;
@@ -331,6 +338,21 @@ async function startSystemRuntimeWithTiming(params: {
   const dispatcher = deps.createDispatcherFn(queueAdapter);
 
   const outboxRepo = deps.createOutboxRepoFn(primaryDb);
+  const systemMutationBridge =
+    new MongoAuthoritativeAdminMutationBridge(
+      mongo.client,
+      primaryDb,
+      container.logger,
+    );
+  const systemAuditGuard = new AuditGuard(
+    new MongoAuditLogger(new MongoAuditWriteRepository(primaryDb)),
+    new AuditContext(),
+  );
+  const accessDeadlineWorker = new AccessDeadlineWorkerService(
+    primaryDb,
+    systemAuditGuard,
+    systemMutationBridge,
+  );
 
   const metricsServer = deps.createMetricsServerFn(
     (
@@ -528,6 +550,8 @@ async function startSystemRuntimeWithTiming(params: {
       createOutboxPollerFn: deps.createOutboxPollerFn,
       pollBatchSize: POLL_BATCH_SIZE,
       pollIdleDelayMs: POLL_IDLE_DELAY_MS,
+      accessDeadlineWorker,
+      accessDeadlinePollDelayMs: ACCESS_DEADLINE_POLL_DELAY_MS,
       onSystemInvariantFailure: handleSystemInvariantCrash,
     });
 

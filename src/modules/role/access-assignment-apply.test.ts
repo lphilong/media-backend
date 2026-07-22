@@ -25,6 +25,7 @@ import { adminRoleRoutes } from "@modules/role/admin/admin.role.routes";
 import { AdminRoleBundleController } from "@modules/role/admin/admin.role-bundle.controller";
 import { adminRoleBundleRoutes } from "@modules/role/admin/admin.role-bundle.routes";
 import { getRoleTemplate } from "@modules/role/domain/role-template.catalog";
+import { buildAuthoritySlotIdentity } from "@modules/role/domain/authority-slot";
 
 const CANONICAL_ASSIGNMENT_TARGET_CODES = [
   "HR_OPERATIONS",
@@ -48,8 +49,8 @@ const TRUE_LEGACY_ASSIGNMENT_TARGET_CODES = [
   "TALENT_STAFF_SELF",
 ] as const;
 
-const EFFECTIVE_AT = Date.UTC(2026, 0, 1);
-const REVIEW_AT_30_DAYS = Date.UTC(2026, 0, 31);
+const EFFECTIVE_AT = Date.now() - 1_000;
+const REVIEW_AT_30_DAYS = EFFECTIVE_AT + 30 * 24 * 60 * 60 * 1_000;
 
 test("access assignment apply creates role assignment with audit trace and effective access", async () => {
   const audit = fakeAudit();
@@ -101,11 +102,98 @@ test("access assignment apply creates role assignment with audit trace and effec
   assert.equal(audit.records.length, 1);
   assert.equal(readPath(result, ["auditTrace", "written"]), true);
   assert.equal(
-    (readPath(result, ["effectiveAccessAfterApply", "permissions"]) as readonly string[])
-      .includes(Permission.WORK_SCHEDULE_READ),
+    (
+      readPath(result, [
+        "effectiveAccessAfterApply",
+        "permissions",
+      ]) as readonly string[]
+    ).includes(Permission.WORK_SCHEDULE_READ),
     true,
   );
   assert.equal(invalidator.calls.length, 1);
+});
+
+test("authoritative apply reclaims an expired persisted assignment at its timed slot boundary", async () => {
+  const db = baseApplyDb({
+    targetContexts: ["STAFF_CONSOLE"],
+    targetRoleCode: "STAFF_CONSOLE_USER",
+    targetRolePermissions: [Permission.WORK_SCHEDULE_READ],
+  });
+  const slot = buildAuthoritySlotIdentity({
+    userId: "target-user",
+    roleId: "role-STAFF_CONSOLE_USER",
+    structuredScopeGrants: [{ scopeType: "self" }],
+  });
+  db.rows("role_assignments").push({
+    _id: "assignment-expired",
+    roleId: "role-STAFF_CONSOLE_USER",
+    userId: "target-user",
+    structuredScopeGrants: [{ scopeType: "self" }],
+    scopeFingerprint: "scope:v1:self",
+    state: "ACTIVE",
+    effectiveAt: 1,
+    expiresAt: 2,
+    reviewAt: null,
+    lifecycle: null,
+    assignedBy: "access-admin",
+    assignedAt: 1,
+    origin: "DIRECT",
+    bundleOrigin: null,
+    reason: "expired authority",
+    createdAt: 1,
+    updatedAt: 1,
+  });
+  db.collection("role_assignment_authority_slots");
+  db.rows("role_assignment_authority_slots").push({
+    _id: slot.id,
+    userId: slot.userId,
+    roleId: slot.roleId,
+    scopeFingerprint: slot.scopeFingerprint,
+    schemaVersion: 1,
+    status: "RESERVED",
+    lineageId: "assignment-expired",
+    currentAssignmentId: "assignment-expired",
+    scheduledSuccessorAssignmentId: null,
+    successorEffectiveAt: null,
+    releaseAt: 2,
+    predecessorReleaseAt: null,
+    transitionIdentity: "expired:assignment-expired",
+    version: 1,
+    createdAt: 1,
+    updatedAt: 1,
+  });
+  const audit = fakeAudit();
+  const result = await withTrace(() =>
+    new AccessAssignmentApplyAdminService(
+      db,
+      audit.guard,
+      fakeBridge(),
+      fakeInvalidator().service,
+    ).apply(actor(), {
+      targetUserId: "target-user",
+      assignmentTargetType: "ROLE_TEMPLATE",
+      assignmentTargetCode: "STAFF_CONSOLE_USER",
+      structuredScopeGrants: [{ scopeType: "self" }],
+      reason: "reclaim exact expired authority slot",
+    }),
+  );
+
+  assert.equal(result.applied, true);
+  assert.equal(
+    db.rows("role_assignments").filter((row) => row.userId === "target-user")
+      .length,
+    2,
+  );
+  const reclaimedSlot = db
+    .rows("role_assignment_authority_slots")
+    .find((row) => row.currentAssignmentId !== "assignment-expired");
+  assert.ok(reclaimedSlot);
+  assert.equal(
+    reclaimedSlot.version,
+    2,
+    JSON.stringify(db.rows("role_assignment_authority_slots")),
+  );
+  assert.equal(audit.records.length, 1);
 });
 
 test("access assignment apply re-previews and blocks canonical Role drift introduced after preview", async () => {
@@ -123,7 +211,9 @@ test("access assignment apply re-previews and blocks canonical Role drift introd
     structuredScopeGrants: [{ scopeType: "self" as const }],
     reason: "re-preview drift guard",
   };
-  const preview = await new AccessAssignmentPreviewAdminService(db).preview(command);
+  const preview = await new AccessAssignmentPreviewAdminService(db).preview(
+    command,
+  );
   assert.equal(preview.canApply, true);
 
   const targetRole = db
@@ -135,9 +225,13 @@ test("access assignment apply re-previews and blocks canonical Role drift introd
 
   const result = await withTrace(() => applyWithFakes(db, command));
   assert.equal(result.applied, false);
-  assert.equal(readCodes(result.blockers).includes("ROLE_TEMPLATE_DRIFT_STALE"), true);
   assert.equal(
-    db.rows("role_assignments").filter((row) => row.userId === "target-user").length,
+    readCodes(result.blockers).includes("ROLE_TEMPLATE_DRIFT_STALE"),
+    true,
+  );
+  assert.equal(
+    db.rows("role_assignments").filter((row) => row.userId === "target-user")
+      .length,
     0,
   );
   assert.deepEqual(targetRole.permissions, template.permissions.slice(1));
@@ -182,13 +276,21 @@ test("access assignment apply permits canonical target roles through preview cla
     const inserted = db
       .rows("role_assignments")
       .find((row) => row.userId === "target-user");
-    assert.equal(result.applied, true);
-    assert.equal(result.applyStatus, "APPLIED");
-    assert.deepEqual(readCodes(result.blockers), []);
-    assert.equal(inserted?.roleId, `role-${code}`);
-    assert.equal(inserted?.reviewAt, REVIEW_AT_30_DAYS);
-    assert.equal(readPath(result, ["sensitiveAccess", "isGlobalLike"]), true);
-    assert.equal(readPath(result, ["sensitiveAccess", "requiresReview"]), true);
+    assert.equal(result.applied, true, code);
+    assert.equal(result.applyStatus, "APPLIED", code);
+    assert.deepEqual(readCodes(result.blockers), [], code);
+    assert.equal(inserted?.roleId, `role-${code}`, code);
+    assert.equal(inserted?.reviewAt, REVIEW_AT_30_DAYS, code);
+    assert.equal(
+      readPath(result, ["sensitiveAccess", "isGlobalLike"]),
+      true,
+      code,
+    );
+    assert.equal(
+      readPath(result, ["sensitiveAccess", "requiresReview"]),
+      true,
+      code,
+    );
     assert.equal(
       readPath(result, [
         "effectiveAccessAfterApply",
@@ -197,6 +299,7 @@ test("access assignment apply permits canonical target roles through preview cla
         "isGlobalLike",
       ]),
       true,
+      code,
     );
     assert.equal(
       readPath(result, [
@@ -206,6 +309,7 @@ test("access assignment apply permits canonical target roles through preview cla
         "requiresReview",
       ]),
       true,
+      code,
     );
   }
 });
@@ -829,7 +933,14 @@ test("access assignment lifecycle lists target-user assignments with audit summa
   ).listForTargetUser("target-user");
 
   assert.equal(readPath(result, ["targetUser", "id"]), "target-user");
-  assert.deepEqual(result.supportedLifecycleActions, ["REVOKE"]);
+  assert.deepEqual(result.supportedLifecycleActions, [
+    "REVIEW",
+    "GRACE_EXCEPTION",
+    "RENEWAL",
+    "REPLACEMENT",
+    "RESTORATION",
+    "REVOKE",
+  ]);
   assert.equal(
     readPath(result, ["items", 0, "assignmentId"]),
     "assignment-target",
@@ -882,12 +993,13 @@ test("access assignment lifecycle lists sensitive and global classification", as
   assert.equal(readPath(result, ["items", 0, "isGlobalLike"]), true);
   assert.equal(readPath(result, ["items", 0, "isHighRisk"]), true);
   assert.equal(readPath(result, ["items", 0, "requiresReview"]), true);
-  assert.equal(readPath(result, ["items", 0, "isBreakGlassLike"]), true);
+  assert.equal(readPath(result, ["items", 0, "isBreakGlassLike"]), false);
 });
 
 test("access assignment lifecycle revoke requires reason, writes audit, invalidates cache, and returns effective access", async () => {
   const audit = fakeAudit();
   const invalidator = fakeInvalidator();
+  const bridgeEffects = { securityChanges: 0, explicitNoOps: 0 };
   const db = fakeDb({
     users: [
       activeUser("access-admin", ["ADMIN_CONSOLE"]),
@@ -903,7 +1015,7 @@ test("access assignment lifecycle revoke requires reason, writes audit, invalida
     new AccessAssignmentLifecycleAdminService(
       db,
       audit.guard,
-      fakeBridge(),
+      fakeBridge(bridgeEffects),
       invalidator.service,
     ).revoke(actor(), {
       assignmentId: "assignment-target",
@@ -924,6 +1036,54 @@ test("access assignment lifecycle revoke requires reason, writes audit, invalida
     [],
   );
   assert.equal(invalidator.calls.length, 1);
+  assert.equal(bridgeEffects.securityChanges, 1);
+  assert.equal(bridgeEffects.explicitNoOps, 0);
+});
+
+test("revoke bumps security truth once when duplicate permission coverage hides a structured-scope reduction", async () => {
+  const bridgeEffects = { securityChanges: 0, explicitNoOps: 0 };
+  const db = fakeDb({
+    users: [
+      activeUser("access-admin", ["ADMIN_CONSOLE"]),
+      activeUser("target-user", ["STAFF_CONSOLE"]),
+    ],
+    roles: [
+      role("role-shared", "STAFF_CONSOLE_USER", [
+        Permission.WORK_SCHEDULE_READ,
+      ]),
+    ],
+    role_assignments: [
+      {
+        ...targetAssignment("assignment-global", "role-shared"),
+        structuredScopeGrants: [{ scopeType: "global" }],
+        scopeFingerprint: "scope:v1:global",
+      },
+      {
+        ...targetAssignment("assignment-self", "role-shared"),
+        structuredScopeGrants: [{ scopeType: "self" }],
+        scopeFingerprint: "scope:v1:self",
+      },
+    ],
+  });
+  const result = await withTrace(() =>
+    new AccessAssignmentLifecycleAdminService(
+      db,
+      fakeAudit().guard,
+      fakeBridge(bridgeEffects),
+      fakeInvalidator().service,
+    ).revoke(actor(), {
+      assignmentId: "assignment-global",
+      reason: "Remove global scope while retaining self scope",
+    }),
+  );
+  assert.equal(result.revoked, true);
+  assert.equal(bridgeEffects.securityChanges, 1);
+  assert.equal(bridgeEffects.explicitNoOps, 0);
+  assert.equal(
+    db.rows("role_assignments").find((item) => item._id === "assignment-self")
+      ?.state,
+    "ACTIVE",
+  );
 });
 
 test("access assignment lifecycle revoke blocks missing reason, self revoke, and already inactive assignments", async () => {
@@ -1190,7 +1350,10 @@ function actor(extraPermissions: readonly Permission[] = []): Actor {
   });
 }
 
-function fakeBridge(): AuthoritativeAdminMutationBridge {
+function fakeBridge(effects?: {
+  securityChanges: number;
+  explicitNoOps: number;
+}): AuthoritativeAdminMutationBridge {
   return {
     async execute<T>(
       _params: unknown,
@@ -1201,8 +1364,12 @@ function fakeBridge(): AuthoritativeAdminMutationBridge {
     ): Promise<T> {
       return runWithDomainEventCollector(async () => {
         const result = await mutate({} as ClientSession, {
-          markAuthSecurityTruthChanged() {},
-          markExplicitNoOpSuccess() {},
+          markAuthSecurityTruthChanged() {
+            if (effects) effects.securityChanges += 1;
+          },
+          markExplicitNoOpSuccess() {
+            if (effects) effects.explicitNoOps += 1;
+          },
         });
         return result;
       });
@@ -1299,9 +1466,19 @@ function actorDelegationAssignment(
     structuredScopeGrants: [{ scopeType: "global" }],
     scopeFingerprint: "scope:v1:global",
     state: "ACTIVE",
-    effectiveAt: 1,
+    effectiveAt: EFFECTIVE_AT,
     expiresAt: null,
-    reviewAt: null,
+    reviewAt: REVIEW_AT_30_DAYS,
+    lifecycle: {
+      version: "access-lifecycle/v1",
+      riskTier: "HIGH",
+      reviewDeadline: REVIEW_AT_30_DAYS,
+      permissionFingerprint: null,
+      scopeFingerprint: "scope:v1:global",
+      graceExceptionExpiresAt: null,
+      successorAssignmentId: null,
+      successorEffectiveAt: null,
+    },
     assignedBy: "system",
     assignedAt: 1,
     revokedAt: null,

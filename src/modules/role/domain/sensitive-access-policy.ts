@@ -1,17 +1,33 @@
 import { Permission } from "@core/permission/permission.enum";
 import { RoleAssignmentScopeGrant } from "./role-assignment-scope";
 import { getRoleBundle } from "./role-bundle.catalog";
-import { getRoleTemplate, normalizeRoleTemplateCode } from "./role-template.catalog";
+import {
+  getRoleTemplate,
+  normalizeRoleTemplateCode,
+} from "./role-template.catalog";
+import { AccessRiskSnapshot } from "./access-lifecycle-policy";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const SENSITIVE_ACCESS_DEFAULT_REVIEW_WINDOW_DAYS = 90;
 export const PRIVILEGED_ACCESS_REVIEW_WINDOW_DAYS = 30;
-export const BREAK_GLASS_ACCESS_WINDOW_DAYS = 14;
 
+export function resolveCanonicalAccessReviewWindowMs(
+  classification: Pick<SensitiveAccessClassification, "maxReviewWindowDays">,
+): number {
+  return (
+    (classification.maxReviewWindowDays ??
+      SENSITIVE_ACCESS_DEFAULT_REVIEW_WINDOW_DAYS) * DAY_MS
+  );
+}
+
+export const CANONICAL_PRIVILEGED_ACCESS_ROLE_CODES = Object.freeze([
+  "OWNER_ADMIN",
+  "ACCESS_ADMIN",
+] as const);
 const OWNER_ADMIN_ROLE_CODES = new Set(["OWNER_ADMIN"]);
 const ACCESS_GOVERNANCE_ROLE_CODES = new Set(["ACCESS_ADMIN"]);
-const SENSITIVE_ROLE_CODES = new Set([
+export const CANONICAL_HIGH_RISK_ROLE_CODES = Object.freeze([
   "OWNER_ADMIN",
   "ACCESS_ADMIN",
   "HR_TERMS_APPROVER",
@@ -21,7 +37,8 @@ const SENSITIVE_ROLE_CODES = new Set([
   "ATTENDANCE_APPROVER",
   "MONTHLY_CLOSE_OWNER",
   "PAYROLL_DRAFT_APPROVER",
-]);
+] as const);
+const SENSITIVE_ROLE_CODES = new Set<string>(CANONICAL_HIGH_RISK_ROLE_CODES);
 
 const HIGH_RISK_ROLE_CATEGORIES = new Set([
   "ADMINISTRATION",
@@ -35,7 +52,7 @@ const HIGH_RISK_ROLE_CATEGORIES = new Set([
   "PAYROLL_APPROVAL",
 ]);
 
-const ACCESS_GOVERNANCE_PERMISSIONS = new Set<string>([
+export const CANONICAL_ACCESS_GOVERNANCE_PERMISSIONS = Object.freeze([
   Permission.USER_CREATE,
   Permission.USER_EDIT,
   Permission.USER_ACTIVATE,
@@ -55,30 +72,54 @@ const ACCESS_GOVERNANCE_PERMISSIONS = new Set<string>([
   Permission.ROLE_ASSIGN_TO_USER,
   Permission.ROLE_REVOKE_FROM_USER,
   Permission.ROLE_ASSIGNMENT_VIEW,
-]);
+  Permission.ROLE_ASSIGNMENT_REVIEW,
+  Permission.ROLE_ASSIGNMENT_GRACE_APPROVE,
+  Permission.ROLE_ASSIGNMENT_RENEW,
+  Permission.ROLE_ASSIGNMENT_REPLACE,
+  Permission.OWNER_SUCCESSION_MANAGE,
+  Permission.BREAK_GLASS_REQUEST,
+  Permission.BREAK_GLASS_ACTIVATE,
+  Permission.BREAK_GLASS_END,
+  Permission.BREAK_GLASS_APPROVE,
+  Permission.BREAK_GLASS_REVIEW,
+] as const);
+const ACCESS_GOVERNANCE_PERMISSIONS = new Set<string>(
+  CANONICAL_ACCESS_GOVERNANCE_PERMISSIONS,
+);
 
-const SENSITIVE_PERMISSION_REASONS: Readonly<Record<string, string>> = Object.freeze({
-  [Permission.EMPLOYMENT_TERMS_READ_SENSITIVE]:
-    "HRET salary/allowance sensitive read permission",
-  [Permission.EMPLOYMENT_TERMS_APPROVE]:
-    "HRET salary/allowance approval permission",
-  [Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE]:
-    "Platform Earnings approval permission",
-  [Permission.REVENUE_LEDGER_PLATFORM_EARNING_VOID]:
-    "Platform Earnings void permission",
-  [Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW]:
-    "Platform Earnings reject/archive review permission",
-  [Permission.REVENUE_LEDGER_RECONCILE]:
-    "Revenue reconciliation permission",
-  [Permission.REVENUE_LEDGER_MANAGE_LIFECYCLE]:
-    "Revenue lifecycle approve/void/archive permission",
-  [Permission.KPI_FINALIZE]:
-    "KPI finalization permission",
-  [Permission.KPI_CORRECT_ACTUAL]:
-    "KPI actual correction permission",
-  [Permission.COMMISSION_SETTLEMENT_MANAGE_LIFECYCLE]:
-    "Commission settlement lifecycle permission cataloged for future SoD",
-});
+const SENSITIVE_PERMISSION_REASONS: Readonly<Record<string, string>> =
+  Object.freeze({
+    [Permission.EMPLOYMENT_TERMS_READ_SENSITIVE]:
+      "HRET salary/allowance sensitive read permission",
+    [Permission.EMPLOYMENT_TERMS_APPROVE]:
+      "HRET salary/allowance approval permission",
+    [Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE]:
+      "Platform Earnings approval permission",
+    [Permission.REVENUE_LEDGER_PLATFORM_EARNING_VOID]:
+      "Platform Earnings void permission",
+    [Permission.REVENUE_LEDGER_PLATFORM_EARNING_REVIEW]:
+      "Platform Earnings reject/archive review permission",
+    [Permission.REVENUE_LEDGER_RECONCILE]: "Revenue reconciliation permission",
+    [Permission.REVENUE_LEDGER_MANAGE_LIFECYCLE]:
+      "Revenue lifecycle approve/void/archive permission",
+    [Permission.KPI_FINALIZE]: "KPI finalization permission",
+    [Permission.KPI_CORRECT_ACTUAL]: "KPI actual correction permission",
+    [Permission.COMMISSION_SETTLEMENT_MANAGE_LIFECYCLE]:
+      "Commission settlement lifecycle permission cataloged for future SoD",
+  });
+
+export const CANONICAL_SENSITIVE_PERMISSIONS = Object.freeze(
+  Object.keys(SENSITIVE_PERMISSION_REASONS).sort(),
+);
+
+export const CANONICAL_HIGH_RISK_PERMISSIONS = Object.freeze(
+  [
+    ...new Set([
+      ...CANONICAL_ACCESS_GOVERNANCE_PERMISSIONS,
+      ...CANONICAL_SENSITIVE_PERMISSIONS,
+    ]),
+  ].sort(),
+);
 
 const GLOBAL_LIKE_SCOPES = new Set(["global", "financeGlobal"]);
 
@@ -156,8 +197,7 @@ export function classifySensitiveAccess(
         highRiskRoleCodes.add(roleCode);
       }
       if (OWNER_ADMIN_ROLE_CODES.has(roleCode)) {
-        isBreakGlassLike = true;
-        riskReasons.add("Owner Admin break-glass-like access");
+        riskReasons.add("Non-production Owner Admin privileged test access");
       }
       if (
         OWNER_ADMIN_ROLE_CODES.has(roleCode) ||
@@ -198,13 +238,11 @@ export function classifySensitiveAccess(
     sensitiveRoleCodes.size > 0 ||
     sensitivePermissions.size > 0 ||
     catalogSensitive;
-  const maxWindow = isBreakGlassLike
-    ? BREAK_GLASS_ACCESS_WINDOW_DAYS
-    : isPrivilegedAccessGovernance
-      ? PRIVILEGED_ACCESS_REVIEW_WINDOW_DAYS
-      : isSensitive || isGlobalLike
-        ? SENSITIVE_ACCESS_DEFAULT_REVIEW_WINDOW_DAYS
-        : null;
+  const maxWindow = isPrivilegedAccessGovernance
+    ? PRIVILEGED_ACCESS_REVIEW_WINDOW_DAYS
+    : isSensitive || isGlobalLike
+      ? SENSITIVE_ACCESS_DEFAULT_REVIEW_WINDOW_DAYS
+      : null;
 
   return {
     isSensitive,
@@ -215,8 +253,8 @@ export function classifySensitiveAccess(
     isBreakGlassLike,
     isPrivilegedAccessGovernance,
     maxReviewWindowDays: maxWindow,
-    requiresExpiry: isBreakGlassLike,
-    maxExpiryWindowDays: isBreakGlassLike ? BREAK_GLASS_ACCESS_WINDOW_DAYS : null,
+    requiresExpiry: false,
+    maxExpiryWindowDays: null,
     globalScopes,
     sensitiveRoleCodes: [...sensitiveRoleCodes].sort(),
     highRiskRoleCodes: [...highRiskRoleCodes].sort(),
@@ -274,6 +312,95 @@ export function validateSensitiveAccessLifecycle(
   return { blockers };
 }
 
+export function buildAccessRiskSnapshot(input: {
+  readonly assignments: readonly SensitiveAccessPolicyAssignment[];
+  readonly assessedAt: number;
+  readonly scopeFingerprint: string;
+  readonly catalogSensitive?: boolean;
+}): AccessRiskSnapshot {
+  const classification = classifySensitiveAccess(input.assignments, {
+    catalogSensitive: input.catalogSensitive,
+  });
+  const permissions = [
+    ...new Set(input.assignments.flatMap((item) => item.permissions ?? [])),
+  ].sort();
+  return Object.freeze({
+    tier: classification.isHighRisk ? "HIGH" : "LOW",
+    reasons: Object.freeze([...classification.riskReasons]),
+    assessedAt: input.assessedAt,
+    permissionFingerprint: `permission:v1:${permissions
+      .map((permission) => encodeURIComponent(permission))
+      .join(";")}`,
+    scopeFingerprint: input.scopeFingerprint,
+  });
+}
+
+export function buildCurrentRoleAssignmentPolicy(input: {
+  readonly roleCode?: string | null;
+  readonly roleTemplateCode?: string | null;
+  readonly permissions: readonly string[];
+  readonly structuredScopeGrants?: readonly RoleAssignmentScopeGrant[];
+  readonly effectiveAt?: number | null;
+  readonly durableReviewDeadline?: number | null;
+  readonly durableRiskTier?: "HIGH" | "LOW" | string | null;
+  readonly storedPermissionFingerprint?: string | null;
+  readonly assessedAt: number;
+  readonly scopeFingerprint: string;
+}): {
+  readonly riskTier: "HIGH" | "LOW";
+  readonly reviewDeadline: number | null;
+  readonly permissionFingerprint: string;
+  readonly scopeFingerprint: string;
+  readonly permissionFingerprintDrifted: boolean;
+  readonly snapshot: AccessRiskSnapshot;
+} {
+  const snapshot = buildAccessRiskSnapshot({
+    assignments: [
+      {
+        roleCode: input.roleCode,
+        roleTemplateCode: input.roleTemplateCode,
+        permissions: input.permissions,
+        structuredScopeGrants: input.structuredScopeGrants,
+      },
+    ],
+    assessedAt: input.assessedAt,
+    scopeFingerprint: input.scopeFingerprint,
+  });
+  const classification = classifySensitiveAccess([
+    {
+      roleCode: input.roleCode,
+      roleTemplateCode: input.roleTemplateCode,
+      permissions: input.permissions,
+      structuredScopeGrants: input.structuredScopeGrants,
+    },
+  ]);
+  const effectiveAt = input.effectiveAt;
+  const durableReviewDeadline = input.durableReviewDeadline;
+  const durableDeadlineMatchesCurrentCycle =
+    typeof durableReviewDeadline === "number" &&
+    Number.isFinite(durableReviewDeadline) &&
+    durableReviewDeadline >= 0 &&
+    input.durableRiskTier === snapshot.tier;
+  const reviewDeadline = durableDeadlineMatchesCurrentCycle
+    ? durableReviewDeadline
+    : classification.requiresReview &&
+        typeof effectiveAt === "number" &&
+        Number.isFinite(effectiveAt) &&
+        effectiveAt >= 0
+      ? effectiveAt + resolveCanonicalAccessReviewWindowMs(classification)
+      : null;
+  return Object.freeze({
+    riskTier: snapshot.tier,
+    reviewDeadline,
+    permissionFingerprint: snapshot.permissionFingerprint,
+    scopeFingerprint: snapshot.scopeFingerprint,
+    permissionFingerprintDrifted:
+      typeof input.storedPermissionFingerprint === "string" &&
+      input.storedPermissionFingerprint !== snapshot.permissionFingerprint,
+    snapshot,
+  });
+}
+
 function normalizeRoleCodes(
   values: readonly (string | null | undefined)[],
 ): readonly string[] {
@@ -287,7 +414,9 @@ function normalizeRoleCodes(
   ];
 }
 
-function normalizeOptionalCode(value: string | null | undefined): string | null {
+function normalizeOptionalCode(
+  value: string | null | undefined,
+): string | null {
   return typeof value === "string" && value.trim()
     ? normalizeRoleTemplateCode(value)
     : null;

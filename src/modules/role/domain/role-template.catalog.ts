@@ -8,6 +8,7 @@ import {
 } from "./role-template-integrity";
 
 export const ROLE_TEMPLATE_CODES = [
+  "OWNER_GOVERNANCE",
   "OWNER_ADMIN",
   "ACCESS_ADMIN",
   "HR_OPERATIONS",
@@ -181,6 +182,7 @@ const ASSIGNABLE_ROLE_TEMPLATE_STATUSES = new Set<RoleAssignabilityStatus>([
 ]);
 
 const RESTRICTED_SENSITIVE_ROLE_CODES = new Set<RoleTemplateCode>([
+  "OWNER_GOVERNANCE",
   "OWNER_ADMIN",
   "ACCESS_ADMIN",
   "HR_TERMS_APPROVER",
@@ -227,6 +229,16 @@ export const LEGACY_ROLE_TEMPLATE_COMPATIBILITY: readonly LegacyRoleTemplateMapp
   ]);
 
 const GOVERNANCE_PERMISSIONS = Object.freeze([
+  Permission.ROLE_ASSIGNMENT_VIEW,
+  Permission.ROLE_ASSIGNMENT_REVIEW,
+  Permission.ROLE_ASSIGNMENT_GRACE_APPROVE,
+  Permission.ROLE_ASSIGNMENT_RENEW,
+  Permission.ROLE_ASSIGNMENT_REPLACE,
+  Permission.BREAK_GLASS_REQUEST,
+  Permission.BREAK_GLASS_END,
+  Permission.BREAK_GLASS_APPROVE,
+  Permission.BREAK_GLASS_REVIEW,
+  Permission.OWNER_SUCCESSION_MANAGE,
   Permission.USER_VIEW,
   Permission.USER_CREATE,
   Permission.USER_EDIT,
@@ -248,7 +260,6 @@ const GOVERNANCE_PERMISSIONS = Object.freeze([
   Permission.ROLE_ASSIGNMENT_RULE_SET,
   Permission.ROLE_ASSIGN_TO_USER,
   Permission.ROLE_REVOKE_FROM_USER,
-  Permission.ROLE_ASSIGNMENT_VIEW,
 ]);
 
 const PEOPLE_OPERATIONS_PERMISSIONS = Object.freeze([
@@ -439,6 +450,30 @@ const GLOBAL_SCOPE_PLAN: readonly RoleTemplateScopePlanEntry[] = Object.freeze([
 export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
   Object.freeze([
     template({
+      code: "OWNER_GOVERNANCE",
+      name: "Owner Governance",
+      description:
+        "Minimal production Owner governance, succession, and bounded break-glass authority.",
+      category: "ACCESS_GOVERNANCE",
+      recommendedAccountContext: "ADMIN_CONSOLE",
+      permissions: Object.freeze([
+        Permission.OWNER_GOVERNANCE_VIEW,
+        Permission.OWNER_SUCCESSION_MANAGE,
+        Permission.BREAK_GLASS_REQUEST,
+        Permission.BREAK_GLASS_ACTIVATE,
+        Permission.BREAK_GLASS_END,
+      ]),
+      recommendedScopeGrants: scopeGrants({}),
+      scopePlan: [scopePlan("Owner Governance", ["global"], "READY")],
+      warnings: [
+        "Does not grant operational HR, Finance, Contract, Revenue, Talent, or Work Schedule authority.",
+      ],
+      implementationNotes: [
+        "Owner identity is resolved from the governance-principal registry, not Role possession.",
+      ],
+      status: "READY",
+    }),
+    template({
       code: "OWNER_ADMIN",
       name: "Owner Admin",
       description: "Owner-controlled full administration preset.",
@@ -457,7 +492,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
       }),
       scopePlan: GLOBAL_SCOPE_PLAN,
       warnings: [
-        "Owner Admin is the explicit break-glass role and includes every current assignable permission; compatibility-only permissions remain excluded.",
+        "Owner Admin is a non-production test superuser only; it is not break-glass and contributes no production authority.",
         "Separation-of-duties constraints are not enforced by the template catalog.",
       ],
       implementationNotes: [
@@ -690,9 +725,7 @@ export const ROLE_TEMPLATE_CATALOG: readonly RoleTemplateDefinition[] =
         workSchedule: Object.freeze(["team"]),
         eventAssignment: Object.freeze(["managedGroup"]),
       }),
-      scopePlan: [
-        scopePlan("Talent Group", ["managedTalentGroup"], "READY"),
-      ],
+      scopePlan: [scopePlan("Talent Group", ["managedTalentGroup"], "READY")],
       warnings: [
         "Talent KPI object scope remains future policy; role enforcement remains permission-based.",
       ],
@@ -1288,6 +1321,7 @@ export function operatorRequiredScopeTypesForRoleTemplate(
 ): readonly RoleAssignmentScopeType[] {
   const normalized = normalizeRoleTemplateCode(code);
   switch (normalized) {
+    case "OWNER_GOVERNANCE":
     case "OWNER_ADMIN":
     case "ACCESS_ADMIN":
     case "KPI_OPERATIONS":

@@ -22,6 +22,20 @@ export const AUTHORITATIVE_ADMIN_MUTATION_IDENTITIES = [
   "role.set-assignment-rules",
   "role.assign-to-user",
   "role.revoke-from-user",
+  "role.assignment.review",
+  "role.assignment.grace-request",
+  "role.assignment.grace-approve",
+  "role.assignment.renew",
+  "role.assignment.replace",
+  "role.assignment.restore",
+  "break-glass.request",
+  "break-glass.approve",
+  "break-glass.activate",
+  "break-glass.end",
+  "break-glass.review",
+  "owner.succession.propose",
+  "owner.succession.approve",
+  "owner.succession.activate",
   "org-unit.create",
   "org-unit.update",
   "org-unit.move",
@@ -226,6 +240,20 @@ const ADMIN_MUTATION_PERMISSION_BY_IDENTITY: Readonly<
   "role.set-assignment-rules": Permission.ROLE_ASSIGNMENT_RULE_SET,
   "role.assign-to-user": Permission.ROLE_ASSIGN_TO_USER,
   "role.revoke-from-user": Permission.ROLE_REVOKE_FROM_USER,
+  "role.assignment.review": Permission.ROLE_ASSIGNMENT_REVIEW,
+  "role.assignment.grace-request": Permission.ROLE_ASSIGNMENT_REVIEW,
+  "role.assignment.grace-approve": Permission.ROLE_ASSIGNMENT_GRACE_APPROVE,
+  "role.assignment.renew": Permission.ROLE_ASSIGNMENT_RENEW,
+  "role.assignment.replace": Permission.ROLE_ASSIGNMENT_REPLACE,
+  "role.assignment.restore": Permission.ROLE_ASSIGNMENT_RENEW,
+  "break-glass.request": Permission.BREAK_GLASS_REQUEST,
+  "break-glass.approve": Permission.BREAK_GLASS_APPROVE,
+  "break-glass.activate": Permission.BREAK_GLASS_ACTIVATE,
+  "break-glass.end": Permission.BREAK_GLASS_END,
+  "break-glass.review": Permission.BREAK_GLASS_REVIEW,
+  "owner.succession.propose": Permission.OWNER_SUCCESSION_MANAGE,
+  "owner.succession.approve": Permission.OWNER_SUCCESSION_MANAGE,
+  "owner.succession.activate": Permission.OWNER_SUCCESSION_MANAGE,
 
   "org-unit.create": Permission.ORG_UNIT_CREATE,
   "org-unit.update": Permission.ORG_UNIT_UPDATE,
@@ -378,22 +406,14 @@ const ADMIN_MUTATION_PERMISSION_BY_IDENTITY: Readonly<
   "contract-registry.expire": Permission.CONTRACT_REGISTRY_MANAGE_LIFECYCLE,
   "contract-registry.terminate": Permission.CONTRACT_REGISTRY_MANAGE_LIFECYCLE,
   "contract-registry.archive": Permission.CONTRACT_REGISTRY_MANAGE_LIFECYCLE,
-  "contract-obligation.create":
-    Permission.CONTRACT_OBLIGATION_MANAGE_DRAFT,
-  "contract-obligation.update":
-    Permission.CONTRACT_OBLIGATION_MANAGE_DRAFT,
-  "contract-obligation.open":
-    Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
-  "contract-obligation.deliver":
-    Permission.CONTRACT_OBLIGATION_DELIVER,
-  "contract-obligation.reject":
-    Permission.CONTRACT_OBLIGATION_REVIEW,
-  "contract-obligation.reopen":
-    Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
-  "contract-obligation.accept":
-    Permission.CONTRACT_OBLIGATION_REVIEW,
-  "contract-obligation.cancel":
-    Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
+  "contract-obligation.create": Permission.CONTRACT_OBLIGATION_MANAGE_DRAFT,
+  "contract-obligation.update": Permission.CONTRACT_OBLIGATION_MANAGE_DRAFT,
+  "contract-obligation.open": Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
+  "contract-obligation.deliver": Permission.CONTRACT_OBLIGATION_DELIVER,
+  "contract-obligation.reject": Permission.CONTRACT_OBLIGATION_REVIEW,
+  "contract-obligation.reopen": Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
+  "contract-obligation.accept": Permission.CONTRACT_OBLIGATION_REVIEW,
+  "contract-obligation.cancel": Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
   "contract-obligation.archive":
     Permission.CONTRACT_OBLIGATION_MANAGE_LIFECYCLE,
   "contract-obligation.event-evidence-link.create":

@@ -1,27 +1,35 @@
-import { ClientSession, Collection, Db } from "mongodb";
+import { Collection, Db } from "mongodb";
 import { Actor } from "@core/actor/actor";
 import { AuditGuard } from "@core/audit/audit.guard";
-import {
-  AuthoritativeAdminMutationBridge,
-} from "@core/application/authoritative-admin-mutation.bridge";
+import { AuthoritativeAdminMutationBridge } from "@core/application/authoritative-admin-mutation.bridge";
 import { ActorSnapshotCacheInvalidator } from "@infra/cache/actor.snapshot.cache";
 import { getTraceIdOrThrow } from "@core/trace/trace.context";
 import { Permission } from "@core/permission/permission.enum";
 import { PermissionResolver } from "@core/permission/permission.resolver";
 import { getCurrentDomainEventCollector } from "@system/event-bridge/domain-event.types";
 import { createRoleRevokedFromUserEvent } from "@modules/role/domain/role.events";
-import { isRoleAssignmentCurrentlyEffective } from "@modules/role/domain/role-assignment-lifecycle";
+import { evaluateRoleAssignmentEffectiveness } from "@modules/role/domain/role-assignment-lifecycle";
 import {
   RoleAssignmentScopeGrant,
   buildRoleAssignmentScopeFingerprint,
 } from "@modules/role/domain/role-assignment-scope";
-import { classifySensitiveAccess } from "@modules/role/domain/sensitive-access-policy";
+import {
+  buildCurrentRoleAssignmentPolicy,
+  classifySensitiveAccess,
+} from "@modules/role/domain/sensitive-access-policy";
 import {
   RoleDependencyError,
   RoleValidationError,
 } from "@modules/role/domain/role.errors";
 import { UserRoleAssignmentRecord } from "@modules/role/domain/role.types";
 import { EffectiveAccessAdminService } from "./admin.effective-access.service";
+import { AccessAuthorityReconciliationService } from "./access-authority-reconciliation.service";
+import { buildAuthoritySlotIdentity } from "@modules/role/domain/authority-slot";
+import { NativeMongoAuthoritySlotRepository } from "@infra/mongo/role/authority-slot.repository";
+import {
+  isRoleAssignmentOperationallyManageable,
+  resolveRoleAssignmentOperationalState,
+} from "@modules/role/domain/role-assignment-operational-state";
 
 interface AssignmentDocument {
   readonly _id: string;
@@ -29,10 +37,12 @@ interface AssignmentDocument {
   readonly userId: string;
   readonly structuredScopeGrants?: readonly RoleAssignmentScopeGrant[];
   readonly scopeFingerprint?: string;
-  readonly state: "ACTIVE" | "REVOKED";
+  readonly state:
+    "ACTIVE" | "SCHEDULED" | "SUSPENDED" | "SUPERSEDED" | "REVOKED";
   readonly effectiveAt: number | null;
   readonly expiresAt?: number | null;
   readonly reviewAt?: number | null;
+  readonly lifecycle?: UserRoleAssignmentRecord["lifecycle"];
   readonly assignedBy?: string | null;
   readonly assignedAt?: number;
   readonly revokedAt: number | null;
@@ -75,6 +85,8 @@ export class AccessAssignmentLifecycleAdminService {
   private readonly assignments: Collection<AssignmentDocument>;
   private readonly roles: Collection<RoleDocument>;
   private readonly users: Collection<UserDocument>;
+  private readonly reconciliation: AccessAuthorityReconciliationService;
+  private readonly authoritySlots: NativeMongoAuthoritySlotRepository;
 
   constructor(
     private readonly db: Db,
@@ -82,19 +94,24 @@ export class AccessAssignmentLifecycleAdminService {
     private readonly mutationBridge: AuthoritativeAdminMutationBridge,
     private readonly actorSnapshotCacheInvalidator: ActorSnapshotCacheInvalidator,
   ) {
-    this.assignments =
-      db.collection<AssignmentDocument>("role_assignments");
+    this.assignments = db.collection<AssignmentDocument>("role_assignments");
     this.roles = db.collection<RoleDocument>("roles");
     this.users = db.collection<UserDocument>("users");
+    this.reconciliation = new AccessAuthorityReconciliationService(db);
+    this.authoritySlots = new NativeMongoAuthoritySlotRepository(db);
   }
 
-  async listForTargetUser(targetUserId: unknown): Promise<Record<string, unknown>> {
+  async listForTargetUser(
+    targetUserId: unknown,
+  ): Promise<Record<string, unknown>> {
     const normalizedTargetUserId = normalizeRequiredText(
       targetUserId,
       "targetUserId",
     );
     const now = Date.now();
-    const targetUser = await this.users.findOne({ _id: normalizedTargetUserId });
+    const targetUser = await this.users.findOne({
+      _id: normalizedTargetUserId,
+    });
     if (!targetUser) {
       throw new RoleDependencyError(
         `Access assignment target user not found: ${normalizedTargetUserId}`,
@@ -118,10 +135,21 @@ export class AccessAssignmentLifecycleAdminService {
       readOnly: true,
       sourceTruth: false,
       targetUser: toUserSummary(targetUser),
-      supportedLifecycleActions: ["REVOKE"],
-      unsupportedLifecycleActions: ["DISABLE", "EXPIRE", "ARCHIVE"],
+      supportedLifecycleActions: [
+        "REVIEW",
+        "GRACE_EXCEPTION",
+        "RENEWAL",
+        "REPLACEMENT",
+        "RESTORATION",
+        "REVOKE",
+      ],
+      unsupportedLifecycleActions: ["IN_PLACE_RENEWAL", "DIRECT_REACTIVATION"],
       items: assignmentDocs.map((assignment) =>
-        toAssignmentLifecycleView(assignment, roleById.get(assignment.roleId), now),
+        toAssignmentLifecycleView(
+          assignment,
+          roleById.get(assignment.roleId),
+          now,
+        ),
       ),
       generatedAt: new Date(now).toISOString(),
     };
@@ -191,12 +219,11 @@ export class AccessAssignmentLifecycleAdminService {
           });
         }
 
-        const permissionCoverageBefore = await this.readPermissionCoverage(
-          role.permissions,
-          session,
-        );
         const updated = await this.assignments.findOneAndUpdate(
-          { _id: assignmentId, state: "ACTIVE" },
+          {
+            _id: assignmentId,
+            state: { $in: ["ACTIVE", "SCHEDULED", "SUSPENDED"] },
+          },
           {
             $set: {
               state: "REVOKED",
@@ -223,6 +250,33 @@ export class AccessAssignmentLifecycleAdminService {
             now,
           });
         }
+
+        const slot = buildAuthoritySlotIdentity({
+          userId: updated.userId,
+          roleId: updated.roleId,
+          structuredScopeGrants: updated.structuredScopeGrants,
+          scopeFingerprint: updated.scopeFingerprint,
+        });
+        await this.authoritySlots.releaseAssignment(
+          slot.id,
+          updated._id,
+          `role.revoke-from-user:${updated._id}`,
+          now,
+          session,
+        );
+
+        await this.reconciliation.reconcileReducedAssignment(
+          updated._id,
+          actor.id,
+          now,
+          session,
+        );
+        await this.reconciliation.reconcileBundleParent(
+          updated.bundleOrigin?.bundleAssignmentId,
+          actor.id,
+          now,
+          session,
+        );
 
         await this.roles.updateOne(
           { _id: role._id },
@@ -266,15 +320,7 @@ export class AccessAssignmentLifecycleAdminService {
           }),
         );
 
-        if (
-          hasPermissionCoverageDelta({
-            permissions: role.permissions,
-            before: permissionCoverageBefore,
-            after: await this.readPermissionCoverage(role.permissions, session),
-          })
-        ) {
-          controls.markAuthSecurityTruthChanged();
-        }
+        controls.markAuthSecurityTruthChanged();
 
         return {
           revoked: true,
@@ -338,7 +384,9 @@ export class AccessAssignmentLifecycleAdminService {
 
     const blockers: Record<string, unknown>[] = [];
 
-    if (params.assignment.state !== "ACTIVE") {
+    if (
+      !isRoleAssignmentOperationallyManageable(params.assignment, params.now)
+    ) {
       blockers.push(
         blocker(
           "ASSIGNMENT_ALREADY_INACTIVE",
@@ -358,61 +406,11 @@ export class AccessAssignmentLifecycleAdminService {
 
     if (!params.role) {
       blockers.push(
-        blocker(
-          "ROLE_NOT_FOUND",
-          "Access assignment role was not found.",
-        ),
+        blocker("ROLE_NOT_FOUND", "Access assignment role was not found."),
       );
     }
 
     return blockers;
-  }
-
-  private async readPermissionCoverage(
-    permissions: readonly string[],
-    session: ClientSession,
-  ): Promise<Readonly<Record<string, readonly string[]>>> {
-    const permissionList = [...new Set(permissions)].sort();
-    if (permissionList.length === 0) {
-      return {};
-    }
-
-    const assignments = await this.assignments
-      .find({ state: "ACTIVE" }, { session })
-      .toArray();
-    const roleIds = [...new Set(assignments.map((assignment) => assignment.roleId))];
-    const roles = roleIds.length
-      ? await this.roles
-          .find({ _id: { $in: roleIds }, state: "ACTIVE" }, { session })
-          .toArray()
-      : [];
-    const roleById = new Map(roles.map((role) => [role._id, role]));
-    const now = Date.now();
-    const coverage: Record<string, string[]> = Object.fromEntries(
-      permissionList.map((permission) => [permission, []]),
-    );
-
-    for (const assignment of assignments) {
-      if (!isRoleAssignmentCurrentlyEffective(assignment, now)) {
-        continue;
-      }
-      const role = roleById.get(assignment.roleId);
-      if (!role) {
-        continue;
-      }
-      for (const permission of permissionList) {
-        if (role.permissions.includes(permission)) {
-          coverage[permission]?.push(assignment.userId);
-        }
-      }
-    }
-
-    return Object.fromEntries(
-      Object.entries(coverage).map(([permission, users]) => [
-        permission,
-        [...new Set(users)].sort(),
-      ]),
-    );
   }
 }
 
@@ -421,9 +419,9 @@ function toAssignmentLifecycleView(
   role: RoleDocument | undefined | null,
   now: number,
 ): Record<string, unknown> {
-  const currentlyEffective = isRoleAssignmentCurrentlyEffective(assignment, now);
   const scopeFingerprint =
-    assignment.scopeFingerprint ?? buildRoleAssignmentScopeFingerprint(undefined);
+    assignment.scopeFingerprint ??
+    buildRoleAssignmentScopeFingerprint(undefined);
   const structuredScopeGrants = assignment.structuredScopeGrants ?? [];
   const accessRisk = classifySensitiveAccess([
     {
@@ -434,6 +432,33 @@ function toAssignmentLifecycleView(
       bundleCode: assignment.bundleOrigin?.bundleCode ?? null,
     },
   ]);
+  const currentPolicy = role
+    ? buildCurrentRoleAssignmentPolicy({
+        roleCode: role.code,
+        roleTemplateCode: role.templateCode ?? role.code,
+        permissions: role.permissions,
+        structuredScopeGrants,
+        effectiveAt: assignment.effectiveAt,
+        durableReviewDeadline:
+          assignment.lifecycle?.reviewDeadline ?? assignment.reviewAt,
+        durableRiskTier: assignment.lifecycle?.riskTier ?? null,
+        storedPermissionFingerprint:
+          assignment.lifecycle?.permissionFingerprint ?? null,
+        assessedAt: now,
+        scopeFingerprint,
+      })
+    : undefined;
+  const effectiveness = evaluateRoleAssignmentEffectiveness(
+    assignment,
+    now,
+    currentPolicy,
+  );
+  const currentlyEffective = effectiveness.effective;
+  const operational = resolveRoleAssignmentOperationalState(
+    assignment,
+    now,
+    currentPolicy,
+  );
 
   return {
     assignmentId: assignment._id,
@@ -447,16 +472,17 @@ function toAssignmentLifecycleView(
     scopeFingerprint,
     status: assignment.state,
     lifecycleState: assignment.state,
+    operationalState: operational.state,
     currentlyEffective,
-    inactiveReason:
-      assignment.state !== "ACTIVE"
-        ? assignment.state
-        : currentlyEffective
-          ? null
-          : "NOT_CURRENTLY_EFFECTIVE",
+    inactiveReason: currentlyEffective
+      ? null
+      : (effectiveness.reason ?? assignment.state),
     effectiveAt: assignment.effectiveAt,
     expiresAt: assignment.expiresAt ?? null,
     reviewAt: assignment.reviewAt ?? null,
+    lifecycle: assignment.lifecycle ?? null,
+    nextAuthorityTransitionAt: effectiveness.nextTransitionAt ?? null,
+    authorityEndsAt: effectiveness.authorityEndsAt ?? null,
     assignedBy: assignment.assignedBy ?? null,
     assignedAt: assignment.assignedAt ?? assignment.createdAt,
     revokedAt: assignment.revokedAt,
@@ -472,21 +498,35 @@ function toAssignmentLifecycleView(
     requiresReview: accessRisk.requiresReview,
     isBreakGlassLike: accessRisk.isBreakGlassLike,
     accessRisk,
-    supportedActions: assignment.state === "ACTIVE" ? ["REVOKE"] : [],
+    currentPermissionFingerprint: currentPolicy?.permissionFingerprint ?? null,
+    permissionFingerprintDrifted: Boolean(
+      currentPolicy &&
+      assignment.lifecycle?.permissionFingerprint &&
+      assignment.lifecycle.permissionFingerprint !==
+        currentPolicy.permissionFingerprint,
+    ),
+    supportedActions:
+      operational.state === "OPERATIONALLY_ACTIVE"
+        ? ["REVIEW", "GRACE_EXCEPTION", "RENEWAL", "REPLACEMENT", "REVOKE"]
+        : operational.state === "OPERATIONALLY_SUSPENDED"
+          ? ["RENEWAL", "REPLACEMENT", "RESTORATION", "REVOKE"]
+          : operational.state === "FUTURE_SCHEDULED"
+            ? ["REVOKE"]
+            : [],
     auditSummary: {
       assignmentId: assignment._id,
       action: assignment.state === "REVOKED" ? "REVOKE" : "ASSIGN",
       actorId:
         assignment.state === "REVOKED"
-          ? assignment.revokedBy ?? null
-          : assignment.assignedBy ?? null,
+          ? (assignment.revokedBy ?? null)
+          : (assignment.assignedBy ?? null),
       timestamp:
         assignment.state === "REVOKED"
           ? assignment.revokedAt
-          : assignment.assignedAt ?? assignment.createdAt,
+          : (assignment.assignedAt ?? assignment.createdAt),
       reason:
         assignment.state === "REVOKED"
-          ? assignment.revokeReason ?? null
+          ? (assignment.revokeReason ?? null)
           : assignment.reason,
       oldStatus: assignment.state === "REVOKED" ? "ACTIVE" : null,
       newStatus: assignment.state,
@@ -544,26 +584,6 @@ function toUserSummary(user: UserDocument): Record<string, unknown> {
 
 function blocker(code: string, summary: string): Record<string, unknown> {
   return { severity: "BLOCKER", code, summary };
-}
-
-function hasPermissionCoverageDelta(params: {
-  readonly permissions: readonly string[];
-  readonly before: Readonly<Record<string, readonly string[]>>;
-  readonly after: Readonly<Record<string, readonly string[]>>;
-}): boolean {
-  for (const permission of params.permissions) {
-    const before = params.before[permission] ?? [];
-    const after = params.after[permission] ?? [];
-    if (before.length !== after.length) {
-      return true;
-    }
-    for (let index = 0; index < before.length; index += 1) {
-      if (before[index] !== after[index]) {
-        return true;
-      }
-    }
-  }
-  return false;
 }
 
 function readTargetUserId(value: Record<string, unknown>): string {

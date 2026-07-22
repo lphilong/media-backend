@@ -4,6 +4,11 @@ import { SystemInvariantError } from "@core/error/system-error";
 import { PermissionContract } from "@core/permission/permission.contract";
 import { AuthoritativeAdminMutationIdentity } from "./authoritative-admin-mutation.permission-map";
 import {
+  AuthoritativeSystemMutationCommand,
+  AuthoritativeSystemMutationIdentity,
+  RegisteredSystemWorkerInvocation,
+} from "./authoritative-system-mutation.policy";
+import {
   DomainEvent,
   PersistableDomainEvent,
   isPersistableDomainEvent,
@@ -32,6 +37,26 @@ export interface AuthoritativeAdminMutationBridge {
   ): Promise<T>;
 }
 
+export interface AuthoritativeSystemMutationBridgeParams {
+  readonly actor: Actor;
+  readonly traceId: string;
+  readonly mutationIdentity: AuthoritativeSystemMutationIdentity;
+  readonly mutationTargetDescriptor: string;
+  readonly invocation: RegisteredSystemWorkerInvocation;
+  readonly command: AuthoritativeSystemMutationCommand;
+}
+
+export interface AuthoritativeSystemMutationBridge {
+  executeSystem<T>(
+    params: AuthoritativeSystemMutationBridgeParams,
+    mutate: (
+      session: ClientSession,
+      controls: AuthoritativeMutationControls,
+      auditPermission: PermissionContract,
+    ) => Promise<T>,
+  ): Promise<T>;
+}
+
 export function assertPersistableAdminMutationEvents(
   events: readonly DomainEvent[],
 ): asserts events is readonly PersistableDomainEvent[] {
@@ -44,7 +69,7 @@ export function assertPersistableAdminMutationEvents(
 
     throw new SystemInvariantError(
       "SYSTEM_INVARIANT_VIOLATION",
-      `Authoritative ADMIN mutation emitted non-persistable domain event at index ${index}: ${eventType}`,
+      `Authoritative mutation emitted non-persistable domain event at index ${index}: ${eventType}`,
     );
   }
 }

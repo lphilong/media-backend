@@ -28,6 +28,17 @@ export enum Permission {
   ROLE_ASSIGN_TO_USER = "role:assign_to_user",
   ROLE_REVOKE_FROM_USER = "role:revoke_from_user",
   ROLE_ASSIGNMENT_VIEW = "role:assignment:view",
+  ROLE_ASSIGNMENT_REVIEW = "role:assignment:review",
+  ROLE_ASSIGNMENT_GRACE_APPROVE = "role:assignment:grace:approve",
+  ROLE_ASSIGNMENT_RENEW = "role:assignment:renew",
+  ROLE_ASSIGNMENT_REPLACE = "role:assignment:replace",
+  OWNER_GOVERNANCE_VIEW = "owner:governance:view",
+  OWNER_SUCCESSION_MANAGE = "owner:succession:manage",
+  BREAK_GLASS_REQUEST = "break_glass:request",
+  BREAK_GLASS_ACTIVATE = "break_glass:activate",
+  BREAK_GLASS_END = "break_glass:end",
+  BREAK_GLASS_APPROVE = "break_glass:approve",
+  BREAK_GLASS_REVIEW = "break_glass:review",
 
   /* =========================
      ORG UNIT

@@ -115,6 +115,103 @@ test("structured authority filters future expired revoked and inactive-role assi
   );
 });
 
+test("structured authority denies a SCHEDULED predecessor at chained cutover and retains its successor", async () => {
+  const service = serviceWith([
+    record({
+      assignmentId: "assignment-b",
+      roleId: "role-b",
+      permissions: ["chain.old"],
+      state: "SCHEDULED",
+      effectiveAt: now - 100,
+      lifecycle: {
+        cycleId: "cycle-b",
+        riskTier: "LOW",
+        riskReasons: [],
+        riskAssessedAt: now - 100,
+        reviewDeadline: now + 10_000,
+        successorAssignmentId: "assignment-c",
+        successorEffectiveAt: now,
+      },
+      structuredScopeGrants: [
+        { scopeType: "managedTalentGroup", targetId: "tg-1" },
+      ],
+    }),
+    record({
+      assignmentId: "assignment-c",
+      roleId: "role-c",
+      permissions: ["chain.new"],
+      state: "SCHEDULED",
+      effectiveAt: now,
+      structuredScopeGrants: [
+        { scopeType: "managedTalentGroup", targetId: "tg-1" },
+      ],
+    }),
+  ]);
+
+  const authority = (permission: string) =>
+    service.hasAuthority({
+      userId: "user-1",
+      permission,
+      scope: { scopeType: "managedTalentGroup", targetId: "tg-1" },
+      now,
+    });
+  assert.equal(await authority("chain.old"), false);
+  assert.equal(await authority("chain.new"), true);
+});
+
+test("structured authority fails closed for malformed successor pairs and unresolved HIGH timing", async () => {
+  const scope = { scopeType: "managedTalentGroup" as const, targetId: "tg-1" };
+  const malformedSuccessor = serviceWith([
+    record({
+      permissions: ["event.read"],
+      lifecycle: {
+        cycleId: "cycle-malformed",
+        riskTier: "LOW",
+        riskReasons: [],
+        riskAssessedAt: now - 1,
+        reviewDeadline: now + 10_000,
+        successorAssignmentId: null,
+        successorEffectiveAt: now + 1,
+      },
+      structuredScopeGrants: [scope],
+    }),
+  ]);
+  assert.equal(
+    await malformedSuccessor.hasAuthority({
+      userId: "user-1",
+      permission: "event.read",
+      scope,
+      now,
+    }),
+    false,
+  );
+
+  const unresolvedHigh = serviceWith([
+    record({
+      permissions: ["event.read"],
+      roleCode: "ACCESS_ADMIN",
+      effectiveAt: null,
+      lifecycle: {
+        cycleId: "cycle-high",
+        riskTier: "HIGH",
+        riskReasons: [],
+        riskAssessedAt: now - 1,
+        reviewDeadline: null as unknown as number,
+      },
+      structuredScopeGrants: [scope],
+    }),
+  ]);
+  assert.equal(
+    await unresolvedHigh.hasAuthority({
+      userId: "user-1",
+      permission: "event.read",
+      scope,
+      now,
+    }),
+    false,
+  );
+});
+
 test("bundle origin is trace metadata and does not authorize without permission and scope", async () => {
   const service = serviceWith([
     record({
@@ -166,6 +263,7 @@ test("finance authority helper allows exact financePeriod or financeGlobal only"
   const exactPeriod = serviceWith([
     record({
       permissions: [Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE],
+      effectiveAt: Date.now() - 1_000,
       structuredScopeGrants: [
         {
           scopeType: "financePeriod",
@@ -196,6 +294,7 @@ test("finance authority helper allows exact financePeriod or financeGlobal only"
   const global = serviceWith([
     record({
       permissions: [Permission.REVENUE_LEDGER_PLATFORM_EARNING_APPROVE],
+      effectiveAt: Date.now() - 1_000,
       structuredScopeGrants: [{ scopeType: "financeGlobal" }],
     }),
   ]);
@@ -239,6 +338,7 @@ test("global-or-object detail authority preserves exact grants while accepting g
   const exact = serviceWith([
     record({
       permissions: [Permission.EVENT_READ],
+      effectiveAt: Date.now() - 1_000,
       structuredScopeGrants: [
         { scopeType: "assignedEvent", targetId: "event-1" },
       ],
@@ -270,6 +370,7 @@ test("global-or-object detail authority preserves exact grants while accepting g
     authority: serviceWith([
       record({
         permissions: [Permission.EVENT_READ],
+        effectiveAt: Date.now() - 1_000,
         structuredScopeGrants: [{ scopeType: "global" }],
       }),
     ]),
@@ -303,12 +404,14 @@ function record(input: {
   readonly assignmentId?: string;
   readonly userId?: string;
   readonly roleId?: string;
+  readonly roleCode?: string;
   readonly permissions: readonly string[];
   readonly structuredScopeGrants?: UserRoleAssignmentRecord["structuredScopeGrants"];
   readonly state?: UserRoleAssignmentRecord["state"];
   readonly roleState?: string;
   readonly effectiveAt?: number | null;
   readonly expiresAt?: number | null;
+  readonly lifecycle?: UserRoleAssignmentRecord["lifecycle"];
   readonly origin?: UserRoleAssignmentRecord["origin"];
   readonly bundleOrigin?: UserRoleAssignmentRecord["bundleOrigin"];
 }): StructuredScopeAuthorityAssignment {
@@ -321,8 +424,10 @@ function record(input: {
         ? { structuredScopeGrants: input.structuredScopeGrants }
         : {}),
       state: input.state ?? "ACTIVE",
-      effectiveAt: input.effectiveAt ?? now - 1,
+      effectiveAt:
+        input.effectiveAt === undefined ? now - 1 : input.effectiveAt,
       expiresAt: input.expiresAt ?? null,
+      ...(input.lifecycle ? { lifecycle: input.lifecycle } : {}),
       revokedAt: input.state === "REVOKED" ? now - 1 : null,
       origin: input.origin,
       bundleOrigin: input.bundleOrigin ?? null,
@@ -333,6 +438,8 @@ function record(input: {
     role: {
       id: input.roleId ?? "role-1",
       state: input.roleState ?? "ACTIVE",
+      code: input.roleCode,
+      templateCode: input.roleCode,
       permissions: input.permissions,
     },
   };

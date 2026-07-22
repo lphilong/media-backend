@@ -7,7 +7,13 @@ export const ROLE_STATES = ["DRAFT", "ACTIVE", "INACTIVE", "ARCHIVED"] as const;
 
 export type RoleState = (typeof ROLE_STATES)[number];
 
-export const ROLE_ASSIGNMENT_STATES = ["ACTIVE", "REVOKED"] as const;
+export const ROLE_ASSIGNMENT_STATES = [
+  "ACTIVE",
+  "SCHEDULED",
+  "SUSPENDED",
+  "SUPERSEDED",
+  "REVOKED",
+] as const;
 
 export type RoleAssignmentState = (typeof ROLE_ASSIGNMENT_STATES)[number];
 
@@ -73,6 +79,7 @@ export interface UserRoleAssignmentRecord {
   readonly effectiveAt: number | null;
   readonly expiresAt?: number | null;
   readonly reviewAt?: number | null;
+  readonly lifecycle?: RoleAssignmentLifecycleSnapshot | null;
   readonly assignedBy?: string | null;
   readonly assignedAt?: number;
   readonly revokedAt: number | null;
@@ -87,6 +94,30 @@ export interface UserRoleAssignmentRecord {
   readonly reason: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
+}
+
+export interface RoleAssignmentLifecycleSnapshot {
+  readonly cycleId: string;
+  readonly riskTier: "HIGH" | "LOW";
+  readonly riskReasons: readonly string[];
+  readonly riskAssessedAt: number;
+  readonly permissionFingerprint?: string;
+  readonly scopeFingerprint?: string;
+  readonly reviewDeadline: number;
+  readonly graceExceptionExpiresAt?: number | null;
+  readonly suspendedAt?: number | null;
+  readonly suspensionCause?:
+    | "EXPIRED"
+    | "MALFORMED_SUCCESSOR"
+    | "REVIEW_DEADLINE_UNRESOLVABLE"
+    | "REVIEW_OVERDUE"
+    | "GRACE_EXPIRED"
+    | "OWNER_ADMIN_REVIEW_OVERDUE"
+    | null;
+  readonly predecessorAssignmentId?: string | null;
+  readonly successorAssignmentId?: string | null;
+  readonly successorEffectiveAt?: number | null;
+  readonly lineageAction?: "RENEWAL" | "REPLACEMENT" | "RESTORATION" | null;
 }
 
 export interface BundleAssignmentRecord {
@@ -178,6 +209,7 @@ export interface RoleAssignmentView {
   readonly effectiveAt: number | null;
   readonly expiresAt?: number | null;
   readonly reviewAt?: number | null;
+  readonly lifecycle?: RoleAssignmentLifecycleSnapshot | null;
   readonly assignedBy?: string | null;
   readonly assignedAt?: number;
   readonly revokedAt: number | null;

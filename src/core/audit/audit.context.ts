@@ -77,7 +77,7 @@ function getAttemptStoreOrThrow(): AuditAttemptStore {
   if (!store.currentAttempt) {
     throw new SystemInvariantError(
       "AUDIT_ATTEMPT_CONTEXT_MISSING",
-      "Authoritative ADMIN mutation audit attempt scope is missing.",
+      "Authoritative mutation audit attempt scope is missing.",
     );
   }
 
@@ -124,7 +124,7 @@ function assertNonEmptyString(
 /**
  * AuditContext is a thin wrapper over AsyncLocalStorage store.
  * Request/job scope is initialized at the execution boundary.
- * Authoritative ADMIN mutation attempt scope is initialized per bridge attempt.
+ * Authoritative mutation attempt scope is initialized per bridge attempt.
  */
 export class AuditContext {
   assertScope(): void {

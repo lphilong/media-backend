@@ -1,17 +1,32 @@
 import { Db } from "mongodb";
 import { ActorScopeGrants } from "@core/actor/actor";
-import {
-  buildWorkspaceAvailability,
-} from "@modules/account-context/account-context.workspace-availability";
+import { buildWorkspaceAvailability } from "@modules/account-context/account-context.workspace-availability";
 import {
   AccountContext,
   normalizeAccountContexts,
 } from "@modules/account-context/domain/account-context.types";
-import { RoleAssignmentScopeGrant, buildRoleAssignmentScopeFingerprint } from "@modules/role/domain/role-assignment-scope";
-import { isRoleAssignmentCurrentlyEffective } from "@modules/role/domain/role-assignment-lifecycle";
-import { classifySensitiveAccess } from "@modules/role/domain/sensitive-access-policy";
+import {
+  RoleAssignmentScopeGrant,
+  buildRoleAssignmentScopeFingerprint,
+} from "@modules/role/domain/role-assignment-scope";
+import {
+  evaluateRoleAssignmentEffectiveness,
+  isRoleAssignmentCurrentlyEffective,
+} from "@modules/role/domain/role-assignment-lifecycle";
+import {
+  buildCurrentRoleAssignmentPolicy,
+  classifySensitiveAccess,
+} from "@modules/role/domain/sensitive-access-policy";
 import { RoleDependencyError } from "@modules/role/domain/role.errors";
 import { UserRoleAssignmentRecord } from "@modules/role/domain/role.types";
+import {
+  BreakGlassActivationRecord,
+  isBreakGlassActivationEffective,
+} from "@modules/role/domain/break-glass";
+import {
+  ownerAdminContributesAuthority,
+  parseAccessDeploymentEnvironment,
+} from "@modules/role/domain/access-environment-policy";
 
 interface UserDocument {
   readonly _id: string;
@@ -28,10 +43,12 @@ interface AssignmentDocument {
   readonly scopeGrants?: ActorScopeGrants;
   readonly structuredScopeGrants?: readonly RoleAssignmentScopeGrant[];
   readonly scopeFingerprint?: string;
-  readonly state: "ACTIVE" | "REVOKED";
+  readonly state:
+    "ACTIVE" | "SCHEDULED" | "SUSPENDED" | "SUPERSEDED" | "REVOKED";
   readonly effectiveAt: number | null;
   readonly expiresAt?: number | null;
   readonly reviewAt?: number | null;
+  readonly lifecycle?: UserRoleAssignmentRecord["lifecycle"];
   readonly assignedBy?: string | null;
   readonly assignedAt?: number;
   readonly origin?: "DIRECT" | "BUNDLE" | "LEGACY";
@@ -58,18 +75,17 @@ export class EffectiveAccessAdminService {
       _id: userId,
     });
     if (!user) {
-      throw new RoleDependencyError(`Effective access user not found: ${userId}`);
+      throw new RoleDependencyError(
+        `Effective access user not found: ${userId}`,
+      );
     }
 
     const assignmentDocs = await this.db
       .collection<AssignmentDocument>("role_assignments")
-      .find({ userId, state: "ACTIVE" })
+      .find({ userId })
       .sort({ createdAt: 1, _id: 1 })
       .toArray();
-    const activeAssignments = assignmentDocs.filter((assignment) =>
-      isRoleAssignmentCurrentlyEffective(assignment, now),
-    );
-    const roleIds = [...new Set(activeAssignments.map((item) => item.roleId))];
+    const roleIds = [...new Set(assignmentDocs.map((item) => item.roleId))];
     const roles = roleIds.length
       ? await this.db
           .collection<RoleDocument>("roles")
@@ -77,8 +93,59 @@ export class EffectiveAccessAdminService {
           .sort({ code: 1, _id: 1 })
           .toArray()
       : [];
-    const roleById = new Map(roles.map((role) => [role._id, role]));
+    const ownerAdminAllowed = ownerAdminContributesAuthority(
+      parseAccessDeploymentEnvironment(process.env.NODE_ENV),
+    );
+    const eligibleRoles = roles.filter(
+      (role) =>
+        ownerAdminAllowed ||
+        (role.code !== "OWNER_ADMIN" && role.templateCode !== "OWNER_ADMIN"),
+    );
+    const roleById = new Map(eligibleRoles.map((role) => [role._id, role]));
+    const currentPolicyByAssignmentId = new Map<
+      string,
+      ReturnType<typeof buildCurrentRoleAssignmentPolicy>
+    >();
+    const activeAssignments = assignmentDocs.filter((assignment) => {
+      const role = roleById.get(assignment.roleId);
+      if (!role) return false;
+      const scopeFingerprint =
+        assignment.scopeFingerprint ??
+        buildRoleAssignmentScopeFingerprint(assignment.structuredScopeGrants);
+      const currentPolicy = buildCurrentRoleAssignmentPolicy({
+        roleCode: role.code,
+        roleTemplateCode: role.templateCode ?? role.code,
+        permissions: role.permissions,
+        structuredScopeGrants: assignment.structuredScopeGrants,
+        effectiveAt: assignment.effectiveAt,
+        durableReviewDeadline:
+          assignment.lifecycle?.reviewDeadline ?? assignment.reviewAt,
+        durableRiskTier: assignment.lifecycle?.riskTier ?? null,
+        storedPermissionFingerprint:
+          assignment.lifecycle?.permissionFingerprint ?? null,
+        assessedAt: now,
+        scopeFingerprint,
+      });
+      currentPolicyByAssignmentId.set(assignment._id, currentPolicy);
+      return isRoleAssignmentCurrentlyEffective(assignment, now, currentPolicy);
+    });
     const permissionSources = new Map<string, Array<Record<string, unknown>>>();
+
+    const breakGlassActivations = await this.db
+      .collection<
+        Omit<BreakGlassActivationRecord, "activationId"> & {
+          readonly _id: string;
+        }
+      >("break_glass_activations")
+      .find({
+        targetUserId: userId,
+        status: "ACTIVE",
+        activatedAt: { $lte: now },
+        expiresAt: { $gt: now },
+        stepUpState: { $in: ["SATISFIED", "NOT_SUPPORTED"] },
+      })
+      .sort({ expiresAt: 1, _id: 1 })
+      .toArray();
 
     for (const assignment of activeAssignments) {
       const role = roleById.get(assignment.roleId);
@@ -119,6 +186,23 @@ export class EffectiveAccessAdminService {
       }
     }
 
+    for (const activation of breakGlassActivations) {
+      for (const permission of activation.permissions) {
+        const sources = permissionSources.get(permission) ?? [];
+        sources.push({
+          authoritySource: "BREAK_GLASS",
+          activationId: activation._id,
+          structuredScopeGrants: activation.structuredScopeGrants,
+          scopeFingerprint: activation.scopeFingerprint,
+          incidentReferenceId: activation.incidentReferenceId,
+          activatedAt: activation.activatedAt,
+          expiresAt: activation.expiresAt,
+          exactAuthorityOnly: true,
+        });
+        permissionSources.set(permission, sources);
+      }
+    }
+
     const assignments = activeAssignments.map((assignment) => {
       const role = roleById.get(assignment.roleId);
       const structuredScopeGrants = assignment.structuredScopeGrants ?? [];
@@ -148,6 +232,13 @@ export class EffectiveAccessAdminService {
         effectiveAt: assignment.effectiveAt,
         expiresAt: assignment.expiresAt ?? null,
         reviewAt: assignment.reviewAt ?? null,
+        lifecycle: assignment.lifecycle ?? null,
+        nextAuthorityTransitionAt:
+          evaluateRoleAssignmentEffectiveness(
+            assignment,
+            now,
+            currentPolicyByAssignmentId.get(assignment._id),
+          ).nextTransitionAt ?? null,
         origin: assignment.origin ?? "LEGACY",
         bundleOrigin: assignment.bundleOrigin ?? null,
         sensitiveOrGlobal: accessRisk.isSensitive || accessRisk.isGlobalLike,
@@ -186,7 +277,7 @@ export class EffectiveAccessAdminService {
       },
       workspaceAvailability,
       activeRoleAssignments: assignments,
-      roles: roles.map((role) => ({
+      roles: eligibleRoles.map((role) => ({
         id: role._id,
         code: role.code,
         name: role.name,
@@ -196,6 +287,43 @@ export class EffectiveAccessAdminService {
       permissionSourceTrace: [...permissionSources.entries()]
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([permission, sources]) => ({ permission, sources })),
+      activeBreakGlass: breakGlassActivations
+        .filter((activation) =>
+          isBreakGlassActivationEffective(
+            { ...activation, activationId: activation._id },
+            now,
+          ),
+        )
+        .map((activation) => ({
+          activationId: activation._id,
+          permissions: activation.permissions,
+          structuredScopeGrants: activation.structuredScopeGrants,
+          incidentReferenceId: activation.incidentReferenceId,
+          activatedAt: activation.activatedAt,
+          expiresAt: activation.expiresAt,
+        })),
+      compatibilityBlockers:
+        ownerAdminAllowed ||
+        !roles.some(
+          (role) =>
+            role.code === "OWNER_ADMIN" || role.templateCode === "OWNER_ADMIN",
+        )
+          ? []
+          : ["PRODUCTION_OWNER_ADMIN_AUTHORITY_BLOCKED"],
+      nextAuthorityTransitionAt:
+        [
+          ...activeAssignments
+            .map(
+              (assignment) =>
+                evaluateRoleAssignmentEffectiveness(
+                  assignment,
+                  now,
+                  currentPolicyByAssignmentId.get(assignment._id),
+                ).nextTransitionAt,
+            )
+            .filter((value): value is number => typeof value === "number"),
+          ...breakGlassActivations.map((activation) => activation.expiresAt),
+        ].sort((left, right) => left - right)[0] ?? null,
       businessResponsibilitySupport: {
         status: "NOT_EVALUATED",
         claims: [],

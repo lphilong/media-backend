@@ -75,6 +75,7 @@ interface UserRoleAssignmentDocument {
   readonly effectiveAt: number | null;
   readonly expiresAt?: number | null;
   readonly reviewAt?: number | null;
+  readonly lifecycle?: UserRoleAssignmentRecord["lifecycle"];
   readonly assignedBy?: string | null;
   readonly assignedAt?: number;
   readonly revokedAt: number | null;
@@ -375,7 +376,7 @@ export class NativeMongoUserRoleAssignmentRepository
       {
         roleId,
         userId,
-        state: "ACTIVE",
+        state: { $in: ["ACTIVE", "SCHEDULED", "SUSPENDED"] },
       },
       this.withSession(session),
     );
@@ -390,7 +391,12 @@ export class NativeMongoUserRoleAssignmentRepository
     session?: ClientSession,
   ): Promise<UserRoleAssignmentRecord | null> {
     const doc = await this.collection.findOne(
-      { roleId, userId, scopeFingerprint, state: "ACTIVE" },
+      {
+        roleId,
+        userId,
+        scopeFingerprint,
+        state: { $in: ["ACTIVE", "SCHEDULED", "SUSPENDED"] },
+      },
       this.withSession(session),
     );
     return doc ? toUserRoleAssignmentRecord(doc) : null;
@@ -406,7 +412,7 @@ export class NativeMongoUserRoleAssignmentRepository
         {
           roleId,
           userId,
-          state: "ACTIVE",
+          state: { $in: ["ACTIVE", "SCHEDULED", "SUSPENDED"] },
         },
         this.withSession(session),
       )
@@ -423,7 +429,7 @@ export class NativeMongoUserRoleAssignmentRepository
     const doc = await this.collection.findOne(
       {
         roleId,
-        state: "ACTIVE",
+        state: { $in: ["ACTIVE", "SCHEDULED", "SUSPENDED"] },
       },
       {
         ...this.withSession(session),
@@ -444,7 +450,7 @@ export class NativeMongoUserRoleAssignmentRepository
     const updated = await this.collection.findOneAndUpdate(
       {
         _id: assignmentId,
-        state: "ACTIVE",
+        state: { $in: ["ACTIVE", "SCHEDULED", "SUSPENDED"] },
       },
       {
         $set: {
@@ -630,6 +636,7 @@ function toUserRoleAssignmentDocument(
     effectiveAt: assignment.effectiveAt,
     expiresAt: assignment.expiresAt ?? null,
     reviewAt: assignment.reviewAt ?? null,
+    lifecycle: assignment.lifecycle ?? null,
     assignedBy: assignment.assignedBy ?? null,
     assignedAt: assignment.assignedAt ?? assignment.createdAt,
     revokedAt: assignment.revokedAt,
@@ -661,6 +668,7 @@ function toUserRoleAssignmentRecord(
     effectiveAt: document.effectiveAt,
     expiresAt: document.expiresAt ?? null,
     reviewAt: document.reviewAt ?? null,
+    lifecycle: document.lifecycle ?? null,
     assignedBy: document.assignedBy ?? null,
     assignedAt: document.assignedAt ?? document.createdAt,
     revokedAt: document.revokedAt,

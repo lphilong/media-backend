@@ -40,5 +40,6 @@ export function actorFromSnapshot(
     accountContexts: snapshot.accountContexts,
     trace,
     isActive: snapshot.isActive,
+    authorizationValidUntil: snapshot.authorizationValidUntil,
   });
 }

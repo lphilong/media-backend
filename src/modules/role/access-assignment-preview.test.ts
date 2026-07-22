@@ -13,6 +13,7 @@ import { AccessAssignmentPreviewAdminService } from "@modules/role/admin/admin.a
 import { AdminAccessAssignmentPreviewController } from "@modules/role/admin/admin.access-assignment-preview.controller";
 import { adminAccessAssignmentPreviewRoutes } from "@modules/role/admin/admin.access-assignment-preview.routes";
 import { getRoleTemplate } from "@modules/role/domain/role-template.catalog";
+import { buildAuthoritySlotIdentity } from "@modules/role/domain/authority-slot";
 
 const CANONICAL_ASSIGNMENT_TARGET_CODES = [
   "OWNER_ADMIN",
@@ -415,7 +416,7 @@ test("access assignment preview blocks missing responsibility and duplicate exac
         ],
         scopeFingerprint: "scope:v1:managedTalentGroup|targetId=group-a",
         state: "ACTIVE",
-        effectiveAt: 1,
+        effectiveAt: Date.now(),
         expiresAt: null,
         reason: "existing",
         createdAt: 1,
@@ -593,7 +594,7 @@ test("access assignment preview expands canonical auditor bundle in memory witho
   assert.equal(db.writeCount, 0);
 });
 
-test("access assignment preview treats canonical target roles as assignable", async () => {
+test("access assignment preview treats canonical targets except environment-bounded OWNER_ADMIN as generally assignable", async () => {
   const permissionsByCode = {
     HR_OPERATIONS: Permission.EMPLOYMENT_PROFILE_READ,
     HR_TERMS_APPROVER: Permission.EMPLOYMENT_TERMS_APPROVE,
@@ -614,6 +615,7 @@ test("access assignment preview treats canonical target roles as assignable", as
   } as const;
 
   for (const code of CANONICAL_ASSIGNMENT_TARGET_CODES) {
+    if (code === "OWNER_ADMIN") continue;
     const isTalentGroupManager = code === "TALENT_GROUP_MANAGER";
     const isOrgUnitManager = code === "ORG_UNIT_MANAGER";
     const isManager = isTalentGroupManager || isOrgUnitManager;
@@ -662,11 +664,8 @@ test("access assignment preview treats canonical target roles as assignable", as
       structuredScopeGrants: scope,
       reason: `canonical assignment for ${code}`,
       effectiveAt: EFFECTIVE_AT,
-      reviewAt:
-        code === "OWNER_ADMIN" || code === "ACCESS_ADMIN"
-          ? EXPIRES_AT_7_DAYS
-          : REVIEW_AT_30_DAYS,
-      ...(code === "OWNER_ADMIN" || code === "ACCESS_ADMIN"
+      reviewAt: code === "ACCESS_ADMIN" ? EXPIRES_AT_7_DAYS : REVIEW_AT_30_DAYS,
+      ...(code === "ACCESS_ADMIN"
         ? { expiresAt: EXPIRES_AT_7_DAYS }
         : {}),
     });
@@ -888,7 +887,7 @@ test("access assignment preview blocks sensitive global access without reason an
     users: [activeUser("actor-user", ["ADMIN_CONSOLE"])],
     employment_profiles: [activeProfile("profile-1", "actor-user")],
     roles: [
-      role("role-owner", "OWNER_ADMIN", [Permission.ROLE_ASSIGN_TO_USER]),
+      role("role-access", "ACCESS_ADMIN", [Permission.ROLE_ASSIGN_TO_USER]),
     ],
     role_assignments: [],
     responsibility_assignments: [],
@@ -897,7 +896,7 @@ test("access assignment preview blocks sensitive global access without reason an
   const result = await new AccessAssignmentPreviewAdminService(db).preview({
     targetUserId: "actor-user",
     assignmentTargetType: "ROLE_TEMPLATE",
-    assignmentTargetCode: "OWNER_ADMIN",
+    assignmentTargetCode: "ACCESS_ADMIN",
     structuredScopeGrants: [{ scopeType: "global" }],
     actorUserId: "actor-user",
     effectiveAt: EFFECTIVE_AT,
@@ -958,7 +957,10 @@ test("access assignment preview requires review for sensitive or global grants",
   ]);
 });
 
-test("access assignment preview classifies owner admin as break-glass-like and requires short expiry", async () => {
+test("access assignment preview permits OWNER_ADMIN only for the active Primary Owner in non-production with a current review deadline", async () => {
+  const previousNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "test";
+  const now = Date.now();
   const db = fakeDb({
     users: [activeUser("target-user", ["ADMIN_CONSOLE"])],
     employment_profiles: [activeProfile("profile-1", "target-user")],
@@ -967,25 +969,43 @@ test("access assignment preview classifies owner admin as break-glass-like and r
     ],
     role_assignments: [],
     responsibility_assignments: [],
+    governance_principals: [
+      {
+        _id: "principal-owner",
+        userId: "target-user",
+        principalType: "PRIMARY_OWNER",
+        status: "ACTIVE",
+        effectiveAt: now - 1_000,
+        expiresAt: null,
+      },
+    ],
   });
 
-  const result = await new AccessAssignmentPreviewAdminService(db).preview({
-    targetUserId: "target-user",
-    assignmentTargetType: "ROLE_TEMPLATE",
-    assignmentTargetCode: "OWNER_ADMIN",
-    structuredScopeGrants: [{ scopeType: "global" }],
-    reason: "emergency owner recovery",
-    effectiveAt: EFFECTIVE_AT,
-    reviewAt: Date.UTC(2026, 0, 8),
-  });
+  try {
+    const result = await new AccessAssignmentPreviewAdminService(db).preview({
+      targetUserId: "target-user",
+      assignmentTargetType: "ROLE_TEMPLATE",
+      assignmentTargetCode: "OWNER_ADMIN",
+      structuredScopeGrants: [{ scopeType: "global" }],
+      reason: "non-production owner administration",
+      effectiveAt: now,
+      reviewAt: now + 7 * 24 * 60 * 60 * 1_000,
+    });
 
-  assert.equal(result.canApply, false);
-  assert.deepEqual(readCodes(result.blockers), ["EXPIRES_AT_REQUIRED"]);
-  assert.equal(readPath(result, ["sensitiveAccess", "isBreakGlassLike"]), true);
-  assert.equal(
-    readPath(result, ["sensitiveAccess", "maxExpiryWindowDays"]),
-    14,
-  );
+    assert.equal(result.canApply, true);
+    assert.deepEqual(readCodes(result.blockers), []);
+    assert.equal(
+      readPath(result, ["sensitiveAccess", "isBreakGlassLike"]),
+      false,
+    );
+    assert.equal(
+      readPath(result, ["sensitiveAccess", "requiresExpiry"]),
+      false,
+    );
+  } finally {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+  }
 });
 
 test("access assignment preview duplicate checks match current active-state lifecycle behavior", async () => {
@@ -1011,7 +1031,7 @@ test("access assignment preview duplicate checks match current active-state life
     structuredScopeGrants: [{ scopeType: "self" }],
     scopeFingerprint: "scope:v1:self",
     state: "ACTIVE",
-    effectiveAt: 1,
+    effectiveAt: Date.now(),
     expiresAt: null,
     reason: "existing",
     createdAt: 1,
@@ -1040,24 +1060,113 @@ test("access assignment preview duplicate checks match current active-state life
       role_assignments: [{ ...activeDuplicate, _id: "expired", expiresAt: 1 }],
     }),
   ).preview(command);
-  assert.equal(expired.canApply, false);
-  assert.deepEqual(readCodes(expired.blockers), [
-    "DUPLICATE_ACTIVE_ASSIGNMENT",
-  ]);
+  assert.equal(expired.canApply, true);
+  assert.deepEqual(readCodes(expired.blockers), []);
+
+  const expiredSuspended = await new AccessAssignmentPreviewAdminService(
+    fakeDb({
+      ...baseRows,
+      role_assignments: [{
+        ...activeDuplicate,
+        _id: "expired-suspended",
+        state: "SUSPENDED",
+        expiresAt: 1,
+      }],
+    }),
+  ).preview(command);
+  assert.equal(expiredSuspended.canApply, true);
+  assert.deepEqual(readCodes(expiredSuspended.blockers), []);
 
   const future = await new AccessAssignmentPreviewAdminService(
     fakeDb({
       ...baseRows,
       role_assignments: [
-        { ...activeDuplicate, _id: "future", effectiveAt: Date.now() + 60_000 },
+        {
+          ...activeDuplicate,
+          _id: "future",
+          state: "SCHEDULED",
+          effectiveAt: Date.now() + 60_000,
+        },
       ],
     }),
   ).preview(command);
   assert.equal(future.canApply, false);
   assert.deepEqual(readCodes(future.blockers), ["DUPLICATE_ACTIVE_ASSIGNMENT"]);
+
+  const timedSlotIdentity = buildAuthoritySlotIdentity({
+    userId: "target-user",
+    roleId: "role-staff",
+    structuredScopeGrants: [{ scopeType: "self" }],
+  });
+  const timedReleased = await new AccessAssignmentPreviewAdminService(
+    fakeDb({
+      ...baseRows,
+      role_assignments: [activeDuplicate],
+      role_assignment_authority_slots: [{
+        _id: timedSlotIdentity.id,
+        userId: timedSlotIdentity.userId,
+        roleId: timedSlotIdentity.roleId,
+        scopeFingerprint: timedSlotIdentity.scopeFingerprint,
+        schemaVersion: 1,
+        status: "RESERVED",
+        lineageId: "assignment-active",
+        currentAssignmentId: "assignment-active",
+        scheduledSuccessorAssignmentId: null,
+        successorEffectiveAt: null,
+        releaseAt: Date.now() - 1,
+        predecessorReleaseAt: null,
+        transitionIdentity: "expired:assignment-active",
+        version: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      }],
+    }),
+  ).preview(command);
+  assert.equal(timedReleased.canApply, true);
+  assert.deepEqual(readCodes(timedReleased.blockers), []);
+
+  const futureReserved = await new AccessAssignmentPreviewAdminService(
+    fakeDb({
+      ...baseRows,
+      role_assignments: [
+        { ...activeDuplicate, expiresAt: 1 },
+        {
+          ...activeDuplicate,
+          _id: "assignment-future",
+          state: "SCHEDULED",
+          effectiveAt: Date.now() + 30_000,
+          expiresAt: Date.now() + 60_000,
+        },
+      ],
+      role_assignment_authority_slots: [{
+        _id: timedSlotIdentity.id,
+        userId: timedSlotIdentity.userId,
+        roleId: timedSlotIdentity.roleId,
+        scopeFingerprint: timedSlotIdentity.scopeFingerprint,
+        schemaVersion: 1,
+        status: "RESERVED",
+        lineageId: "assignment-active",
+        currentAssignmentId: "assignment-active",
+        scheduledSuccessorAssignmentId: "assignment-future",
+        successorEffectiveAt: Date.now() + 30_000,
+        releaseAt: Date.now() + 60_000,
+        predecessorReleaseAt: null,
+        transitionIdentity: "successor:assignment-future",
+        version: 2,
+        createdAt: 1,
+        updatedAt: 2,
+      }],
+    }),
+  ).preview(command);
+  assert.equal(futureReserved.canApply, false);
+  assert.deepEqual(readCodes(futureReserved.blockers), [
+    "DUPLICATE_ACTIVE_ASSIGNMENT",
+  ]);
 });
 
 test("access assignment targets endpoint is metadata-only and does not expose user pickers", async () => {
+  const previousNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "test";
   const app = express();
   app.use(express.json());
   app.use(contextMiddleware("ADMIN"));
@@ -1183,6 +1292,8 @@ test("access assignment targets endpoint is metadata-only and does not expose us
     }
   } finally {
     await close(server);
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
   }
 });
 

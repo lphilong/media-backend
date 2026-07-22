@@ -21,10 +21,10 @@ test("sensitive access taxonomy classifies role, permission, bundle, and scope r
   assert.equal(owner.isGlobalLike, true);
   assert.equal(owner.isHighRisk, true);
   assert.equal(owner.requiresReview, true);
-  assert.equal(owner.requiresExpiry, true);
-  assert.equal(owner.isBreakGlassLike, true);
-  assert.equal(owner.maxReviewWindowDays, 14);
-  assert.equal(owner.maxExpiryWindowDays, 14);
+  assert.equal(owner.requiresExpiry, false);
+  assert.equal(owner.isBreakGlassLike, false);
+  assert.equal(owner.maxReviewWindowDays, 30);
+  assert.equal(owner.maxExpiryWindowDays, null);
   assert.deepEqual(owner.sensitiveRoleCodes, ["OWNER_ADMIN"]);
   assert.equal(owner.sensitivePermissions.includes(Permission.ROLE_ASSIGN_TO_USER), true);
 
@@ -71,7 +71,7 @@ test("sensitive access taxonomy classifies role, permission, bundle, and scope r
   assert.equal(scopedAuditor.requiresReview, false);
 });
 
-test("sensitive access lifecycle validation enforces review and break-glass expiry windows", () => {
+test("sensitive access lifecycle validation enforces review windows without treating OWNER_ADMIN as break-glass", () => {
   const globalAudit = classifySensitiveAccess([
     {
       roleCode: "VIEWER_AUDITOR",
@@ -106,9 +106,9 @@ test("sensitive access lifecycle validation enforces review and break-glass expi
   assert.deepEqual(
     validateSensitiveAccessLifecycle(owner, {
       effectiveAt: EFFECTIVE_AT,
-      reviewAt: Date.UTC(2026, 0, 8),
+      reviewAt: Date.UTC(2026, 0, 31),
       expiresAt: null,
     }).blockers.map((item) => item.code),
-    ["EXPIRES_AT_REQUIRED"],
+    [],
   );
 });

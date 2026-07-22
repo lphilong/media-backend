@@ -20,6 +20,8 @@ const KNOWN_ENV_KEYS = [
   "HTTP_MANAGEMENT_PORT",
   "HTTP_ERROR_INCLUDE_REQUEST_ID",
   "ADMIN_BUSINESS_TIMEZONE",
+  "GOVERNANCE_CALENDAR_VERSION",
+  "GOVERNANCE_HOLIDAY_DATES",
   "TRUST_PROXY",
   "CORS_ORIGINS",
   "MONGO_URI",
@@ -394,6 +396,8 @@ const envSchema = z
           "ADMIN_BUSINESS_TIMEZONE must be a valid IANA timezone",
       })
       .default("UTC"),
+    GOVERNANCE_CALENDAR_VERSION: z.string().trim().min(1).optional(),
+    GOVERNANCE_HOLIDAY_DATES: z.string().trim().min(1).optional(),
 
     /* =========================
      * HTTP / NETWORK
@@ -643,6 +647,22 @@ const envSchema = z
     HEROKU_APP_NAME: z.string().optional(),
   })
   .superRefine((env, ctx) => {
+    if (env.NODE_ENV === "production") {
+      if (!env.GOVERNANCE_CALENDAR_VERSION) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["GOVERNANCE_CALENDAR_VERSION"],
+          message: "GOVERNANCE_CALENDAR_VERSION is required in production",
+        });
+      }
+      if (!env.GOVERNANCE_HOLIDAY_DATES) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["GOVERNANCE_HOLIDAY_DATES"],
+          message: "GOVERNANCE_HOLIDAY_DATES is required in production",
+        });
+      }
+    }
     if (env.SKIP_DB_INDEX_BOOTSTRAP) {
       if (env.NODE_ENV === "production") {
         ctx.addIssue({

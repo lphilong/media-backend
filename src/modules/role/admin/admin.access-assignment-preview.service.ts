@@ -13,9 +13,16 @@ import {
   RoleAssignmentScopeGrant,
 } from "@modules/role/domain/role-assignment-scope";
 import {
+  buildCurrentRoleAssignmentPolicy,
   classifySensitiveAccess,
   validateSensitiveAccessLifecycle,
 } from "@modules/role/domain/sensitive-access-policy";
+import {
+  evaluateOwnerAdminEnvironmentEligibility,
+  ownerAdminContributesAuthority,
+  parseAccessDeploymentEnvironment,
+} from "@modules/role/domain/access-environment-policy";
+import { GovernancePrincipalRecord } from "@modules/role/domain/governance-principal";
 import { isRoleAssignmentCurrentlyEffective } from "@modules/role/domain/role-assignment-lifecycle";
 import {
   evaluateRoleBundleAssignability,
@@ -32,6 +39,7 @@ import {
 import { RoleValidationError } from "@modules/role/domain/role.errors";
 import { UserRoleAssignmentRecord } from "@modules/role/domain/role.types";
 import { classifyRoleTemplateDrift } from "@modules/role/domain/role-template-integrity";
+import { findOperationalAssignmentOccupant } from "./access-assignment-occupancy";
 
 export type AccessAssignmentTargetType = "ROLE" | "ROLE_TEMPLATE" | "BUNDLE";
 
@@ -67,6 +75,7 @@ export interface AccessAssignmentSourceContext {
 export interface AccessAssignmentPreviewOptions {
   readonly session?: ClientSession;
   readonly actor?: Actor;
+  readonly ignoreAssignmentIds?: readonly string[];
 }
 
 interface UserDocument {
@@ -103,10 +112,12 @@ interface AssignmentDocument {
   readonly userId: string;
   readonly structuredScopeGrants?: readonly RoleAssignmentScopeGrant[];
   readonly scopeFingerprint?: string;
-  readonly state: "ACTIVE" | "REVOKED";
+  readonly state:
+    "ACTIVE" | "SCHEDULED" | "SUSPENDED" | "SUPERSEDED" | "REVOKED";
   readonly effectiveAt: number | null;
   readonly expiresAt?: number | null;
   readonly reviewAt?: number | null;
+  readonly lifecycle?: UserRoleAssignmentRecord["lifecycle"];
   readonly assignedBy?: string | null;
   readonly assignedAt?: number;
   readonly origin?: "DIRECT" | "BUNDLE" | "LEGACY";
@@ -181,6 +192,9 @@ export class AccessAssignmentPreviewAdminService {
   private readonly responsibilities: Collection<ResponsibilityDocument>;
   private readonly talentGroups: Collection<TalentGroupDocument>;
   private readonly orgUnits: Collection<OrgUnitDocument>;
+  private readonly governancePrincipals: Collection<
+    Omit<GovernancePrincipalRecord, "principalId"> & { readonly _id: string }
+  >;
 
   constructor(private readonly db: Db) {
     this.users = db.collection<UserDocument>("users");
@@ -194,6 +208,7 @@ export class AccessAssignmentPreviewAdminService {
     );
     this.talentGroups = db.collection<TalentGroupDocument>("talent_groups");
     this.orgUnits = db.collection<OrgUnitDocument>("org_units");
+    this.governancePrincipals = db.collection("governance_principals");
   }
 
   listTargetOptions(): Record<string, unknown> {
@@ -234,6 +249,11 @@ export class AccessAssignmentPreviewAdminService {
           .filter(
             (template) =>
               !LEGACY_ASSIGNMENT_TARGET_CODES.has(template.code) &&
+              template.code !== "OWNER_GOVERNANCE" &&
+              (template.code !== "OWNER_ADMIN" ||
+                ownerAdminContributesAuthority(
+                  parseAccessDeploymentEnvironment(process.env.NODE_ENV),
+                )) &&
               evaluateRoleTemplateAssignability(template).assignable,
           )
           .map((template) => ({
@@ -358,6 +378,40 @@ export class AccessAssignmentPreviewAdminService {
       blockers,
       options?.session,
     );
+    const resolvedRoleCodes = targetResolution.roles.map((role) =>
+      normalizeRoleTemplateCode(role.templateCode ?? role.code),
+    );
+    if (resolvedRoleCodes.includes("OWNER_GOVERNANCE")) {
+      blockers.push(
+        blocker(
+          "OWNER_GOVERNANCE_SYSTEM_CONTROLLED",
+          "OWNER_GOVERNANCE is created only through the authorized governance bootstrap or succession workflow.",
+        ),
+      );
+    }
+    if (resolvedRoleCodes.includes("OWNER_ADMIN")) {
+      const primaryOwner = await this.governancePrincipals.findOne(
+        { principalType: "PRIMARY_OWNER", status: "ACTIVE" },
+        options?.session ? { session: options.session } : {},
+      );
+      const ownerEligibility = evaluateOwnerAdminEnvironmentEligibility({
+        environment: parseAccessDeploymentEnvironment(process.env.NODE_ENV),
+        assignmentUserId: targetUserId,
+        primaryOwnerUserId: primaryOwner?.userId ?? null,
+        primaryOwnerEligible:
+          !!primaryOwner &&
+          primaryOwner.effectiveAt <= now &&
+          (primaryOwner.expiresAt === null || primaryOwner.expiresAt > now) &&
+          !!targetUser,
+        reviewDeadline: reviewAt,
+        now,
+      });
+      for (const code of ownerEligibility.blockers) {
+        blockers.push(
+          blocker(code, `OWNER_ADMIN assignment is not eligible: ${code}.`),
+        );
+      }
+    }
     const proposedAssignments = targetResolution.roles.map((role) => ({
       assignmentId: `preview:${crypto.randomUUID()}`,
       roleId: role._id,
@@ -415,7 +469,9 @@ export class AccessAssignmentPreviewAdminService {
     const duplicateConflicts = await this.findDuplicateConflicts(
       proposedAssignments,
       targetUserId,
+      now,
       options?.session,
+      options?.ignoreAssignmentIds,
     );
     if (duplicateConflicts.length > 0) {
       blockers.push(
@@ -687,9 +743,8 @@ export class AccessAssignmentPreviewAdminService {
           continue;
         }
         const childTemplate = getRoleTemplate(childCode);
-        const childTemplateReadiness = evaluateRoleTemplateAssignability(
-          childTemplate,
-        );
+        const childTemplateReadiness =
+          evaluateRoleTemplateAssignability(childTemplate);
         const childDrift = classifyRoleTemplateDrift({
           role,
           template: childTemplate,
@@ -821,7 +876,7 @@ export class AccessAssignmentPreviewAdminService {
     const governingCode =
       targetType === "ROLE_TEMPLATE"
         ? requestedCode
-        : role.templateCode ?? role.code;
+        : (role.templateCode ?? role.code);
     const template = getRoleTemplate(governingCode);
     const roleDrift = classifyRoleTemplateDrift({
       role,
@@ -957,27 +1012,27 @@ export class AccessAssignmentPreviewAdminService {
   private async findDuplicateConflicts(
     proposedAssignments: readonly ProposedAssignment[],
     userId: string,
+    now: number,
     session?: ClientSession,
+    ignoreAssignmentIds: readonly string[] = [],
   ): Promise<readonly Record<string, unknown>[]> {
     const conflicts: Array<Record<string, unknown>> = [];
     for (const assignment of proposedAssignments) {
-      const existing = await this.assignments.findOne(
+      const existing = await findOperationalAssignmentOccupant(
+        this.db,
         {
-          roleId: assignment.roleId,
           userId,
-          scopeFingerprint: assignment.scopeFingerprint,
-          state: "ACTIVE",
-        },
-        mongoOptions(session),
-      );
-      if (existing) {
-        conflicts.push({
-          assignmentId: existing._id,
           roleId: assignment.roleId,
           roleCode: assignment.roleCode,
+          structuredScopeGrants: assignment.structuredScopeGrants,
           scopeFingerprint: assignment.scopeFingerprint,
-          lifecycleState: "ACTIVE",
-        });
+        },
+        now,
+        session,
+        ignoreAssignmentIds,
+      );
+      if (existing) {
+        conflicts.push({ ...existing });
       }
     }
     return conflicts;
@@ -1118,12 +1173,12 @@ export class AccessAssignmentPreviewAdminService {
   ): Promise<Record<string, unknown>> {
     const now = Date.now();
     const currentAssignments = await this.assignments
-      .find({ userId: user._id, state: "ACTIVE" }, mongoOptions(session))
+      .find(
+        { userId: user._id, state: { $in: ["ACTIVE", "SCHEDULED"] } },
+        mongoOptions(session),
+      )
       .sort({ createdAt: 1, _id: 1 })
       .toArray();
-    const activeCurrentAssignments = currentAssignments.filter((assignment) =>
-      isRoleAssignmentCurrentlyEffective(assignment, now),
-    );
     const activeProposedAssignments = proposedAssignments.filter(
       (assignment) =>
         assignment.effectiveAt <= now &&
@@ -1131,7 +1186,7 @@ export class AccessAssignmentPreviewAdminService {
     );
     const roleIds = [
       ...new Set([
-        ...activeCurrentAssignments.map((item) => item.roleId),
+        ...currentAssignments.map((item) => item.roleId),
         ...activeProposedAssignments.map((item) => item.roleId),
       ]),
     ];
@@ -1145,6 +1200,28 @@ export class AccessAssignmentPreviewAdminService {
           .toArray()
       : [];
     const roleById = new Map(roles.map((role) => [role._id, role]));
+    const activeCurrentAssignments = currentAssignments.filter((assignment) => {
+      const role = roleById.get(assignment.roleId);
+      if (!role) return false;
+      const scopeFingerprint =
+        assignment.scopeFingerprint ??
+        buildRoleAssignmentScopeFingerprint(assignment.structuredScopeGrants);
+      const currentPolicy = buildCurrentRoleAssignmentPolicy({
+        roleCode: role.code,
+        roleTemplateCode: role.templateCode ?? role.code,
+        permissions: role.permissions,
+        structuredScopeGrants: assignment.structuredScopeGrants,
+        effectiveAt: assignment.effectiveAt,
+        durableReviewDeadline:
+          assignment.lifecycle?.reviewDeadline ?? assignment.reviewAt,
+        durableRiskTier: assignment.lifecycle?.riskTier ?? null,
+        storedPermissionFingerprint:
+          assignment.lifecycle?.permissionFingerprint ?? null,
+        assessedAt: now,
+        scopeFingerprint,
+      });
+      return isRoleAssignmentCurrentlyEffective(assignment, now, currentPolicy);
+    });
     const permissionSources = new Map<string, Array<Record<string, unknown>>>();
     const assignments = [
       ...activeCurrentAssignments.map((assignment) =>
@@ -1201,7 +1278,9 @@ export class AccessAssignmentPreviewAdminService {
 }
 
 function isBlockingRoleTemplateDrift(
-  classification: ReturnType<typeof classifyRoleTemplateDrift>["classification"],
+  classification: ReturnType<
+    typeof classifyRoleTemplateDrift
+  >["classification"],
 ): boolean {
   return (
     classification === "STALE_MISSING_PERMISSIONS" ||
@@ -1211,7 +1290,9 @@ function isBlockingRoleTemplateDrift(
 }
 
 function isBlockingCanonicalRoleTemplateState(
-  classification: ReturnType<typeof classifyRoleTemplateDrift>["classification"],
+  classification: ReturnType<
+    typeof classifyRoleTemplateDrift
+  >["classification"],
 ): boolean {
   return classification !== "MATCHED";
 }
